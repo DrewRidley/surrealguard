@@ -1,0 +1,8 @@
+[package]
+name = "surrealguard-cli"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+surrealguard-core = { path = "../core" }
+surrealdb.workspace = true

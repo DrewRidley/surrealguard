@@ -1,0 +1,15 @@
+[workspace]
+members = ["crates/core", "crates/codegen", "crates/macros", "crates/cli"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Drew Ridley"]
+license = "MIT OR Apache-2.0"
+
+
+[workspace.dependencies]
+surrealdb = { version = "2.1.4", features = [], default-features = false}
+serde = { version = "~1", features = ["derive"] }
+thiserror = "1"

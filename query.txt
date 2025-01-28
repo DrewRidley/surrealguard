@@ -1,0 +1,1484 @@
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            All,
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Table(
+                                Table(
+                                    "person",
+                                ),
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            Single {
+                                expr: Idiom(
+                                    Idiom(
+                                        [
+                                            Field(
+                                                Ident(
+                                                    "address",
+                                                ),
+                                            ),
+                                            Field(
+                                                Ident(
+                                                    "city",
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                                alias: None,
+                            },
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Table(
+                                Table(
+                                    "person",
+                                ),
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            Single {
+                                expr: Idiom(
+                                    Idiom(
+                                        [
+                                            Field(
+                                                Ident(
+                                                    "name",
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                                alias: None,
+                            },
+                            Single {
+                                expr: Idiom(
+                                    Idiom(
+                                        [
+                                            Field(
+                                                Ident(
+                                                    "address",
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                                alias: None,
+                            },
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Table(
+                                Table(
+                                    "person",
+                                ),
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            Single {
+                                expr: Subquery(
+                                    Value(
+                                        Expression(
+                                            Binary {
+                                                l: Subquery(
+                                                    Value(
+                                                        Expression(
+                                                            Binary {
+                                                                l: Idiom(
+                                                                    Idiom(
+                                                                        [
+                                                                            Field(
+                                                                                Ident(
+                                                                                    "celsius",
+                                                                                ),
+                                                                            ),
+                                                                        ],
+                                                                    ),
+                                                                ),
+                                                                o: Mul,
+                                                                r: Number(
+                                                                    Float(
+                                                                        1.8,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                ),
+                                                o: Add,
+                                                r: Number(
+                                                    Int(
+                                                        32,
+                                                    ),
+                                                ),
+                                            },
+                                        ),
+                                    ),
+                                ),
+                                alias: Some(
+                                    Idiom(
+                                        [
+                                            Field(
+                                                Ident(
+                                                    "fahrenheit",
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            },
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Table(
+                                Table(
+                                    "temperature",
+                                ),
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            Single {
+                                expr: Expression(
+                                    Binary {
+                                        l: Idiom(
+                                            Idiom(
+                                                [
+                                                    Field(
+                                                        Ident(
+                                                            "rating",
+                                                        ),
+                                                    ),
+                                                ],
+                                            ),
+                                        ),
+                                        o: MoreThanOrEqual,
+                                        r: Number(
+                                            Int(
+                                                4,
+                                            ),
+                                        ),
+                                    },
+                                ),
+                                alias: Some(
+                                    Idiom(
+                                        [
+                                            Field(
+                                                Ident(
+                                                    "positive",
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            },
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Table(
+                                Table(
+                                    "review",
+                                ),
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            Single {
+                                expr: Object(
+                                    Object(
+                                        {
+                                            "monthly": Bool(
+                                                true,
+                                            ),
+                                            "weekly": Bool(
+                                                false,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                alias: Some(
+                                    Idiom(
+                                        [
+                                            Field(
+                                                Ident(
+                                                    "marketing settings",
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            },
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Table(
+                                Table(
+                                    "user",
+                                ),
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            Single {
+                                expr: Idiom(
+                                    Idiom(
+                                        [
+                                            Field(
+                                                Ident(
+                                                    "address",
+                                                ),
+                                            ),
+                                            Where(
+                                                Expression(
+                                                    Binary {
+                                                        l: Idiom(
+                                                            Idiom(
+                                                                [
+                                                                    Field(
+                                                                        Ident(
+                                                                            "active",
+                                                                        ),
+                                                                    ),
+                                                                ],
+                                                            ),
+                                                        ),
+                                                        o: Equal,
+                                                        r: Bool(
+                                                            true,
+                                                        ),
+                                                    },
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                                alias: None,
+                            },
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Table(
+                                Table(
+                                    "person",
+                                ),
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            All,
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Table(
+                                Table(
+                                    "person",
+                                ),
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: Some(
+                        Cond(
+                            Idiom(
+                                Idiom(
+                                    [
+                                        Graph(
+                                            Graph {
+                                                dir: Out,
+                                                expr: Fields(
+                                                    [
+                                                        All,
+                                                    ],
+                                                    false,
+                                                ),
+                                                what: Tables(
+                                                    [
+                                                        Table(
+                                                            "reacted_to",
+                                                        ),
+                                                    ],
+                                                ),
+                                                cond: Some(
+                                                    Cond(
+                                                        Expression(
+                                                            Binary {
+                                                                l: Idiom(
+                                                                    Idiom(
+                                                                        [
+                                                                            Field(
+                                                                                Ident(
+                                                                                    "type",
+                                                                                ),
+                                                                            ),
+                                                                        ],
+                                                                    ),
+                                                                ),
+                                                                o: Equal,
+                                                                r: Strand(
+                                                                    Strand(
+                                                                        "celebrate",
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                ),
+                                                split: None,
+                                                group: None,
+                                                order: None,
+                                                limit: None,
+                                                start: None,
+                                                alias: None,
+                                            },
+                                        ),
+                                        Graph(
+                                            Graph {
+                                                dir: Out,
+                                                expr: Fields(
+                                                    [
+                                                        All,
+                                                    ],
+                                                    false,
+                                                ),
+                                                what: Tables(
+                                                    [
+                                                        Table(
+                                                            "post",
+                                                        ),
+                                                    ],
+                                                ),
+                                                cond: None,
+                                                split: None,
+                                                group: None,
+                                                order: None,
+                                                limit: None,
+                                                start: None,
+                                                alias: None,
+                                            },
+                                        ),
+                                    ],
+                                ),
+                            ),
+                        ),
+                    ),
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            All,
+                            Single {
+                                expr: Subquery(
+                                    Select(
+                                        SelectStatement {
+                                            expr: Fields(
+                                                [
+                                                    All,
+                                                ],
+                                                false,
+                                            ),
+                                            omit: None,
+                                            only: false,
+                                            what: Values(
+                                                [
+                                                    Table(
+                                                        Table(
+                                                            "events",
+                                                        ),
+                                                    ),
+                                                ],
+                                            ),
+                                            with: None,
+                                            cond: Some(
+                                                Cond(
+                                                    Expression(
+                                                        Binary {
+                                                            l: Idiom(
+                                                                Idiom(
+                                                                    [
+                                                                        Field(
+                                                                            Ident(
+                                                                                "type",
+                                                                            ),
+                                                                        ),
+                                                                    ],
+                                                                ),
+                                                            ),
+                                                            o: Equal,
+                                                            r: Strand(
+                                                                Strand(
+                                                                    "activity",
+                                                                ),
+                                                            ),
+                                                        },
+                                                    ),
+                                                ),
+                                            ),
+                                            split: None,
+                                            group: None,
+                                            order: None,
+                                            limit: Some(
+                                                Limit(
+                                                    Number(
+                                                        Int(
+                                                            5,
+                                                        ),
+                                                    ),
+                                                ),
+                                            ),
+                                            start: None,
+                                            fetch: None,
+                                            version: None,
+                                            timeout: None,
+                                            parallel: false,
+                                            explain: None,
+                                            tempfiles: false,
+                                        },
+                                    ),
+                                ),
+                                alias: Some(
+                                    Idiom(
+                                        [
+                                            Field(
+                                                Ident(
+                                                    "history",
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            },
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Table(
+                                Table(
+                                    "user",
+                                ),
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            Single {
+                                expr: Idiom(
+                                    Idiom(
+                                        [
+                                            Field(
+                                                Ident(
+                                                    "address",
+                                                ),
+                                            ),
+                                            Destructure(
+                                                [
+                                                    Field(
+                                                        Ident(
+                                                            "city",
+                                                        ),
+                                                    ),
+                                                    Field(
+                                                        Ident(
+                                                            "country",
+                                                        ),
+                                                    ),
+                                                ],
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                                alias: None,
+                            },
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Table(
+                                Table(
+                                    "person",
+                                ),
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            All,
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Thing(
+                                Thing {
+                                    tb: "eperson",
+                                    id: Range(
+                                        IdRange {
+                                            beg: Included(
+                                                Number(
+                                                    1,
+                                                ),
+                                            ),
+                                            end: Excluded(
+                                                Number(
+                                                    1000,
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                },
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            All,
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Thing(
+                                Thing {
+                                    tb: "temperature",
+                                    id: Range(
+                                        IdRange {
+                                            beg: Included(
+                                                Array(
+                                                    Array(
+                                                        [
+                                                            Strand(
+                                                                Strand(
+                                                                    "London",
+                                                                ),
+                                                            ),
+                                                            None,
+                                                        ],
+                                                    ),
+                                                ),
+                                            ),
+                                            end: Included(
+                                                Array(
+                                                    Array(
+                                                        [
+                                                            Strand(
+                                                                Strand(
+                                                                    "London",
+                                                                ),
+                                                            ),
+                                                            Function(
+                                                                Normal(
+                                                                    "time::now",
+                                                                    [],
+                                                                ),
+                                                            ),
+                                                        ],
+                                                    ),
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                },
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            All,
+                        ],
+                        false,
+                    ),
+                    omit: Some(
+                        Idioms(
+                            [
+                                Idiom(
+                                    [
+                                        Field(
+                                            Ident(
+                                                "password",
+                                            ),
+                                        ),
+                                    ],
+                                ),
+                                Idiom(
+                                    [
+                                        Field(
+                                            Ident(
+                                                "opt",
+                                            ),
+                                        ),
+                                        Field(
+                                            Ident(
+                                                "security",
+                                            ),
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ),
+                    only: false,
+                    what: Values(
+                        [
+                            Table(
+                                Table(
+                                    "person",
+                                ),
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            All,
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Table(
+                                Table(
+                                    "user",
+                                ),
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: Some(
+                        Splits(
+                            [
+                                Split(
+                                    Idiom(
+                                        [
+                                            Field(
+                                                Ident(
+                                                    "emails",
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            ],
+                        ),
+                    ),
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            Single {
+                                expr: Idiom(
+                                    Idiom(
+                                        [
+                                            Field(
+                                                Ident(
+                                                    "country",
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                                alias: None,
+                            },
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Table(
+                                Table(
+                                    "user",
+                                ),
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: Some(
+                        Groups(
+                            [
+                                Group(
+                                    Idiom(
+                                        [
+                                            Field(
+                                                Ident(
+                                                    "country",
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            ],
+                        ),
+                    ),
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            All,
+                            Single {
+                                expr: Idiom(
+                                    Idiom(
+                                        [
+                                            Field(
+                                                Ident(
+                                                    "artist",
+                                                ),
+                                            ),
+                                            Field(
+                                                Ident(
+                                                    "email",
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                                alias: None,
+                            },
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Table(
+                                Table(
+                                    "review",
+                                ),
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: Some(
+                        Fetchs(
+                            [
+                                Fetch(
+                                    Idiom(
+                                        Idiom(
+                                            [
+                                                Field(
+                                                    Ident(
+                                                        "artist",
+                                                    ),
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                ),
+                            ],
+                        ),
+                    ),
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            All,
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: true,
+                    what: Values(
+                        [
+                            Thing(
+                                Thing {
+                                    tb: "person",
+                                    id: String(
+                                        "john",
+                                    ),
+                                },
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            All,
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Thing(
+                                Thing {
+                                    tb: "user",
+                                    id: String(
+                                        "john",
+                                    ),
+                                },
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: Some(
+                        Version(
+                            Datetime(
+                                Datetime(
+                                    2024-08-19T08:00:00Z,
+                                ),
+                            ),
+                        ),
+                    ),
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            Single {
+                                expr: Idiom(
+                                    Idiom(
+                                        [
+                                            Graph(
+                                                Graph {
+                                                    dir: Out,
+                                                    expr: Fields(
+                                                        [
+                                                            All,
+                                                        ],
+                                                        false,
+                                                    ),
+                                                    what: Tables(
+                                                        [
+                                                            Table(
+                                                                "likes",
+                                                            ),
+                                                        ],
+                                                    ),
+                                                    cond: None,
+                                                    split: None,
+                                                    group: None,
+                                                    order: None,
+                                                    limit: None,
+                                                    start: None,
+                                                    alias: None,
+                                                },
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                                alias: Some(
+                                    Idiom(
+                                        [
+                                            Field(
+                                                Ident(
+                                                    "likes",
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            },
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Table(
+                                Table(
+                                    "person",
+                                ),
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)
+Parsed query: 
+Query(
+    Statements(
+        [
+            Select(
+                SelectStatement {
+                    expr: Fields(
+                        [
+                            Single {
+                                expr: Idiom(
+                                    Idiom(
+                                        [
+                                            Graph(
+                                                Graph {
+                                                    dir: Out,
+                                                    expr: Fields(
+                                                        [
+                                                            All,
+                                                        ],
+                                                        false,
+                                                    ),
+                                                    what: Tables(
+                                                        [
+                                                            Table(
+                                                                "likes",
+                                                            ),
+                                                        ],
+                                                    ),
+                                                    cond: None,
+                                                    split: None,
+                                                    group: None,
+                                                    order: None,
+                                                    limit: None,
+                                                    start: None,
+                                                    alias: None,
+                                                },
+                                            ),
+                                            Graph(
+                                                Graph {
+                                                    dir: Out,
+                                                    expr: Fields(
+                                                        [
+                                                            All,
+                                                        ],
+                                                        false,
+                                                    ),
+                                                    what: Tables(
+                                                        [
+                                                            Table(
+                                                                "person",
+                                                            ),
+                                                        ],
+                                                    ),
+                                                    cond: None,
+                                                    split: None,
+                                                    group: None,
+                                                    order: None,
+                                                    limit: None,
+                                                    start: None,
+                                                    alias: None,
+                                                },
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                                alias: Some(
+                                    Idiom(
+                                        [
+                                            Field(
+                                                Ident(
+                                                    "likesPeople",
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            },
+                        ],
+                        false,
+                    ),
+                    omit: None,
+                    only: false,
+                    what: Values(
+                        [
+                            Table(
+                                Table(
+                                    "person",
+                                ),
+                            ),
+                        ],
+                    ),
+                    with: None,
+                    cond: None,
+                    split: None,
+                    group: None,
+                    order: None,
+                    limit: None,
+                    start: None,
+                    fetch: None,
+                    version: None,
+                    timeout: None,
+                    parallel: false,
+                    explain: None,
+                    tempfiles: false,
+                },
+            ),
+        ],
+    ),
+)

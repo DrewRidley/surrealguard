@@ -1,0 +1,8 @@
+[package]
+name = "surrealguard-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+surrealdb.workspace = true
+thiserror.workspace = true
