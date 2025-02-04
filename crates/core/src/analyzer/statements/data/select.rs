@@ -93,30 +93,13 @@ pub fn analyze_select(context: &AnalyzerContext, stmt: &SelectStatement) -> Anal
                     // Check if this is a graph traversal by looking for Graph parts
                     if field_idiom.0.iter().any(|p| matches!(p, Part::Graph(_))) {
                         let graph_type = analyze_graph_path(context, field_idiom)?;
-
-                        // Get the key name from the first Graph part
-                        let output_name = if let Some(alias_name) = alias {
-                            alias_name.to_string()
+                        if let Some(alias_name) = alias {
+                            field_types.insert(alias_name.to_string(), graph_type);
                         } else {
-                            // Find the Graph part and use its first table
-                            let graph = field_idiom.0.iter()
-                                .find_map(|p| if let Part::Graph(g) = p {
-                                    Some(g)
-                                } else {
-                                    None
-                                })
-                                .ok_or_else(|| AnalyzerError::UnexpectedSyntax)?;
-
-                            let first_table = graph.what.0.first()
-                                .ok_or_else(|| AnalyzerError::UnexpectedSyntax)?;
-
-                            match graph.dir {
-                                Dir::In => format!("<-{}", first_table.0),
-                                Dir::Out => format!("->{}", first_table.0),
-                                _ => return Err(AnalyzerError::UnexpectedSyntax),
+                            if let Kind::Literal(Literal::Object(graph_fields)) = graph_type {
+                                field_types.extend(graph_fields);
                             }
-                        };
-                        field_types.insert(output_name, graph_type);
+                        }
                         continue;
                     }
 
@@ -267,83 +250,97 @@ fn parse_graph(s: &str) -> (Vec<(Dir, String)>, Option<Modifier>) {
 /// # Errors
 /// Returns an error if no graph parts are present.
 pub fn analyze_graph_path(context: &AnalyzerContext, field_idiom: &Idiom) -> AnalyzerResult<Kind> {
-    let mut graph = None;
-    let mut modifier = None;
-
-    for part in &field_idiom.0 {
-        match part {
-            Part::Graph(g) => graph = Some(g),
-            Part::All => modifier = Some(Modifier::All),
-            Part::Destructure(fields) => {
-                modifier = Some(Modifier::Destructure(
-                    fields.iter().map(|p| p.to_string()).collect()
-                ))
+    // Find all Graph parts and the final modifier
+    let mut final_modifier = None;
+    let graph_parts: Vec<_> = field_idiom.0.iter()
+        .filter_map(|part| match part {
+            Part::Graph(g) => Some(g),
+            Part::All => {
+                final_modifier = Some(Modifier::All);
+                None
             },
-            _ => {}
-        }
+            Part::Destructure(fields) => {
+                final_modifier = Some(Modifier::Destructure(
+                    fields.iter().map(|p| p.to_string()).collect()
+                ));
+                None
+            },
+            _ => None
+        })
+        .collect();
+
+    if graph_parts.is_empty() {
+        return Err(AnalyzerError::UnexpectedSyntax);
     }
 
-    let graph = graph.ok_or_else(|| AnalyzerError::UnexpectedSyntax)?;
-    let tables = &graph.what.0;
+    // For single graph part
+    if graph_parts.len() == 1 {
+        let graph = &graph_parts[0];
+        let table = &graph.what.0[0].0;
 
-    if tables.is_empty() {
-        return Ok(Kind::Any);
-    }
-
-    // Single-table case - return direct array
-    if tables.len() == 1 {
-        let target = &tables[0].0;
-        let inner_type = match &modifier {
-            Some(Modifier::All) => build_full_table_type(context, target, None)?,
-            Some(Modifier::Destructure(fields)) => {
-                let full = build_full_table_type(context, target, None)?;
+        // Handle modifiers for the record type
+        let inner_type = match final_modifier {
+            Some(Modifier::All) => build_full_table_type(context, table, None)?,
+            Some(Modifier::Destructure(ref fields)) => {
+                let full = build_full_table_type(context, table, None)?;
                 restrict_type(full, fields)
             },
-            None => Kind::Record(vec![Table::from(target.clone())])
+            None => Kind::Record(vec![Table::from(table.clone())])
         };
 
         let mut result = BTreeMap::new();
         let key = match graph.dir {
-            Dir::In => format!("<-{}", target),
-            Dir::Out => format!("->{}", target),
+            Dir::In => format!("<-{}", table),
+            Dir::Out => format!("->{}", table),
             _ => return Err(AnalyzerError::UnexpectedSyntax),
         };
+
         result.insert(key, Kind::Literal(Literal::Array(vec![inner_type])));
         return Ok(Kind::Literal(Literal::Object(result)));
     }
 
-    // Multi-table case
-    let target_table = &tables.last().unwrap().0;
-    let source_table = &tables[0].0;
+    // For multiple graph parts, build from inside out
+    let mut current = {
+        let last_graph = graph_parts.last().unwrap();
+        let table = &last_graph.what.0[0].0;
 
-    // Build target type with modifiers
-    let target_type = match &modifier {
-        Some(Modifier::All) => build_full_table_type(context, target_table, None)?,
-        Some(Modifier::Destructure(fields)) => {
-            let full = build_full_table_type(context, target_table, None)?;
-            restrict_type(full, fields)
-        },
-        None => Kind::Record(vec![Table::from(target_table.clone())])
+        // Handle modifiers for the final record type
+        let inner_type = match final_modifier {
+            Some(Modifier::All) => build_full_table_type(context, table, None)?,
+            Some(Modifier::Destructure(ref fields)) => {
+                let full = build_full_table_type(context, table, None)?;
+                restrict_type(full, fields)
+            },
+            None => Kind::Record(vec![Table::from(table.clone())])
+        };
+
+        let mut map = BTreeMap::new();
+        let key = match last_graph.dir {
+            Dir::In => format!("<-{}", table),
+            Dir::Out => format!("->{}", table),
+            _ => return Err(AnalyzerError::UnexpectedSyntax),
+        };
+
+        map.insert(key, Kind::Literal(Literal::Array(vec![inner_type])));
+        Kind::Literal(Literal::Object(map))
     };
 
-    // Build nested structure
-    let mut inner_map = BTreeMap::new();
-    let target_key = match graph.dir {
-        Dir::In => format!("<-{}", target_table),
-        Dir::Out => format!("->{}", target_table),
-        _ => return Err(AnalyzerError::UnexpectedSyntax),
-    };
-    inner_map.insert(target_key, Kind::Literal(Literal::Array(vec![target_type])));
+    // Work backwards through the remaining parts
+    for graph in graph_parts[..graph_parts.len()-1].iter().rev() {
+        let table = &graph.what.0[0].0;
 
-    let mut outer_map = BTreeMap::new();
-    let source_key = match graph.dir {
-        Dir::In => format!("<-{}", source_table),
-        Dir::Out => format!("->{}", source_table),
-        _ => return Err(AnalyzerError::UnexpectedSyntax),
-    };
-    outer_map.insert(source_key, Kind::Literal(Literal::Object(inner_map)));
+        let mut map = BTreeMap::new();
+        let key = match graph.dir {
+            Dir::In => format!("<-{}", table),
+            Dir::Out => format!("->{}", table),
+            _ => return Err(AnalyzerError::UnexpectedSyntax),
+        };
 
-    Ok(Kind::Literal(Literal::Object(outer_map)))
+        map.insert(key, current);
+        current = Kind::Literal(Literal::Object(map));
+    }
+
+    Ok(current)
 }
 
 /// Restricts a full table type (assumed to be a Literal::Object) to only include the given list of fields.

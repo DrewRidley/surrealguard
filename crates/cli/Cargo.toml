@@ -4,6 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-#surrealguard-core = { path = "../core" }
+surrealguard-core = { path = "../core" }
 surrealdb.workspace = true
 surrealguard-macros = { path = "../macros" }
