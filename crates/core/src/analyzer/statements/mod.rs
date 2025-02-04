@@ -1,27 +1,53 @@
-use surrealdb::sql::Statement;
+//! Analysis of individual SurrealQL statement types.
+//!
+//! This module contains analyzers for different categories of SurrealQL statements:
+//!
+//! - Data manipulation (SELECT, CREATE, UPDATE, DELETE)
+//! - Schema definition (DEFINE TABLE, DEFINE FIELD)
+//! - System commands (INFO, USE)
+//!
+//! Each statement type has its own submodule with specialized analysis logic
+//! that validates the statement against schema rules and determines result types.
 
-use super::{context::AnalyzerContext, model::{Type, TypeKind}};
+pub(crate) mod data;
+// pub(crate) mod logic;
+// pub(crate) mod system;
 
-mod data;
-// mod logic;
-mod schema;
-// mod system;
-// mod transaction;
+use surrealdb::sql::{Kind, Statement};
+use crate::analyzer::{
+    context::AnalyzerContext,
+    error::{AnalyzerError, AnalyzerResult},
+};
 
-
-
-/// Analyzes an arbitrary string of SurrealQL.
+/// Analyzes a single SurrealQL statement.
 ///
-/// Returns a Vec containing the type of each statement in order.
-pub fn analyze(ctx: &mut AnalyzerContext, surql: &str) -> Vec<Type> {
-    let parsed = surrealdb::sql::parse(surql).unwrap();
+/// Routes the statement to the appropriate analyzer based on its type
+/// and returns the resulting type or error.
+///
+/// # Arguments
+/// * `ctx` - The analysis context
+/// * `stmt` - The statement to analyze
+///
+/// # Returns
+/// The type produced by the statement, or an error if analysis fails.
+pub fn analyze_statement(ctx: &mut AnalyzerContext, stmt: &Statement) -> AnalyzerResult<Kind> {
+    match stmt {
+        // Direct value statement (e.g., "SELECT 1 + 1")
+        Statement::Value(value) => ctx.resolve(value),
+        // Data query statements
+        Statement::Select(select_stmt) => self::data::analyze_select(ctx, select_stmt),
+        // Schema definition statements
+        Statement::Define(define_stmt) => {
+            ctx.append_definition(define_stmt.clone());
 
-    parsed.iter().map(|stmt| {
-        match stmt {
-            Statement::Value(value) => ctx.resolve(value),
-            Statement::Select(select_stmt) => self::data::analyze_select(ctx, select_stmt),
-            Statement::Define(define_stmt) => self::schema::analyze_define(ctx, define_stmt),
-            _ => todo!("Statement not supported.")
-        }
-    }).collect()
+            //A define statement returns nothing.
+            Ok(Kind::Null)
+        },
+        // Other statement types
+        _ => Err(AnalyzerError::Surreal(
+            surrealdb::err::Error::Unimplemented(
+                format!("Analysis not implemented for {:?}", stmt)
+            )
+        )),
+    }
 }

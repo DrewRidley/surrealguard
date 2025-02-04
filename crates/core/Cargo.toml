@@ -6,3 +6,4 @@ edition.workspace = true
 [dependencies]
 surrealdb.workspace = true
 thiserror.workspace = true
+surrealguard-macros.path = "../macros"

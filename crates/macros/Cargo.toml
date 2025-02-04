@@ -1,5 +1,5 @@
 [package]
-name = "surrelguard-macros"
+name = "surrealguard-macros"
 version.workspace = true
 edition.workspace = true
 
@@ -7,11 +7,9 @@ edition.workspace = true
 proc-macro = true
 
 [dependencies]
-surrealguard-core= { path = "../core" }
-surrealguard-codegen = { path = "../codegen" }
 surrealdb.workspace = true
 
 # Macro specific dependencies
-syn = { version = "2.0", features = ["full"] }
+syn = { version = "2.0", features = ["full", "extra-traits"] }
 quote = "1.0"
 proc-macro2 = "1.0"

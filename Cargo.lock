@@ -3121,7 +3121,7 @@ name = "surrealguard-cli"
 version = "0.1.0"
 dependencies = [
  "surrealdb",
- "surrealguard-core",
+ "surrealguard-macros",
 ]
 
 [[package]]
@@ -3139,18 +3139,17 @@ name = "surrealguard-core"
 version = "0.1.0"
 dependencies = [
  "surrealdb",
+ "surrealguard-macros",
  "thiserror 1.0.69",
 ]
 
 [[package]]
-name = "surrelguard-macros"
+name = "surrealguard-macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
  "surrealdb",
- "surrealguard-codegen",
- "surrealguard-core",
  "syn 2.0.96",
 ]
 
