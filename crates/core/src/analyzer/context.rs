@@ -1,7 +1,7 @@
-use surrealdb::sql::statements::DefineFieldStatement;
+use surrealdb::sql::statements::{DefineFieldStatement, DefineTableStatement};
 use surrealdb::sql::{statements::DefineStatement, Geometry, Kind, Table, Value};
 use surrealdb::sql::{
-    Idiom, Part
+    Idiom, Part, TableType
 };
 
 use super::error::AnalyzerResult;
@@ -16,6 +16,49 @@ impl AnalyzerContext {
                 definitions: Vec::new()
             }
     }
+
+    /// Gets the target table of a relation
+        pub fn get_relation_target(&self, relation_table: &str, is_reverse: bool) -> Option<String> {
+            if let Some(DefineStatement::Table(table_def)) = self.find_table_definition(relation_table) {
+                if let TableType::Relation(rel) = &table_def.kind {
+                    // For reverse traversals (<-), return "from"; for forward (->), return "to"
+                    if let Some(Kind::Record(tables)) = if is_reverse {
+                        rel.from.as_ref()
+                    } else {
+                        rel.to.as_ref()
+                    } {
+                        // Get the first table name from the record type
+                        tables.first().map(|t| t.0.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+
+    /// Finds a relation definition (i.e. a table whose TableType is Relation)
+        /// matching the given relation idiom.
+        pub fn find_relation_definition(&self, relation_idiom: &Idiom) -> Option<&DefineTableStatement> {
+            self.definitions.iter().find_map(|def| {
+                if let DefineStatement::Table(table_def) = def {
+                    // Compare the table’s name with the given relation idiom.
+                    // Here we compare the normalized strings.
+                    if table_def.name.to_string().eq_ignore_ascii_case(&relation_idiom.to_string())
+                        && matches!(table_def.kind, TableType::Relation(_))
+                    {
+                        Some(table_def)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+        }
 
     pub fn find_table_definition(&self, table_name: &str) -> Option<&DefineStatement> {
             self.definitions.iter().find(|def| {

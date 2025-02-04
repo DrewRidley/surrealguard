@@ -198,3 +198,182 @@ fn select_only() {
     "#);
     assert_eq!(analyzed_kind, expected_kind);
 }
+
+
+#[test]
+fn destructuring() {
+    let stmt = "SELECT address.{city, country} FROM user;";
+
+    let mut ctx = AnalyzerContext::new();
+    analyze(&mut ctx, r#"
+        DEFINE TABLE user SCHEMAFULL;
+            DEFINE FIELD address ON user TYPE {
+                city: string,
+                state: string,
+                zip: number,
+                country: string
+            };
+    "#).expect("Schema construction should succeed");
+
+    let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+    let expected_kind = kind!(r#"
+        {
+            address: {
+                city: string,
+                country: string
+            }
+        }
+    "#);
+
+    assert_eq!(analyzed_kind, expected_kind);
+}
+
+#[test]
+fn destructuring_with_alias() {
+    let stmt = "SELECT address.{city, country} AS location FROM user;";
+
+    let mut ctx = AnalyzerContext::new();
+    analyze(&mut ctx, r#"
+        DEFINE TABLE user SCHEMAFULL;
+            DEFINE FIELD address ON user TYPE {
+                city: string,
+                state: string,
+                zip: number,
+                country: string
+            };
+    "#).expect("Schema construction should succeed");
+
+    let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+    let expected_kind = kind!(r#"
+        {
+            location: {
+                city: string,
+                country: string
+            }
+        }
+    "#);
+
+    assert_eq!(analyzed_kind, expected_kind);
+}
+
+#[test]
+fn graph_traversal_simple() {
+    let mut ctx = AnalyzerContext::new();
+
+    // Define the schema
+    analyze(&mut ctx, r#"
+        DEFINE TABLE user SCHEMAFULL;
+        DEFINE TABLE org SCHEMAFULL;
+            DEFINE FIELD name ON org TYPE string;
+        DEFINE TABLE memberOf SCHEMAFULL TYPE RELATION FROM user TO org;
+    "#).expect("Schema construction should succeed");
+
+    // Test simple edge traversal
+    let stmt = "SELECT ->memberOf FROM user;";
+    let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+    let expected_kind = kind!(r#"
+        {
+            "->memberOf": [record<memberOf>]
+        }
+    "#);
+    assert_eq!(analyzed_kind, expected_kind);
+}
+
+#[test]
+fn graph_traversal_to_node() {
+    let mut ctx = AnalyzerContext::new();
+
+    analyze(&mut ctx, r#"
+        DEFINE TABLE user SCHEMAFULL;
+        DEFINE TABLE org SCHEMAFULL;
+            DEFINE FIELD name ON org TYPE string;
+        DEFINE TABLE memberOf SCHEMAFULL TYPE RELATION FROM user TO org;
+    "#).expect("Schema construction should succeed");
+
+    let stmt = "SELECT ->memberOf->org FROM user;";
+    let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+    let expected_kind = kind!(r#"
+        {
+            "->memberOf": {
+                "->org": [record<org>]
+            }
+        }
+    "#);
+    assert_eq!(analyzed_kind, expected_kind);
+}
+
+#[test]
+fn graph_traversal_with_fields() {
+    let mut ctx = AnalyzerContext::new();
+
+    analyze(&mut ctx, r#"
+        DEFINE TABLE user SCHEMAFULL;
+        DEFINE TABLE org SCHEMAFULL;
+            DEFINE FIELD name ON org TYPE string;
+        DEFINE TABLE memberOf SCHEMAFULL TYPE RELATION FROM user TO org;
+    "#).expect("Schema construction should succeed");
+
+    let stmt = "SELECT ->memberOf->org.* FROM user;";
+    let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+    let expected_kind = kind!(r#"
+        {
+            "->memberOf": {
+                "->org": [{
+                    name: string
+                }]
+            }
+        }
+    "#);
+    assert_eq!(analyzed_kind, expected_kind);
+}
+
+#[test]
+fn graph_traversal_with_destructure() {
+    let mut ctx = AnalyzerContext::new();
+
+    analyze(&mut ctx, r#"
+        DEFINE TABLE user SCHEMAFULL;
+        DEFINE TABLE org SCHEMAFULL;
+            DEFINE FIELD name ON org TYPE string;
+            DEFINE FIELD address ON org TYPE string;
+        DEFINE TABLE memberOf SCHEMAFULL TYPE RELATION FROM user TO org;
+    "#).expect("Schema construction should succeed");
+
+    let stmt = "SELECT ->memberOf->org.{name} FROM user;";
+    let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+    let expected_kind = kind!(r#"
+        {
+            "->memberOf": {
+                "->org": [{
+                    name: string
+                }]
+            }
+        }
+    "#);
+    assert_eq!(analyzed_kind, expected_kind);
+}
+
+#[test]
+fn graph_traversal_reverse() {
+    let mut ctx = AnalyzerContext::new();
+
+    analyze(&mut ctx, r#"
+        DEFINE TABLE user SCHEMAFULL;
+            DEFINE FIELD name ON user TYPE string;
+        DEFINE TABLE org SCHEMAFULL;
+        DEFINE TABLE memberOf SCHEMAFULL TYPE RELATION FROM user TO org;
+    "#).expect("Schema construction should succeed");
+
+    let stmt = "SELECT <-memberOf<-user.* FROM org;";
+    let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+    let expected_kind = kind!(r#"
+        {
+            "<-memberOf": {
+                "<-user": [{
+                    name: string
+                }]
+            }
+        }
+    "#);
+    assert_eq!(analyzed_kind, expected_kind);
+}
