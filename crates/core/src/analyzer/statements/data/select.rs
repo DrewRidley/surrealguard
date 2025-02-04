@@ -92,16 +92,22 @@ pub fn analyze_select(context: &AnalyzerContext, stmt: &SelectStatement) -> Anal
 
                     // Check if this is a graph traversal by looking for Graph parts
                     if field_idiom.0.iter().any(|p| matches!(p, Part::Graph(_))) {
-                        let graph_type = analyze_graph_path(context, field_idiom)?;
-                        if let Some(alias_name) = alias {
-                            field_types.insert(alias_name.to_string(), graph_type);
-                        } else {
-                            if let Kind::Literal(Literal::Object(graph_fields)) = graph_type {
-                                field_types.extend(graph_fields);
+                            let graph_type = analyze_graph_path(context, field_idiom)?;
+
+                            if let Some(alias_name) = alias {
+                                // For aliased paths, extract the innermost array type
+                                if let Kind::Literal(Literal::Object(graph_fields)) = graph_type {
+                                    let final_type = extract_final_type(&graph_fields);
+                                    field_types.insert(alias_name.to_string(), final_type);
+                                }
+                            } else {
+                                // No alias - use the full path structure
+                                if let Kind::Literal(Literal::Object(graph_fields)) = graph_type {
+                                    field_types.extend(graph_fields);
+                                }
                             }
+                            continue;
                         }
-                        continue;
-                    }
 
                     // Handle destructuring
                     if let Some((parent_path, fields)) = get_destructure_parts(field_idiom) {
@@ -170,6 +176,27 @@ pub fn analyze_select(context: &AnalyzerContext, stmt: &SelectStatement) -> Anal
     Ok(transformed_kind)
 }
 
+
+fn extract_final_type(fields: &BTreeMap<String, Kind>) -> Kind {
+    // We expect only one key in each level
+    if let Some((_key, value)) = fields.iter().next() {
+        match value {
+            Kind::Literal(Literal::Object(inner_fields)) => {
+                // Recurse into nested objects
+                extract_final_type(inner_fields)
+            },
+            Kind::Literal(Literal::Array(array_types)) => {
+                // We found the final array - return it
+                Kind::Literal(Literal::Array(array_types.clone()))
+            },
+            // For any other type, return as is
+            other => other.clone(),
+        }
+    } else {
+        // Shouldn't happen with valid graph types
+        Kind::Any
+    }
+}
 
 /// Specifies an optional modifier on the final graph segment.
 enum Modifier {

@@ -280,6 +280,42 @@ fn graph_traversal_simple() {
 }
 
 #[test]
+fn graph_traversal_multi_hop() {
+    let mut ctx = AnalyzerContext::new();
+
+    // Define a more complex schema with organization hierarchies
+    analyze(&mut ctx, r#"
+        DEFINE TABLE user SCHEMAFULL;
+            DEFINE FIELD name ON user TYPE string;
+        DEFINE TABLE team SCHEMAFULL;
+            DEFINE FIELD name ON team TYPE string;
+        DEFINE TABLE org SCHEMAFULL;
+            DEFINE FIELD name ON org TYPE string;
+            DEFINE FIELD industry ON org TYPE string;
+        DEFINE TABLE memberOf SCHEMAFULL TYPE RELATION FROM user TO team;
+        DEFINE TABLE partOf SCHEMAFULL TYPE RELATION FROM team TO org;
+    "#).expect("Schema construction should succeed");
+
+    // Test three-hop traversal with field expansion
+    let stmt = "SELECT ->memberOf->partOf->org.* FROM user;";
+    let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+    let expected_kind = kind!(r#"
+        {
+            "->memberOf": {
+                "->partOf": {
+                    "->org": [{
+                        name: string,
+                        industry: string
+                    }]
+                }
+            }
+        }
+    "#);
+
+    assert_eq!(analyzed_kind, expected_kind);
+}
+
+#[test]
 fn graph_traversal_to_node() {
     let mut ctx = AnalyzerContext::new();
 
@@ -375,5 +411,35 @@ fn graph_traversal_reverse() {
             }
         }
     "#);
+    assert_eq!(analyzed_kind, expected_kind);
+}
+
+
+#[test]
+fn graph_traversal_with_alias() {
+    let mut ctx = AnalyzerContext::new();
+
+    // Define the schema
+    analyze(&mut ctx, r#"
+        DEFINE TABLE user SCHEMAFULL;
+            DEFINE FIELD name ON user TYPE string;
+        DEFINE TABLE org SCHEMAFULL;
+            DEFINE FIELD name ON org TYPE string;
+            DEFINE FIELD industry ON org TYPE string;
+        DEFINE TABLE memberOf SCHEMAFULL TYPE RELATION FROM user TO org;
+    "#).expect("Schema construction should succeed");
+
+    // Test multi-hop traversal with an alias
+    let stmt = "SELECT ->memberOf->org.* AS orgs FROM user;";
+    let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+    let expected_kind = kind!(r#"
+        {
+            "orgs": [{
+                name: string,
+                industry: string
+            }]
+        }
+    "#);
+
     assert_eq!(analyzed_kind, expected_kind);
 }
