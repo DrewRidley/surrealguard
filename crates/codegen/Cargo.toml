@@ -4,9 +4,12 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+surrealdb.workspace = true
 surrealguard-core = { path = "../core" }
+surrealguard-macros = { path = "../macros" }
 
 # Codegen specific dependencies
 convert_case = "0.6"
 handlebars = "4.3"   # For template-based code generation
 prettyplease = "0.2" # For Rust code formatting
+crypto = "0.5.1"

@@ -11,5 +11,4 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 surrealdb = { version = "2.1.4", features = [], default-features = false}
-serde = { version = "~1", features = ["derive"] }
 thiserror = "1"
