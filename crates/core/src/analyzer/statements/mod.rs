@@ -36,6 +36,13 @@ pub fn analyze_statement(ctx: &mut AnalyzerContext, stmt: &Statement) -> Analyze
         Statement::Value(value) => ctx.resolve(value),
         // Data query statements
         Statement::Select(select_stmt) => self::data::analyze_select(ctx, select_stmt),
+        Statement::Update(update_stmt) => self::data::analyze_update(ctx, update_stmt),
+        Statement::Create(create_stmt) => self::data::analyze_create(ctx, create_stmt),
+        Statement::Delete(delete_stmt) => self::data::analyze_delete(ctx, delete_stmt),
+        Statement::Insert(insert_stmt) => self::data::analyze_insert(ctx, insert_stmt),
+        Statement::Upsert(upsert_stmt) => self::data::analyze_upsert(ctx, upsert_stmt),
+        Statement::Relate(relate_stmt) => self::data::analyze_relate(ctx, relate_stmt),
+
         // Schema definition statements
         Statement::Define(define_stmt) => {
             ctx.append_definition(define_stmt.clone());

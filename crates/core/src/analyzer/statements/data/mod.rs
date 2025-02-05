@@ -9,3 +9,9 @@ mod update; // UPDATE statements
 mod upsert; // UPSERT statements
 
 pub use select::analyze_select;
+pub use update::analyze_update;
+pub use create::analyze_create;
+pub use relate::analyze_relate;
+pub use upsert::analyze_upsert;
+pub use delete::analyze_delete;
+pub use insert::analyze_insert;

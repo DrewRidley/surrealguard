@@ -1,7 +1,9 @@
+use std::collections::BTreeMap;
+
 use surrealdb::sql::statements::{DefineFieldStatement, DefineTableStatement};
 use surrealdb::sql::{statements::DefineStatement, Geometry, Kind, Table, Value};
 use surrealdb::sql::{
-    Idiom, Part, TableType
+    Idiom, Literal, Part, TableType
 };
 
 use super::error::AnalyzerResult;
@@ -39,6 +41,16 @@ impl AnalyzerContext {
                 None
             }
         }
+
+        pub fn build_full_table_type(&self, table_name: &str) -> AnalyzerResult<Kind> {
+                let mut field_types = BTreeMap::new();
+                for field_def in self.get_field_definitions(table_name) {
+                    if let Some(kind) = field_def.kind.clone() {
+                        field_types.insert(field_def.name.to_string(), kind);
+                    }
+                }
+                Ok(Kind::Literal(Literal::Object(field_types)))
+            }
 
     /// Finds a relation definition (i.e. a table whose TableType is Relation)
         /// matching the given relation idiom.
