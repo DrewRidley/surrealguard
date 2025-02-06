@@ -17,15 +17,15 @@
 //! For normal SELECT queries, the return type is the record type (an object), without any array wrapping.
 //! (In particular, ONLY queries return a single object.)
 
-use std::collections::BTreeMap;
-use surrealdb::sql::{
-    statements::{DefineStatement, SelectStatement}, Dir, Fetch, Field, Idiom, Idioms, Kind, Literal, Part, Table, Value
-};
 use crate::analyzer::{
     context::AnalyzerContext,
     error::{AnalyzerError, AnalyzerResult},
 };
-
+use std::collections::BTreeMap;
+use surrealdb::sql::{
+    statements::{DefineStatement, SelectStatement},
+    Dir, Fetch, Field, Idiom, Idioms, Kind, Literal, Part, Table, Value,
+};
 
 pub fn analyze_select(context: &AnalyzerContext, stmt: &SelectStatement) -> AnalyzerResult<Kind> {
     let table_value = stmt.what.0.first().ok_or(AnalyzerError::UnexpectedSyntax)?;
@@ -67,14 +67,18 @@ pub fn analyze_select(context: &AnalyzerContext, stmt: &SelectStatement) -> Anal
                     }
                     return Ok(Kind::Literal(Literal::Array(vec![resolved])));
                 } else {
-                    return Err(AnalyzerError::field_not_found(field_idiom.to_string(), &table_name));
+                    return Err(AnalyzerError::field_not_found(
+                        field_idiom.to_string(),
+                        &table_name,
+                    ));
                 }
             }
             _ => return Err(AnalyzerError::UnexpectedSyntax),
         }
     }
 
-    let base_kind = if stmt.expr.0.is_empty() || stmt.expr.0.iter().any(|f| matches!(f, Field::All)) {
+    let base_kind = if stmt.expr.0.is_empty() || stmt.expr.0.iter().any(|f| matches!(f, Field::All))
+    {
         build_full_table_type(context, &table_name, stmt.omit.as_ref())?
     } else {
         let mut field_types = BTreeMap::new();
@@ -92,29 +96,31 @@ pub fn analyze_select(context: &AnalyzerContext, stmt: &SelectStatement) -> Anal
 
                     // Check if this is a graph traversal by looking for Graph parts
                     if field_idiom.0.iter().any(|p| matches!(p, Part::Graph(_))) {
-                            let graph_type = analyze_graph_path(context, field_idiom)?;
+                        let graph_type = analyze_graph_path(context, field_idiom)?;
 
-                            if let Some(alias_name) = alias {
-                                // For aliased paths, extract the innermost array type
-                                if let Kind::Literal(Literal::Object(graph_fields)) = graph_type {
-                                    let final_type = extract_final_type(&graph_fields);
-                                    field_types.insert(alias_name.to_string(), final_type);
-                                }
-                            } else {
-                                // No alias - use the full path structure
-                                if let Kind::Literal(Literal::Object(graph_fields)) = graph_type {
-                                    field_types.extend(graph_fields);
-                                }
+                        if let Some(alias_name) = alias {
+                            // For aliased paths, extract the innermost array type
+                            if let Kind::Literal(Literal::Object(graph_fields)) = graph_type {
+                                let final_type = extract_final_type(&graph_fields);
+                                field_types.insert(alias_name.to_string(), final_type);
                             }
-                            continue;
+                        } else {
+                            // No alias - use the full path structure
+                            if let Kind::Literal(Literal::Object(graph_fields)) = graph_type {
+                                field_types.extend(graph_fields);
+                            }
                         }
+                        continue;
+                    }
 
                     // Handle destructuring
                     if let Some((parent_path, fields)) = get_destructure_parts(field_idiom) {
                         if let Some(DefineStatement::Field(parent_field_def)) =
                             context.find_field_definition(&table_name, &parent_path)
                         {
-                            if let Some(Kind::Literal(Literal::Object(parent_type))) = &parent_field_def.kind {
+                            if let Some(Kind::Literal(Literal::Object(parent_type))) =
+                                &parent_field_def.kind
+                            {
                                 let mut destructured_types = BTreeMap::new();
                                 for field_name in fields {
                                     if let Some(field_type) = parent_type.get(&field_name) {
@@ -128,7 +134,7 @@ pub fn analyze_select(context: &AnalyzerContext, stmt: &SelectStatement) -> Anal
                                 };
                                 field_types.insert(
                                     output_name,
-                                    Kind::Literal(Literal::Object(destructured_types))
+                                    Kind::Literal(Literal::Object(destructured_types)),
                                 );
                                 continue;
                             }
@@ -176,7 +182,6 @@ pub fn analyze_select(context: &AnalyzerContext, stmt: &SelectStatement) -> Anal
     Ok(transformed_kind)
 }
 
-
 fn extract_final_type(fields: &BTreeMap<String, Kind>) -> Kind {
     // We expect only one key in each level
     if let Some((_key, value)) = fields.iter().next() {
@@ -184,11 +189,11 @@ fn extract_final_type(fields: &BTreeMap<String, Kind>) -> Kind {
             Kind::Literal(Literal::Object(inner_fields)) => {
                 // Recurse into nested objects
                 extract_final_type(inner_fields)
-            },
+            }
             Kind::Literal(Literal::Array(array_types)) => {
                 // We found the final array - return it
                 Kind::Literal(Literal::Array(array_types.clone()))
-            },
+            }
             // For any other type, return as is
             other => other.clone(),
         }
@@ -227,7 +232,9 @@ fn parse_graph(s: &str) -> (Vec<(Dir, String)>, Option<Modifier>) {
 
     for (i, part) in parts.iter().enumerate() {
         let part = part.trim();
-        if part.is_empty() { continue; }
+        if part.is_empty() {
+            continue;
+        }
 
         let overall_dir = overall_dir.clone();
 
@@ -235,7 +242,10 @@ fn parse_graph(s: &str) -> (Vec<(Dir, String)>, Option<Modifier>) {
             // Handle modifiers on last segment
             if let Some(idx) = part.find(".{") {
                 let table = &part[..idx];
-                if let Some(fields_str) = part[idx..].strip_prefix(".{").and_then(|s| s.strip_suffix("}")) {
+                if let Some(fields_str) = part[idx..]
+                    .strip_prefix(".{")
+                    .and_then(|s| s.strip_suffix("}"))
+                {
                     let fields: Vec<String> = fields_str
                         .split(',')
                         .map(|s| s.trim().to_string())
@@ -262,7 +272,6 @@ fn parse_graph(s: &str) -> (Vec<(Dir, String)>, Option<Modifier>) {
     (segments, modifier)
 }
 
-
 /// Analyzes a graph traversal path (for example,
 /// `"SELECT ->memberOf->org FROM user;"` or
 /// `"SELECT <-memberOf<-user.* FROM org;"`)
@@ -279,20 +288,22 @@ fn parse_graph(s: &str) -> (Vec<(Dir, String)>, Option<Modifier>) {
 pub fn analyze_graph_path(context: &AnalyzerContext, field_idiom: &Idiom) -> AnalyzerResult<Kind> {
     // Find all Graph parts and the final modifier
     let mut final_modifier = None;
-    let graph_parts: Vec<_> = field_idiom.0.iter()
+    let graph_parts: Vec<_> = field_idiom
+        .0
+        .iter()
         .filter_map(|part| match part {
             Part::Graph(g) => Some(g),
             Part::All => {
                 final_modifier = Some(Modifier::All);
                 None
-            },
+            }
             Part::Destructure(fields) => {
                 final_modifier = Some(Modifier::Destructure(
-                    fields.iter().map(|p| p.to_string()).collect()
+                    fields.iter().map(|p| p.to_string()).collect(),
                 ));
                 None
-            },
-            _ => None
+            }
+            _ => None,
         })
         .collect();
 
@@ -311,8 +322,8 @@ pub fn analyze_graph_path(context: &AnalyzerContext, field_idiom: &Idiom) -> Ana
             Some(Modifier::Destructure(ref fields)) => {
                 let full = build_full_table_type(context, table, None)?;
                 restrict_type(full, fields)
-            },
-            None => Kind::Record(vec![Table::from(table.clone())])
+            }
+            None => Kind::Record(vec![Table::from(table.clone())]),
         };
 
         let mut result = BTreeMap::new();
@@ -337,8 +348,8 @@ pub fn analyze_graph_path(context: &AnalyzerContext, field_idiom: &Idiom) -> Ana
             Some(Modifier::Destructure(ref fields)) => {
                 let full = build_full_table_type(context, table, None)?;
                 restrict_type(full, fields)
-            },
-            None => Kind::Record(vec![Table::from(table.clone())])
+            }
+            None => Kind::Record(vec![Table::from(table.clone())]),
         };
 
         let mut map = BTreeMap::new();
@@ -353,7 +364,7 @@ pub fn analyze_graph_path(context: &AnalyzerContext, field_idiom: &Idiom) -> Ana
     };
 
     // Work backwards through the remaining parts
-    for graph in graph_parts[..graph_parts.len()-1].iter().rev() {
+    for graph in graph_parts[..graph_parts.len() - 1].iter().rev() {
         let table = &graph.what.0[0].0;
 
         let mut map = BTreeMap::new();
@@ -375,11 +386,12 @@ pub fn analyze_graph_path(context: &AnalyzerContext, field_idiom: &Idiom) -> Ana
 fn restrict_type(kind: Kind, fields: &Vec<String>) -> Kind {
     match kind {
         Kind::Literal(Literal::Object(map)) => {
-            let new_map = map.into_iter()
+            let new_map = map
+                .into_iter()
                 .filter(|(k, _)| fields.contains(k))
                 .collect();
             Kind::Literal(Literal::Object(new_map))
-        },
+        }
         other => other,
     }
 }
@@ -393,9 +405,7 @@ fn get_destructure_parts(idiom: &Idiom) -> Option<(Idiom, Vec<String>)> {
 
             // Since we can't match on DestructurePart variants,
             // we'll just convert the fields to strings directly
-            let field_names = fields.iter()
-                .map(|p| p.to_string())
-                .collect();
+            let field_names = fields.iter().map(|p| p.to_string()).collect();
 
             return Some((parent_path, field_names));
         }
@@ -476,60 +486,67 @@ fn fetches_to_chain(fetches: &Vec<Fetch>) -> Vec<String> {
         .collect()
 }
 
-/// Extension trait on Kind to allow resolving a fetch chain.
+
 pub trait KindFetchExt {
-    /// Resolves the fetch chain on self.
-    /// For any record link encountered whose target table matches the first element
-    /// of the fetch chain, the record link is replaced with the full table type.
-    /// The chain is then applied recursively.
-    fn resolve_fetch(&self, fetch_chain: &[String], context: &AnalyzerContext) -> Self;
+    /// Resolve a fetch chain. In a FETCH context, record links (or arrays thereof)
+    /// are replaced with the full table “schema” (as a Literal object).
+    fn resolve_fetch(&self, fetch_chain: &[String], ctx: &AnalyzerContext) -> Self;
 }
 
+// Revised fetch resolution logic.
 impl KindFetchExt for Kind {
-    fn resolve_fetch(&self, fetch_chain: &[String], context: &AnalyzerContext) -> Self {
+    fn resolve_fetch(&self, fetch_chain: &[String], ctx: &AnalyzerContext) -> Self {
+        // When no fetch segments remain, if self is a record we try to expand it.
         if fetch_chain.is_empty() {
+            if let Kind::Record(tables) = self {
+                if let Some(table) = tables.first() {
+                    if let Ok(full_type) = ctx.build_full_table_type(&table.0) {
+                        return full_type;
+                    }
+                }
+            }
             return self.clone();
         }
         match self {
-            // For a record link, check whether any table in the link matches the fetch segment.
+            // If the type is a record link and the current fetch segment matches one of its
+            // table names, call build_full_table_type to get the full schema.
             Kind::Record(tables) => {
                 let target = fetch_chain[0].trim().to_lowercase();
-                if let Some(matching_table) =
-                    tables.iter().find(|t| t.0.trim().to_lowercase() == target)
-                {
-                    if let Ok(full_type) = build_full_table_type(context, &matching_table.0, None) {
-                        return full_type.resolve_fetch(&fetch_chain[1..], context);
+                if let Some(table) = tables.iter().find(|t| t.0.trim().to_lowercase() == target) {
+                    if let Ok(full_type) = ctx.build_full_table_type(&table.0) {
+                        return full_type.resolve_fetch(&fetch_chain[1..], ctx);
                     }
                 }
                 self.clone()
             }
-            // For an object literal, apply fetch resolution on each field.
+            // For literal objects, we look at each key; if a key matches the current fetch segment,
+            // then we replace its value by calling resolve_fetch with the remaining chain.
             Kind::Literal(Literal::Object(map)) => {
-                let mut new_map = BTreeMap::new();
-                for (k, v) in map {
-                    new_map.insert(k.clone(), v.resolve_fetch(fetch_chain, context));
+                let mut new_map = map.clone();
+                for (key, value) in map.iter() {
+                    if key.trim().to_lowercase() == fetch_chain[0] {
+                        new_map.insert(key.clone(), value.resolve_fetch(&fetch_chain[1..], ctx));
+                    }
                 }
                 Kind::Literal(Literal::Object(new_map))
             }
-            // For an array, wrap the resolved inner type in a Literal::Array.
-            Kind::Array(inner, _len) => {
-                let new_inner = inner.resolve_fetch(fetch_chain, context);
-                Kind::Literal(Literal::Array(vec![new_inner]))
+            // For arrays, if the inner type is a record link then we “force” its expansion (by
+            // calling resolve_fetch with an empty chain) so that an array<record<user>> becomes
+            // array<Literal(Object{...})>.
+            Kind::Array(inner, len) => {
+                let new_inner = if let Kind::Record(_) = **inner {
+                    inner.resolve_fetch(&[], ctx)
+                } else {
+                    inner.resolve_fetch(fetch_chain, ctx)
+                };
+                Kind::Array(Box::new(new_inner), *len)
             }
-            // For union types, apply on each branch.
+            // For union types, process each branch.
             Kind::Either(kinds) => {
-                let new_kinds = kinds
-                    .iter()
-                    .map(|k| k.resolve_fetch(fetch_chain, context))
-                    .collect();
+                let new_kinds = kinds.iter().map(|k| k.resolve_fetch(fetch_chain, ctx)).collect();
                 Kind::Either(new_kinds)
             }
             _ => self.clone(),
         }
     }
-}
-
-/// Applies the FETCH transformation using the given fetch chain.
-fn apply_fetch(context: &AnalyzerContext, kind: Kind, fetch_chain: &[String]) -> Kind {
-    kind.resolve_fetch(fetch_chain, context)
 }

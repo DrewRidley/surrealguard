@@ -13,11 +13,11 @@ pub(crate) mod data;
 // pub(crate) mod logic;
 // pub(crate) mod system;
 
-use surrealdb::sql::{Kind, Statement};
 use crate::analyzer::{
     context::AnalyzerContext,
     error::{AnalyzerError, AnalyzerResult},
 };
+use surrealdb::sql::{Kind, Statement};
 
 /// Analyzes a single SurrealQL statement.
 ///
@@ -49,12 +49,13 @@ pub fn analyze_statement(ctx: &mut AnalyzerContext, stmt: &Statement) -> Analyze
 
             //A define statement returns nothing.
             Ok(Kind::Null)
-        },
+        }
         // Other statement types
         _ => Err(AnalyzerError::Surreal(
-            surrealdb::err::Error::Unimplemented(
-                format!("Analysis not implemented for {:?}", stmt)
-            )
+            surrealdb::err::Error::Unimplemented(format!(
+                "Analysis not implemented for {:?}",
+                stmt
+            )),
         )),
     }
 }

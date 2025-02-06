@@ -1,6 +1,6 @@
-use thiserror::Error;
-use surrealdb::sql::Kind;
 use surrealdb::err::Error as SurrealError;
+use surrealdb::sql::Kind;
+use thiserror::Error;
 
 /// Result type for analyzer operations
 pub type AnalyzerResult<T> = Result<T, AnalyzerError>;
@@ -14,10 +14,7 @@ pub enum AnalyzerError {
 
     /// A referenced field does not exist in the table or record schema
     #[error("Field '{field}' not found in {context}")]
-    FieldNotFound {
-        field: String,
-        context: String,
-    },
+    FieldNotFound { field: String, context: String },
 
     /// A referenced table does not exist in the database schema
     #[error("Table '{0}' not found")]
@@ -33,10 +30,7 @@ pub enum AnalyzerError {
 
     /// A type mismatch occurred during analysis
     #[error("Type mismatch: expected {expected}, found {found}")]
-    TypeMismatch {
-        expected: String,
-        found: String,
-    },
+    TypeMismatch { expected: String, found: String },
 
     /// A schema constraint or rule was violated
     #[error("Schema violation: {message}")]
@@ -55,20 +49,17 @@ pub enum AnalyzerError {
 
     /// Function call analysis failed
     #[error("Invalid function call: {message}")]
-    InvalidFunctionCall {
-        function: String,
-        message: String,
-    },
+    InvalidFunctionCall { function: String, message: String },
 
     /// A permissions check failed during analysis
     #[error("Permission denied: {message}")]
-    PermissionDenied {
-        message: String,
-        resource: String,
-    },
+    PermissionDenied { message: String, resource: String },
 
     #[error("Unexpected syntax was encountered")]
-    UnexpectedSyntax
+    UnexpectedSyntax,
+
+    #[error("Not implemented: {0}")]
+    Unimplemented(String),
 }
 
 impl AnalyzerError {

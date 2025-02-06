@@ -1,5 +1,8 @@
+use crate::analyzer::{
+    context::AnalyzerContext,
+    error::{AnalyzerError, AnalyzerResult},
+};
 use surrealdb::sql::{statements::DeleteStatement, Kind, Literal};
-use crate::analyzer::{context::AnalyzerContext, error::{AnalyzerError, AnalyzerResult}};
 
 /// Analyzes a DELETE statement.
 ///

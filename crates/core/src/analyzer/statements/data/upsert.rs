@@ -1,6 +1,8 @@
-
+use crate::analyzer::{
+    context::AnalyzerContext,
+    error::{AnalyzerError, AnalyzerResult},
+};
 use surrealdb::sql::{statements::UpsertStatement, Kind};
-use crate::analyzer::{context::AnalyzerContext, error::{AnalyzerError, AnalyzerResult}};
 
 /// Analyzes an UPSERT statement.
 ///
@@ -16,8 +18,8 @@ pub fn analyze_upsert(ctx: &mut AnalyzerContext, stmt: &UpsertStatement) -> Anal
             } else {
                 return Err(AnalyzerError::UnexpectedSyntax);
             }
-        },
-        _ => return Err(AnalyzerError::UnexpectedSyntax)
+        }
+        _ => return Err(AnalyzerError::UnexpectedSyntax),
     };
     // UPSERT returns an array of the updated records.
     Ok(Kind::Array(Box::new(target_type), None))

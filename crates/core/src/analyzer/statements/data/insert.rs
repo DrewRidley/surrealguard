@@ -1,6 +1,8 @@
-
+use crate::analyzer::{
+    context::AnalyzerContext,
+    error::{AnalyzerError, AnalyzerResult},
+};
 use surrealdb::sql::{statements::InsertStatement, Kind};
-use crate::analyzer::{context::AnalyzerContext, error::{AnalyzerError, AnalyzerResult}};
 
 /// Analyzes an INSERT statement.
 ///
@@ -17,8 +19,8 @@ pub fn analyze_insert(ctx: &mut AnalyzerContext, stmt: &InsertStatement) -> Anal
             } else {
                 return Err(AnalyzerError::UnexpectedSyntax);
             }
-        },
-        _ => return Err(AnalyzerError::UnexpectedSyntax)
+        }
+        _ => return Err(AnalyzerError::UnexpectedSyntax),
     };
     Ok(Kind::Array(Box::new(target_type), None))
 }

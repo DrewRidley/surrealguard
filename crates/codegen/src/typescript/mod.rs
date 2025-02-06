@@ -74,14 +74,12 @@ impl TypeScriptGenerator {
                 format!("[{}]", types.join(", "))
             }
             Literal::Object(fields) => {
-                let field_defs: Vec<String> = fields.iter()
+                let field_defs: Vec<String> = fields
+                    .iter()
                     .map(|(name, kind)| {
                         let value = Self::generate(kind);
                         if value.contains('\n') {
-                            format!("  {}: {}",
-                                name,
-                                value.replace('\n', "\n  ")
-                            )
+                            format!("  {}: {}", name, value.replace("\n", "\n  "))
                         } else {
                             format!("  {}: {}", name, value)
                         }
@@ -94,7 +92,7 @@ impl TypeScriptGenerator {
                     format!("{{\n{}\n}}", field_defs.join(",\n"))
                 }
             }
-            Literal::DiscriminatedObject(tag, variants) => {
+            Literal::DiscriminatedObject(_tag, variants) => {
                 let variant_types: Vec<String> = variants
                     .iter()
                     .map(|variant| {
@@ -107,7 +105,7 @@ impl TypeScriptGenerator {
                     .collect();
                 variant_types.join(" | ")
             }
-            _ => todo!(),
+            _ => "any".to_string(),
         }
     }
 }
