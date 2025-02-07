@@ -22,8 +22,8 @@ pub fn analyze_create(ctx: &mut AnalyzerContext, stmt: &CreateStatement) -> Anal
             } else {
                 return Err(AnalyzerError::UnexpectedSyntax);
             }
-        },
-        _ => return Err(AnalyzerError::UnexpectedSyntax)
+        }
+        _ => return Err(AnalyzerError::UnexpectedSyntax),
     };
 
     // Analyze the Data variant for parameter inference
@@ -79,13 +79,37 @@ mod tests {
     use surrealguard_macros::kind;
 
     #[test]
+    fn create_table() {
+        let mut ctx = AnalyzerContext::new();
+        analyze(
+            &mut ctx,
+            r#"
+            DEFINE TABLE user SCHEMAFULL;
+                DEFINE FIELD name ON user TYPE string;
+                DEFINE FIELD age ON user TYPE number;
+        "#,
+        )
+        .expect("Schema construction should succeed");
+
+        let stmt = "CREATE user CONTENT { name: 'John', age: 42 };";
+        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+
+        let expected_kind = kind!("array<array<{ name: string, age: number }>>");
+        assert_eq!(analyzed_kind, expected_kind);
+    }
+
+    #[test]
     fn infer_create_content_param() {
         let mut ctx = AnalyzerContext::new();
-        analyze(&mut ctx, r#"
+        analyze(
+            &mut ctx,
+            r#"
             DEFINE TABLE user SCHEMAFULL;
                 DEFINE FIELD email ON user TYPE string;
                 DEFINE FIELD age ON user TYPE number;
-        "#).expect("Schema construction should succeed");
+        "#,
+        )
+        .expect("Schema construction should succeed");
 
         let stmt = "CREATE user CONTENT $user;";
         analyze(&mut ctx, stmt).expect("Analysis should succeed");
@@ -98,11 +122,15 @@ mod tests {
     #[test]
     fn infer_create_content_fields() {
         let mut ctx = AnalyzerContext::new();
-        analyze(&mut ctx, r#"
+        analyze(
+            &mut ctx,
+            r#"
             DEFINE TABLE user SCHEMAFULL;
                 DEFINE FIELD email ON user TYPE string;
                 DEFINE FIELD age ON user TYPE number;
-        "#).expect("Schema construction should succeed");
+        "#,
+        )
+        .expect("Schema construction should succeed");
 
         let stmt = r#"
             CREATE user CONTENT {
@@ -116,5 +144,4 @@ mod tests {
         assert!(params.contains(&("email".to_string(), Kind::String)));
         assert!(params.contains(&("age".to_string(), Kind::Number)));
     }
-
 }

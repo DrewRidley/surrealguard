@@ -141,7 +141,6 @@ mod tests {
         let params = ctx.get_all_inferred_params();
         assert!(params.contains(&("name".to_string(), Kind::String)));
         assert!(params.contains(&("age".to_string(), Kind::Number)));
-
     }
 
     #[test]
@@ -187,5 +186,25 @@ mod tests {
 
         let params = ctx.get_all_inferred_params();
         assert!(params.contains(&("new_age".to_string(), Kind::Number)));
+    }
+
+    #[test]
+    fn update_table() {
+        let mut ctx = AnalyzerContext::new();
+        analyze(
+            &mut ctx,
+            r#"
+            DEFINE TABLE user SCHEMAFULL;
+                DEFINE FIELD name ON user TYPE string;
+                DEFINE FIELD age ON user TYPE number;
+        "#,
+        )
+        .expect("Schema construction should succeed");
+
+        let stmt = "UPDATE user SET name = 'John';";
+        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+
+        let expected_kind = kind!("array<array<{ name: string, age: number }>>");
+        assert_eq!(analyzed_kind, expected_kind);
     }
 }

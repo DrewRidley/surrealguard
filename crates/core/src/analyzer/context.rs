@@ -1,5 +1,32 @@
-use std::collections::{BTreeMap, HashMap};
-
+//! Maintains analysis state and provides schema validation utilities.
+//!
+//! The AnalyzerContext stores:
+//! - Schema definitions (tables, fields)
+//! - Inferred parameter types
+//! - Analysis state
+//!
+//! It provides methods to:
+//! - Validate schema constraints
+//! - Resolve types
+//! - Track parameter inference
+//!
+//! # Examples
+//!
+//! ```rust
+//! use surrealguard_core::prelude::*;
+//!
+//! let mut ctx = AnalyzerContext::new();
+//!
+//! // Add schema definitions
+//! ctx.append_definition(/* ... */);
+//!
+//! // Infer parameter types
+//! ctx.infer_param_from_table("user", "$user");
+//!
+//! // Get inferred types
+//! let param_types = ctx.get_all_inferred_params();
+//! ```
+use std::collections::BTreeMap;
 use surrealdb::sql::statements::{DefineFieldStatement, DefineTableStatement};
 use surrealdb::sql::{statements::DefineStatement, Geometry, Kind, Table, Value};
 use surrealdb::sql::{Idiom, Literal, Part, TableType};
@@ -194,7 +221,7 @@ impl AnalyzerContext {
             Value::None => Kind::Null,
             Value::Null => Kind::Null,
             Value::Bool(_) => Kind::Bool,
-            Value::Number(number) => Kind::Number,
+            Value::Number(_) => Kind::Number,
             Value::Strand(_) => Kind::String,
             Value::Duration(_) => Kind::Duration,
             Value::Datetime(_) => Kind::Datetime,

@@ -71,6 +71,101 @@ impl AnalyzerError {
         }
     }
 
+    pub fn report(&self) -> String {
+        match self {
+            Self::SchemaViolation {
+                message,
+                table,
+                field,
+            } => {
+                format!(
+                        "Schema violation in table '{}', field '{}': {}\n\
+                         Suggestion: Ensure the field matches the schema definition or update the schema.",
+                        table.as_deref().unwrap_or("unknown"),
+                        field.as_deref().unwrap_or("unknown"),
+                        message
+                    )
+            }
+            Self::TypeMismatch { expected, found } => {
+                format!(
+                    "Type mismatch: expected {}, found {}\n\
+                         Suggestion: Convert the value to the expected type or update the schema.",
+                    expected, found
+                )
+            }
+            Self::FieldNotFound { field, context } => {
+                format!(
+                    "Field '{}' not found in {}\n\
+                         Suggestion: Check field name spelling or add the field to the schema.",
+                    field, context
+                )
+            }
+            Self::TableNotFound(table) => {
+                format!(
+                    "Table '{}' not found in database schema\n\
+                         Suggestion: Define the table using DEFINE TABLE or check the table name.",
+                    table
+                )
+            }
+            Self::ParameterNotFound(param) => {
+                format!(
+                    "Parameter '{}' not found in current context\n\
+                         Suggestion: Ensure all parameters are properly defined before use.",
+                    param
+                )
+            }
+            Self::FunctionNotFound(func) => {
+                format!(
+                    "Function '{}' not found\n\
+                         Suggestion: Import the function or check function name spelling.",
+                    func
+                )
+            }
+            Self::InvalidPath { path, context } => {
+                format!(
+                    "Invalid path: {}{}\n\
+                         Suggestion: Verify the path syntax and ensure all segments exist.",
+                    path,
+                    context
+                        .as_ref()
+                        .map(|ctx| format!(" in {}", ctx))
+                        .unwrap_or_default()
+                )
+            }
+            Self::InvalidFunctionCall { function, message } => {
+                format!(
+                    "Invalid function call to '{}': {}\n\
+                         Suggestion: Check function documentation for correct usage.",
+                    function, message
+                )
+            }
+            Self::PermissionDenied { message, resource } => {
+                format!(
+                        "Permission denied: {} for resource '{}'\n\
+                         Suggestion: Verify access permissions or authenticate with required privileges.",
+                        message, resource
+                    )
+            }
+            Self::UnexpectedSyntax => "Unexpected syntax encountered\n\
+                     Suggestion: Verify query syntax against SurrealQL documentation."
+                .to_string(),
+            Self::Unimplemented(feature) => {
+                format!(
+                    "Feature not implemented: {}\n\
+                         This is a limitation of the current version.",
+                    feature
+                )
+            }
+            Self::Surreal(err) => {
+                format!(
+                        "SurrealDB error: {}\n\
+                         Suggestion: This is an underlying database error, check SurrealDB documentation.",
+                        err
+                    )
+            }
+        }
+    }
+
     /// Creates a field not found error with context
     pub fn field_not_found(field: impl Into<String>, context: impl Into<String>) -> Self {
         Self::FieldNotFound {

@@ -9,9 +9,11 @@ surrealguard-core = { path = "../core" }
 surrealguard-macros = { path = "../macros" }
 
 # Codegen specific dependencies
-convert_case = "0.6"
-handlebars = "4.3"   # For template-based code generation
-prettyplease = "0.2" # For Rust code formatting
-crypto = "0.5.1"
+# convert_case = "0.6"
+# handlebars = "4.3"   # For template-based code generation
 serde = "1.0.217"
-serde_json = "1.0.138"
+toml = "0.8.20"
+thiserror.workspace = true
+regex = "1.11.1"
+walkdir = "2.5.0"
+notify = "8.0.0"

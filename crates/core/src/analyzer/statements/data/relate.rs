@@ -52,7 +52,11 @@ pub fn analyze_relate(ctx: &mut AnalyzerContext, stmt: &RelateStatement) -> Anal
                         for (field, value) in obj.iter() {
                             if let Value::Param(param_name) = value {
                                 let field_idiom = Idiom::from(field.clone());
-                                ctx.infer_param_from_field(&relation_table, &field_idiom, param_name)?;
+                                ctx.infer_param_from_field(
+                                    &relation_table,
+                                    &field_idiom,
+                                    param_name,
+                                )?;
                             }
                         }
                     }
@@ -78,14 +82,18 @@ mod tests {
     #[test]
     fn infer_relate_from_param() {
         let mut ctx = AnalyzerContext::new();
-        analyze(&mut ctx, r#"
+        analyze(
+            &mut ctx,
+            r#"
             DEFINE TABLE user SCHEMAFULL;
                 DEFINE FIELD name ON user TYPE string;
             DEFINE TABLE org SCHEMAFULL;
                 DEFINE FIELD name ON org TYPE string;
             DEFINE TABLE memberOf SCHEMAFULL TYPE RELATION FROM user TO org;
                 DEFINE FIELD role ON memberOf TYPE string;
-        "#).expect("Schema construction should succeed");
+        "#,
+        )
+        .expect("Schema construction should succeed");
 
         let stmt = "RELATE $person->memberOf->org:acme;";
         analyze(&mut ctx, stmt).expect("Analysis should succeed");
@@ -99,14 +107,18 @@ mod tests {
     #[test]
     fn infer_relate_with_param() {
         let mut ctx = AnalyzerContext::new();
-        analyze(&mut ctx, r#"
+        analyze(
+            &mut ctx,
+            r#"
             DEFINE TABLE user SCHEMAFULL;
                 DEFINE FIELD name ON user TYPE string;
             DEFINE TABLE org SCHEMAFULL;
                 DEFINE FIELD name ON org TYPE string;
             DEFINE TABLE memberOf SCHEMAFULL TYPE RELATION FROM user TO org;
                 DEFINE FIELD role ON memberOf TYPE string;
-        "#).expect("Schema construction should succeed");
+        "#,
+        )
+        .expect("Schema construction should succeed");
 
         let stmt = "RELATE user:john->memberOf->$organization;";
         analyze(&mut ctx, stmt).expect("Analysis should succeed");
@@ -120,14 +132,18 @@ mod tests {
     #[test]
     fn infer_relate_both_params() {
         let mut ctx = AnalyzerContext::new();
-        analyze(&mut ctx, r#"
+        analyze(
+            &mut ctx,
+            r#"
             DEFINE TABLE user SCHEMAFULL;
                 DEFINE FIELD name ON user TYPE string;
             DEFINE TABLE org SCHEMAFULL;
                 DEFINE FIELD name ON org TYPE string;
             DEFINE TABLE memberOf SCHEMAFULL TYPE RELATION FROM user TO org;
                 DEFINE FIELD role ON memberOf TYPE string;
-        "#).expect("Schema construction should succeed");
+        "#,
+        )
+        .expect("Schema construction should succeed");
 
         let stmt = "RELATE $person->memberOf->$organization;";
         analyze(&mut ctx, stmt).expect("Analysis should succeed");
@@ -141,14 +157,18 @@ mod tests {
     #[test]
     fn infer_relate_content_fields() {
         let mut ctx = AnalyzerContext::new();
-        analyze(&mut ctx, r#"
+        analyze(
+            &mut ctx,
+            r#"
             DEFINE TABLE user SCHEMAFULL;
                 DEFINE FIELD name ON user TYPE string;
             DEFINE TABLE org SCHEMAFULL;
                 DEFINE FIELD name ON org TYPE string;
             DEFINE TABLE memberOf SCHEMAFULL TYPE RELATION FROM user TO org;
                 DEFINE FIELD role ON memberOf TYPE string;
-        "#).expect("Schema construction should succeed");
+        "#,
+        )
+        .expect("Schema construction should succeed");
 
         let stmt = r#"
             RELATE user:john->memberOf->org:acme
@@ -160,5 +180,28 @@ mod tests {
 
         let params = ctx.get_all_inferred_params();
         assert!(params.contains(&("role".to_string(), Kind::String)));
+    }
+
+    #[test]
+    fn relate_statement() {
+        let mut ctx = AnalyzerContext::new();
+        analyze(
+            &mut ctx,
+            r#"
+            DEFINE TABLE user SCHEMAFULL;
+            DEFINE TABLE org SCHEMAFULL;
+                DEFINE FIELD name ON org TYPE string;
+            DEFINE TABLE memberOf SCHEMAFULL TYPE RELATION FROM user TO org;
+                DEFINE FIELD role ON memberOf TYPE string;
+                DEFINE FIELD since ON memberOf TYPE datetime;
+        "#,
+        )
+        .expect("Schema construction should succeed");
+
+        let stmt = "RELATE user:alice->memberOf->org:google";
+        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+
+        let expected_kind = kind!("array<array<{ role: string, since: datetime }>>");
+        assert_eq!(analyzed_kind, expected_kind);
     }
 }

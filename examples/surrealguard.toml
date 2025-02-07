@@ -1,0 +1,14 @@
+# surrealguard.toml
+version = "1.0"
+language = "typescript"
+
+[schema]
+path = "schema/"
+
+[queries]
+path = "queries/"
+src = ["src/", "lib/"]  # Optional source directories for inline queries
+
+[output]
+path = "src/queries.ts"
+format = true  # Whether to run prettier/formatter

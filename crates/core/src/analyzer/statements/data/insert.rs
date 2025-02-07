@@ -24,3 +24,30 @@ pub fn analyze_insert(ctx: &mut AnalyzerContext, stmt: &InsertStatement) -> Anal
     };
     Ok(Kind::Array(Box::new(target_type), None))
 }
+
+#[cfg(test)]
+mod tests {
+    use surrealguard_macros::kind;
+
+    use crate::analyzer::{analyze, context::AnalyzerContext};
+
+    #[test]
+    fn insert_table() {
+        let mut ctx = AnalyzerContext::new();
+        analyze(
+            &mut ctx,
+            r#"
+            DEFINE TABLE user SCHEMAFULL;
+                DEFINE FIELD name ON user TYPE string;
+                DEFINE FIELD age ON user TYPE number;
+        "#,
+        )
+        .expect("Schema construction should succeed");
+
+        let stmt = "INSERT INTO user { name: 'Jane', age: 30 };";
+        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+
+        let expected_kind = kind!("array<array<{ name: string, age: number }>>");
+        assert_eq!(analyzed_kind, expected_kind);
+    }
+}
