@@ -1,5 +1,5 @@
 use surrealdb::sql::{
-    statements::{DefineStatement, UpdateStatement},
+    statements::UpdateStatement,
     Data, Idiom, Kind, Value,
 };
 

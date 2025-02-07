@@ -26,8 +26,6 @@ struct QueryInfo {
     variables_type: Option<String>,
     /// A doc comment showing the analyzed kind
     doc_comment: String,
-    /// Whether this query was found in a source file (inline) or in a file on disk
-    inline: bool,
 }
 
 impl Generator {
@@ -105,7 +103,7 @@ impl Generator {
             .and_then(|s| s.to_str())
             .unwrap_or("UnnamedQuery")
             .to_string();
-        self.analyze_query(&content, Some(name), false)
+        self.analyze_query(&content, Some(name))
     }
 
     fn scan_source_files(&mut self, dirs: &[PathBuf]) -> Result<()> {
@@ -120,7 +118,7 @@ impl Generator {
                             let content = fs::read_to_string(entry.path())?;
                             for cap in re.captures_iter(&content) {
                                 if let Some(query) = cap.get(1) {
-                                    self.analyze_query(query.as_str(), None, true)?;
+                                    self.analyze_query(query.as_str(), None)?;
                                 }
                             }
                         }
@@ -132,8 +130,10 @@ impl Generator {
         Ok(())
     }
 
-    fn analyze_query(&mut self, query: &str, name: Option<String>, inline: bool) -> Result<()> {
-        let kind = analyzer::analyze(&mut self.ctx, query)?;
+    fn analyze_query(&mut self, query: &str, name: Option<String>) -> Result<()> {
+        let mut ctx = self.ctx.clone();
+
+        let kind = analyzer::analyze(&mut ctx, query)?;
         let type_def = self.generate_type(&kind);
 
         // Generate a PascalCase name if one is provided; otherwise generate an inline query name.
@@ -154,8 +154,8 @@ impl Generator {
         };
 
         // Get inferred parameter types (if any)
-        let variables_type = if !self.ctx.get_all_inferred_params().is_empty() {
-            let params = self.ctx.get_all_inferred_params();
+        let variables_type = if !ctx.get_all_inferred_params().is_empty() {
+            let params = ctx.get_all_inferred_params();
             let fields: Vec<String> = params
                 .iter()
                 .map(|(name, kind)| format!("    {}: {}", name, self.generate_type(kind)))
@@ -176,7 +176,6 @@ impl Generator {
             type_def,
             variables_type,
             doc_comment,
-            inline,
         };
 
         // Use the query text itself as the key in the generated Queries map.
@@ -305,7 +304,7 @@ impl Generator {
                 info.query.replace('`', "\\`")
             ));
             content.push_str(&format!(
-                "export type {}Result = [\n    {}\n];\n\n",
+                "export type {}Result = {};\n\n",
                 info.name, info.type_def
             ));
         }

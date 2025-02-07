@@ -14,17 +14,16 @@
 //!
 //! ```rust
 //! use surrealguard_core::prelude::*;
+//! use surrealdb::sql::Kind;
 //!
 //! let mut ctx = AnalyzerContext::new();
 //!
-//! // Add schema definitions
-//! ctx.append_definition(/* ... */);
-//!
-//! // Infer parameter types
-//! ctx.infer_param_from_table("user", "$user");
+//! // Add inferred parameter directly
+//! ctx.add_inferred_param("$user", Kind::String);
 //!
 //! // Get inferred types
 //! let param_types = ctx.get_all_inferred_params();
+//! assert_eq!(param_types.len(), 1);
 //! ```
 use std::collections::BTreeMap;
 use surrealdb::sql::statements::{DefineFieldStatement, DefineTableStatement};
@@ -33,6 +32,7 @@ use surrealdb::sql::{Idiom, Literal, Part, TableType};
 
 use super::error::{AnalyzerError, AnalyzerResult};
 
+#[derive(Clone)]
 pub struct AnalyzerContext {
     definitions: Vec<DefineStatement>,
     /// Parameters whose types are inferred based on usage or positioning.

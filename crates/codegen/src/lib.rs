@@ -33,10 +33,8 @@ pub fn generate(config: &Config) -> Result<()> {
 
 pub fn watch(config: &Config) -> Result<()> {
     use notify::{RecommendedWatcher, RecursiveMode, Watcher, Config as NotifyConfig, event::EventKind};
-    use std::time::{Duration, Instant};
-    use console::{style, Term};
+    use console::style;
 
-    let term = Term::stdout();
 
     // Styled initial messages
     println!("{}", style("SurrealGuard").green().bold());

@@ -68,7 +68,11 @@ pub fn analyze_create(ctx: &mut AnalyzerContext, stmt: &CreateStatement) -> Anal
     }
 
     let target_type = ctx.build_full_table_type(&table_name)?;
-    Ok(Kind::Array(Box::new(target_type), None))
+
+    match stmt.only {
+        true => Ok(target_type),
+        false =>  Ok(Kind::Array(Box::new(target_type), None))
+    }
 }
 
 #[cfg(test)]
@@ -144,4 +148,26 @@ mod tests {
         assert!(params.contains(&("email".to_string(), Kind::String)));
         assert!(params.contains(&("age".to_string(), Kind::Number)));
     }
+
+    #[test]
+        fn create_table_only() {
+            let mut ctx = AnalyzerContext::new();
+            analyze(
+                &mut ctx,
+                r#"
+                DEFINE TABLE user SCHEMAFULL;
+                    DEFINE FIELD name ON user TYPE string;
+                    DEFINE FIELD age ON user TYPE number;
+            "#,
+            )
+            .expect("Schema construction should succeed");
+
+            let stmt = "CREATE ONLY user CONTENT { name: 'John', age: 42 };";
+            let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+
+            //The array is because 'analyze' wraps each statement in the array.
+            //This is the behavior of SurrealDB if there are multiple statements.
+            let expected_kind = kind!("array<{ name: string, age: number }>");
+            assert_eq!(analyzed_kind, expected_kind);
+        }
 }

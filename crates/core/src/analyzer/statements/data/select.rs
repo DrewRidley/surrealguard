@@ -458,8 +458,6 @@ impl KindFetchExt for Kind {
             return self.clone();
         }
         match self {
-            // If the type is a record link and the current fetch segment matches one of its
-            // table names, call build_full_table_type to get the full schema.
             Kind::Record(tables) => {
                 let target = fetch_chain[0].trim().to_lowercase();
                 if let Some(table) = tables.iter().find(|t| t.0.trim().to_lowercase() == target) {
@@ -469,29 +467,33 @@ impl KindFetchExt for Kind {
                 }
                 self.clone()
             }
-            // For literal objects, we look at each key; if a key matches the current fetch segment,
-            // then we replace its value by calling resolve_fetch with the remaining chain.
             Kind::Literal(Literal::Object(map)) => {
                 let mut new_map = map.clone();
                 for (key, value) in map.iter() {
                     if key.trim().to_lowercase() == fetch_chain[0] {
+                        // If value is an array of records, handle it specially
+                        if let Kind::Array(inner, _) = value {
+                            if let Kind::Record(tables) = &**inner {
+                                if let Some(table) = tables.first() {
+                                    if let Ok(full_type) = ctx.build_full_table_type(&table.0) {
+                                        new_map.insert(
+                                            key.clone(),
+                                            Kind::Literal(Literal::Array(vec![full_type])),
+                                        );
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
                         new_map.insert(key.clone(), value.resolve_fetch(&fetch_chain[1..], ctx));
                     }
                 }
                 Kind::Literal(Literal::Object(new_map))
             }
-            // For arrays, if the inner type is a record link then we “force” its expansion (by
-            // calling resolve_fetch with an empty chain) so that an array<record<user>> becomes
-            // array<Literal(Object{...})>.
             Kind::Array(inner, len) => {
-                let new_inner = if let Kind::Record(_) = **inner {
-                    inner.resolve_fetch(&[], ctx)
-                } else {
-                    inner.resolve_fetch(fetch_chain, ctx)
-                };
+                let new_inner = inner.resolve_fetch(fetch_chain, ctx);
                 Kind::Array(Box::new(new_inner), *len)
             }
-            // For union types, process each branch.
             Kind::Either(kinds) => {
                 let new_kinds = kinds
                     .iter()
