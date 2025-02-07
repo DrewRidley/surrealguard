@@ -4,17 +4,15 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+surrealdb.workspace = true
+thiserror.workspace = true
 surrealguard-core = { path = "../core" }
 surrealguard-codegen = { path = "../codegen" }
-surrealdb.workspace = true
-surrealguard-macros = { path = "../macros" }
 clap = { version = "4", features = ["derive"]}
+# Needed for some weird reason :(
 clap_derive = { version = "4.0.0-rc.1"}
 walkdir = "2.5.0"
 console = "0.15.10"
-indicatif = "0.17.11"
-thiserror.workspace = true
-tokio = { version = "1.43.0", features = ["full"] }
 notify = "8.0.0"
 regex = "1.10.2"
 serde = { version = "1.0", features = ["derive"] }

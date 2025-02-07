@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::env;
 use std::fs;
+use std::error::Error;
 use surrealguard_codegen::{self, Config, CodegenError};
 
 #[derive(Parser)]
@@ -40,8 +41,7 @@ path = "src/queries.ts"
 format = true
 "#;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
     match cli.command {
