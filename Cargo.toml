@@ -6,7 +6,11 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 authors = ["Drew Ridley"]
+readme = "README.md"
+repository = "https://github.com/DrewRidley/surrealguard.git"
+description = "Type-safe query builder and static analyzer for SurrealDB with automatic TypeScript type generation"
 license = "MIT OR Apache-2.0"
+
 
 
 [workspace.dependencies]

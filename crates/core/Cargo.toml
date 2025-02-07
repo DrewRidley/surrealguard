@@ -2,6 +2,7 @@
 name = "surrealguard-core"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [dependencies]
 surrealdb.workspace = true

@@ -2,6 +2,8 @@
 name = "surrealguard-macros"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+description = "Supplimentary proc macros to facilitate testing and development in surrealguard-core."
 
 [lib]
 proc-macro = true
