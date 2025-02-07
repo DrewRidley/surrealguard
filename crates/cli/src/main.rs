@@ -29,10 +29,10 @@ const EXAMPLE_CONFIG: &str = r#"version = "1.0"
 language = "typescript"
 
 [schema]
-path = "schema/surrealql/"
+path = "schema/"
 
 [queries]
-path = "queries/surrealql/"
+path = "queries/"
 src = ["src/"]
 
 [output]
