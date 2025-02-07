@@ -5,7 +5,6 @@ mod typescript;
 pub use config::{Config, Language};
 pub use error::{CodegenError, Result};
 
-use notify::Event;
 use typescript::Generator as TypeScriptGenerator;
 
 pub fn check(config: &Config) -> Result<()> {
@@ -33,38 +32,41 @@ pub fn generate(config: &Config) -> Result<()> {
 }
 
 pub fn watch(config: &Config) -> Result<()> {
-    use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+    use notify::{RecommendedWatcher, RecursiveMode, Watcher, Config as NotifyConfig, event::EventKind};
+    use std::time::{Duration, Instant};
+    use console::{style, Term};
 
-    println!("Initial generation...");
+    let term = Term::stdout();
+
+    // Styled initial messages
+    println!("{}", style("SurrealGuard").green().bold());
+    println!("  {} Initial generation...", style("➜").green());
     generate(config)?;
 
-    println!("Watching for changes...");
+    println!("  {} Watching for changes...", style("➜").cyan());
     let (tx, rx) = std::sync::mpsc::channel();
 
-    // Convert notify errors to CodegenError
+    // Rest of the watcher setup...
     let mut watcher = RecommendedWatcher::new(
         tx,
-        notify::Config::default(),
+        NotifyConfig::default()
     ).map_err(|e| CodegenError::Watch(e))?;
 
-    // Watch schema directory
+    // Watch directories setup...
     watcher.watch(&config.schema.path, RecursiveMode::Recursive)
         .map_err(|e| CodegenError::Watch(e))?;
 
-    // Watch query directory if specified
     if let Some(queries_path) = &config.queries.path {
         watcher.watch(queries_path, RecursiveMode::Recursive)
             .map_err(|e| CodegenError::Watch(e))?;
     }
 
-    // Watch source directories if specified
     if let Some(src_dirs) = &config.queries.src {
         for dir in src_dirs {
             watcher.watch(dir, RecursiveMode::Recursive)
                 .map_err(|e| CodegenError::Watch(e))?;
         }
     }
-
 
     let output_path = config.output.path.canonicalize().unwrap_or(config.output.path.clone());
 
@@ -75,12 +77,37 @@ pub fn watch(config: &Config) -> Result<()> {
                     continue;
                 }
 
-                println!("Change detected: {:?}", event);
-                if let Err(e) = generate(config) {
-                    eprintln!("Generation failed: {}", e);
+                if !matches!(event.kind, EventKind::Modify(notify::event::ModifyKind::Data(_))) {
+                    continue;
+                }
+
+                // Get the first changed file path for display
+                if let Some(changed_path) = event.paths.first() {
+                    let relative_path = changed_path
+                        .strip_prefix(std::env::current_dir().unwrap())
+                        .unwrap_or(changed_path)
+                        .display();
+
+                    println!("\n{} Changed: {}",
+                        style("[⚡️GEN]").yellow().bold(),
+                        style(relative_path).cyan()
+                    );
+                }
+
+                match generate(config) {
+                    Ok(_) => println!("  {} Types regenerated successfully",
+                        style("➜").green()
+                    ),
+                    Err(e) => println!("  {} Generation failed: {}",
+                        style("✖").red(),
+                        style(e).red()
+                    ),
                 }
             }
-            Err(e) => eprintln!("Watch error: {:?}", e),
+            Err(e) => println!("  {} Watch error: {}",
+                style("✖").red(),
+                style(e).red()
+            ),
         }
     }
 

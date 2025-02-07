@@ -10,6 +10,6 @@ proc-macro = true
 surrealdb.workspace = true
 
 # Macro specific dependencies
-syn = { version = "2.0", features = ["full", "extra-traits"] }
+syn = { version = "2.0", features = [] }
 quote = "1.0"
 proc-macro2 = "1.0"

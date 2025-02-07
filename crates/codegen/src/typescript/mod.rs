@@ -16,11 +16,17 @@ pub struct Generator {
 
 #[derive(Debug, Clone)]
 struct QueryInfo {
+    /// The “alias” name used for exporting the TS types (for inline queries a generated name is used)
     name: String,
+    /// The SQL query text
     query: String,
+    /// The generated type definition for the query’s result
     type_def: String,
+    /// A string representing the variables type (if any) or `None`
     variables_type: Option<String>,
+    /// A doc comment showing the analyzed kind
     doc_comment: String,
+    /// Whether this query was found in a source file (inline) or in a file on disk
     inline: bool,
 }
 
@@ -93,6 +99,7 @@ impl Generator {
 
     fn process_query_file(&mut self, path: &Path) -> Result<()> {
         let content = fs::read_to_string(path)?;
+        // For file queries we use the file stem to generate a name but later we key the map by the SQL string.
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -129,29 +136,51 @@ impl Generator {
         let kind = analyzer::analyze(&mut self.ctx, query)?;
         let type_def = self.generate_type(&kind);
 
+        // Generate a PascalCase name if one is provided; otherwise generate an inline query name.
+        // (Note: In the output map the key is the full SQL string, so file queries use their query text as the key.)
         let query_name = if let Some(n) = name {
-            n
+            n.split('_')
+                .map(|word| {
+                    let mut chars = word.chars();
+                    match chars.next() {
+                        None => String::new(),
+                        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    }
+                })
+                .collect()
         } else {
             self.inline_counter += 1;
             format!("InlineQuery{}", self.inline_counter)
         };
 
+        // Get inferred parameter types (if any)
+        let variables_type = if !self.ctx.get_all_inferred_params().is_empty() {
+            let params = self.ctx.get_all_inferred_params();
+            let fields: Vec<String> = params
+                .iter()
+                .map(|(name, kind)| format!("    {}: {}", name, self.generate_type(kind)))
+                .collect();
+            Some(format!("{{\n{}\n}}", fields.join(",\n")))
+        } else {
+            None
+        };
+
         let doc_comment = format!(
-            "/**\n * ## {} query results\n *\n * Kind:\n * ```\n * {}\n * ```\n */",
-            query_name,
+            "/**\n * ## Query results\n *\n * Kind:\n * ```\n * {}\n * ```\n */",
             kind.to_string()
         );
 
         let info = QueryInfo {
-            name: query_name.clone(),
+            name: query_name,
             query: query.to_string(),
             type_def,
-            variables_type: None,
+            variables_type,
             doc_comment,
             inline,
         };
 
-        self.query_types.insert(query_name, info);
+        // Use the query text itself as the key in the generated Queries map.
+        self.query_types.insert(info.query.clone(), info);
         Ok(())
     }
 
@@ -240,36 +269,36 @@ impl Generator {
     }
 
     fn generate_output(&self, path: &Path, should_format: bool) -> Result<()> {
-        let mut content = String::from(r#"import { type RecordId, Surreal } from 'surrealdb';
+        let mut content = String::new();
+        content.push_str("import { type RecordId, Surreal } from 'surrealdb';\n\n");
 
-export type Queries = {"#);
-
-        // Generate types for file-based queries
-        for info in self.query_types.values().filter(|q| !q.inline) {
+        // Generate a unified Queries type mapping SQL strings to their definitions.
+        content.push_str("export type Queries = {\n");
+        for info in self.query_types.values() {
             content.push_str(&format!(
-                "\n    {}: {{ variables: {}, result: {}Result }};",
-                info.name,
+                "    \"{}\": {{ variables: {}, result: {}Result }};\n",
+                Self::escape_string_literal(&info.query),
                 info.variables_type.as_deref().unwrap_or("never"),
                 info.name
             ));
         }
-        content.push_str("\n}\n\n");
+        content.push_str("};\n\n");
 
-        // Generate types for inline queries
-        content.push_str("export type QueryMap = {\n");
-        for info in self.query_types.values().filter(|q| q.inline) {
-            content.push_str(&format!(
-                "    \"{}\": {}Result,\n",
-                Self::escape_string_literal(&info.query),
-                info.name
-            ));
-        }
-        content.push_str("}\n\n");
+        // Generate helper type for enforcing variables via rest parameters
+        content.push_str("export type Variables<Q extends keyof Queries> = Queries[Q]['variables'] extends never ? [] : [Queries[Q]['variables']];\n\n");
 
-        // Generate individual query types
+        // Generate the individual query definitions.
         for info in self.query_types.values() {
             content.push_str(&info.doc_comment);
             content.push('\n');
+
+            if let Some(vars) = &info.variables_type {
+                content.push_str(&format!(
+                    "export interface {}Variables {}\n\n",
+                    info.name, vars
+                ));
+            }
+
             content.push_str(&format!(
                 "export const {} = `{}`;\n",
                 info.name,
@@ -281,15 +310,11 @@ export type Queries = {"#);
             ));
         }
 
-        // Add utility types and functions
-        content.push_str(r#"
-export class TypedSurreal extends Surreal {
-    typed<Q extends keyof Queries>(query: Q, ...rest: Queries[Q]['variables'] extends never ? [] : [Queries[Q]['variables']]): Promise<Queries[Q]['result']> {
+        // Generate the utility class and the tagged template helper.
+        content.push_str(
+r#"export class TypedSurreal extends Surreal {
+    typed<Q extends keyof Queries>(query: Q, ...rest: Variables<Q>): Promise<Queries[Q]["result"]> {
         return this.query(query, rest[0]);
-    }
-
-    async inline<T extends keyof QueryMap>(sql: T): Promise<QueryMap[T]> {
-        return super.query(sql) as Promise<QueryMap[T]>;
     }
 
     async query(sql: string, vars?: any): Promise<any> {
@@ -298,12 +323,13 @@ export class TypedSurreal extends Surreal {
 }
 
 export function surql<const S extends readonly string[]>(
-  strings: TemplateStringsArray & { raw: S },
-  ...values: unknown[]
-): S[0] & keyof QueryMap {
-  return strings[0] as S[0] & keyof QueryMap;
+    strings: TemplateStringsArray & { raw: S },
+    ...values: unknown[]
+): S[0] & keyof Queries {
+    return strings[0] as S[0] & keyof Queries;
 }
-"#);
+"#
+        );
 
         fs::write(path, content)?;
 
