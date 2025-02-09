@@ -15,17 +15,19 @@ pub struct Generator {
 }
 
 #[derive(Debug, Clone)]
+/// QueryInfo holds the metadata for each discovered query. For queries discovered from files,
+/// the "name" field is set (converted to PascalCase) so that we can export a constant for it.
 struct QueryInfo {
-    /// The “alias” name used for exporting the TS types (for inline queries a generated name is used)
-    name: String,
-    /// The SQL query text
-    query: String,
-    /// The generated type definition for the query’s result
-    type_def: String,
-    /// A string representing the variables type (if any) or `None`
-    variables_type: Option<String>,
-    /// A doc comment showing the analyzed kind
-    doc_comment: String,
+    /// If available (for file-based queries) this is the PascalCase query name.
+    pub name: Option<String>,
+    /// The SQL query text (this is used as the key in the generated Queries mapping).
+    pub query: String,
+    /// The generated type definition for the query’s result, always inlined into the mapping.
+    pub type_def: String,
+    /// A string representing the variables type (if any), or `None` if no variables are inferred.
+    pub variables_type: Option<String>,
+    /// A doc comment showing the analyzed kind.
+    pub doc_comment: String,
 }
 
 impl Generator {
@@ -97,7 +99,7 @@ impl Generator {
 
     fn process_query_file(&mut self, path: &Path) -> Result<()> {
         let content = fs::read_to_string(path)?;
-        // For file queries we use the file stem to generate a name but later we key the map by the SQL string.
+        // File-based queries use the file stem as their name.
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -106,8 +108,20 @@ impl Generator {
         self.analyze_query(&content, Some(name))
     }
 
+    // Fuck typescript but we have to do this since template literals are borked:
+    // https://github.com/microsoft/TypeScript/issues/33304
     fn scan_source_files(&mut self, dirs: &[PathBuf]) -> Result<()> {
-        let re = Regex::new(r#"surql`([^`]*)`"#).unwrap();
+        // Match surql( ... ) where the query is provided as a literal string.
+        // The regex will match either:
+        //   surql("query")
+        //   surql('query')
+        //   surql(`query`)
+        //
+        // Capture group 1 matches double quotes,
+        // group 2 matches single quotes,
+        // group 3 matches backticks.
+        let re = Regex::new(r#"surql\(\s*(?:"([^"]*)"|'([^']*)'|`([^`]*)`)"#)
+            .expect("invalid regex");
 
         for dir in dirs {
             for entry in WalkDir::new(dir) {
@@ -117,8 +131,17 @@ impl Generator {
                         Some("ts" | "js" | "jsx" | "tsx" | "svelte" | "vue") => {
                             let content = fs::read_to_string(entry.path())?;
                             for cap in re.captures_iter(&content) {
-                                if let Some(query) = cap.get(1) {
-                                    self.analyze_query(query.as_str(), None)?;
+                                // Try the three capture groups in order.
+                                let query_candidate = cap.get(1)
+                                    .or_else(|| cap.get(2))
+                                    .or_else(|| cap.get(3));
+                                if let Some(m) = query_candidate {
+                                    let query = m.as_str().trim();
+                                    if query.is_empty() {
+                                        continue;
+                                    }
+                                    // Analyze the query string.
+                                    self.analyze_query(query, None)?;
                                 }
                             }
                         }
@@ -130,30 +153,26 @@ impl Generator {
         Ok(())
     }
 
+    // analyze_query analyzes the SQL query and generates its type definition.
+    // If a name is provided (such as for file-based queries), it is converted to PascalCase.
     fn analyze_query(&mut self, query: &str, name: Option<String>) -> Result<()> {
         let mut ctx = self.ctx.clone();
-
         let kind = analyzer::analyze(&mut ctx, query)?;
         let type_def = self.generate_type(&kind);
 
-        // Generate a PascalCase name if one is provided; otherwise generate an inline query name.
-        // (Note: In the output map the key is the full SQL string, so file queries use their query text as the key.)
-        let query_name = if let Some(n) = name {
+        let query_name = name.map(|n| {
             n.split('_')
-                .map(|word| {
-                    let mut chars = word.chars();
-                    match chars.next() {
-                        None => String::new(),
-                        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                    }
-                })
-                .collect()
-        } else {
-            self.inline_counter += 1;
-            format!("InlineQuery{}", self.inline_counter)
-        };
+             .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    None => String::new(),
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                }
+             })
+             .collect::<String>()
+        });
 
-        // Get inferred parameter types (if any)
+        // Get inferred parameter types (if any).
         let variables_type = if !ctx.get_all_inferred_params().is_empty() {
             let params = ctx.get_all_inferred_params();
             let fields: Vec<String> = params
@@ -178,11 +197,12 @@ impl Generator {
             doc_comment,
         };
 
-        // Use the query text itself as the key in the generated Queries map.
+        // Use the query text itself as the key in the generated Queries mapping.
         self.query_types.insert(info.query.clone(), info);
         Ok(())
     }
 
+    // generate_type converts a Kind to its corresponding TypeScript type definition.
     fn generate_type(&self, kind: &Kind) -> String {
         match kind {
             Kind::Null => "null".to_string(),
@@ -228,6 +248,7 @@ impl Generator {
         }
     }
 
+    // generate_literal converts a Literal to its TypeScript literal representation.
     fn generate_literal(&self, lit: &Literal) -> String {
         match lit {
             Literal::String(s) => format!("\"{}\"", s),
@@ -259,6 +280,7 @@ impl Generator {
         }
     }
 
+    // escape_string_literal escapes backticks and other important characters.
     fn escape_string_literal(s: &str) -> String {
         s.replace('\\', "\\\\")
          .replace('\"', "\\\"")
@@ -267,6 +289,9 @@ impl Generator {
          .replace('\t', "\\t")
     }
 
+    // generate_output writes out the unified TypeScript definitions.
+    // In the Queries mapping, every query's result type is inlined.
+    // For queries discovered from files (with a name) we also export constants.
     fn generate_output(&self, path: &Path, should_format: bool) -> Result<()> {
         let mut content = String::new();
         content.push_str("import { type RecordId, Surreal } from 'surrealdb';\n\n");
@@ -275,38 +300,37 @@ impl Generator {
         content.push_str("export type Queries = {\n");
         for info in self.query_types.values() {
             content.push_str(&format!(
-                "    \"{}\": {{ variables: {}, result: {}Result }};\n",
+                "    \"{}\": {{ variables: {}, result: {} }};\n",
                 Self::escape_string_literal(&info.query),
                 info.variables_type.as_deref().unwrap_or("never"),
-                info.name
+                // Always inline the type definition here.
+                info.type_def
             ));
         }
         content.push_str("};\n\n");
 
-        // Generate helper type for enforcing variables via rest parameters
+        // Helper type for enforcing variables via rest parameters.
         content.push_str("export type Variables<Q extends keyof Queries> = Queries[Q]['variables'] extends never ? [] : [Queries[Q]['variables']];\n\n");
 
-        // Generate the individual query definitions.
+        // For queries that came from a file (with a provided name), export the queries as named constants.
         for info in self.query_types.values() {
-            content.push_str(&info.doc_comment);
-            content.push('\n');
+            if let Some(name) = &info.name {
+                content.push_str(&info.doc_comment);
+                content.push('\n');
 
-            if let Some(vars) = &info.variables_type {
+                if let Some(vars) = &info.variables_type {
+                    content.push_str(&format!(
+                        "export interface {}Variables {}\n\n",
+                        name, vars
+                    ));
+                }
+
                 content.push_str(&format!(
-                    "export interface {}Variables {}\n\n",
-                    info.name, vars
+                    "export const {} = `{}`;\n\n",
+                    name,
+                    info.query.replace('`', "\\`")
                 ));
             }
-
-            content.push_str(&format!(
-                "export const {} = `{}`;\n",
-                info.name,
-                info.query.replace('`', "\\`")
-            ));
-            content.push_str(&format!(
-                "export type {}Result = {};\n\n",
-                info.name, info.type_def
-            ));
         }
 
         // Generate the utility class and the tagged template helper.
@@ -321,11 +345,8 @@ r#"export class TypedSurreal extends Surreal {
     }
 }
 
-export function surql<const S extends readonly string[]>(
-    strings: TemplateStringsArray & { raw: S },
-    ...values: unknown[]
-): S[0] & keyof Queries {
-    return strings[0] as S[0] & keyof Queries;
+export function surql<Q extends keyof Queries>(query: Q): Q {
+  return query;
 }
 "#
         );
