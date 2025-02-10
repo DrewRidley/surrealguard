@@ -193,7 +193,13 @@ pub fn analyze_select(context: &AnalyzerContext, stmt: &SelectStatement) -> Anal
         base_kind
     };
 
-    Ok(transformed_kind)
+    if stmt.only {
+        // For SELECT ONLY, return the record type as is.
+        Ok(transformed_kind)
+    } else {
+        // For a normal SELECT, wrap the record type in an Array.
+        Ok(Kind::Array(Box::new(transformed_kind), None))
+    }
 }
 
 fn extract_final_type(fields: &BTreeMap<String, Kind>) -> Kind {
@@ -508,8 +514,24 @@ impl KindFetchExt for Kind {
 
 #[cfg(test)]
 mod tests {
-    use crate::analyzer::{analyze, context::AnalyzerContext};
+    use crate::{analyzer::{analyze, context::AnalyzerContext}, prelude::AnalyzerResult};
+    use surrealdb::sql::{parse, Kind, Statement};
     use surrealguard_macros::kind;
+
+    // Wrapper over analyze_select that unwraps other statement types.
+    fn analyze_select(ctx: &mut AnalyzerContext, query: &str) -> AnalyzerResult<Kind> {
+        let stmt = surrealdb::sql::parse(query)
+            .expect("Statement should be valid SurrealQL")
+            .into_iter()
+            .next()
+            .expect("Expected at least one statement");
+        let Statement::Select(stmt) = stmt else {
+            panic!("Expected a SELECT statement");
+        };
+
+        super::analyze_select(ctx, &stmt)
+    }
+
 
     #[test]
     fn basic() {
@@ -526,7 +548,7 @@ mod tests {
         )
         .expect("Schema construction should succeed");
 
-        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, stmt).expect("Analysis should succeed");
         let expected_kind = kind!("array<{ name: string, age: number }>");
 
         assert_eq!(analyzed_kind, expected_kind);
@@ -553,7 +575,7 @@ mod tests {
         )
         .expect("Schema construction should succeed");
 
-        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, stmt).expect("Analysis should succeed");
         let expected_kind = kind!(
             r#"array<{
             name: string,
@@ -585,7 +607,7 @@ mod tests {
         )
         .expect("Schema construction should succeed");
 
-        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, stmt).expect("Analysis should succeed");
         let expected_kind = kind!("array<{ nom: string }>");
 
         assert_eq!(analyzed_kind, expected_kind);
@@ -612,7 +634,7 @@ mod tests {
         )
         .expect("Schema construction should succeed");
 
-        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, stmt).expect("Analysis should succeed");
         let expected_kind = kind!(
             r#"array<{
             name: string,
@@ -640,7 +662,7 @@ mod tests {
         analyze(&mut ctx, schema).expect("Schema construction should succeed");
 
         let query = "SELECT author FROM post FETCH author;";
-        let analyzed_kind = analyze(&mut ctx, query).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, query).expect("Analysis should succeed");
         let expected_kind = kind!("array<{ author: { name: string, age: number } }>");
 
         assert_eq!(analyzed_kind, expected_kind);
@@ -659,7 +681,7 @@ mod tests {
         analyze(&mut ctx, schema).expect("Schema construction should succeed");
 
         let query = "SELECT members FROM group FETCH members;";
-        let analyzed_kind = analyze(&mut ctx, query).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, query).expect("Analysis should succeed");
         let expected_kind = kind!("array<{ members: [ { username: string, email: string } ] }>");
 
         assert_eq!(analyzed_kind, expected_kind);
@@ -674,9 +696,9 @@ mod tests {
         "#;
         let mut ctx = AnalyzerContext::new();
         analyze(&mut ctx, schema).expect("Schema construction should succeed");
-        let analyzed_kind = analyze(&mut ctx, query).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, query).expect("Analysis should succeed");
         // Changed to match the actual structure: Array(Literal(Array([String])), None)
-        let expected_kind = kind!("array<[string]>");
+        let expected_kind = kind!("[string]");
         assert_eq!(analyzed_kind, expected_kind);
     }
 
@@ -691,12 +713,12 @@ mod tests {
         analyze(&mut ctx, schema).expect("Schema construction should succeed");
 
         let query = "SELECT * FROM ONLY person:tobie;";
-        let analyzed_kind = analyze(&mut ctx, query).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, query).expect("Analysis should succeed");
         let expected_kind = kind!(
-            r#"array<{
+            r#"{
             name: string,
             age: number
-        }>"#
+        }"#
         );
         assert_eq!(analyzed_kind, expected_kind);
     }
@@ -720,7 +742,7 @@ mod tests {
         )
         .expect("Schema construction should succeed");
 
-        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, stmt).expect("Analysis should succeed");
         let expected_kind = kind!(
             r#"array<{
             address: {
@@ -752,7 +774,7 @@ mod tests {
         )
         .expect("Schema construction should succeed");
 
-        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, stmt).expect("Analysis should succeed");
         let expected_kind = kind!(
             r#"array<{
             location: {
@@ -781,7 +803,7 @@ mod tests {
         .expect("Schema construction should succeed");
 
         let stmt = "SELECT ->memberOf FROM user;";
-        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, stmt).expect("Analysis should succeed");
         let expected_kind = kind!(
             r#"array<{
             "->memberOf": [record<memberOf>]
@@ -811,7 +833,7 @@ mod tests {
         .expect("Schema construction should succeed");
 
         let stmt = "SELECT ->memberOf->partOf->org.* FROM user;";
-        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, stmt).expect("Analysis should succeed");
         let expected_kind = kind!(
             r#"array<{
             "->memberOf": {
@@ -844,7 +866,7 @@ mod tests {
         .expect("Schema construction should succeed");
 
         let stmt = "SELECT ->memberOf->org FROM user;";
-        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, stmt).expect("Analysis should succeed");
         let expected_kind = kind!(
             r#"array<{
             "->memberOf": {
@@ -871,7 +893,7 @@ mod tests {
         .expect("Schema construction should succeed");
 
         let stmt = "SELECT ->memberOf->org.* FROM user;";
-        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, stmt).expect("Analysis should succeed");
         let expected_kind = kind!(
             r#"array<{
             "->memberOf": {
@@ -901,7 +923,7 @@ mod tests {
         .expect("Schema construction should succeed");
 
         let stmt = "SELECT ->memberOf->org.{name} FROM user;";
-        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, stmt).expect("Analysis should succeed");
         let expected_kind = kind!(
             r#"array<{
             "->memberOf": {
@@ -930,7 +952,7 @@ mod tests {
         .expect("Schema construction should succeed");
 
         let stmt = "SELECT <-memberOf<-user.* FROM org;";
-        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, stmt).expect("Analysis should succeed");
         let expected_kind = kind!(
             r#"array<{
             "<-memberOf": {
@@ -961,7 +983,7 @@ mod tests {
         .expect("Schema construction should succeed");
 
         let stmt = "SELECT ->memberOf->org.* AS orgs FROM user;";
-        let analyzed_kind = analyze(&mut ctx, stmt).expect("Analysis should succeed");
+        let analyzed_kind = analyze_select(&mut ctx, stmt).expect("Analysis should succeed");
         let expected_kind = kind!(
             r#"array<{
             "orgs": [{

@@ -121,7 +121,7 @@ pub(super) fn analyze_time(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
             match ctx.resolve(args.first().unwrap())? {
                 Kind::Array(inner, _) => {
                     // For our purposes we check the inner type is a datetime.
-                    if **inner != Kind::Datetime {
+                    if *inner != Kind::Datetime {
                         return Err(AnalyzerError::UnexpectedSyntax);
                     }
                     Ok(Kind::Datetime)
@@ -156,7 +156,7 @@ pub(super) fn analyze_time(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
             if args.len() != 1 { return Err(AnalyzerError::UnexpectedSyntax); }
             match ctx.resolve(args.first().unwrap())? {
                 Kind::Array(inner, _) => {
-                    if **inner != Kind::Datetime {
+                    if *inner != Kind::Datetime {
                         return Err(AnalyzerError::UnexpectedSyntax);
                     }
                     Ok(Kind::Datetime)

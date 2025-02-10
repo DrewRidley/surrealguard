@@ -11,7 +11,6 @@ use surrealdb::sql::{Kind, Literal};
 pub struct Generator {
     ctx: AnalyzerContext,
     query_types: HashMap<String, QueryInfo>,
-    inline_counter: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -35,7 +34,7 @@ impl Generator {
         Self {
             ctx: AnalyzerContext::new(),
             query_types: HashMap::new(),
-            inline_counter: 0,
+
         }
     }
 
