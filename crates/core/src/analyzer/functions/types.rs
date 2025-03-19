@@ -1,7 +1,6 @@
-
+use super::AnalyzerContext;
 use crate::analyzer::error::{AnalyzerError, AnalyzerResult};
 use surrealdb::sql::{Function, Kind};
-use super::AnalyzerContext;
 
 /// Analyze functions in the "type" namespace.
 ///
@@ -31,7 +30,7 @@ use super::AnalyzerContext;
 /// duration, float, geometry, int, line, none, null, multiline, multipoint,
 /// multipolygon, number, object, point, polygon, record (optionally 1–2 args),
 /// string, uuid.
-pub(super) fn analyze_type(ctx: &AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
+pub(super) fn analyze_type(_ctx: &AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
     let name = func.name().ok_or(AnalyzerError::UnexpectedSyntax)?;
     let segments: Vec<&str> = name.split("::").collect();
 
@@ -52,28 +51,28 @@ pub(super) fn analyze_type(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
                 // Return an array of Any.
                 Ok(Kind::Array(Box::new(Kind::Any), None))
             }
-        },
+        }
         "bool" => {
             if func.args().len() != 1 {
                 Err(AnalyzerError::UnexpectedSyntax)
             } else {
                 Ok(Kind::Bool)
             }
-        },
+        }
         "bytes" => {
             if func.args().len() != 1 {
                 Err(AnalyzerError::UnexpectedSyntax)
             } else {
                 Ok(Kind::Bytes)
             }
-        },
+        }
         "datetime" => {
             if func.args().len() != 1 {
                 Err(AnalyzerError::UnexpectedSyntax)
             } else {
                 Ok(Kind::Datetime)
             }
-        },
+        }
         "decimal" => {
             if func.args().len() != 1 {
                 Err(AnalyzerError::UnexpectedSyntax)
@@ -81,14 +80,14 @@ pub(super) fn analyze_type(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
                 // Represent decimals as numbers.
                 Ok(Kind::Number)
             }
-        },
+        }
         "duration" => {
             if func.args().len() != 1 {
                 Err(AnalyzerError::UnexpectedSyntax)
             } else {
                 Ok(Kind::Duration)
             }
-        },
+        }
         "field" | "fields" => {
             if func.args().len() != 1 {
                 Err(AnalyzerError::UnexpectedSyntax)
@@ -96,28 +95,28 @@ pub(super) fn analyze_type(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
                 // Projection functions return an unconstrained type.
                 Ok(Kind::Any)
             }
-        },
+        }
         "float" => {
             if func.args().len() != 1 {
                 Err(AnalyzerError::UnexpectedSyntax)
             } else {
                 Ok(Kind::Number)
             }
-        },
+        }
         "int" | "number" => {
             if func.args().len() != 1 {
                 Err(AnalyzerError::UnexpectedSyntax)
             } else {
                 Ok(Kind::Number)
             }
-        },
+        }
         "point" => {
             if func.args().len() != 1 {
                 Err(AnalyzerError::UnexpectedSyntax)
             } else {
                 Ok(Kind::Point)
             }
-        },
+        }
         "range" => {
             if func.args().len() != 1 {
                 Err(AnalyzerError::UnexpectedSyntax)
@@ -126,7 +125,7 @@ pub(super) fn analyze_type(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
                 // We explicitly construct a Kind value for record before boxing it.
                 Ok(Kind::Range)
             }
-        },
+        }
         "record" => {
             let arg_count = func.args().len();
             if arg_count < 1 || arg_count > 2 {
@@ -135,14 +134,14 @@ pub(super) fn analyze_type(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
                 // Return a record type.
                 Ok(Kind::Record(vec![]))
             }
-        },
+        }
         "string" => {
             if func.args().len() != 1 {
                 Err(AnalyzerError::UnexpectedSyntax)
             } else {
                 Ok(Kind::String)
             }
-        },
+        }
         "table" => {
             if func.args().len() != 1 {
                 Err(AnalyzerError::UnexpectedSyntax)
@@ -150,7 +149,7 @@ pub(super) fn analyze_type(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
                 // A table is represented as a string.
                 Ok(Kind::String)
             }
-        },
+        }
         "thing" => {
             if func.args().len() != 2 {
                 Err(AnalyzerError::UnexpectedSyntax)
@@ -158,14 +157,14 @@ pub(super) fn analyze_type(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
                 // Return a record pointer.
                 Ok(Kind::Record(vec![]))
             }
-        },
+        }
         "uuid" => {
             if func.args().len() != 1 {
                 Err(AnalyzerError::UnexpectedSyntax)
             } else {
                 Ok(Kind::Uuid)
             }
-        },
+        }
         "is" => {
             // type::is::<subtype>(any) -> bool.
             if segments.len() < 3 {
@@ -174,17 +173,16 @@ pub(super) fn analyze_type(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
             let subtype = segments[2];
             match subtype {
                 // All these expect exactly one argument.
-                "array" | "bool" | "bytes" | "collection" | "datetime" |
-                "decimal" | "duration" | "float" | "geometry" | "int" |
-                "line" | "none" | "null" | "multiline" | "multipoint" |
-                "multipolygon" | "number" | "object" | "point" |
-                "polygon" | "string" | "uuid" => {
+                "array" | "bool" | "bytes" | "collection" | "datetime" | "decimal" | "duration"
+                | "float" | "geometry" | "int" | "line" | "none" | "null" | "multiline"
+                | "multipoint" | "multipolygon" | "number" | "object" | "point" | "polygon"
+                | "string" | "uuid" => {
                     if func.args().len() != 1 {
                         Err(AnalyzerError::UnexpectedSyntax)
                     } else {
                         Ok(Kind::Bool)
                     }
-                },
+                }
                 // The "record" type check can accept one or two arguments.
                 "record" => {
                     let len = func.args().len();
@@ -193,10 +191,13 @@ pub(super) fn analyze_type(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
                     } else {
                         Ok(Kind::Bool)
                     }
-                },
-                _ => Err(AnalyzerError::FunctionNotFound(format!("type::is::{}", subtype))),
+                }
+                _ => Err(AnalyzerError::FunctionNotFound(format!(
+                    "type::is::{}",
+                    subtype
+                ))),
             }
-        },
+        }
         other => Err(AnalyzerError::FunctionNotFound(format!("type::{}", other))),
     }
 }

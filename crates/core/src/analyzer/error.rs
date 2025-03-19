@@ -58,6 +58,9 @@ pub enum AnalyzerError {
     #[error("Unexpected syntax was encountered")]
     UnexpectedSyntax,
 
+    #[error("No scope provided for $auth inference.")]
+    MissingAuth,
+
     #[error("Not implemented: {0}")]
     Unimplemented(String),
 }
@@ -162,6 +165,12 @@ impl AnalyzerError {
                          Suggestion: This is an underlying database error, check SurrealDB documentation.",
                         err
                     )
+            }
+            Self::MissingAuth => {
+                format!(
+                    "Missing provided auth scope but $auth is used\n\
+                         Suggestion: A scope must be provided when selecting from $auth!"
+                )
             }
         }
     }

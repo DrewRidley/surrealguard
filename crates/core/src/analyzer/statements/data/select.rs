@@ -46,6 +46,16 @@ pub fn analyze_select(context: &AnalyzerContext, stmt: &SelectStatement) -> Anal
     let raw_table_name = match table_value {
         Value::Table(t) => t.0.clone(),
         Value::Thing(thing) => thing.tb.clone(),
+        Value::Param(p) => match p.trim() {
+            "$auth" => match context.auth() {
+                Some(auth) => auth.to_string(),
+                None => return Err(AnalyzerError::MissingAuth),
+            },
+            "$token" => {
+                todo!("Implement token inference")
+            }
+            _ => return Err(AnalyzerError::UnexpectedSyntax),
+        },
         _ => return Err(AnalyzerError::UnexpectedSyntax),
     };
     let table_name = if raw_table_name.contains(':') {
@@ -514,8 +524,11 @@ impl KindFetchExt for Kind {
 
 #[cfg(test)]
 mod tests {
-    use crate::{analyzer::{analyze, context::AnalyzerContext}, prelude::AnalyzerResult};
-    use surrealdb::sql::{parse, Kind, Statement};
+    use crate::{
+        analyzer::{analyze, context::AnalyzerContext},
+        prelude::AnalyzerResult,
+    };
+    use surrealdb::sql::{Kind, Statement};
     use surrealguard_macros::kind;
 
     // Wrapper over analyze_select that unwraps other statement types.
@@ -531,7 +544,6 @@ mod tests {
 
         super::analyze_select(ctx, &stmt)
     }
-
 
     #[test]
     fn basic() {

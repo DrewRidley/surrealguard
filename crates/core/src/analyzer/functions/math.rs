@@ -1,6 +1,6 @@
+use super::AnalyzerContext;
 use crate::analyzer::error::{AnalyzerError, AnalyzerResult};
 use surrealdb::sql::{Function, Kind};
-use super::AnalyzerContext;
 
 pub(super) fn analyze_math(ctx: &AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
     // Get the full function name – e.g. "math::abs" or "math::clamp"
@@ -15,11 +15,9 @@ pub(super) fn analyze_math(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
     match segments[1] {
         // -------------------------------------------------------------------
         // FUNCTIONS THAT DO NOT EXPECT ARGUMENTS (constants)
-        "e" | "pi" | "inf" | "neg_inf" | "tau" |
-        "ln_10" | "ln_2" | "log10_2" | "log10_e" | "log2_10" | "log2_e" |
-        "frac_1_pi" | "frac_1_sqrt_2" | "frac_2_pi" | "frac_2_sqrt_pi" |
-        "frac_pi_2" | "frac_pi_3" | "frac_pi_4" | "frac_pi_6" | "frac_pi_8" |
-        "sqrt_2" => {
+        "e" | "pi" | "inf" | "neg_inf" | "tau" | "ln_10" | "ln_2" | "log10_2" | "log10_e"
+        | "log2_10" | "log2_e" | "frac_1_pi" | "frac_1_sqrt_2" | "frac_2_pi" | "frac_2_sqrt_pi"
+        | "frac_pi_2" | "frac_pi_3" | "frac_pi_4" | "frac_pi_6" | "frac_pi_8" | "sqrt_2" => {
             if !func.args().is_empty() {
                 return Err(AnalyzerError::UnexpectedSyntax);
             }
@@ -28,16 +26,15 @@ pub(super) fn analyze_math(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
 
         // -------------------------------------------------------------------
         // FUNCTIONS THAT TAKE A SINGLE NUMBER (e.g. abs, acos, asin, atan, etc.)
-        "abs" | "acos" | "acot" | "asin" | "atan" |
-        "ceil" | "floor" | "ln" | "log10" | "log2" |
-        "rad2deg" | "round" | "sign" | "sin" | "sqrt" | "tan" | "deg2rad" => {
+        "abs" | "acos" | "acot" | "asin" | "atan" | "ceil" | "floor" | "ln" | "log10" | "log2"
+        | "rad2deg" | "round" | "sign" | "sin" | "sqrt" | "tan" | "deg2rad" => {
             let args = func.args();
             if args.len() != 1 {
                 return Err(AnalyzerError::UnexpectedSyntax);
             }
             match ctx.resolve(&args[0])? {
                 Kind::Number => Ok(Kind::Number),
-                _ => Err(AnalyzerError::UnexpectedSyntax)
+                _ => Err(AnalyzerError::UnexpectedSyntax),
             }
         }
 
@@ -49,7 +46,7 @@ pub(super) fn analyze_math(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
             }
             match (ctx.resolve(&args[0])?, ctx.resolve(&args[1])?) {
                 (Kind::Number, Kind::Number) => Ok(Kind::Number),
-                _ => Err(AnalyzerError::UnexpectedSyntax)
+                _ => Err(AnalyzerError::UnexpectedSyntax),
             }
         }
 
@@ -69,7 +66,7 @@ pub(super) fn analyze_math(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
                 }
             }
             Ok(Kind::Number)
-        },
+        }
         // log(number, base)
         "log" => {
             let args = func.args();
@@ -84,7 +81,7 @@ pub(super) fn analyze_math(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
                 }
             }
             Ok(Kind::Number)
-        },
+        }
         // lerp and lerpangle both require three numbers
         "lerp" | "lerpangle" => {
             let args = func.args();
@@ -99,7 +96,7 @@ pub(super) fn analyze_math(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
                 }
             }
             Ok(Kind::Number)
-        },
+        }
         // pow(number, exponent)
         "pow" => {
             let args = func.args();
@@ -114,27 +111,26 @@ pub(super) fn analyze_math(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
                 }
             }
             Ok(Kind::Number)
-        },
+        }
 
         // -------------------------------------------------------------------
         // FUNCTIONS THAT TAKE ARRAY ARGUMENTS (or an array plus a number)
         // These functions are for aggregations. Most of them accept an array of numbers and return a number.
-        "mean" | "median" | "midhinge" | "min" | "mode" |
-        "nearestrank" | "percentile" | "product" | "stddev" |
-        "sum" | "spread" | "trimean" | "variance" => {
+        "mean" | "median" | "midhinge" | "min" | "mode" | "nearestrank" | "percentile"
+        | "product" | "stddev" | "sum" | "spread" | "trimean" | "variance" => {
             let args = func.args();
             if args.len() != 1 {
                 return Err(AnalyzerError::UnexpectedSyntax);
             }
             match ctx.resolve(&args[0])? {
                 // Assuming your array type is Kind::Array(inner, _)
-                Kind::Array(inner, _) => {
+                Kind::Array(_, _) => {
                     // You might want to ensure that the inner type is a Number.
                     Ok(Kind::Number)
-                },
-                _ => Err(AnalyzerError::UnexpectedSyntax)
+                }
+                _ => Err(AnalyzerError::UnexpectedSyntax),
             }
-        },
+        }
         // "bottom" and "top" expect an array of numbers and a numeric argument (the count)
         "bottom" | "top" => {
             let args = func.args();
@@ -150,10 +146,10 @@ pub(super) fn analyze_math(ctx: &AnalyzerContext, func: &Function) -> AnalyzerRe
                     } else {
                         Err(AnalyzerError::UnexpectedSyntax)
                     }
-                },
-                _ => Err(AnalyzerError::UnexpectedSyntax)
+                }
+                _ => Err(AnalyzerError::UnexpectedSyntax),
             }
-        },
+        }
 
         // -------------------------------------------------------------------
         // If the function name is not found, report an error.

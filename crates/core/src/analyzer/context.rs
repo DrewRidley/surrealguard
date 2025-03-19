@@ -41,6 +41,12 @@ pub struct AnalyzerContext {
     /// It is possible to infer the required type of a parameter.
     /// This has to be bubbled up to the codegen for processing.
     inferred_params: Vec<(String, Kind)>,
+    /// Table name for the current scope user.
+    auth: Option<String>,
+
+    // A list of identifiers and their corresponding
+    // justifications for alterations to the original 'Kind'.
+    permissions: BTreeMap<String, String>,
 }
 
 impl AnalyzerContext {
@@ -48,7 +54,30 @@ impl AnalyzerContext {
         Self {
             definitions: Vec::new(),
             inferred_params: Vec::new(),
+            auth: None,
+            permissions: BTreeMap::new(),
         }
+    }
+
+    pub fn auth(&self) -> Option<&str> {
+        self.auth.as_deref()
+    }
+
+    /// Registers a permission for a field path.
+    ///
+    /// This function allows you to associate a permission with a specific field path.
+    /// The field path is a string representing the path to the field, and the permission
+    /// is a string representing the required permission for accessing the field.
+    ///
+    /// Example usage:
+    ///
+    /// ```
+    /// let mut context = AnalyzerContext::new();
+    /// context.register_permission("users.email", "read");
+    /// ```
+    pub fn register_permission(&mut self, field_path: &str, permission: &str) {
+        self.permissions
+            .insert(field_path.to_string(), permission.to_string());
     }
 
     pub fn add_inferred_param(&mut self, name: &str, kind: Kind) {

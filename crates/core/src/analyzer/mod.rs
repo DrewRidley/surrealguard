@@ -49,8 +49,6 @@ pub fn analyze(ctx: &mut AnalyzerContext, surql: &str) -> AnalyzerResult<Kind> {
         .map(|stmt| statements::analyze_statement(ctx, stmt))
         .collect::<Result<Vec<_>, _>>()?;
 
-
-
     match kinds.len() {
         0 => Ok(Kind::Null),
         //TODO: consolidate this after refactoring the kind! macro.
