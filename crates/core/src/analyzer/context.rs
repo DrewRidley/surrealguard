@@ -72,6 +72,7 @@ impl AnalyzerContext {
     /// Example usage:
     ///
     /// ```
+    /// use surrealguard_core::prelude::AnalyzerContext;
     /// let mut context = AnalyzerContext::new();
     /// context.register_permission("users.email", "read");
     /// ```
