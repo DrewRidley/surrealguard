@@ -109,85 +109,124 @@ pub fn analyze_select(context: &AnalyzerContext, stmt: &SelectStatement) -> Anal
         for field in &stmt.expr.0 {
             match field {
                 Field::Single { expr, alias } => {
-                    let field_idiom = match expr {
-                        Value::Idiom(idiom) => idiom,
-                        _ => return Err(AnalyzerError::UnexpectedSyntax),
-                    };
+                    // Handle different types of expressions
+                    match expr {
+                        Value::Idiom(idiom) => {
+                            let field_idiom = idiom;
 
-                    if should_omit_field(field_idiom, stmt.omit.as_ref()) {
-                        continue;
-                    }
-
-                    // Check if this is a graph traversal by looking for Graph parts
-                    if field_idiom.0.iter().any(|p| matches!(p, Part::Graph(_))) {
-                        let graph_type = analyze_graph_path(context, field_idiom)?;
-
-                        if let Some(alias_name) = alias {
-                            // For aliased paths, extract the innermost array type
-                            if let Kind::Literal(Literal::Object(graph_fields)) = graph_type {
-                                let final_type = extract_final_type(&graph_fields);
-                                field_types.insert(alias_name.to_string(), final_type);
+                            if should_omit_field(field_idiom, stmt.omit.as_ref()) {
+                                continue;
                             }
-                        } else {
-                            // No alias - use the full path structure
-                            if let Kind::Literal(Literal::Object(graph_fields)) = graph_type {
-                                field_types.extend(graph_fields);
-                            }
-                        }
-                        continue;
-                    }
 
-                    // Handle destructuring
-                    if let Some((parent_path, fields)) = get_destructure_parts(field_idiom) {
-                        if let Some(DefineStatement::Field(parent_field_def)) =
-                            context.find_field_definition(&table_name, &parent_path)
-                        {
-                            if let Some(Kind::Literal(Literal::Object(parent_type))) =
-                                &parent_field_def.kind
-                            {
-                                let mut destructured_types = BTreeMap::new();
-                                for field_name in fields {
-                                    if let Some(field_type) = parent_type.get(&field_name) {
-                                        destructured_types.insert(field_name, field_type.clone());
+                            // Check if this is a graph traversal by looking for Graph parts
+                            if field_idiom.0.iter().any(|p| matches!(p, Part::Graph(_))) {
+                                let graph_type = analyze_graph_path(context, field_idiom)?;
+
+                                if let Some(alias_name) = alias {
+                                    // For aliased paths, extract the innermost array type
+                                    if let Kind::Literal(Literal::Object(graph_fields)) = graph_type {
+                                        let final_type = extract_final_type(&graph_fields);
+                                        field_types.insert(alias_name.to_string(), final_type);
+                                    }
+                                } else {
+                                    // No alias - use the full path structure
+                                    if let Kind::Literal(Literal::Object(graph_fields)) = graph_type {
+                                        field_types.extend(graph_fields);
                                     }
                                 }
+                                continue;
+                            }
+
+                            // Handle destructuring
+                            if let Some((parent_path, fields)) = get_destructure_parts(field_idiom) {
+                                if let Some(DefineStatement::Field(parent_field_def)) =
+                                    context.find_field_definition(&table_name, &parent_path)
+                                {
+                                    if let Some(Kind::Literal(Literal::Object(parent_type))) =
+                                        &parent_field_def.kind
+                                    {
+                                        let mut destructured_types = BTreeMap::new();
+                                        for field_name in fields {
+                                            if let Some(field_type) = parent_type.get(&field_name) {
+                                                destructured_types.insert(field_name, field_type.clone());
+                                            }
+                                        }
+                                        let output_name = if let Some(alias_name) = alias {
+                                            alias_name.to_string()
+                                        } else {
+                                            parent_path.to_string()
+                                        };
+                                        field_types.insert(
+                                            output_name,
+                                            Kind::Literal(Literal::Object(destructured_types)),
+                                        );
+                                        continue;
+                                    }
+                                }
+                            }
+
+                            // Regular field handling
+                            if let Some(DefineStatement::Field(field_def)) =
+                                context.find_field_definition(&table_name, field_idiom)
+                            {
                                 let output_name = if let Some(alias_name) = alias {
                                     alias_name.to_string()
                                 } else {
-                                    parent_path.to_string()
+                                    field_idiom.to_string()
                                 };
-                                field_types.insert(
-                                    output_name,
-                                    Kind::Literal(Literal::Object(destructured_types)),
-                                );
-                                continue;
+                                if let Some(kind) = field_def.kind.clone() {
+                                    field_types.insert(output_name, kind);
+                                } else {
+                                    return Err(AnalyzerError::schema_violation(
+                                        "Field type not defined",
+                                        Some(&table_name),
+                                        Some(&field_idiom.to_string()),
+                                    ));
+                                }
+                            } else {
+                                return Err(AnalyzerError::field_not_found(
+                                    field_idiom.to_string(),
+                                    &table_name,
+                                ));
                             }
-                        }
-                    }
-
-                    // Regular field handling
-                    if let Some(DefineStatement::Field(field_def)) =
-                        context.find_field_definition(&table_name, field_idiom)
-                    {
-                        let output_name = if let Some(alias_name) = alias {
-                            alias_name.to_string()
-                        } else {
-                            field_idiom.to_string()
-                        };
-                        if let Some(kind) = field_def.kind.clone() {
+                        },
+                        Value::Subquery(_) => {
+                            // For subqueries, we determine the type based on our context's resolve method
+                            let output_name = if let Some(alias_name) = alias {
+                                alias_name.to_string()
+                            } else {
+                                "subquery".to_string() // Default name if no alias
+                            };
+                            
+                            // Use the context's resolve method to determine the type
+                            let kind = context.resolve(expr)?;
                             field_types.insert(output_name, kind);
-                        } else {
-                            return Err(AnalyzerError::schema_violation(
-                                "Field type not defined",
-                                Some(&table_name),
-                                Some(&field_idiom.to_string()),
-                            ));
-                        }
-                    } else {
-                        return Err(AnalyzerError::field_not_found(
-                            field_idiom.to_string(),
-                            &table_name,
-                        ));
+                        },
+                        Value::Query(_) => {
+                            // For queries, we determine the type based on our context's resolve method
+                            let output_name = if let Some(alias_name) = alias {
+                                alias_name.to_string()
+                            } else {
+                                "query".to_string() // Default name if no alias
+                            };
+                            
+                            // Use the context's resolve method to determine the type
+                            let kind = context.resolve(expr)?;
+                            field_types.insert(output_name, kind);
+                        },
+                        Value::Expression(_) => {
+                            // For expressions, we determine the type based on our context's resolve method
+                            let output_name = if let Some(alias_name) = alias {
+                                alias_name.to_string()
+                            } else {
+                                "expression".to_string() // Default name if no alias
+                            };
+                            
+                            // Use the context's resolve method to determine the type
+                            let kind = context.resolve(expr)?;
+                            field_types.insert(output_name, kind);
+                        },
+                        _ => return Err(AnalyzerError::UnexpectedSyntax),
                     }
                 }
                 _ => return Err(AnalyzerError::UnexpectedSyntax),
@@ -1002,6 +1041,115 @@ mod tests {
                 name: string,
                 industry: string
             }]
+        }>"#
+        );
+
+        assert_eq!(analyzed_kind, expected_kind);
+    }
+
+    #[test]
+    fn nested_query_in_select() {
+        let mut ctx = AnalyzerContext::new();
+
+        analyze(
+            &mut ctx,
+            r#"
+            DEFINE TABLE user SCHEMAFULL;
+                DEFINE FIELD name ON user TYPE string;
+                DEFINE FIELD age ON user TYPE number;
+            DEFINE TABLE post SCHEMAFULL;
+                DEFINE FIELD title ON post TYPE string;
+                DEFINE FIELD content ON post TYPE string;
+                DEFINE FIELD author ON post TYPE record<user>;
+        "#,
+        )
+        .expect("Schema construction should succeed");
+
+        // Test a SELECT statement with a nested subquery
+        let stmt = "SELECT *, (SELECT name FROM user WHERE user.id = post.author) AS author_name FROM post;";
+        let analyzed_kind = analyze_select(&mut ctx, stmt).expect("Analysis should succeed");
+        let expected_kind = kind!(
+            r#"array<{
+            title: string,
+            content: string,
+            author: record<user>,
+            author_name: [string]
+        }>"#
+        );
+
+        assert_eq!(analyzed_kind, expected_kind);
+    }
+
+    #[test]
+    fn nested_query_in_where_clause() {
+        let mut ctx = AnalyzerContext::new();
+
+        analyze(
+            &mut ctx,
+            r#"
+            DEFINE TABLE user SCHEMAFULL;
+                DEFINE FIELD name ON user TYPE string;
+                DEFINE FIELD age ON user TYPE number;
+            DEFINE TABLE post SCHEMAFULL;
+                DEFINE FIELD title ON post TYPE string;
+                DEFINE FIELD content ON post TYPE string;
+                DEFINE FIELD author ON post TYPE record<user>;
+        "#,
+        )
+        .expect("Schema construction should succeed");
+
+        // Test a SELECT statement with a nested subquery in the WHERE clause
+        let stmt = "SELECT * FROM post WHERE author IN (SELECT * FROM user WHERE age > 18);";
+        let analyzed_kind = analyze_select(&mut ctx, stmt).expect("Analysis should succeed");
+        let expected_kind = kind!(
+            r#"array<{
+            title: string,
+            content: string,
+            author: record<user>
+        }>"#
+        );
+
+        assert_eq!(analyzed_kind, expected_kind);
+    }
+
+    #[test]
+    fn multiple_nested_queries() {
+        let mut ctx = AnalyzerContext::new();
+
+        analyze(
+            &mut ctx,
+            r#"
+            DEFINE TABLE user SCHEMAFULL;
+                DEFINE FIELD name ON user TYPE string;
+                DEFINE FIELD age ON user TYPE number;
+            DEFINE TABLE post SCHEMAFULL;
+                DEFINE FIELD title ON post TYPE string;
+                DEFINE FIELD content ON post TYPE string;
+                DEFINE FIELD author ON post TYPE record<user>;
+            DEFINE TABLE comment SCHEMAFULL;
+                DEFINE FIELD text ON comment TYPE string;
+                DEFINE FIELD post ON comment TYPE record<post>;
+                DEFINE FIELD author ON comment TYPE record<user>;
+        "#,
+        )
+        .expect("Schema construction should succeed");
+
+        // Test a SELECT statement with multiple nested subqueries
+        let stmt = r#"
+            SELECT 
+                *, 
+                (SELECT name FROM user WHERE user.id = post.author) AS author_name,
+                (SELECT COUNT() FROM comment WHERE comment.post = post.id) AS comment_count
+            FROM post;
+        "#;
+        let analyzed_kind = analyze_select(&mut ctx, stmt).expect("Analysis should succeed");
+        let expected_kind = kind!(
+            r#"array<{
+            title: string,
+            content: string,
+            author: record<user>,
+            author_name: [string],
+            comment_count: [number]
         }>"#
         );
 
