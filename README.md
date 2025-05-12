@@ -2,6 +2,7 @@
 
 SurrealGuard is a static analysis and type checking system for SurrealQL queries, providing compile-time safety and type inference for your SurrealDB applications.
 
+
 ## Motivation
 
 Working with SurrealDB's query language (SurrealQL) in TypeScript/JavaScript applications can be challenging due to:
