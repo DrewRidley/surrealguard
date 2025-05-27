@@ -48,6 +48,10 @@ pub enum AnalyzerError {
     },
 
     /// Function call analysis failed
+    
+    /// Function return type mismatch between declared and inferred types
+    #[error("Function return type mismatch: declared {declared:?}, inferred {inferred:?}")]
+    FunctionReturnTypeMismatch { declared: Kind, inferred: Kind },
     #[error("Invalid function call: {message}")]
     InvalidFunctionCall { function: String, message: String },
 
@@ -191,6 +195,13 @@ impl AnalyzerError {
                 format!(
                     "Missing provided auth scope but $auth is used\n\
                          Suggestion: A scope must be provided when selecting from $auth!"
+                )
+            }
+            Self::FunctionReturnTypeMismatch { declared, inferred } => {
+                format!(
+                    "Function return type mismatch: declared {:?}, inferred {:?}\n\
+                         Suggestion: Update the function's return type or fix the function body.",
+                    declared, inferred
                 )
             }
         }

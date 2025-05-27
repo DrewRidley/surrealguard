@@ -35,12 +35,18 @@ use super::error::{AnalyzerError, AnalyzerResult};
 #[derive(Clone)]
 pub struct AnalyzerContext {
     definitions: Vec<DefineStatement>,
+    /// Local parameters: function arguments, LET variables (highest precedence)
+    local_params: BTreeMap<String, Kind>,
+    /// Global parameters: DEFINE PARAM statements (middle precedence)
+    global_params: BTreeMap<String, Kind>,
     /// Parameters whose types are inferred based on usage or positioning.
     ///
     /// In certain contexts, particularly UPDATE or CREATE,
     /// It is possible to infer the required type of a parameter.
     /// This has to be bubbled up to the codegen for processing.
-    inferred_params: Vec<(String, Kind)>,
+    required_params: Vec<(String, Kind)>,
+    /// Function metadata mapping function names to their required parameters
+    function_metadata: BTreeMap<String, Vec<(String, Kind)>>,
     /// Table name for the current scope user.
     auth: Option<String>,
 
@@ -53,7 +59,10 @@ impl AnalyzerContext {
     pub fn new() -> Self {
         Self {
             definitions: Vec::new(),
-            inferred_params: Vec::new(),
+            local_params: BTreeMap::new(),
+            global_params: BTreeMap::new(),
+            required_params: Vec::new(),
+            function_metadata: BTreeMap::new(),
             auth: None,
             permissions: BTreeMap::new(),
         }
@@ -80,19 +89,145 @@ impl AnalyzerContext {
             .insert(field_path.to_string(), permission.to_string());
     }
 
+    /// Adds a local parameter (function argument, LET variable)
+    pub fn add_local_param(&mut self, name: &str, kind: Kind) {
+        self.local_params.insert(name.to_string(), kind);
+    }
+
+    /// Adds a global parameter (DEFINE PARAM)
+    pub fn add_global_param(&mut self, name: &str, kind: Kind) {
+        self.global_params.insert(name.to_string(), kind);
+    }
+
+    /// Adds a required parameter (referenced but not found)
+    pub fn add_required_param(&mut self, name: &str, kind: Kind) {
+        self.required_params.push((name.to_string(), kind));
+    }
+
+    /// Gets a parameter with precedence: local → global → None
+    pub fn get_param(&self, name: &str) -> Option<&Kind> {
+        self.local_params.get(name)
+            .or_else(|| self.global_params.get(name))
+    }
+
+    /// Gets a parameter or adds it to required_params if not found
+    pub fn get_or_require_param(&mut self, name: &str, fallback_kind: Kind) -> Kind {
+        if let Some(kind) = self.get_param(name) {
+            kind.clone()
+        } else {
+            self.add_required_param(name, fallback_kind.clone());
+            fallback_kind
+        }
+    }
+
+    // Legacy method for backward compatibility - now uses required_params
     pub fn add_inferred_param(&mut self, name: &str, kind: Kind) {
-        self.inferred_params.push((name.to_string(), kind));
+        self.add_required_param(name, kind);
     }
 
     pub fn get_inferred_param(&self, name: &str) -> Option<&Kind> {
-        self.inferred_params
+        self.required_params
             .iter()
             .find(|(param_name, _)| param_name == name)
             .map(|(_, kind)| kind)
     }
 
     pub fn get_all_inferred_params(&self) -> &[(String, Kind)] {
-        &self.inferred_params
+        &self.required_params
+    }
+
+    pub fn get_all_required_params(&self) -> &[(String, Kind)] {
+        &self.required_params
+    }
+
+    /// Stores required parameters for a function
+    pub fn set_function_required_params(&mut self, function_name: &str, required_params: Vec<(String, Kind)>) {
+        self.function_metadata.insert(function_name.to_string(), required_params);
+    }
+
+    /// Gets required parameters for a function
+    pub fn get_function_required_params(&self, function_name: &str) -> Option<&Vec<(String, Kind)>> {
+        self.function_metadata.get(function_name)
+    }
+
+    /// Adds required parameters from a function call to the current context
+    pub fn inherit_function_required_params(&mut self, function_name: &str) {
+        if let Some(func_required_params) = self.function_metadata.get(function_name).cloned() {
+            for (param_name, param_type) in func_required_params {
+                self.add_required_param(&param_name, param_type);
+            }
+        }
+    }
+
+    /// Creates a new context for function analysis with the given parameters
+    pub fn with_function_params(&self, params: &[(String, Kind)]) -> Self {
+        let mut func_ctx = self.clone();
+        for (name, kind) in params {
+            func_ctx.add_local_param(name, kind.clone());
+        }
+        func_ctx
+    }
+
+    /// Clears local parameters (for resetting function scope)
+    pub fn clear_local_params(&mut self) {
+        self.local_params.clear();
+    }
+
+    /// Adds context variables for a specific statement type
+    pub fn add_context_variables_for_statement(&mut self, statement_type: &str, table_name: Option<&str>) {
+        match statement_type {
+            "CREATE" => {
+                self.add_local_param("value", Kind::Any);
+                self.add_local_param("auth", Kind::Any);
+                self.add_local_param("this", Kind::Any);
+                self.add_local_param("parent", Kind::Any);
+                
+                // If we know the table, we can be more specific about $value type
+                if let Some(table) = table_name {
+                    if let Ok(table_type) = self.build_full_table_type(table) {
+                        self.add_local_param("value", table_type);
+                    }
+                }
+            }
+            "UPDATE" => {
+                self.add_local_param("before", Kind::Any);
+                self.add_local_param("after", Kind::Any);
+                self.add_local_param("value", Kind::Any);
+                self.add_local_param("auth", Kind::Any);
+                self.add_local_param("this", Kind::Any);
+                self.add_local_param("parent", Kind::Any);
+                
+                // If we know the table, we can be more specific
+                if let Some(table) = table_name {
+                    if let Ok(table_type) = self.build_full_table_type(table) {
+                        self.add_local_param("before", table_type.clone());
+                        self.add_local_param("after", table_type);
+                    }
+                }
+            }
+            "SELECT" => {
+                self.add_local_param("auth", Kind::Any);
+                self.add_local_param("this", Kind::Any);
+                self.add_local_param("parent", Kind::Any);
+            }
+            "DELETE" => {
+                self.add_local_param("before", Kind::Any);
+                self.add_local_param("auth", Kind::Any);
+                self.add_local_param("this", Kind::Any);
+                self.add_local_param("parent", Kind::Any);
+                
+                // If we know the table, we can be more specific about $before
+                if let Some(table) = table_name {
+                    if let Ok(table_type) = self.build_full_table_type(table) {
+                        self.add_local_param("before", table_type);
+                    }
+                }
+            }
+            _ => {
+                // Default context variables available in most contexts
+                self.add_local_param("auth", Kind::Any);
+            }
+        }
     }
 
     pub fn infer_param_from_field(
@@ -346,7 +481,13 @@ impl AnalyzerContext {
             Value::Thing(thing) => Kind::Record(vec![Table::from(thing.tb.clone())]),
             Value::Table(table) => Kind::Record(vec![table.clone()]),
             Value::Range(_) => Kind::Range,
-            Value::Function(_) => Kind::Function(None, None),
+            Value::Function(func) => {
+                // Properly analyze the function instead of returning Function(None, None)
+                match crate::analyzer::functions::analyze_function(&mut self.clone(), func) {
+                    Ok(kind) => kind,
+                    Err(_) => Kind::Function(None, None), // Fallback to original behavior on error
+                }
+            },
             Value::Model(_) => Kind::Object,
             Value::Mock(_)
             | Value::Param(_)
