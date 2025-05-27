@@ -1,8 +1,8 @@
 use crate::analyzer::error::{AnalyzerError, AnalyzerResult};
-use surrealdb::sql::{Function, Kind};
+use surrealdb::sql::{Function, Kind, Value, Subquery};
 use super::AnalyzerContext;
 
-pub(super) fn analyze_array(ctx: &AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
+pub(super) fn analyze_array(ctx: &mut AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
     let name = func.name().ok_or(AnalyzerError::UnexpectedSyntax)?;
 
     // Get the specific function after the namespace
@@ -15,7 +15,19 @@ pub(super) fn analyze_array(ctx: &AnalyzerContext, func: &Function) -> AnalyzerR
              "prepend" | "push" | "remove" | "reverse" | "shuffle" |
              "sort" | "sort::asc" | "sort::desc" | "swap") => {
             if let Some(first_arg) = func.args().first() {
-                ctx.resolve(first_arg)
+                // Handle subqueries specially since ctx.resolve returns Kind::Any for them
+                match first_arg {
+                    Value::Subquery(subquery) => {
+                        match subquery.as_ref() {
+                            Subquery::Select(select_stmt) => {
+                                // Analyze the SELECT statement to get its proper result type
+                                crate::analyzer::statements::data::analyze_select(ctx, select_stmt)
+                            },
+                            _ => Ok(Kind::Any),
+                        }
+                    },
+                    _ => ctx.resolve(first_arg),
+                }
             } else {
                 Err(AnalyzerError::UnexpectedSyntax)
             }

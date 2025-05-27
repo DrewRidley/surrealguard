@@ -26,7 +26,7 @@
 //! assert_eq!(param_types.len(), 1);
 //! ```
 use std::collections::BTreeMap;
-use surrealdb::sql::statements::{DefineFieldStatement, DefineTableStatement};
+use surrealdb::sql::statements::{DefineFieldStatement, DefineTableStatement, AlterTableStatement, DefineFunctionStatement};
 use surrealdb::sql::{statements::DefineStatement, Geometry, Kind, Table, Value};
 use surrealdb::sql::{Idiom, Literal, Part, TableType};
 
@@ -244,6 +244,70 @@ impl AnalyzerContext {
 
     pub fn append_definition(&mut self, definition: DefineStatement) {
         self.definitions.push(definition);
+    }
+
+    pub fn remove_table_definition(&mut self, table_name: &str) {
+        self.definitions.retain(|def| {
+            !matches!(def, DefineStatement::Table(table_def) if table_def.name.0 == table_name)
+                && !matches!(def, DefineStatement::Field(field_def) if field_def.what.0 == table_name)
+        });
+    }
+
+    pub fn remove_field_definition(&mut self, table_name: &str, field_name: &Idiom) {
+        self.definitions.retain(|def| {
+            !matches!(def, DefineStatement::Field(field_def) 
+                if field_def.what.0 == table_name && &field_def.name == field_name)
+        });
+    }
+
+    pub fn find_function_definition(&self, function_name: &str) -> Option<&DefineFunctionStatement> {
+        self.definitions.iter().find_map(|def| {
+            if let DefineStatement::Function(func_def) = def {
+                // Compare full qualified name (e.g., "fn::sync_market_relations")
+                let full_name = format!("fn::{}", func_def.name.0);
+                if full_name == function_name {
+                    Some(func_def)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn alter_table_definition(&mut self, alter_table: &AlterTableStatement) -> AnalyzerResult<()> {
+        
+        let table_name = &alter_table.name.0;
+        
+        // Find and modify the existing table definition
+        for def in &mut self.definitions {
+            if let DefineStatement::Table(table_def) = def {
+                if table_def.name.0 == *table_name {
+                    // Apply the alterations
+                    if let Some(full) = &alter_table.full {
+                        table_def.full = *full;
+                    }
+                    
+                    if let Some(permissions) = &alter_table.permissions {
+                        table_def.permissions = permissions.clone();
+                    }
+                    
+                    if let Some(comment) = &alter_table.comment {
+                        table_def.comment = comment.clone();
+                    }
+                    
+                    if let Some(kind) = &alter_table.kind {
+                        table_def.kind = kind.clone();
+                    }
+                    
+                    return Ok(());
+                }
+            }
+        }
+        
+        // If we get here, the table wasn't found (shouldn't happen due to earlier check)
+        Err(AnalyzerError::TableNotFound(table_name.clone()))
     }
     pub fn resolve(&self, value: &Value) -> AnalyzerResult<Kind> {
         Ok(match value {

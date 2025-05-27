@@ -2,7 +2,7 @@ use super::AnalyzerContext;
 use crate::analyzer::error::{AnalyzerError, AnalyzerResult};
 use surrealdb::sql::{Function, Kind};
 
-pub(super) fn analyze_math(ctx: &AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
+pub(super) fn analyze_math(ctx: &mut AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
     // Get the full function name – e.g. "math::abs" or "math::clamp"
     let name = func.name().ok_or(AnalyzerError::UnexpectedSyntax)?;
     let segments: Vec<&str> = name.split("::").collect();

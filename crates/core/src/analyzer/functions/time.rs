@@ -41,7 +41,7 @@ use super::AnalyzerContext;
 ///   • time::from::ulid(string) -> datetime
 ///   • time::from::uuid(uuid) -> datetime
 ///
-pub(super) fn analyze_time(ctx: &AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
+pub(super) fn analyze_time(ctx: &mut AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
     // Retrieve the full function name (e.g. "time::ceil", "time::from::millis", etc.)
     let name = func.name().ok_or(AnalyzerError::UnexpectedSyntax)?;
     let segments: Vec<&str> = name.split("::").collect();

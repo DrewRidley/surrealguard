@@ -37,12 +37,14 @@ use crate::analyzer::{
 };
 use std::collections::BTreeMap;
 use surrealdb::sql::{
-    statements::{DefineStatement, SelectStatement},
+    statements::{DefineStatement, SelectStatement}, Statement, Subquery,
     Dir, Fetch, Field, Idiom, Idioms, Kind, Literal, Part, Table, Value,
 };
 
-pub fn analyze_select(context: &AnalyzerContext, stmt: &SelectStatement) -> AnalyzerResult<Kind> {
+pub fn analyze_select(context: &mut AnalyzerContext, stmt: &SelectStatement) -> AnalyzerResult<Kind> {
     let table_value = stmt.what.0.first().ok_or(AnalyzerError::UnexpectedSyntax)?;
+
+
     let raw_table_name = match table_value {
         Value::Table(t) => t.0.clone(),
         Value::Thing(thing) => thing.tb.clone(),
@@ -55,6 +57,111 @@ pub fn analyze_select(context: &AnalyzerContext, stmt: &SelectStatement) -> Anal
                 todo!("Implement token inference")
             }
             _ => return Err(AnalyzerError::UnexpectedSyntax),
+        },
+        Value::Subquery(subquery) => {
+            // For subqueries, we need to analyze the inner query
+            // Handle the case where it's a SELECT from a table
+            match subquery.as_ref() {
+                Subquery::Select(select_stmt) => {
+                    if let Some(Value::Table(table)) = select_stmt.what.0.first() {
+                        table.0.clone()
+                    } else {
+                        return Err(AnalyzerError::UnexpectedSyntax);
+                    }
+                },
+                _ => return Err(AnalyzerError::UnexpectedSyntax),
+            }
+        },
+        Value::Function(func) => {
+            // Handle function calls that return records (like type::thing)
+            let func_result = crate::analyzer::functions::analyze_function(context, func)?;
+            match func_result {
+                Kind::Record(tables) => {
+                    if let Some(table) = tables.first() {
+                        table.0.clone()
+                    } else {
+                        // Generic record, use a default table name
+                        "unknown".to_string()
+                    }
+                },
+                _ => return Err(AnalyzerError::UnexpectedSyntax),
+            }
+        },
+        Value::Expression(_expr) => {
+            // Handle expressions like user[0] or (SELECT ...)[0].field
+            // For now, try to resolve the expression and extract table info
+            let expr_result = context.resolve(table_value)?;
+            match expr_result {
+                Kind::Record(tables) => {
+                    if let Some(table) = tables.first() {
+                        table.0.clone()
+                    } else {
+                        // Generic record, use a default table name
+                        "unknown".to_string()
+                    }
+                },
+                Kind::Array(inner_type, _) => {
+                    // If it's an array, check if the inner type is a record
+                    match inner_type.as_ref() {
+                        Kind::Record(tables) => {
+                            if let Some(table) = tables.first() {
+                                table.0.clone()
+                            } else {
+                                "unknown".to_string()
+                            }
+                        },
+                        _ => "unknown".to_string(),
+                    }
+                },
+                _ => "unknown".to_string(),
+            }
+        },
+        Value::Idiom(idiom) => {
+            // Handle idioms like user[0] or (SELECT ...)[0].field
+            if let Some(first_part) = idiom.0.first() {
+                match first_part {
+                    Part::Field(field) => field.0.clone(),
+                    Part::Start(subquery) => {
+                        // Handle complex expressions starting with subqueries
+                        match subquery {
+                            Value::Subquery(sq) => {
+                                // Extract table from the subquery
+                                match sq.as_ref() {
+                                    Subquery::Select(select_stmt) => {
+                                        if let Some(subquery_table_value) = select_stmt.what.0.first() {
+                                            match subquery_table_value {
+                                                Value::Table(table) => table.0.clone(),
+                                                Value::Function(func) => {
+                                                    // Handle functions like type::thing that return records
+                                                    let func_result = crate::analyzer::functions::analyze_function(context, func)?;
+                                                    match func_result {
+                                                        Kind::Record(tables) => {
+                                                            if let Some(table) = tables.first() {
+                                                                table.0.clone()
+                                                            } else {
+                                                                "unknown".to_string()
+                                                            }
+                                                        },
+                                                        _ => "unknown".to_string(),
+                                                    }
+                                                },
+                                                _ => "unknown".to_string(),
+                                            }
+                                        } else {
+                                            "unknown".to_string()
+                                        }
+                                    },
+                                    _ => "unknown".to_string(),
+                                }
+                            },
+                            _ => "unknown".to_string(),
+                        }
+                    },
+                    _ => return Err(AnalyzerError::UnexpectedSyntax),
+                }
+            } else {
+                return Err(AnalyzerError::UnexpectedSyntax);
+            }
         },
         _ => return Err(AnalyzerError::UnexpectedSyntax),
     };
@@ -86,8 +193,11 @@ pub fn analyze_select(context: &AnalyzerContext, stmt: &SelectStatement) -> Anal
                 {
                     let mut resolved = field_def.kind.clone().unwrap_or(Kind::Any);
                     if let Some(fetches) = stmt.fetch.as_ref() {
-                        let fetch_chain = fetches_to_chain(fetches);
-                        resolved = resolved.resolve_fetch(&fetch_chain, context);
+                        for fetch in &fetches.0 {
+                            let fetch_path_str = fetch.0.to_string().trim().to_lowercase();
+                            let fetch_segments: Vec<String> = fetch_path_str.split('.').map(|s| s.to_string()).collect();
+                            resolved = resolved.resolve_fetch(&fetch_segments, context);
+                        }
                     }
                     return Ok(Kind::Literal(Literal::Array(vec![resolved])));
                 } else {
@@ -109,85 +219,104 @@ pub fn analyze_select(context: &AnalyzerContext, stmt: &SelectStatement) -> Anal
         for field in &stmt.expr.0 {
             match field {
                 Field::Single { expr, alias } => {
-                    let field_idiom = match expr {
-                        Value::Idiom(idiom) => idiom,
-                        _ => return Err(AnalyzerError::UnexpectedSyntax),
-                    };
+                    match expr {
+                        Value::Idiom(idiom) => {
+                            let field_idiom = idiom;
 
-                    if should_omit_field(field_idiom, stmt.omit.as_ref()) {
-                        continue;
-                    }
-
-                    // Check if this is a graph traversal by looking for Graph parts
-                    if field_idiom.0.iter().any(|p| matches!(p, Part::Graph(_))) {
-                        let graph_type = analyze_graph_path(context, field_idiom)?;
-
-                        if let Some(alias_name) = alias {
-                            // For aliased paths, extract the innermost array type
-                            if let Kind::Literal(Literal::Object(graph_fields)) = graph_type {
-                                let final_type = extract_final_type(&graph_fields);
-                                field_types.insert(alias_name.to_string(), final_type);
-                            }
-                        } else {
-                            // No alias - use the full path structure
-                            if let Kind::Literal(Literal::Object(graph_fields)) = graph_type {
-                                field_types.extend(graph_fields);
-                            }
-                        }
-                        continue;
-                    }
-
-                    // Handle destructuring
-                    if let Some((parent_path, fields)) = get_destructure_parts(field_idiom) {
-                        if let Some(DefineStatement::Field(parent_field_def)) =
-                            context.find_field_definition(&table_name, &parent_path)
-                        {
-                            if let Some(Kind::Literal(Literal::Object(parent_type))) =
-                                &parent_field_def.kind
-                            {
-                                let mut destructured_types = BTreeMap::new();
-                                for field_name in fields {
-                                    if let Some(field_type) = parent_type.get(&field_name) {
-                                        destructured_types.insert(field_name, field_type.clone());
-                                    }
-                                }
-                                let output_name = if let Some(alias_name) = alias {
-                                    alias_name.to_string()
-                                } else {
-                                    parent_path.to_string()
-                                };
-                                field_types.insert(
-                                    output_name,
-                                    Kind::Literal(Literal::Object(destructured_types)),
-                                );
+                            if should_omit_field(field_idiom, stmt.omit.as_ref()) {
                                 continue;
                             }
-                        }
-                    }
 
-                    // Regular field handling
-                    if let Some(DefineStatement::Field(field_def)) =
-                        context.find_field_definition(&table_name, field_idiom)
-                    {
-                        let output_name = if let Some(alias_name) = alias {
-                            alias_name.to_string()
-                        } else {
-                            field_idiom.to_string()
-                        };
-                        if let Some(kind) = field_def.kind.clone() {
-                            field_types.insert(output_name, kind);
-                        } else {
-                            return Err(AnalyzerError::schema_violation(
-                                "Field type not defined",
-                                Some(&table_name),
-                                Some(&field_idiom.to_string()),
-                            ));
+                            // Check if this is a graph traversal by looking for Graph parts
+                            if field_idiom.0.iter().any(|p| matches!(p, Part::Graph(_))) {
+                                let graph_type = analyze_graph_path(context, field_idiom)?;
+
+                                if let Some(alias_name) = alias {
+                                    // For aliased paths, use the alias name as string
+                                    if let Kind::Literal(Literal::Object(graph_fields)) = graph_type {
+                                        let final_type = extract_final_type(&graph_fields);
+                                        field_types.insert(alias_name.to_string(), final_type);
+                                    }
+                                } else {
+                                    // For non-aliased paths, use the field idiom string
+                                    if let Kind::Literal(Literal::Object(graph_fields)) = graph_type {
+                                        field_types.extend(graph_fields);
+                                    }
+                                }
+                                continue;
+                            }
+
+                            // Check for destructuring syntax
+                            if let Some((parent_path, fields)) = get_destructure_parts(field_idiom) {
+                                if let Some(DefineStatement::Field(parent_field_def)) =
+                                    context.find_field_definition(&table_name, &parent_path)
+                                {
+                                    if let Some(Kind::Literal(Literal::Object(parent_type))) =
+                                        &parent_field_def.kind
+                                    {
+                                        let mut destructured_types = BTreeMap::new();
+                                        for field_name in fields {
+                                            if let Some(field_type) = parent_type.get(&field_name) {
+                                                destructured_types.insert(field_name, field_type.clone());
+                                            }
+                                        }
+
+                                        let destructured_kind =
+                                            Kind::Literal(Literal::Object(destructured_types));
+
+                                        if let Some(alias_name) = alias {
+                                            field_types.insert(alias_name.to_string(), destructured_kind);
+                                        } else {
+                                            field_types.insert(
+                                                parent_path.to_string(),
+                                                destructured_kind,
+                                            );
+                                        }
+                                        continue;
+                                    }
+                                }
+                            }
+
+                            // Regular field handling
+                            if let Some(DefineStatement::Field(field_def)) =
+                                context.find_field_definition(&table_name, field_idiom)
+                            {
+                                let mut resolved = field_def.kind.clone().unwrap_or(Kind::Any);
+                                if let Some(fetches) = stmt.fetch.as_ref() {
+                                    for fetch in &fetches.0 {
+                                        let fetch_path_str = fetch.0.to_string().trim().to_lowercase();
+                                        let fetch_segments: Vec<String> = fetch_path_str.split('.').map(|s| s.to_string()).collect();
+                                        resolved = resolved.resolve_fetch(&fetch_segments, context);
+                                    }
+                                }
+
+                                let field_name = if let Some(alias_name) = alias {
+                                    alias_name.to_string()
+                                } else {
+                                    field_idiom.to_string()
+                                };
+
+                                field_types.insert(field_name, resolved);
+                            } else {
+                                return Err(AnalyzerError::field_not_found(
+                                    field_idiom.to_string(),
+                                    &table_name,
+                                ));
+                            }
                         }
-                    } else {
-                        return Err(AnalyzerError::field_not_found(
-                            field_idiom.to_string(),
-                            &table_name,
-                        ));
+                        Value::Function(func) => {
+                            // Handle function calls in SELECT
+                            let func_result = crate::analyzer::functions::analyze_function(context, func)?;
+                            
+                            let field_name = if let Some(alias_name) = alias {
+                                alias_name.to_string()
+                            } else {
+                                func.name().unwrap_or("function_result").to_string()
+                            };
+
+                            field_types.insert(field_name, func_result);
+                        }
+                        _ => return Err(AnalyzerError::UnexpectedSyntax),
                     }
                 }
                 _ => return Err(AnalyzerError::UnexpectedSyntax),
@@ -197,8 +326,13 @@ pub fn analyze_select(context: &AnalyzerContext, stmt: &SelectStatement) -> Anal
     };
 
     let transformed_kind = if let Some(fetches) = stmt.fetch.as_ref() {
-        let fetch_chain = fetches_to_chain(fetches);
-        base_kind.resolve_fetch(&fetch_chain, context)
+        let mut result = base_kind;
+        for fetch in &fetches.0 {
+            let fetch_path_str = fetch.0.to_string().trim().to_lowercase();
+            let fetch_segments: Vec<String> = fetch_path_str.split('.').map(|s| s.to_string()).collect();
+            result = result.resolve_fetch(&fetch_segments, context);
+        }
+        result
     } else {
         base_kind
     };
@@ -281,7 +415,7 @@ pub fn analyze_graph_path(context: &AnalyzerContext, field_idiom: &Idiom) -> Ana
     // For single graph part
     if graph_parts.len() == 1 {
         let graph = &graph_parts[0];
-        let table = &graph.what.0[0].0;
+        let table = get_table_from_graph_subject(&graph.what.0[0]);
 
         // Handle modifiers for the record type
         let inner_type = match final_modifier {
@@ -290,7 +424,7 @@ pub fn analyze_graph_path(context: &AnalyzerContext, field_idiom: &Idiom) -> Ana
                 let full = build_full_table_type(context, table, None)?;
                 restrict_type(full, fields)
             }
-            None => Kind::Record(vec![Table::from(table.clone())]),
+            None => Kind::Record(vec![Table::from(table)]),
         };
 
         let mut result = BTreeMap::new();
@@ -307,7 +441,7 @@ pub fn analyze_graph_path(context: &AnalyzerContext, field_idiom: &Idiom) -> Ana
     // For multiple graph parts, build from inside out
     let mut current = {
         let last_graph = graph_parts.last().unwrap();
-        let table = &last_graph.what.0[0].0;
+        let table = get_table_from_graph_subject(&last_graph.what.0[0]);
 
         // Handle modifiers for the final record type
         let inner_type = match final_modifier {
@@ -316,7 +450,7 @@ pub fn analyze_graph_path(context: &AnalyzerContext, field_idiom: &Idiom) -> Ana
                 let full = build_full_table_type(context, table, None)?;
                 restrict_type(full, fields)
             }
-            None => Kind::Record(vec![Table::from(table.clone())]),
+            None => Kind::Record(vec![Table::from(table)]),
         };
 
         let mut map = BTreeMap::new();
@@ -332,7 +466,7 @@ pub fn analyze_graph_path(context: &AnalyzerContext, field_idiom: &Idiom) -> Ana
 
     // Work backwards through the remaining parts
     for graph in graph_parts[..graph_parts.len() - 1].iter().rev() {
-        let table = &graph.what.0[0].0;
+        let table = get_table_from_graph_subject(&graph.what.0[0]);
 
         let mut map = BTreeMap::new();
         let key = match graph.dir {
@@ -464,14 +598,27 @@ impl KindFetchExt for Kind {
     fn resolve_fetch(&self, fetch_chain: &[String], ctx: &AnalyzerContext) -> Self {
         // When no fetch segments remain, if self is a record we try to expand it.
         if fetch_chain.is_empty() {
-            if let Kind::Record(tables) = self {
-                if let Some(table) = tables.first() {
-                    if let Ok(full_type) = ctx.build_full_table_type(&table.0) {
-                        return full_type;
+            match self {
+                Kind::Record(tables) => {
+                    if let Some(table) = tables.first() {
+                        if let Ok(full_type) = ctx.build_full_table_type(&table.0) {
+                            return full_type;
+                        }
                     }
+                    return self.clone();
                 }
+                Kind::Option(inner) => {
+                    if let Kind::Record(tables) = &**inner {
+                        if let Some(table) = tables.first() {
+                            if let Ok(full_type) = ctx.build_full_table_type(&table.0) {
+                                return Kind::Option(Box::new(full_type));
+                            }
+                        }
+                    }
+                    return self.clone();
+                }
+                _ => return self.clone(),
             }
-            return self.clone();
         }
         match self {
             Kind::Record(tables) => {
@@ -506,6 +653,89 @@ impl KindFetchExt for Kind {
                 }
                 Kind::Literal(Literal::Object(new_map))
             }
+            Kind::Literal(Literal::DiscriminatedObject(discriminant, variants)) => {
+                let new_variants: Vec<BTreeMap<String, Kind>> = variants
+                    .iter()
+                    .map(|variant| {
+                        let mut new_variant = variant.clone();
+                        for (key, value) in variant.iter() {
+                            if key.trim().to_lowercase() == fetch_chain[0] {
+                                // Handle different value types that might contain records
+                                let resolved_value = match value {
+                                    // Direct record type
+                                    Kind::Record(tables) => {
+                                        if let Some(table) = tables.first() {
+                                            if let Ok(full_type) = ctx.build_full_table_type(&table.0) {
+                                                full_type.resolve_fetch(&fetch_chain[1..], ctx)
+                                            } else {
+                                                value.resolve_fetch(&fetch_chain[1..], ctx)
+                                            }
+                                        } else {
+                                            value.resolve_fetch(&fetch_chain[1..], ctx)
+                                        }
+                                    }
+                                    // Array<record<T>>
+                                    Kind::Array(inner, len) => {
+                                        match &**inner {
+                                            Kind::Record(tables) => {
+                                                if let Some(table) = tables.first() {
+                                                    if let Ok(full_type) = ctx.build_full_table_type(&table.0) {
+                                                        Kind::Array(Box::new(full_type.resolve_fetch(&fetch_chain[1..], ctx)), *len)
+                                                    } else {
+                                                        value.resolve_fetch(&fetch_chain[1..], ctx)
+                                                    }
+                                                } else {
+                                                    value.resolve_fetch(&fetch_chain[1..], ctx)
+                                                }
+                                            }
+                                            _ => value.resolve_fetch(&fetch_chain[1..], ctx)
+                                        }
+                                    }
+                                    // Option<T> where T could be record, array, etc.
+                                    Kind::Option(inner) => {
+                                        match &**inner {
+                                            // Option<record<T>>
+                                            Kind::Record(tables) => {
+                                                if let Some(table) = tables.first() {
+                                                    if let Ok(full_type) = ctx.build_full_table_type(&table.0) {
+                                                        Kind::Option(Box::new(full_type.resolve_fetch(&fetch_chain[1..], ctx)))
+                                                    } else {
+                                                        value.resolve_fetch(&fetch_chain[1..], ctx)
+                                                    }
+                                                } else {
+                                                    value.resolve_fetch(&fetch_chain[1..], ctx)
+                                                }
+                                            }
+                                            // Option<array<record<T>>>
+                                            Kind::Array(array_inner, len) => {
+                                                if let Kind::Record(tables) = &**array_inner {
+                                                    if let Some(table) = tables.first() {
+                                                        if let Ok(full_type) = ctx.build_full_table_type(&table.0) {
+                                                            Kind::Option(Box::new(Kind::Array(Box::new(full_type.resolve_fetch(&fetch_chain[1..], ctx)), *len)))
+                                                        } else {
+                                                            value.resolve_fetch(&fetch_chain[1..], ctx)
+                                                        }
+                                                    } else {
+                                                        value.resolve_fetch(&fetch_chain[1..], ctx)
+                                                    }
+                                                } else {
+                                                    value.resolve_fetch(&fetch_chain[1..], ctx)
+                                                }
+                                            }
+                                            _ => value.resolve_fetch(&fetch_chain[1..], ctx)
+                                        }
+                                    }
+                                    // Default case: delegate to recursive resolve_fetch
+                                    _ => value.resolve_fetch(&fetch_chain[1..], ctx)
+                                };
+                                new_variant.insert(key.clone(), resolved_value);
+                            }
+                        }
+                        new_variant
+                    })
+                    .collect();
+                Kind::Literal(Literal::DiscriminatedObject(discriminant.clone(), new_variants))
+            }
             Kind::Array(inner, len) => {
                 let new_inner = inner.resolve_fetch(fetch_chain, ctx);
                 Kind::Array(Box::new(new_inner), *len)
@@ -516,6 +746,11 @@ impl KindFetchExt for Kind {
                     .map(|k| k.resolve_fetch(fetch_chain, ctx))
                     .collect();
                 Kind::Either(new_kinds)
+            }
+            Kind::Option(inner) => {
+                // When we have more fetch segments, traverse into the Option
+                let resolved_inner = inner.resolve_fetch(fetch_chain, ctx);
+                Kind::Option(Box::new(resolved_inner))
             }
             _ => self.clone(),
         }
@@ -1006,5 +1241,16 @@ mod tests {
         );
 
         assert_eq!(analyzed_kind, expected_kind);
+    }
+}
+
+use surrealdb::sql::GraphSubject;
+
+/// Helper function to extract the table name from a GraphSubject
+fn get_table_from_graph_subject(subject: &surrealdb::sql::GraphSubject) -> &str {
+    match subject {
+        GraphSubject::Table(table) => &table.0,
+        GraphSubject::Range(table, _) => &table.0,
+        _ => "",
     }
 }

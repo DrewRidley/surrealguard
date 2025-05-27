@@ -58,6 +58,9 @@ pub enum AnalyzerError {
     #[error("Unexpected syntax was encountered")]
     UnexpectedSyntax,
 
+    #[error("Unexpected syntax at {location}: {message}")]
+    UnexpectedSyntaxWithContext { location: String, message: String },
+
     #[error("No scope provided for $auth inference.")]
     MissingAuth,
 
@@ -71,6 +74,17 @@ impl AnalyzerError {
         Self::TypeMismatch {
             expected: expected.to_string(),
             found: found.to_string(),
+        }
+    }
+
+    /// Creates an unexpected syntax error with context
+    pub fn unexpected_syntax_with_context(
+        location: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::UnexpectedSyntaxWithContext {
+            location: location.into(),
+            message: message.into(),
         }
     }
 
@@ -152,6 +166,13 @@ impl AnalyzerError {
             Self::UnexpectedSyntax => "Unexpected syntax encountered\n\
                      Suggestion: Verify query syntax against SurrealQL documentation."
                 .to_string(),
+            Self::UnexpectedSyntaxWithContext { location, message } => {
+                format!(
+                    "Unexpected syntax at {}: {}\n\
+                     Suggestion: Verify query syntax against SurrealQL documentation.",
+                    location, message
+                )
+            }
             Self::Unimplemented(feature) => {
                 format!(
                     "Feature not implemented: {}\n\

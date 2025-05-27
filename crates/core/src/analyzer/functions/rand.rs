@@ -2,7 +2,7 @@ use crate::analyzer::error::{AnalyzerError, AnalyzerResult};
 use surrealdb::sql::{Function, Kind};
 use super::AnalyzerContext;
 
-pub(super) fn analyze_rand(ctx: &AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
+pub(super) fn analyze_rand(ctx: &mut AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
     let name = func.name().ok_or(AnalyzerError::UnexpectedSyntax)?;
     let segments: Vec<&str> = name.split("::").collect();
 

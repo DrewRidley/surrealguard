@@ -1,6 +1,6 @@
 use surrealdb::sql::{
     statements::UpdateStatement,
-    Data, Idiom, Kind, Value,
+    Data, Idiom, Kind, Value, Subquery,
 };
 
 use crate::analyzer::{
@@ -10,16 +10,36 @@ use crate::analyzer::{
 
 pub fn analyze_update(ctx: &mut AnalyzerContext, stmt: &UpdateStatement) -> AnalyzerResult<Kind> {
     // Get the table name from the first value
-    let kind = ctx.resolve(&stmt.what.0[0])?;
-    let table_name = match &kind {
-        Kind::Record(tables) => {
-            if let Some(table) = tables.first() {
-                &table.0
-            } else {
-                return Err(AnalyzerError::UnexpectedSyntax);
+    let table_name = match &stmt.what.0[0] {
+        Value::Table(table) => table.0.clone(),
+        Value::Thing(thing) => thing.tb.clone(),
+        Value::Subquery(subquery) => {
+            // Handle subqueries - extract table name from inner SELECT
+            match subquery.as_ref() {
+                Subquery::Select(select_stmt) => {
+                    if let Some(Value::Table(table)) = select_stmt.what.0.first() {
+                        table.0.clone()
+                    } else {
+                        return Err(AnalyzerError::UnexpectedSyntax);
+                    }
+                },
+                _ => return Err(AnalyzerError::UnexpectedSyntax),
+            }
+        },
+        _ => {
+            // Fallback to the old resolve method for other cases
+            let kind = ctx.resolve(&stmt.what.0[0])?;
+            match &kind {
+                Kind::Record(tables) => {
+                    if let Some(table) = tables.first() {
+                        table.0.clone()
+                    } else {
+                        return Err(AnalyzerError::UnexpectedSyntax);
+                    }
+                }
+                _ => return Err(AnalyzerError::UnexpectedSyntax),
             }
         }
-        _ => return Err(AnalyzerError::UnexpectedSyntax),
     };
 
     // Analyze the Data variant for parameter inference
@@ -29,7 +49,7 @@ pub fn analyze_update(ctx: &mut AnalyzerContext, stmt: &UpdateStatement) -> Anal
                 for (idiom, _op, value) in sets {
                     if let Value::Param(param_name) = value {
                         // For SET expressions, infer from the field being set
-                        ctx.infer_param_from_field(table_name, idiom, param_name)?;
+                        ctx.infer_param_from_field(&table_name, idiom, param_name)?;
                     }
                 }
             }
@@ -37,14 +57,14 @@ pub fn analyze_update(ctx: &mut AnalyzerContext, stmt: &UpdateStatement) -> Anal
                 match value {
                     Value::Param(param_name) => {
                         // For CONTENT $param, infer the full table type
-                        ctx.infer_param_from_table(table_name, param_name)?;
+                        ctx.infer_param_from_table(&table_name, param_name)?;
                     }
                     Value::Object(obj) => {
                         // For CONTENT { field: $param }, infer each field's type
                         for (field, value) in obj.iter() {
                             if let Value::Param(param_name) = value {
                                 let field_idiom = Idiom::from(field.clone());
-                                ctx.infer_param_from_field(table_name, &field_idiom, param_name)?;
+                                ctx.infer_param_from_field(&table_name, &field_idiom, param_name)?;
                             }
                         }
                     }
@@ -57,14 +77,14 @@ pub fn analyze_update(ctx: &mut AnalyzerContext, stmt: &UpdateStatement) -> Anal
                 match value {
                     Value::Param(param_name) => {
                         // For MERGE/PATCH/REPLACE $param, infer the full table type
-                        ctx.infer_param_from_table(table_name, param_name)?;
+                        ctx.infer_param_from_table(&table_name, param_name)?;
                     }
                     Value::Object(obj) => {
                         // For MERGE/PATCH/REPLACE { field: $param }, infer each field's type
                         for (field, value) in obj.iter() {
                             if let Value::Param(param_name) = value {
                                 let field_idiom = Idiom::from(field.clone());
-                                ctx.infer_param_from_field(table_name, &field_idiom, param_name)?;
+                                ctx.infer_param_from_field(&table_name, &field_idiom, param_name)?;
                             }
                         }
                     }
@@ -74,7 +94,7 @@ pub fn analyze_update(ctx: &mut AnalyzerContext, stmt: &UpdateStatement) -> Anal
             Data::UpdateExpression(updates) => {
                 for (idiom, _op, value) in updates {
                     if let Value::Param(param_name) = value {
-                        ctx.infer_param_from_field(table_name, idiom, param_name)?;
+                        ctx.infer_param_from_field(&table_name, idiom, param_name)?;
                     }
                 }
             }
@@ -86,7 +106,7 @@ pub fn analyze_update(ctx: &mut AnalyzerContext, stmt: &UpdateStatement) -> Anal
         }
     }
 
-    let target_type = ctx.build_full_table_type(table_name)?;
+    let target_type = ctx.build_full_table_type(&table_name)?;
     Ok(Kind::Array(Box::new(target_type), None))
 }
 

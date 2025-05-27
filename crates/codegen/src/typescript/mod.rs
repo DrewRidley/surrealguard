@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::error::{CodegenError, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use regex::Regex;
@@ -72,12 +72,20 @@ impl Generator {
                 let entry = entry.map_err(|_| CodegenError::InvalidPath(path.to_path_buf()))?;
                 if entry.path().extension().map_or(false, |ext| ext == "surql") {
                     let content = fs::read_to_string(entry.path())?;
-                    analyzer::analyze(&mut self.ctx, &content)?;
+                    analyzer::analyze(&mut self.ctx, &content)
+                        .map_err(|e| CodegenError::Analysis {
+                            error: Box::new(e),
+                            context: format!("schema file: {}", entry.path().display()),
+                        })?;
                 }
             }
         } else {
             let content = fs::read_to_string(path)?;
-            analyzer::analyze(&mut self.ctx, &content)?;
+            analyzer::analyze(&mut self.ctx, &content)
+                .map_err(|e| CodegenError::Analysis {
+                    error: Box::new(e),
+                    context: format!("schema file: {}", path.display()),
+                })?;
         }
         Ok(())
     }
@@ -105,6 +113,13 @@ impl Generator {
             .unwrap_or("UnnamedQuery")
             .to_string();
         self.analyze_query(&content, Some(name))
+            .map_err(|e| match e {
+                CodegenError::Analysis { error, .. } => CodegenError::Analysis {
+                    error,
+                    context: format!("query file: {}", path.display()),
+                },
+                other => other,
+            })
     }
 
     // Fuck typescript but we have to do this since template literals are borked:
@@ -140,7 +155,14 @@ impl Generator {
                                         continue;
                                     }
                                     // Analyze the query string.
-                                    self.analyze_query(query, None)?;
+                                    self.analyze_query(query, None)
+                                        .map_err(|e| match e {
+                                            CodegenError::Analysis { error, .. } => CodegenError::Analysis {
+                                                error,
+                                                context: format!("source file: {} (query: {})", entry.path().display(), query),
+                                            },
+                                            other => other,
+                                        })?;
                                 }
                             }
                         }
@@ -156,7 +178,11 @@ impl Generator {
     // If a name is provided (such as for file-based queries), it is converted to PascalCase.
     fn analyze_query(&mut self, query: &str, name: Option<String>) -> Result<()> {
         let mut ctx = self.ctx.clone();
-        let kind = analyzer::analyze(&mut ctx, query)?;
+        let kind = analyzer::analyze(&mut ctx, query)
+            .map_err(|e| CodegenError::Analysis {
+                error: Box::new(e),
+                context: format!("analyzing query: {}", query),
+            })?;
         let type_def = self.generate_type(&kind);
 
         let query_name = name.map(|n| {
@@ -216,7 +242,7 @@ impl Generator {
             Kind::Object => "Record<string, any>".to_string(),
             Kind::Record(tables) => {
                 if let Some(table) = tables.first() {
-                    format!("(RecordId<\"{}\"> & {{ id: string }})", table.0)
+                    format!("RecordId<\"{}\">", table.0)
                 } else {
                     "RecordId<string>".to_string()
                 }
@@ -243,6 +269,10 @@ impl Generator {
                 let types: Vec<String> = kinds.iter().map(|k| self.generate_type(k)).collect();
                 types.join(" | ")
             }
+            Kind::Option(inner) => {
+                let inner_type = self.generate_type(inner);
+                format!("({} | undefined)", inner_type)
+            }
             _ => "any".to_string(),
         }
     }
@@ -258,7 +288,9 @@ impl Generator {
                 format!("[{}]", types.join(", "))
             }
             Literal::Object(fields) => {
-                let field_defs: Vec<String> = fields
+                // Nest dotted field names (e.g., "email.address" -> email: { address: ... })
+                let nested_fields = self.nest_dotted_fields(fields);
+                let field_defs: Vec<String> = nested_fields
                     .iter()
                     .map(|(name, kind)| {
                         let value = self.generate_type(kind);
@@ -275,8 +307,68 @@ impl Generator {
                     format!("{{\n{}\n}}", field_defs.join(",\n"))
                 }
             }
+            Literal::DiscriminatedObject(discriminant, variants) => {
+                // Handle union types like { type: "system", ... } | { type: "user", ... }
+                let variant_types: Vec<String> = variants
+                    .iter()
+                    .map(|variant| {
+                        let nested_fields = self.nest_dotted_fields(variant);
+                        let field_defs: Vec<String> = nested_fields
+                            .iter()
+                            .map(|(name, kind)| {
+                                let value = self.generate_type(kind);
+                                format!("    {}: {}", name, value)
+                            })
+                            .collect();
+                        if field_defs.is_empty() {
+                            "{}".to_string()
+                        } else {
+                            format!("{{\n{}\n  }}", field_defs.join(",\n"))
+                        }
+                    })
+                    .collect();
+                variant_types.join(" | ")
+            }
             _ => "any".to_string(),
         }
+    }
+
+    // nest_dotted_fields converts dotted field names like "email.address" into nested objects
+    fn nest_dotted_fields(&self, fields: &BTreeMap<String, Kind>) -> BTreeMap<String, Kind> {
+        
+        let mut nested = BTreeMap::new();
+        let mut dotted_groups: BTreeMap<String, BTreeMap<String, Kind>> = BTreeMap::new();
+        
+        for (name, kind) in fields {
+            if name.contains('.') {
+                let parts: Vec<&str> = name.splitn(2, '.').collect();
+                if parts.len() == 2 {
+                    let parent = parts[0].to_string();
+                    let child = parts[1].to_string();
+                    
+                    dotted_groups
+                        .entry(parent)
+                        .or_insert_with(BTreeMap::new)
+                        .insert(child, kind.clone());
+                } else {
+                    nested.insert(name.clone(), kind.clone());
+                }
+            } else {
+                // Check if this field has dotted children
+                let has_dotted_children = fields.keys().any(|k| k.starts_with(&format!("{}.", name)));
+                if !has_dotted_children {
+                    nested.insert(name.clone(), kind.clone());
+                }
+            }
+        }
+        
+        // Convert dotted groups to nested objects
+        for (parent, children) in dotted_groups {
+            let nested_children = self.nest_dotted_fields(&children);
+            nested.insert(parent, Kind::Literal(Literal::Object(nested_children)));
+        }
+        
+        nested
     }
 
     // escape_string_literal escapes backticks and other important characters.

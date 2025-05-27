@@ -11,7 +11,7 @@ use super::AnalyzerContext;
 /// • object::keys(object) -> array<string>
 /// • object::len(object) -> number
 /// • object::values(object) -> array<any>
-pub(super) fn analyze_object(ctx: &AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
+pub(super) fn analyze_object(ctx: &mut AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
     // Get the full function name, e.g. "object::entries"
     let name = func.name().ok_or(AnalyzerError::UnexpectedSyntax)?;
     // Get the specific function name after the "object" namespace.

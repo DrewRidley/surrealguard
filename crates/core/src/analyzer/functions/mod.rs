@@ -16,7 +16,7 @@ mod string;
 mod time;
 
 
-pub fn analyze_function(ctx: &AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
+pub fn analyze_function(ctx: &mut AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
     let name = func.name().ok_or(AnalyzerError::UnexpectedSyntax)?;
 
     match name.split("::").next() {
@@ -56,6 +56,38 @@ pub fn analyze_function(ctx: &AnalyzerContext, func: &Function) -> AnalyzerResul
             _ => Err(AnalyzerError::FunctionNotFound(name.to_string())),
         },
 
-        Some(_) | None => Err(AnalyzerError::FunctionNotFound(name.to_string())),
+        Some("fn") => {
+            // Custom function - look it up in the context
+            if let Some(func_def) = ctx.find_function_definition(name) {
+                // For now, return the function's declared return type if available
+                // TODO: Analyze function body to infer return type
+                if let Some(returns) = &func_def.returns {
+                    Ok(returns.clone())
+                } else {
+                    // No explicit return type, return Any for now
+                    Ok(Kind::Any)
+                }
+            } else {
+                // Function not found - show what we were looking for
+                Err(AnalyzerError::FunctionNotFound(format!("Custom function '{}' not found", name)))
+            }
+        },
+
+        Some(_) | None => {
+            // Check if this is a custom function without fn:: prefix
+            let full_name = format!("fn::{}", name);
+            if let Some(func_def) = ctx.find_function_definition(&full_name) {
+                // For now, return the function's declared return type if available
+                // TODO: Analyze function body to infer return type
+                if let Some(returns) = &func_def.returns {
+                    Ok(returns.clone())
+                } else {
+                    // No explicit return type, return Any for now
+                    Ok(Kind::Any)
+                }
+            } else {
+                Err(AnalyzerError::FunctionNotFound(name.to_string()))
+            }
+        },
     }
 }

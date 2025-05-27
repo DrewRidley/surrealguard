@@ -21,7 +21,10 @@ pub mod statements;
 
 use context::AnalyzerContext;
 use error::{AnalyzerError, AnalyzerResult};
-use surrealdb::sql::{Kind, Literal};
+use surrealdb::{
+    dbs::{capabilities::Targets, Capabilities},
+    sql::{Kind, Literal},
+};
 
 /// Analyzes a SurrealQL query string and returns the types of all statements.
 ///
@@ -41,19 +44,44 @@ use surrealdb::sql::{Kind, Literal};
 /// - Referenced tables/fields don't exist
 pub fn analyze(ctx: &mut AnalyzerContext, surql: &str) -> AnalyzerResult<Kind> {
     // Parse the query string into AST
-    let statements = surrealdb::sql::parse(surql).map_err(AnalyzerError::Surreal)?;
+
+    //Dont validate that experimetal features match env.
+    let capabilities = Capabilities::all().with_experimental(Targets::All);
+    //parse_with_capabilities
+    let statements = surrealdb::syn::parse_with_capabilities(surql, &capabilities)
+        .map_err(AnalyzerError::Surreal)?;
 
     // Analyze each statement
     let kinds: Vec<Kind> = statements
         .iter()
-        .map(|stmt| statements::analyze_statement(ctx, stmt))
+        .enumerate()
+        .map(|(index, stmt)| {
+            statements::analyze_statement(ctx, stmt)
+                .map_err(|e| match e {
+                    AnalyzerError::UnexpectedSyntax => {
+                        AnalyzerError::unexpected_syntax_with_context(
+                            format!("statement {}", index + 1),
+                            format!("in statement: {}", stmt)
+                        )
+                    }
+                    other => other,
+                })
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
     match kinds.len() {
         0 => Ok(Kind::Null),
         //TODO: consolidate this after refactoring the kind! macro.
         1 => Ok(Kind::Array(Box::new(kinds[0].clone()), None)),
-        _ => Ok(Kind::Literal(Literal::Array(kinds))),
+        _ => {
+            // For multiple statements, return the type of the last statement
+            // This matches SurrealDB behavior where multiple statements return the last result
+            if let Some(last_kind) = kinds.last() {
+                Ok(last_kind.clone())
+            } else {
+                Ok(Kind::Null)
+            }
+        },
     }
 }
 

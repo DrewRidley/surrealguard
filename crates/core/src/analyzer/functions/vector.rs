@@ -2,7 +2,7 @@ use crate::analyzer::error::{AnalyzerError, AnalyzerResult};
 use surrealdb::sql::{Function, Kind};
 use super::AnalyzerContext;
 
-pub(super) fn analyze_vector(ctx: &AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
+pub(super) fn analyze_vector(ctx: &mut AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
     // Get full function name e.g. "vector::add"
     let name = func.name().ok_or(AnalyzerError::UnexpectedSyntax)?;
     let segments: Vec<&str> = name.split("::").collect();

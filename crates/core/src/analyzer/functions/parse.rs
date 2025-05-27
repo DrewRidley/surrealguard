@@ -14,7 +14,7 @@ use super::AnalyzerContext;
 ///   • parse::url::port(string) -> number
 ///   • parse::url::scheme(string) -> string
 ///   • parse::url::query(string) -> string
-pub(super) fn analyze_parse(ctx: &AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
+pub(super) fn analyze_parse(ctx: &mut AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
     // Retrieve the full function name, e.g. "parse::email::host" or "parse::url::port"
     let name = func.name().ok_or(AnalyzerError::UnexpectedSyntax)?;
     let segments: Vec<&str> = name.split("::").collect();

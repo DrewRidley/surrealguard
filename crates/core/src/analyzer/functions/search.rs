@@ -9,7 +9,7 @@ use super::AnalyzerContext;
 ///   • search::score(number) -> number
 ///   • search::highlight(string, string, number, [boolean]) -> string
 ///   • search::offsets(number, [boolean]) -> object
-pub(super) fn analyze_search(ctx: &AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
+pub(super) fn analyze_search(ctx: &mut AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
     // Retrieve the full function name, e.g. "search::analyze"
     let name = func.name().ok_or(AnalyzerError::UnexpectedSyntax)?;
     let segments: Vec<&str> = name.split("::").collect();

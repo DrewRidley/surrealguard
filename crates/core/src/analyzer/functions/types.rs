@@ -1,6 +1,6 @@
 use super::AnalyzerContext;
 use crate::analyzer::error::{AnalyzerError, AnalyzerResult};
-use surrealdb::sql::{Function, Kind};
+use surrealdb::sql::{Function, Kind, Table, Value};
 
 /// Analyze functions in the "type" namespace.
 ///
@@ -30,7 +30,7 @@ use surrealdb::sql::{Function, Kind};
 /// duration, float, geometry, int, line, none, null, multiline, multipoint,
 /// multipolygon, number, object, point, polygon, record (optionally 1–2 args),
 /// string, uuid.
-pub(super) fn analyze_type(_ctx: &AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
+pub(super) fn analyze_type(ctx: &mut AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
     let name = func.name().ok_or(AnalyzerError::UnexpectedSyntax)?;
     let segments: Vec<&str> = name.split("::").collect();
 
@@ -154,8 +154,23 @@ pub(super) fn analyze_type(_ctx: &AnalyzerContext, func: &Function) -> AnalyzerR
             if func.args().len() != 2 {
                 Err(AnalyzerError::UnexpectedSyntax)
             } else {
-                // Return a record pointer.
-                Ok(Kind::Record(vec![]))
+                let args = func.args();
+                
+                // Second argument is the ID value - infer its type if it's a parameter
+                if let Value::Param(param_name) = &args[1] {
+                    // For record IDs, typically expect UUID, but could also be string or number
+                    // Default to UUID as it's most common for record IDs
+                    ctx.add_inferred_param(param_name, Kind::Uuid);
+                }
+                
+                // Try to extract table name from first argument if it's a literal
+                if let Value::Strand(table_name) = &args[0] {
+                    // Return a record of the specific table type
+                    Ok(Kind::Record(vec![Table::from(table_name.0.clone())]))
+                } else {
+                    // If table name isn't a literal, return generic record
+                    Ok(Kind::Record(vec![]))
+                }
             }
         }
         "uuid" => {

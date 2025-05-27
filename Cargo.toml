@@ -13,5 +13,5 @@ license = "MIT OR Apache-2.0"
 
 
 [workspace.dependencies]
-surrealdb = { version = "2.1.4", features = [], default-features = false}
+surrealdb.path = "/Users/drewridley/Documents/Projects/inertia/surrealdb/crates/sdk"
 thiserror = "1"

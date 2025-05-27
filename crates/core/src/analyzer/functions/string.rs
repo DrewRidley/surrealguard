@@ -27,7 +27,7 @@ use super::AnalyzerContext;
 ///   • string::uppercase(string) -> string
 ///   • string::words(string) -> array<string>
 ///
-pub(super) fn analyze_string(ctx: &AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
+pub(super) fn analyze_string(ctx: &mut AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
     let name = func.name().ok_or(AnalyzerError::UnexpectedSyntax)?;
 
     // Get the specific function name using string::[func]

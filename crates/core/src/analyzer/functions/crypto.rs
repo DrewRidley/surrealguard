@@ -2,7 +2,7 @@ use crate::analyzer::error::{AnalyzerError, AnalyzerResult};
 use surrealdb::sql::{Function, Kind};
 use super::AnalyzerContext;
 
-pub(super) fn analyze_crypto(ctx: &AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
+pub(super) fn analyze_crypto(ctx: &mut AnalyzerContext, func: &Function) -> AnalyzerResult<Kind> {
     // Retrieve the full function name, e.g. "crypto::blake3" or "crypto::argon2::compare"
     let name = func.name().ok_or(AnalyzerError::UnexpectedSyntax)?;
     let segments: Vec<&str> = name.split("::").collect();

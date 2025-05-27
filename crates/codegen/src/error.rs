@@ -18,6 +18,12 @@ pub enum CodegenError {
     #[error("Analysis error: {0}")]
     Analyzer(#[from] surrealguard_core::analyzer::error::AnalyzerError),
 
+    #[error("Analysis error in {context}: {error}")]
+    Analysis {
+        error: Box<surrealguard_core::analyzer::error::AnalyzerError>,
+        context: String,
+    },
+
     #[error("Format error: {0}")]
     Format(String),
 
