@@ -10,6 +10,7 @@
 //! that validates the statement against schema rules and determines result types.
 
 pub(crate) mod data;
+pub(crate) mod schema;
 // pub(crate) mod logic;
 // pub(crate) mod system;
 
@@ -45,9 +46,15 @@ pub fn analyze_statement(ctx: &mut AnalyzerContext, stmt: &Statement) -> Analyze
 
         // Schema definition statements
         Statement::Define(define_stmt) => {
-            ctx.append_definition(define_stmt.clone());
-
-            //A define statement returns nothing.
+            // First analyze the DEFINE statement
+            let result = self::schema::analyze_define(ctx, define_stmt);
+            
+            // If analysis fails, return the error
+            if result.is_err() {
+                return result;
+            }
+            
+            // A define statement returns nothing
             Ok(Kind::Null)
         }
         // Other statement types
