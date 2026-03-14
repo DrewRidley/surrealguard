@@ -147,13 +147,26 @@ enum Ctx {
 }
 
 fn determine_context(node: &tree_sitter::Node, source: &str, offset: usize) -> Ctx {
-    // Check text-based triggers first (these work even with parse errors)
+    // Text-based triggers first — these work even with parse errors
     let text_before = &source[..offset.min(source.len())];
-    if text_before.ends_with('$') || text_before.ends_with("$") {
+    let text_trimmed = text_before.trim_end();
+
+    if text_before.ends_with('$') {
         return Ctx::Variable;
     }
     if let Some(ns) = extract_namespace_from_text(text_before) {
         return Ctx::FunctionInNamespace(ns);
+    }
+    if text_before.ends_with("->") {
+        // Find the source table for graph edge filtering
+        let source_table = find_statement_table_from_text(text_trimmed);
+        return Ctx::GraphEdge(source_table);
+    }
+
+    // Text-based keyword detection for incomplete parses.
+    // When tree-sitter can't parse "UPDATE user SET n", we detect SET from text.
+    if let Some(ctx) = detect_keyword_context(text_trimmed, source) {
+        return ctx;
     }
 
     let mut current = *node;
@@ -165,6 +178,22 @@ fn determine_context(node: &tree_sitter::Node, source: &str, offset: usize) -> C
         match parent.kind() {
             "from_clause" => return Ctx::FromClause,
             "create_target" => return Ctx::TableTarget,
+            // Inside an object that's part of a CONTENT clause
+            "object" | "object_content" | "object_property" => {
+                // Check if this object is inside a content_clause
+                let mut obj = parent;
+                while let Some(gp) = obj.parent() {
+                    if gp.kind() == "content_clause" {
+                        let table = find_statement_table_from_node(&gp, source)
+                            .unwrap_or_default();
+                        return Ctx::ContentObject(table);
+                    }
+                    if gp.kind().ends_with("_statement") {
+                        break;
+                    }
+                    obj = gp;
+                }
+            }
             "graph_path" | "graph_predicate" => {
                 // Determine if this is the first segment (relation) or second (target)
                 let prev_relation = find_preceding_relation_name(&current, source);
@@ -467,6 +496,131 @@ fn add_type_names(prefix: &str, items: &mut Vec<CompletionItem>) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────
+
+/// Text-based keyword context detection for when tree-sitter can't parse incomplete input.
+/// Scans backwards from cursor to find the last significant keyword.
+fn detect_keyword_context(text: &str, _full_source: &str) -> Option<Ctx> {
+    let upper = text.to_uppercase();
+    let words: Vec<&str> = upper.split_whitespace().collect();
+    if words.is_empty() {
+        return None;
+    }
+
+    // Find the last keyword and determine context
+    for i in (0..words.len()).rev() {
+        match words[i] {
+            "SET" => {
+                // Find the table name: look for CREATE/UPDATE/UPSERT before SET
+                let table = find_dml_table_from_words(&words[..i]);
+                return Some(Ctx::SetFields(table.unwrap_or_default()));
+            }
+            "CONTENT" => {
+                let table = find_dml_table_from_words(&words[..i]);
+                return Some(Ctx::ContentObject(table.unwrap_or_default()));
+            }
+            "WHERE" => {
+                let table = find_dml_table_from_words(&words[..i]);
+                return Some(Ctx::Expression(table));
+            }
+            "FROM" => return Some(Ctx::FromClause),
+            "INTO" => return Some(Ctx::TableTarget),
+            "CREATE" | "UPDATE" | "DELETE" | "UPSERT" => {
+                // If this is the last word, we need a table name
+                if i == words.len() - 1 {
+                    return Some(Ctx::TableTarget);
+                }
+            }
+            "ORDER" | "GROUP" | "SPLIT" | "OMIT" | "FETCH" => {
+                // After ORDER BY, GROUP BY, etc. — field names
+                let table = find_dml_table_from_words(&words[..i]);
+                return Some(Ctx::Expression(table));
+            }
+            "BY" => {
+                // Check if preceded by ORDER or GROUP
+                if i > 0 && matches!(words[i - 1], "ORDER" | "GROUP") {
+                    let table = find_dml_table_from_words(&words[..i - 1]);
+                    return Some(Ctx::Expression(table));
+                }
+            }
+            "RETURN" => {
+                // RETURN clause — suggest BEFORE, AFTER, DIFF, NONE, or fields
+                return Some(Ctx::General); // TODO: dedicated ReturnClause context
+            }
+            "TYPE" => {
+                return Some(Ctx::TypeName);
+            }
+            "DEFAULT" | "VALUE" | "ASSERT" => {
+                // DEFINE FIELD context — find the table from ON clause
+                let table = find_on_table_from_words(&words);
+                return Some(Ctx::FieldExpression(table.unwrap_or_default()));
+            }
+            "ON" => {
+                // After ON — suggest table names
+                return Some(Ctx::TableTarget);
+            }
+            "INDEX" => {
+                // After WITH INDEX — suggest index names (not implemented yet)
+                if i > 0 && words[i - 1] == "WITH" {
+                    return None; // Let general fallback handle
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+/// Extract table name from DML word sequence like ["CREATE", "user"] or ["UPDATE", "user", "SET"]
+fn find_dml_table_from_words(words: &[&str]) -> Option<String> {
+    for i in 0..words.len() {
+        match words[i] {
+            "CREATE" | "UPDATE" | "DELETE" | "UPSERT" | "INSERT" => {
+                // Next word is the table (skip INTO for INSERT)
+                let next = if words[i] == "INSERT" && i + 1 < words.len() && words[i + 1] == "INTO" {
+                    i + 2
+                } else {
+                    i + 1
+                };
+                if next < words.len() {
+                    return Some(words[next].to_lowercase());
+                }
+            }
+            "FROM" => {
+                if i + 1 < words.len() {
+                    return Some(words[i + 1].to_lowercase());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Extract table from ON clause in DEFINE FIELD words
+fn find_on_table_from_words(words: &[&str]) -> Option<String> {
+    for i in 0..words.len() {
+        if words[i] == "ON" {
+            // Skip optional TABLE keyword
+            let next = if i + 1 < words.len() && words[i + 1] == "TABLE" {
+                i + 2
+            } else {
+                i + 1
+            };
+            if next < words.len() {
+                return Some(words[next].to_lowercase());
+            }
+        }
+    }
+    None
+}
+
+/// Extract table name from text for graph edge context
+fn find_statement_table_from_text(text: &str) -> Option<String> {
+    let upper = text.to_uppercase();
+    let words: Vec<&str> = upper.split_whitespace().collect();
+    find_dml_table_from_words(&words)
+}
 
 fn extract_prefix(source: &str, offset: usize) -> String {
     let before = &source[..offset.min(source.len())];
