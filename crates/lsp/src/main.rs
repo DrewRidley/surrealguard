@@ -1,8 +1,9 @@
 use tower_lsp::{LspService, Server};
 
 mod backend;
+mod completions;
 mod diagnostics;
-mod hover;
+pub mod hover;
 mod text;
 mod workspace;
 

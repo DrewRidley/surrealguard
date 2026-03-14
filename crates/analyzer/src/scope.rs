@@ -108,6 +108,20 @@ impl Scope {
         }
     }
 
+    /// Return all bindings visible in the current scope (all levels).
+    pub fn all_bindings(&self) -> Vec<&Binding> {
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        for level in self.levels.iter().rev() {
+            for (name, binding) in &level.bindings {
+                if seen.insert(name.clone()) {
+                    result.push(binding);
+                }
+            }
+        }
+        result
+    }
+
     /// Look up a variable, searching from innermost to outermost scope.
     pub fn lookup(&self, name: &str) -> Option<&Binding> {
         for level in self.levels.iter().rev() {

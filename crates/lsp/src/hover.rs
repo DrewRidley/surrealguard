@@ -9,12 +9,12 @@ use surrealguard_analyzer::types::{display_kind, KindExt, Literal};
 use crate::text::{byte_range_to_lsp, position_to_offset};
 
 /// Built-in function signatures for hover display.
-struct BuiltinFn {
-    name: &'static str,
-    signature: &'static str,
-    summary: &'static str,
-    doc_anchor: &'static str,
-    doc_namespace: &'static str,
+pub struct BuiltinFn {
+    pub name: &'static str,
+    pub signature: &'static str,
+    pub summary: &'static str,
+    pub doc_anchor: &'static str,
+    pub doc_namespace: &'static str,
 }
 
 /// Resolve hover for a document at a given position.
@@ -386,6 +386,11 @@ fn format_type_for_hover(kind: &Kind) -> String {
 }
 
 /// Extract the target table name from a statement node.
+/// Extract the target table name from a statement node (public for completions).
+pub fn extract_table_from_statement_pub(node: &tree_sitter::Node, source: &str) -> Option<String> {
+    extract_table_from_statement(node, source)
+}
+
 fn extract_table_from_statement(node: &tree_sitter::Node, source: &str) -> Option<String> {
     let mut cursor = node.walk();
     let children: Vec<_> = node.named_children(&mut cursor).collect();
@@ -438,7 +443,7 @@ fn is_target_identifier(statement: &tree_sitter::Node, ident: &tree_sitter::Node
 
 // ── Built-in function database ──────────────────────────────────────────
 
-static BUILTIN_FUNCTIONS: &[BuiltinFn] = &[
+pub static BUILTIN_FUNCTIONS: &[BuiltinFn] = &[
     // String functions
     BuiltinFn { name: "string::len", signature: "string::len(value: string) -> number", summary: "Returns the length of a string in characters.", doc_anchor: "stringlen", doc_namespace: "string" },
     BuiltinFn { name: "string::lowercase", signature: "string::lowercase(value: string) -> string", summary: "Converts a string to lowercase.", doc_anchor: "stringlowercase", doc_namespace: "string" },

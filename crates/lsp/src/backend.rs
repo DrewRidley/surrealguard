@@ -85,6 +85,14 @@ impl LanguageServer for Backend {
                 )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 inlay_hint_provider: Some(OneOf::Left(true)),
+                completion_provider: Some(CompletionOptions {
+                    resolve_provider: Some(false),
+                    trigger_characters: Some(vec![
+                        ".".into(), ":".into(), "$".into(),
+                        ">".into(), " ".into(),
+                    ]),
+                    ..CompletionOptions::default()
+                }),
                 ..ServerCapabilities::default()
             },
         })
@@ -133,6 +141,23 @@ impl LanguageServer for Backend {
         self.client
             .publish_diagnostics(params.text_document.uri, Vec::new(), None)
             .await;
+    }
+
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+
+        let result = {
+            let ws = self.workspace.read().await;
+            ws.analyze_document(&uri)
+        };
+
+        let Some(result) = result else {
+            return Ok(None);
+        };
+
+        let items = crate::completions::resolve(&result.source, position, &result.context);
+        Ok(Some(CompletionResponse::Array(items)))
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
