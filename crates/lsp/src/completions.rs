@@ -89,9 +89,9 @@ pub fn resolve(
                 }
             }
         }
-        // ── CONTENT clause (field names as object keys) ──
+        // ── CONTENT clause (field names as object keys with : separator) ──
         Ctx::ContentObject(table) => {
-            add_fields(ctx, &table, &prefix, &mut items);
+            add_object_key_fields(ctx, &table, &prefix, &mut items);
         }
         // ── TYPE clause (type names) ──
         Ctx::TypeName => {
@@ -354,6 +354,25 @@ fn add_fields(ctx: &Context, table: &str, prefix: &str, items: &mut Vec<Completi
     }
 }
 
+/// Add fields as object keys (for CONTENT clause) — inserts `name: ` with colon
+fn add_object_key_fields(ctx: &Context, table: &str, prefix: &str, items: &mut Vec<CompletionItem>) {
+    for field in ctx.get_fields(table) {
+        if !prefix.is_empty() && !field.name.to_lowercase().starts_with(&prefix.to_lowercase()) {
+            continue;
+        }
+        let detail = field.typ.as_ref().map(|t| display_kind(t));
+        items.push(CompletionItem {
+            label: field.name.clone(),
+            kind: Some(CompletionItemKind::FIELD),
+            detail,
+            insert_text: Some(format!("{}: $0", field.name)),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            sort_text: Some(format!("0-{}", field.name)),
+            ..CompletionItem::default()
+        });
+    }
+}
+
 fn add_variables(ctx: &Context, prefix: &str, items: &mut Vec<CompletionItem>) {
     // User-defined variables
     for binding in ctx.scope.all_bindings() {
@@ -500,7 +519,9 @@ fn add_type_names(prefix: &str, items: &mut Vec<CompletionItem>) {
 /// Text-based keyword context detection for when tree-sitter can't parse incomplete input.
 /// Scans backwards from cursor to find the last significant keyword.
 fn detect_keyword_context(text: &str, _full_source: &str) -> Option<Ctx> {
-    let upper = text.to_uppercase();
+    // Only look at the current statement (after the last semicolon)
+    let current_stmt = text.rfind(';').map(|i| &text[i + 1..]).unwrap_or(text);
+    let upper = current_stmt.to_uppercase();
     let words: Vec<&str> = upper.split_whitespace().collect();
     if words.is_empty() {
         return None;
@@ -597,11 +618,12 @@ fn find_dml_table_from_words(words: &[&str]) -> Option<String> {
     None
 }
 
-/// Extract table from ON clause in DEFINE FIELD words
+/// Extract table from the NEAREST ON clause, searching backwards from cursor.
+/// This ensures we find the ON clause of the current DEFINE FIELD, not a previous one.
 fn find_on_table_from_words(words: &[&str]) -> Option<String> {
-    for i in 0..words.len() {
+    // Search backwards to find the nearest ON clause
+    for i in (0..words.len()).rev() {
         if words[i] == "ON" {
-            // Skip optional TABLE keyword
             let next = if i + 1 < words.len() && words[i + 1] == "TABLE" {
                 i + 2
             } else {
