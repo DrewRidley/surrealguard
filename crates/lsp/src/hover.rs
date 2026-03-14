@@ -325,7 +325,7 @@ fn builtin_function_hover(name: &str, range: Range) -> Option<Hover> {
 ///
 /// So from "user", we need to go up to path_element, then look at the
 /// previous sibling (graph_path containing "wrote").
-fn find_preceding_relation(node: &tree_sitter::Node, source: &str) -> Option<String> {
+pub fn find_preceding_relation(node: &tree_sitter::Node, source: &str) -> Option<String> {
     // Walk up to find the path or path_element level
     let mut current = *node;
     while let Some(parent) = current.parent() {
@@ -349,7 +349,7 @@ fn find_preceding_relation(node: &tree_sitter::Node, source: &str) -> Option<Str
 }
 
 /// Walk up from a node to find the enclosing statement's target table.
-fn find_statement_table(node: &tree_sitter::Node, source: &str) -> Option<String> {
+pub fn find_statement_table(node: &tree_sitter::Node, source: &str) -> Option<String> {
     let mut current = *node;
     while let Some(parent) = current.parent() {
         if parent.kind().ends_with("_statement") {
@@ -428,7 +428,7 @@ fn first_identifier(node: &tree_sitter::Node, source: &str) -> Option<String> {
 }
 
 /// Check if an identifier is a statement target (before any clause).
-fn is_target_identifier(statement: &tree_sitter::Node, ident: &tree_sitter::Node) -> bool {
+pub fn is_target_identifier(statement: &tree_sitter::Node, ident: &tree_sitter::Node) -> bool {
     let mut cursor = statement.walk();
     for child in statement.named_children(&mut cursor) {
         if child.kind().ends_with("_clause") {

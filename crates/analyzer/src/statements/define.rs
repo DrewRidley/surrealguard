@@ -151,15 +151,36 @@ fn analyze_function(node: &Node, source: &str, ctx: &mut Context) {
     if let Some(ref declared) = declared_return_type {
         if !matches!(declared, Kind::Any) && !matches!(body_type, Kind::Any) {
             if !crate::types::is_assignable(declared, &body_type) {
-                let span = child_by_kind(node, "block")
-                    .map(|b| Span::from_node(&b))
+                let span = child_by_kind(node, "returns_clause")
+                    .map(|rc| Span::from_node(&rc))
                     .unwrap_or_else(|| Span::from_node(node));
                 ctx.emit(Diagnostic::warning(
                     span,
                     Code::ReturnTypeMismatch,
                     format!(
-                        "function body returns `{}` but declared return type is `{}`",
-                        body_type, declared
+                        "expected `{}`, found `{}`",
+                        declared, body_type
+                    ),
+                ));
+            }
+        }
+
+        // Check if all code paths return a value when a return type is declared
+        if let Some(body) = child_by_kind(node, "block") {
+            let flow = crate::resolve::analyze_flow(&body, source, ctx, None);
+            if !flow.always_returns && !matches!(declared, Kind::Null) {
+                let fn_name = child_by_kind(node, "custom_function_name")
+                    .map(|n| node_text(&n, source).to_string())
+                    .unwrap_or_else(|| "function".to_string());
+                let span = child_by_kind(node, "returns_clause")
+                    .map(|rc| Span::from_node(&rc))
+                    .unwrap_or_else(|| Span::from_node(node));
+                ctx.emit(Diagnostic::warning(
+                    span,
+                    Code::ReturnTypeMismatch,
+                    format!(
+                        "not all code paths in `{}` return a value of type `{}`",
+                        fn_name, declared
                     ),
                 ));
             }

@@ -178,6 +178,17 @@ fn determine_context(node: &tree_sitter::Node, source: &str, offset: usize) -> C
         match parent.kind() {
             "from_clause" => return Ctx::FromClause,
             "create_target" => return Ctx::TableTarget,
+            // ORDER BY, GROUP BY, SPLIT, OMIT, FETCH → field names
+            "order_clause" | "group_clause" | "split_clause" | "omit_clause"
+            | "fetch_clause" => {
+                let table = find_statement_table_from_node(&parent, source);
+                return Ctx::Expression(table);
+            }
+            // RETURN clause
+            "return_clause" => {
+                let table = find_statement_table_from_node(&parent, source);
+                return Ctx::Expression(table);
+            }
             // Inside an object that's part of a CONTENT clause
             "object" | "object_content" | "object_property" => {
                 // Check if this object is inside a content_clause
@@ -354,7 +365,7 @@ fn add_fields(ctx: &Context, table: &str, prefix: &str, items: &mut Vec<Completi
     }
 }
 
-/// Add fields as object keys (for CONTENT clause) — inserts `name: ` with colon
+/// Add fields as object keys (for CONTENT clause) — appends `: ` after the name
 fn add_object_key_fields(ctx: &Context, table: &str, prefix: &str, items: &mut Vec<CompletionItem>) {
     for field in ctx.get_fields(table) {
         if !prefix.is_empty() && !field.name.to_lowercase().starts_with(&prefix.to_lowercase()) {
@@ -362,11 +373,10 @@ fn add_object_key_fields(ctx: &Context, table: &str, prefix: &str, items: &mut V
         }
         let detail = field.typ.as_ref().map(|t| display_kind(t));
         items.push(CompletionItem {
-            label: field.name.clone(),
+            label: format!("{}: ", field.name),
             kind: Some(CompletionItemKind::FIELD),
             detail,
-            insert_text: Some(format!("{}: $0", field.name)),
-            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            filter_text: Some(field.name.clone()),
             sort_text: Some(format!("0-{}", field.name)),
             ..CompletionItem::default()
         });

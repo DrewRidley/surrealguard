@@ -9,6 +9,7 @@ use tower_lsp::{Client, LanguageServer};
 
 use surrealguard_analyzer::hints::{collect_type_hints, TypeHintKind};
 
+use crate::definition;
 use crate::diagnostics;
 use crate::hover;
 use crate::text::{byte_range_to_lsp, offset_to_position};
@@ -83,6 +84,7 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
+                definition_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 inlay_hint_provider: Some(OneOf::Left(true)),
                 completion_provider: Some(CompletionOptions {
@@ -93,6 +95,14 @@ impl LanguageServer for Backend {
                     ]),
                     ..CompletionOptions::default()
                 }),
+                signature_help_provider: Some(SignatureHelpOptions {
+                    trigger_characters: Some(vec!["(".into(), ",".into()]),
+                    retrigger_characters: None,
+                    work_done_progress_options: WorkDoneProgressOptions {
+                        work_done_progress: None,
+                    },
+                }),
+                document_symbol_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -174,6 +184,69 @@ impl LanguageServer for Backend {
         };
 
         Ok(hover::resolve(&result.source, position, &result.context))
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        let result = {
+            let ws = self.workspace.read().await;
+            ws.analyze_document(&uri)
+        };
+
+        let Some(result) = result else {
+            return Ok(None);
+        };
+
+        Ok(definition::resolve(
+            &result.source,
+            position,
+            &result.context,
+            &uri,
+        ))
+    }
+
+    async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        let result = {
+            let ws = self.workspace.read().await;
+            ws.analyze_document(&uri)
+        };
+
+        let Some(result) = result else {
+            return Ok(None);
+        };
+
+        Ok(crate::signature::resolve(
+            &result.source,
+            position,
+            &result.context,
+        ))
+    }
+
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        let uri = params.text_document.uri;
+
+        let source = {
+            let ws = self.workspace.read().await;
+            ws.get(&uri).map(|d| d.text.clone())
+        };
+
+        let Some(source) = source else {
+            return Ok(None);
+        };
+
+        let symbols = crate::symbols::document_symbols(&source).unwrap_or_default();
+        Ok(Some(DocumentSymbolResponse::Nested(symbols)))
     }
 
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
