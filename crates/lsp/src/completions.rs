@@ -1,12 +1,12 @@
 //! Context-aware completions for SurrealQL.
 //!
 //! Uses tree-sitter to understand cursor context and provides relevant
-//! suggestions: table names after FROM, field names in WHERE/SET,
-//! function names after ::, variables after $.
+//! suggestions. Each context shows ONLY what makes sense there.
 
 use tower_lsp::lsp_types::*;
 
 use surrealguard_analyzer::{self as sg, Context};
+use surrealguard_analyzer::context::TableKind;
 use surrealguard_analyzer::types::{display_kind, KindExt};
 
 use crate::text::position_to_offset;
@@ -20,66 +20,93 @@ pub fn resolve(
 ) -> Vec<CompletionItem> {
     let offset = position_to_offset(source, position);
     let prefix = extract_prefix(source, offset);
-    let trigger = detect_trigger(source, offset);
 
     let tree = sg::parse(source).ok();
-    let node_context = tree.as_ref().and_then(|t| {
+    let completion_ctx = tree.as_ref().and_then(|t| {
         let root = t.root_node();
         let node = root.descendant_for_byte_range(offset.saturating_sub(1), offset)?;
-        Some(determine_context(&node, source))
-    }).unwrap_or(CompletionContext::Unknown);
+        Some(determine_context(&node, source, offset))
+    }).unwrap_or(Ctx::General);
 
     let mut items = Vec::new();
 
-    match node_context {
-        CompletionContext::AfterFrom | CompletionContext::AfterInto
-        | CompletionContext::AfterUpdate | CompletionContext::AfterDelete => {
-            add_table_completions(ctx, &prefix, &mut items);
+    match completion_ctx {
+        // ── Table targets (only tables, no variables) ────────
+        Ctx::TableTarget => {
+            add_non_relation_tables(ctx, &prefix, &mut items);
         }
-        CompletionContext::AfterSet | CompletionContext::InWhere
-        | CompletionContext::InSelect => {
-            // Find the statement's target table for field completions
-            if let Some(ref tree) = tree {
-                let root = tree.root_node();
-                if let Some(node) = root.descendant_for_byte_range(offset.saturating_sub(1), offset) {
-                    let table = find_statement_table_from_node(&node, source);
-                    if let Some(tbl) = table {
-                        add_field_completions(ctx, &tbl, &prefix, &mut items);
-                    }
+        // ── FROM clause (tables + variables, since FROM $var is valid) ──
+        Ctx::FromClause => {
+            add_non_relation_tables(ctx, &prefix, &mut items);
+            add_variables(ctx, &prefix, &mut items);
+        }
+        // ── SET clause fields (only fields of the target table) ──────
+        Ctx::SetFields(table) => {
+            add_fields(ctx, &table, &prefix, &mut items);
+        }
+        // ── WHERE / SELECT / general expression context ──────
+        Ctx::Expression(table) => {
+            if let Some(ref tbl) = table {
+                add_fields(ctx, tbl, &prefix, &mut items);
+            }
+            add_variables(ctx, &prefix, &mut items);
+            add_builtin_namespaces(&prefix, &mut items);
+        }
+        // ── After -> (only relation tables, filtered by source) ──
+        Ctx::GraphEdge(source_table) => {
+            add_graph_edges(ctx, source_table.as_deref(), &prefix, &mut items);
+        }
+        // ── After ->relation-> (only valid target tables) ──
+        Ctx::GraphTarget(relation) => {
+            add_graph_targets(ctx, &relation, &prefix, &mut items);
+        }
+        // ── After $ (variables only) ──
+        Ctx::Variable => {
+            add_variables(ctx, &prefix, &mut items);
+        }
+        // ── After namespace:: (functions in that namespace) ──
+        Ctx::FunctionInNamespace(ns) => {
+            add_namespace_functions(&ns, &prefix, &mut items);
+        }
+        // ── DEFINE FIELD ... DEFAULT/VALUE/ASSERT context ──
+        Ctx::FieldExpression(table) => {
+            add_fields(ctx, &table, &prefix, &mut items);
+            add_variables(ctx, &prefix, &mut items);
+            add_builtin_namespaces(&prefix, &mut items);
+            // Add $this, $value, $before, $after for field context
+        }
+        // ── DEFINE TABLE PERMISSIONS / DEFINE FIELD PERMISSIONS ──
+        Ctx::PermissionExpression => {
+            add_variables(ctx, &prefix, &mut items);
+            // Suggest FULL, NONE, WHERE
+            for kw in &["FULL", "NONE", "WHERE"] {
+                if prefix.is_empty() || kw.to_lowercase().starts_with(&prefix.to_lowercase()) {
+                    items.push(CompletionItem {
+                        label: kw.to_string(),
+                        kind: Some(CompletionItemKind::KEYWORD),
+                        ..CompletionItem::default()
+                    });
                 }
             }
-            // Also add variables and tables as fallback
-            add_variable_completions(ctx, &prefix, &mut items);
-            add_table_completions(ctx, &prefix, &mut items);
         }
-        CompletionContext::AfterArrow => {
-            // After -> in graph traversal, suggest relation tables
-            add_relation_table_completions(ctx, &prefix, &mut items);
+        // ── CONTENT clause (field names as object keys) ──
+        Ctx::ContentObject(table) => {
+            add_fields(ctx, &table, &prefix, &mut items);
         }
-        CompletionContext::AfterDollar => {
-            add_variable_completions(ctx, &prefix, &mut items);
+        // ── TYPE clause (type names) ──
+        Ctx::TypeName => {
+            add_type_names(&prefix, &mut items);
         }
-        CompletionContext::AfterDoubleColon(namespace) => {
-            add_namespace_function_completions(&namespace, &prefix, &mut items);
-        }
-        CompletionContext::Unknown => {
-            // General context — suggest based on trigger character
-            match trigger {
-                Some('$') => add_variable_completions(ctx, &prefix, &mut items),
-                Some(':') => {
-                    // Could be :: for function namespace
-                    let ns = extract_namespace(source, offset);
-                    if let Some(namespace) = ns {
-                        add_namespace_function_completions(&namespace, &prefix, &mut items);
-                    }
-                }
-                _ => {
-                    // Suggest keywords, tables, functions
-                    add_keyword_completions(&prefix, &mut items);
-                    add_table_completions(ctx, &prefix, &mut items);
-                    add_variable_completions(ctx, &prefix, &mut items);
-                    add_builtin_namespace_completions(&prefix, &mut items);
-                }
+        // ── General / fallback ──
+        Ctx::General => {
+            if prefix.starts_with('$') {
+                add_variables(ctx, &prefix, &mut items);
+            } else if let Some(ns) = extract_namespace_from_text(&source[..offset.min(source.len())]) {
+                add_namespace_functions(&ns, &prefix, &mut items);
+            } else {
+                add_non_relation_tables(ctx, &prefix, &mut items);
+                add_variables(ctx, &prefix, &mut items);
+                add_builtin_namespaces(&prefix, &mut items);
             }
         }
     }
@@ -87,24 +114,48 @@ pub fn resolve(
     items
 }
 
-// ── Context Detection ────────────────────────────────────────
+// ── Context Types ────────────────────────────────────────────
 
 #[derive(Debug)]
-enum CompletionContext {
-    AfterFrom,
-    AfterInto,
-    AfterUpdate,
-    AfterDelete,
-    AfterSet,
-    InWhere,
-    InSelect,
-    AfterArrow,
-    AfterDollar,
-    AfterDoubleColon(String),
-    Unknown,
+enum Ctx {
+    /// CREATE/UPDATE/DELETE/UPSERT target — tables only, no relations
+    TableTarget,
+    /// FROM clause — tables + variables
+    FromClause,
+    /// SET clause — only fields of the target table
+    SetFields(String),
+    /// WHERE/SELECT expression — fields + variables + functions
+    Expression(Option<String>),
+    /// After -> — relation tables (optionally filtered by source table)
+    GraphEdge(Option<String>),
+    /// After ->relation-> — valid target tables for that relation
+    GraphTarget(String),
+    /// After $ — variables only
+    Variable,
+    /// After namespace:: — functions in that namespace
+    FunctionInNamespace(String),
+    /// DEFINE FIELD ... DEFAULT/VALUE/ASSERT expression
+    FieldExpression(String),
+    /// PERMISSIONS clause
+    PermissionExpression,
+    /// CONTENT { ... } — field names as object keys
+    ContentObject(String),
+    /// TYPE clause — type names
+    TypeName,
+    /// General / unknown context
+    General,
 }
 
-fn determine_context(node: &tree_sitter::Node, source: &str) -> CompletionContext {
+fn determine_context(node: &tree_sitter::Node, source: &str, offset: usize) -> Ctx {
+    // Check text-based triggers first (these work even with parse errors)
+    let text_before = &source[..offset.min(source.len())];
+    if text_before.ends_with('$') || text_before.ends_with("$") {
+        return Ctx::Variable;
+    }
+    if let Some(ns) = extract_namespace_from_text(text_before) {
+        return Ctx::FunctionInNamespace(ns);
+    }
+
     let mut current = *node;
     loop {
         let Some(parent) = current.parent() else {
@@ -112,44 +163,111 @@ fn determine_context(node: &tree_sitter::Node, source: &str) -> CompletionContex
         };
 
         match parent.kind() {
-            "from_clause" => return CompletionContext::AfterFrom,
-            "create_target" => return CompletionContext::AfterFrom,
-            "set_clause" | "field_assignment" => return CompletionContext::AfterSet,
-            "where_clause" => return CompletionContext::InWhere,
-            "select_clause" => return CompletionContext::InSelect,
-            "graph_path" | "graph_predicate" => return CompletionContext::AfterArrow,
+            "from_clause" => return Ctx::FromClause,
+            "create_target" => return Ctx::TableTarget,
+            "graph_path" | "graph_predicate" => {
+                // Determine if this is the first segment (relation) or second (target)
+                let prev_relation = find_preceding_relation_name(&current, source);
+                if let Some(relation) = prev_relation {
+                    return Ctx::GraphTarget(relation);
+                }
+                // First segment — suggest relation tables
+                let source_table = find_statement_table_from_node(&parent, source);
+                return Ctx::GraphEdge(source_table);
+            }
+            "set_clause" | "field_assignment" => {
+                // In SET clause — are we on the field name (left of =) or value (right of =)?
+                let has_equals = {
+                    let mut c = parent.walk();
+                    let children: Vec<_> = parent.children(&mut c).collect();
+                    children.iter().any(|ch| {
+                        ch.utf8_text(source.as_bytes()).ok().map(|t| t.trim()) == Some("=")
+                            && ch.start_byte() < current.start_byte()
+                    })
+                };
+                if has_equals {
+                    // Right side of = — expression context
+                    let table = find_statement_table_from_node(&parent, source);
+                    return Ctx::Expression(table);
+                } else {
+                    // Left side — field names only
+                    let table = find_statement_table_from_node(&parent, source)
+                        .unwrap_or_default();
+                    return Ctx::SetFields(table);
+                }
+            }
+            "content_clause" => {
+                // Inside CONTENT { ... } — suggest field names as keys
+                let table = find_statement_table_from_node(&parent, source)
+                    .unwrap_or_default();
+                return Ctx::ContentObject(table);
+            }
+            "where_clause" => {
+                let table = find_statement_table_from_node(&parent, source);
+                return Ctx::Expression(table);
+            }
+            "select_clause" => {
+                let table = find_statement_table_from_node(&parent, source);
+                return Ctx::Expression(table);
+            }
+            "default_clause" | "value_clause" | "assert_clause" => {
+                // Inside DEFINE FIELD ... DEFAULT/VALUE/ASSERT
+                let table = find_define_field_table(&parent, source)
+                    .unwrap_or_default();
+                return Ctx::FieldExpression(table);
+            }
+            "permissions_for_clause" | "permissions_basic_clause" => {
+                return Ctx::PermissionExpression;
+            }
+            "type_clause" | "type" | "parameterized_type" => {
+                return Ctx::TypeName;
+            }
             _ => {}
         }
 
-        // Check if we're right after a keyword
-        if current.kind() == "identifier" || current.kind() == "ERROR" {
-            let prev = current.prev_named_sibling();
-            if let Some(prev_node) = prev {
-                match prev_node.kind() {
-                    "keyword_from" => return CompletionContext::AfterFrom,
-                    "keyword_into" => return CompletionContext::AfterInto,
-                    "keyword_update" => return CompletionContext::AfterUpdate,
-                    "keyword_delete" => return CompletionContext::AfterDelete,
-                    "keyword_set" => return CompletionContext::AfterSet,
-                    "keyword_where" => return CompletionContext::InWhere,
+        // Check previous sibling keywords
+        if matches!(current.kind(), "identifier" | "ERROR" | "variable_name") {
+            if let Some(prev) = current.prev_named_sibling() {
+                match prev.kind() {
+                    "keyword_from" => return Ctx::FromClause,
+                    "keyword_into" => return Ctx::TableTarget,
+                    "keyword_set" => {
+                        let table = find_statement_table_from_node(&current, source)
+                            .unwrap_or_default();
+                        return Ctx::SetFields(table);
+                    }
+                    "keyword_where" => {
+                        let table = find_statement_table_from_node(&current, source);
+                        return Ctx::Expression(table);
+                    }
+                    "keyword_content" => {
+                        let table = find_statement_table_from_node(&current, source)
+                            .unwrap_or_default();
+                        return Ctx::ContentObject(table);
+                    }
+                    "keyword_type" => return Ctx::TypeName,
+                    "keyword_default" | "keyword_value" | "keyword_assert" => {
+                        let table = find_define_field_table(&current, source)
+                            .unwrap_or_default();
+                        return Ctx::FieldExpression(table);
+                    }
                     _ => {}
                 }
             }
         }
 
-        // Check for DML statement targets
-        if parent.kind().ends_with("_statement") {
+        // DML statement targets (first identifier before any clause)
+        if parent.kind().ends_with("_statement") && current.kind() == "identifier" {
             match parent.kind() {
-                "update_statement" | "delete_statement" | "upsert_statement" => {
-                    // If we're the first identifier in the statement, it's a table target
+                "create_statement" | "update_statement" | "delete_statement" | "upsert_statement" => {
                     let mut cursor = parent.walk();
                     let children: Vec<_> = parent.named_children(&mut cursor).collect();
                     for child in &children {
-                        if child.kind().ends_with("_clause") {
+                        if child.kind().ends_with("_clause") || child.kind() == "set_clause" {
                             break;
                         }
                         if child.id() == current.id() {
-                            return CompletionContext::AfterUpdate;
+                            return Ctx::TableTarget;
                         }
                     }
                 }
@@ -160,43 +278,27 @@ fn determine_context(node: &tree_sitter::Node, source: &str) -> CompletionContex
         current = parent;
     }
 
-    // Check text-based triggers
-    let text_before = &source[..node.start_byte().min(source.len())];
-    if text_before.ends_with("$") {
-        return CompletionContext::AfterDollar;
-    }
-    if text_before.ends_with("->") {
-        return CompletionContext::AfterArrow;
-    }
-    if let Some(ns) = extract_namespace_from_text(text_before) {
-        return CompletionContext::AfterDoubleColon(ns);
-    }
-
-    CompletionContext::Unknown
+    Ctx::General
 }
 
 // ── Completion Providers ─────────────────────────────────────
 
-fn add_table_completions(ctx: &Context, prefix: &str, items: &mut Vec<CompletionItem>) {
+fn add_non_relation_tables(ctx: &Context, prefix: &str, items: &mut Vec<CompletionItem>) {
     for name in ctx.table_names() {
         if !prefix.is_empty() && !name.to_lowercase().starts_with(&prefix.to_lowercase()) {
             continue;
         }
         let table = ctx.get_table(name);
-        let detail = table.map(|t| {
-            match &t.kind {
-                surrealguard_analyzer::context::TableKind::Relation { from, to } => {
-                    let from_str = from.as_ref().map(|f| f.join("|")).unwrap_or_default();
-                    let to_str = to.as_ref().map(|t| t.join("|")).unwrap_or_default();
-                    format!("RELATION {} → {}", from_str, to_str)
-                }
-                _ => match t.schema_mode {
-                    surrealguard_analyzer::context::SchemaMode::Schemafull => "SCHEMAFULL".to_string(),
-                    surrealguard_analyzer::context::SchemaMode::Schemaless => "SCHEMALESS".to_string(),
-                }
+        // Skip relation tables for non-graph contexts
+        if let Some(t) = table {
+            if matches!(t.kind, TableKind::Relation { .. }) {
+                continue;
             }
+        }
+        let detail = table.map(|t| match t.schema_mode {
+            sg::context::SchemaMode::Schemafull => "SCHEMAFULL".to_string(),
+            sg::context::SchemaMode::Schemaless => "SCHEMALESS".to_string(),
         });
-
         items.push(CompletionItem {
             label: name.to_string(),
             kind: Some(CompletionItemKind::STRUCT),
@@ -207,7 +309,7 @@ fn add_table_completions(ctx: &Context, prefix: &str, items: &mut Vec<Completion
     }
 }
 
-fn add_field_completions(ctx: &Context, table: &str, prefix: &str, items: &mut Vec<CompletionItem>) {
+fn add_fields(ctx: &Context, table: &str, prefix: &str, items: &mut Vec<CompletionItem>) {
     for field in ctx.get_fields(table) {
         if !prefix.is_empty() && !field.name.to_lowercase().starts_with(&prefix.to_lowercase()) {
             continue;
@@ -217,33 +319,29 @@ fn add_field_completions(ctx: &Context, table: &str, prefix: &str, items: &mut V
             label: field.name.clone(),
             kind: Some(CompletionItemKind::FIELD),
             detail,
-            sort_text: Some(format!("1-{}", field.name)),
+            sort_text: Some(format!("0-{}", field.name)),
             ..CompletionItem::default()
         });
     }
 }
 
-fn add_variable_completions(ctx: &Context, prefix: &str, items: &mut Vec<CompletionItem>) {
+fn add_variables(ctx: &Context, prefix: &str, items: &mut Vec<CompletionItem>) {
+    // User-defined variables
     for binding in ctx.scope.all_bindings() {
         let name = &binding.name;
         if !prefix.is_empty() && !name.to_lowercase().starts_with(&prefix.to_lowercase()) {
             continue;
         }
-        let detail = if binding.typ.is_any() {
-            None
-        } else {
-            Some(display_kind(&binding.typ))
-        };
+        let detail = if binding.typ.is_any() { None } else { Some(display_kind(&binding.typ)) };
         items.push(CompletionItem {
             label: name.clone(),
             kind: Some(CompletionItemKind::VARIABLE),
             detail,
-            sort_text: Some(format!("2-{}", name)),
+            sort_text: Some(format!("1-{}", name)),
             ..CompletionItem::default()
         });
     }
-
-    // Always suggest built-in variables
+    // Built-in variables
     for (name, description) in BUILTIN_VARIABLES {
         let var = format!("${name}");
         if !prefix.is_empty() && !var.to_lowercase().starts_with(&prefix.to_lowercase()) {
@@ -253,21 +351,29 @@ fn add_variable_completions(ctx: &Context, prefix: &str, items: &mut Vec<Complet
             label: var,
             kind: Some(CompletionItemKind::VARIABLE),
             detail: Some(description.to_string()),
-            sort_text: Some(format!("3-{}", name)),
+            sort_text: Some(format!("2-{}", name)),
             ..CompletionItem::default()
         });
     }
 }
 
-fn add_relation_table_completions(ctx: &Context, prefix: &str, items: &mut Vec<CompletionItem>) {
+fn add_graph_edges(ctx: &Context, source_table: Option<&str>, prefix: &str, items: &mut Vec<CompletionItem>) {
     for name in ctx.table_names() {
         let table = match ctx.get_table(name) {
             Some(t) => t,
             None => continue,
         };
-        if let surrealguard_analyzer::context::TableKind::Relation { from, to } = &table.kind {
+        if let TableKind::Relation { from, to } = &table.kind {
             if !prefix.is_empty() && !name.to_lowercase().starts_with(&prefix.to_lowercase()) {
                 continue;
+            }
+            // Filter: only show relations that connect FROM the source table
+            if let Some(src) = source_table {
+                if let Some(from_tables) = from {
+                    if !from_tables.iter().any(|t| t == src) {
+                        continue;
+                    }
+                }
             }
             let from_str = from.as_ref().map(|f| f.join("|")).unwrap_or_default();
             let to_str = to.as_ref().map(|t| t.join("|")).unwrap_or_default();
@@ -282,7 +388,33 @@ fn add_relation_table_completions(ctx: &Context, prefix: &str, items: &mut Vec<C
     }
 }
 
-fn add_namespace_function_completions(namespace: &str, prefix: &str, items: &mut Vec<CompletionItem>) {
+fn add_graph_targets(ctx: &Context, relation: &str, prefix: &str, items: &mut Vec<CompletionItem>) {
+    // Show only tables that the relation connects TO
+    if let Some(table) = ctx.get_table(relation) {
+        if let TableKind::Relation { to, .. } = &table.kind {
+            if let Some(to_tables) = to {
+                for target in to_tables {
+                    if !prefix.is_empty() && !target.to_lowercase().starts_with(&prefix.to_lowercase()) {
+                        continue;
+                    }
+                    let detail = ctx.get_table(target).map(|t| match t.schema_mode {
+                        sg::context::SchemaMode::Schemafull => "SCHEMAFULL".to_string(),
+                        sg::context::SchemaMode::Schemaless => "SCHEMALESS".to_string(),
+                    });
+                    items.push(CompletionItem {
+                        label: target.clone(),
+                        kind: Some(CompletionItemKind::STRUCT),
+                        detail,
+                        sort_text: Some(format!("0-{}", target)),
+                        ..CompletionItem::default()
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn add_namespace_functions(namespace: &str, prefix: &str, items: &mut Vec<CompletionItem>) {
     let ns_prefix = format!("{}::", namespace);
     for func in BUILTIN_FUNCTIONS {
         if !func.name.starts_with(&ns_prefix) {
@@ -305,7 +437,7 @@ fn add_namespace_function_completions(namespace: &str, prefix: &str, items: &mut
     }
 }
 
-fn add_builtin_namespace_completions(prefix: &str, items: &mut Vec<CompletionItem>) {
+fn add_builtin_namespaces(prefix: &str, items: &mut Vec<CompletionItem>) {
     for ns in BUILTIN_NAMESPACES {
         if !prefix.is_empty() && !ns.to_lowercase().starts_with(&prefix.to_lowercase()) {
             continue;
@@ -314,21 +446,21 @@ fn add_builtin_namespace_completions(prefix: &str, items: &mut Vec<CompletionIte
             label: format!("{}::", ns),
             kind: Some(CompletionItemKind::MODULE),
             detail: Some("function namespace".to_string()),
-            sort_text: Some(format!("4-{}", ns)),
+            sort_text: Some(format!("5-{}", ns)),
             ..CompletionItem::default()
         });
     }
 }
 
-fn add_keyword_completions(prefix: &str, items: &mut Vec<CompletionItem>) {
-    for kw in KEYWORDS {
-        if !prefix.is_empty() && !kw.to_lowercase().starts_with(&prefix.to_lowercase()) {
+fn add_type_names(prefix: &str, items: &mut Vec<CompletionItem>) {
+    for type_name in TYPE_NAMES {
+        if !prefix.is_empty() && !type_name.to_lowercase().starts_with(&prefix.to_lowercase()) {
             continue;
         }
         items.push(CompletionItem {
-            label: kw.to_string(),
-            kind: Some(CompletionItemKind::KEYWORD),
-            sort_text: Some(format!("9-{}", kw)),
+            label: type_name.to_string(),
+            kind: Some(CompletionItemKind::TYPE_PARAMETER),
+            sort_text: Some(format!("0-{}", type_name)),
             ..CompletionItem::default()
         });
     }
@@ -344,24 +476,15 @@ fn extract_prefix(source: &str, offset: usize) -> String {
     before[start..].to_string()
 }
 
-fn detect_trigger(source: &str, offset: usize) -> Option<char> {
-    if offset == 0 { return None; }
-    source[..offset].chars().last()
-}
-
-fn extract_namespace(source: &str, offset: usize) -> Option<String> {
-    extract_namespace_from_text(&source[..offset.min(source.len())])
-}
-
 fn extract_namespace_from_text(text: &str) -> Option<String> {
     if !text.ends_with("::") {
         return None;
     }
-    let before_colons = &text[..text.len() - 2];
-    let start = before_colons.rfind(|c: char| !c.is_alphanumeric() && c != '_')
+    let before = &text[..text.len() - 2];
+    let start = before.rfind(|c: char| !c.is_alphanumeric() && c != '_')
         .map(|i| i + 1)
         .unwrap_or(0);
-    let ns = &before_colons[start..];
+    let ns = &before[start..];
     if ns.is_empty() { None } else { Some(ns.to_string()) }
 }
 
@@ -372,6 +495,63 @@ fn find_statement_table_from_node(node: &tree_sitter::Node, source: &str) -> Opt
             return crate::hover::extract_table_from_statement_pub(&parent, source);
         }
         current = parent;
+    }
+    None
+}
+
+fn find_define_field_table(node: &tree_sitter::Node, source: &str) -> Option<String> {
+    let mut current = *node;
+    while let Some(parent) = current.parent() {
+        if parent.kind() == "define_field_statement" {
+            // Find ON TABLE clause
+            let mut cursor = parent.walk();
+            for child in parent.named_children(&mut cursor) {
+                if child.kind() == "on_table_clause" {
+                    let mut inner = child.walk();
+                    for c in child.named_children(&mut inner) {
+                        if c.kind() == "identifier" {
+                            return c.utf8_text(source.as_bytes()).ok().map(|s| s.trim().to_string());
+                        }
+                    }
+                }
+            }
+        }
+        current = parent;
+    }
+    None
+}
+
+/// Find the relation name in a preceding graph segment.
+fn find_preceding_relation_name(node: &tree_sitter::Node, source: &str) -> Option<String> {
+    // Walk up to the path node
+    let mut current = *node;
+    while let Some(parent) = current.parent() {
+        if parent.kind() == "path" {
+            let mut cursor = parent.walk();
+            let children: Vec<_> = parent.named_children(&mut cursor).collect();
+            let our_idx = children.iter().position(|c| {
+                c.start_byte() <= node.start_byte() && c.end_byte() >= node.end_byte()
+            })?;
+            if our_idx > 0 {
+                return first_identifier_text(&children[our_idx - 1], source);
+            }
+            return None;
+        }
+        current = parent;
+    }
+    None
+}
+
+fn first_identifier_text(node: &tree_sitter::Node, source: &str) -> Option<String> {
+    let mut stack = vec![*node];
+    while let Some(current) = stack.pop() {
+        if current.kind() == "identifier" {
+            return current.utf8_text(source.as_bytes()).ok().map(|s| s.trim().to_string());
+        }
+        let mut cursor = current.walk();
+        for child in current.named_children(&mut cursor) {
+            stack.push(child);
+        }
     }
     None
 }
@@ -397,23 +577,8 @@ static BUILTIN_VARIABLES: &[(&str, &str)] = &[
     ("event", "The event type (CREATE, UPDATE, DELETE)"),
 ];
 
-static KEYWORDS: &[&str] = &[
-    "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "ORDER", "BY",
-    "LIMIT", "START", "FETCH", "GROUP", "SPLIT", "OMIT", "TIMEOUT",
-    "PARALLEL", "EXPLAIN",
-    "CREATE", "SET", "CONTENT", "RETURN",
-    "UPDATE", "MERGE", "PATCH",
-    "DELETE",
-    "INSERT", "INTO", "VALUES", "ON DUPLICATE KEY UPDATE",
-    "UPSERT",
-    "RELATE",
-    "DEFINE", "TABLE", "FIELD", "INDEX", "FUNCTION", "EVENT", "PARAM",
-    "SCHEMAFULL", "SCHEMALESS", "TYPE", "DEFAULT", "ASSERT", "READONLY",
-    "OVERWRITE", "IF NOT EXISTS",
-    "REMOVE",
-    "LET", "IF", "ELSE", "END", "FOR", "IN",
-    "BEGIN", "COMMIT", "CANCEL", "TRANSACTION",
-    "RETURN", "THROW", "BREAK", "CONTINUE",
-    "LIVE", "KILL", "SHOW", "CHANGES", "SINCE",
-    "USE", "NS", "DB", "INFO",
+static TYPE_NAMES: &[&str] = &[
+    "any", "null", "bool", "int", "float", "decimal", "number",
+    "string", "bytes", "duration", "datetime", "uuid", "object",
+    "array", "set", "record", "geometry", "option", "range",
 ];
