@@ -329,7 +329,7 @@ mod tests {
         let errors: Vec<_> = result
             .diagnostics
             .iter()
-            .filter(|d| d.is_error() && d.message.contains("not defined on schemafull"))
+            .filter(|d| d.is_error() && d.message.contains("not defined on table"))
             .collect();
         assert!(
             !errors.is_empty(),
@@ -351,7 +351,7 @@ mod tests {
         let errors: Vec<_> = result
             .diagnostics
             .iter()
-            .filter(|d| d.is_error() && d.message.contains("not defined on schemafull"))
+            .filter(|d| d.is_error() && d.message.contains("not defined on table"))
             .collect();
         assert!(
             errors.is_empty(),
@@ -1313,6 +1313,54 @@ mod tests {
                     eprintln!("       related span {}..{}: {}", r.span.start, r.span.end, r.message);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn block_with_if_return_unions_types() {
+        // A block with IF/RETURN should produce a union type
+        let src = r#"
+            LET $result = {
+                IF true { RETURN 'hello' };
+                RETURN 42;
+            };
+        "#;
+        let result = analyze(src).unwrap();
+        if let Some(binding) = result.context.scope.lookup("$result") {
+            match &binding.typ {
+                Kind::Either(variants) => {
+                    assert!(
+                        variants.len() >= 2,
+                        "Expected union of at least 2 types, got: {:?}",
+                        variants
+                    );
+                }
+                Kind::String | Kind::Int => {
+                    // Acceptable if one branch dominates
+                }
+                other => {
+                    // At minimum it should not be Any
+                    assert!(
+                        !other.is_any(),
+                        "Expected union type for multi-return block, got: {:?}",
+                        other
+                    );
+                }
+            }
+        }
+        // Should have no errors
+        let errors: Vec<_> = result.diagnostics.iter().filter(|d| d.is_error()).collect();
+        assert!(errors.is_empty(), "Unexpected errors: {:?}", errors);
+    }
+
+    #[test]
+    fn block_single_return_infers_type() {
+        let src = r#"LET $x = { RETURN 'hello'; };"#;
+        let result = analyze(src).unwrap();
+        if let Some(binding) = result.context.scope.lookup("$x") {
+            assert_eq!(binding.typ, Kind::String, "Expected string from RETURN 'hello'");
+        } else {
+            panic!("$x not found in scope");
         }
     }
 

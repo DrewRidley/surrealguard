@@ -315,12 +315,16 @@ pub fn resolve_expr(node: &Node, source: &str, ctx: &mut Context, table: Option<
         // ── Block expression ──────────────────────────────────
         "block" | "block_expression" => {
             ctx.scope.push(crate::scope::ScopeKind::Block);
+
+            // Use control flow analysis to collect all return paths.
+            // We still need to walk for unreachable code detection.
             let mut last_type = Kind::Null;
-            let mut cursor = node.walk();
             let mut seen_terminator = false;
+            let mut return_types: Vec<Kind> = Vec::new();
+
+            let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
                 if child.kind() == "expressions" {
-                    // Iterate each expression inside the expressions node
                     let mut inner_cursor = child.walk();
                     for expr in child.named_children(&mut inner_cursor) {
                         if expr.kind() == "semi_colon" {
@@ -334,11 +338,14 @@ pub fn resolve_expr(node: &Node, source: &str, ctx: &mut Context, table: Option<
                                 "unreachable code after RETURN, THROW, BREAK, or CONTINUE"
                                     .to_string(),
                             ));
-                            // Still resolve for further diagnostics, but don't update last_type
                             resolve_expr(&expr, source, ctx, table);
                             continue;
                         }
                         last_type = resolve_expr(&expr, source, ctx, table);
+                        // Collect explicit return types
+                        if is_return_node(&expr) {
+                            return_types.push(last_type.clone());
+                        }
                         if is_terminator(&expr) {
                             seen_terminator = true;
                         }
@@ -358,13 +365,27 @@ pub fn resolve_expr(node: &Node, source: &str, ctx: &mut Context, table: Option<
                         continue;
                     }
                     last_type = resolve_expr(&child, source, ctx, table);
+                    if is_return_node(&child) {
+                        return_types.push(last_type.clone());
+                    }
                     if is_terminator(&child) {
                         seen_terminator = true;
                     }
                 }
             }
+
             ctx.scope.pop();
-            last_type
+
+            // If we have explicit RETURN types, unify them with the implicit last type
+            if return_types.is_empty() {
+                last_type
+            } else {
+                if !seen_terminator {
+                    // Block doesn't always terminate — implicit last value is also possible
+                    return_types.push(last_type);
+                }
+                unify_types(&return_types)
+            }
         }
 
         // ── IF expression ─────────────────────────────────────
@@ -663,6 +684,236 @@ fn is_terminator(node: &Node) -> bool {
             result
         }
         _ => false,
+    }
+}
+
+/// Check if a node is or contains an explicit RETURN statement.
+fn is_return_node(node: &Node) -> bool {
+    match node.kind() {
+        "return_statement" | "return_clause" => true,
+        "value" | "base_value" | "expression" | "subquery_statement" | "primary_statement"
+        | "block" | "block_expression" | "expressions" => {
+            let mut cursor = node.walk();
+            let children: Vec<_> = node.named_children(&mut cursor).collect();
+            children.iter().any(|child| is_return_node(child))
+        }
+        "if_expression" | "if_statement" => {
+            let mut cursor = node.walk();
+            let children: Vec<_> = node.named_children(&mut cursor).collect();
+            children.iter().any(|child| {
+                matches!(child.kind(), "if_then_result" | "block" | "block_expression"
+                    | "else_then_clause" | "else_if_clause" | "else_clause")
+                    && is_return_node(child)
+            })
+        }
+        _ => false,
+    }
+}
+
+// ── Control Flow Analysis ─────────────────────────────────────
+//
+// Collects all possible return types from all code paths through a
+// block, function body, or expression. This enables:
+// - Union types for blocks with multiple RETURN paths
+// - "Not all paths return a value" warnings for functions
+// - Accurate type inference for LET $x = { IF ... RETURN ... }
+
+/// Result of control flow analysis on a block or expression.
+#[derive(Debug, Clone)]
+pub struct FlowResult {
+    /// All possible return types from explicit RETURN statements.
+    pub return_types: Vec<Kind>,
+    /// The implicit return type (last expression, if no RETURN terminates first).
+    pub implicit_type: Option<Kind>,
+    /// Whether all code paths definitely return/terminate.
+    pub always_returns: bool,
+}
+
+impl FlowResult {
+    /// Compute the unified type across all possible code paths.
+    pub fn unified_type(&self) -> Kind {
+        let mut all_types = self.return_types.clone();
+        if !self.always_returns {
+            if let Some(ref implicit) = self.implicit_type {
+                all_types.push(implicit.clone());
+            } else {
+                all_types.push(Kind::Null);
+            }
+        }
+        if all_types.is_empty() {
+            Kind::Null
+        } else {
+            unify_types(&all_types)
+        }
+    }
+}
+
+/// Analyze control flow through a node, collecting all possible return types.
+///
+/// This is the core of control flow analysis. It walks blocks, IF/ELSE branches,
+/// and nested expressions to find every possible RETURN path.
+pub fn analyze_flow(node: &Node, source: &str, ctx: &mut Context, table: Option<&str>) -> FlowResult {
+    match node.kind() {
+        "block" | "block_expression" => analyze_block_flow(node, source, ctx, table),
+        "if_expression" | "if_statement" => analyze_if_flow(node, source, ctx, table),
+        "return_statement" | "return_clause" => {
+            let mut cursor = node.walk();
+            let children: Vec<Node> = node.named_children(&mut cursor).collect();
+            let ret_type = if let Some(val) = children.iter().find(|c| c.kind() != "keyword_return") {
+                resolve_expr(val, source, ctx, table)
+            } else {
+                Kind::Null
+            };
+            FlowResult {
+                return_types: vec![ret_type],
+                implicit_type: None,
+                always_returns: true,
+            }
+        }
+        "throw_statement" => FlowResult {
+            return_types: Vec::new(),
+            implicit_type: None,
+            always_returns: true, // THROW terminates but doesn't return a value
+        },
+        // Transparent wrappers
+        "value" | "base_value" | "expression" | "subquery_statement"
+        | "primary_statement" | "inclusive_predicate" | "expressions" => {
+            let mut cursor = node.walk();
+            let children: Vec<_> = node.named_children(&mut cursor).collect();
+            if let Some(child) = children.iter().find(|c| c.kind() != "semi_colon") {
+                analyze_flow(child, source, ctx, table)
+            } else {
+                FlowResult {
+                    return_types: Vec::new(),
+                    implicit_type: Some(Kind::Null),
+                    always_returns: false,
+                }
+            }
+        }
+        // Any other expression — just resolve its type as implicit return
+        _ => {
+            let typ = resolve_expr(node, source, ctx, table);
+            FlowResult {
+                return_types: Vec::new(),
+                implicit_type: Some(typ),
+                always_returns: is_terminator(node),
+            }
+        }
+    }
+}
+
+/// Analyze control flow through a block, collecting return types from all paths.
+fn analyze_block_flow(node: &Node, source: &str, ctx: &mut Context, table: Option<&str>) -> FlowResult {
+    let mut all_returns = Vec::new();
+    let mut last_type = Kind::Null;
+    let mut terminated = false;
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.kind() == "semi_colon" {
+            continue;
+        }
+        if terminated {
+            // Still resolve for diagnostics but don't track
+            resolve_expr(&child, source, ctx, table);
+            continue;
+        }
+
+        if child.kind() == "expressions" {
+            // Walk inner expressions
+            let mut inner_cursor = child.walk();
+            for expr in child.named_children(&mut inner_cursor) {
+                if expr.kind() == "semi_colon" {
+                    continue;
+                }
+                if terminated {
+                    resolve_expr(&expr, source, ctx, table);
+                    continue;
+                }
+
+                let flow = analyze_flow(&expr, source, ctx, table);
+                all_returns.extend(flow.return_types);
+
+                if flow.always_returns {
+                    terminated = true;
+                } else if let Some(t) = flow.implicit_type {
+                    last_type = t;
+                }
+            }
+        } else {
+            let flow = analyze_flow(&child, source, ctx, table);
+            all_returns.extend(flow.return_types);
+
+            if flow.always_returns {
+                terminated = true;
+            } else if let Some(t) = flow.implicit_type {
+                last_type = t;
+            }
+        }
+    }
+
+    FlowResult {
+        return_types: all_returns,
+        implicit_type: if terminated { None } else { Some(last_type) },
+        always_returns: terminated,
+    }
+}
+
+/// Analyze control flow through an IF/ELSE, merging branch return types.
+fn analyze_if_flow(node: &Node, source: &str, ctx: &mut Context, table: Option<&str>) -> FlowResult {
+    let mut all_returns = Vec::new();
+    let mut branch_implicits = Vec::new();
+    let mut has_else = false;
+    let mut all_branches_return = true;
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        match child.kind() {
+            "if_then_result" | "block" | "block_expression" => {
+                let flow = analyze_flow(&child, source, ctx, table);
+                all_returns.extend(flow.return_types);
+                if !flow.always_returns {
+                    all_branches_return = false;
+                    if let Some(t) = flow.implicit_type {
+                        branch_implicits.push(t);
+                    }
+                }
+            }
+            "else_then_clause" | "else_if_clause" | "else_clause" => {
+                has_else = true;
+                let flow = analyze_flow(&child, source, ctx, table);
+                all_returns.extend(flow.return_types);
+                if !flow.always_returns {
+                    all_branches_return = false;
+                    if let Some(t) = flow.implicit_type {
+                        branch_implicits.push(t);
+                    }
+                }
+            }
+            k if k.starts_with("keyword_") => {}
+            _ => {
+                // Condition expression — just resolve for type checking
+                resolve_expr(&child, source, ctx, table);
+            }
+        }
+    }
+
+    // If there's no else branch, the IF might not execute at all
+    if !has_else {
+        all_branches_return = false;
+        branch_implicits.push(Kind::Null);
+    }
+
+    let implicit = if branch_implicits.is_empty() {
+        None
+    } else {
+        Some(unify_types(&branch_implicits))
+    };
+
+    FlowResult {
+        return_types: all_returns,
+        implicit_type: implicit,
+        always_returns: has_else && all_branches_return,
     }
 }
 
