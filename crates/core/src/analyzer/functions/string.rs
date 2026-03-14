@@ -57,8 +57,8 @@ pub(super) fn analyze_string(ctx: &AnalyzerContext, func: &Function) -> Analyzer
                 Err(AnalyzerError::UnexpectedSyntax)
             }
         },
-        // string::ends_with(string, string) -> bool
-        Some("ends_with") => {
+        // string::ends_with / string::endsWith (camelCase alias) -> bool
+        Some("ends_with") | Some("endsWith") => {
             let args = func.args();
             if args.len() != 2 {
                 return Err(AnalyzerError::UnexpectedSyntax);
@@ -93,8 +93,8 @@ pub(super) fn analyze_string(ctx: &AnalyzerContext, func: &Function) -> Analyzer
                 Err(AnalyzerError::UnexpectedSyntax)
             }
         },
-        // string::lowercase(string) -> string
-        Some("lowercase") => {
+        // string::lowercase / string::toLowerCase (camelCase alias) -> string
+        Some("lowercase") | Some("toLowerCase") => {
             if func.args().len() != 1 {
                 return Err(AnalyzerError::UnexpectedSyntax);
             }
@@ -190,8 +190,8 @@ pub(super) fn analyze_string(ctx: &AnalyzerContext, func: &Function) -> Analyzer
                 Err(AnalyzerError::UnexpectedSyntax)
             }
         },
-        // string::starts_with(string, string) -> bool
-        Some("starts_with") => {
+        // string::starts_with / string::startsWith (camelCase alias) -> bool
+        Some("starts_with") | Some("startsWith") => {
             let args = func.args();
             if args.len() != 2 {
                 return Err(AnalyzerError::UnexpectedSyntax);
@@ -213,8 +213,8 @@ pub(super) fn analyze_string(ctx: &AnalyzerContext, func: &Function) -> Analyzer
                 Err(AnalyzerError::UnexpectedSyntax)
             }
         },
-        // string::uppercase(string) -> string
-        Some("uppercase") => {
+        // string::uppercase / string::toUpperCase (camelCase alias) -> string
+        Some("uppercase") | Some("toUpperCase") => {
             if func.args().len() != 1 {
                 return Err(AnalyzerError::UnexpectedSyntax);
             }
