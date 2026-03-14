@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/codegen", "crates/macros", "crates/cli"]
+members = ["crates/core", "crates/codegen", "crates/macros", "crates/cli", "crates/analyzer", "crates/lsp"]
 resolver = "2"
 
 [workspace.package]
@@ -15,3 +15,5 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 surrealdb = { version = "2.1.4", features = [], default-features = false}
 thiserror = "1"
+tree-sitter = "0.26"
+tree-sitter-surrealql = { path = "../tree-sitter-surrealql" }
