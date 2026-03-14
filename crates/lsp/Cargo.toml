@@ -1,0 +1,20 @@
+[package]
+name = "surrealguard-lsp"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Language Server Protocol implementation for SurrealQL powered by SurrealGuard"
+
+[[bin]]
+name = "surrealguard-lsp"
+path = "src/main.rs"
+
+[dependencies]
+surrealguard-analyzer = { path = "../analyzer" }
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync"] }
+tree-sitter.workspace = true
+tree-sitter-surrealql.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+walkdir = "2"
