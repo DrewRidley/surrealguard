@@ -3442,6 +3442,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "surrealguard-typegen"
+version = "0.1.0"
+dependencies = [
+ "surrealguard-analyzer",
+ "tree-sitter",
+ "walkdir",
+]
+
+[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
