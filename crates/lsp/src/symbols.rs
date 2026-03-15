@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use tower_lsp::lsp_types::{DocumentSymbol, Position, Range, SymbolKind, SymbolTag};
+use tower_lsp::lsp_types::{DocumentSymbol, Range, SymbolKind};
 
 use crate::text::byte_range_to_lsp;
 

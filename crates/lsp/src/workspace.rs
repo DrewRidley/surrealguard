@@ -82,16 +82,15 @@ impl Workspace {
             }
         }
 
-        // Track byte ranges for each file so we can attribute definitions
-        let mut file_byte_ranges: Vec<(Url, u32, u32)> = Vec::new();
-        let mut offset = 0u32;
+        let mut schema_sources = Vec::new();
 
         for (file_uri, text) in &schema_files {
-            let len = text.len() as u32;
-            file_byte_ranges.push(((*file_uri).clone(), offset, offset + len));
+            schema_sources.push(SchemaSource {
+                uri: (*file_uri).clone(),
+                text: text.to_string(),
+            });
             let _ = sg::analyze_with_context(text, &mut ctx);
-            ctx.take_diagnostics(); // Discard diagnostics from schema files
-            offset += len;
+            ctx.take_diagnostics();
         }
 
         // Phase 2: Analyze the target document
@@ -102,6 +101,7 @@ impl Workspace {
                 context: ctx,
                 source: target_text.clone(),
                 uri: uri.clone(),
+                schema_sources,
             });
         }
 
@@ -157,6 +157,7 @@ impl Workspace {
             context: ctx,
             source: target_text.clone(),
             uri: uri.clone(),
+            schema_sources,
         })
     }
 
@@ -180,10 +181,19 @@ impl Workspace {
     }
 }
 
+/// A schema file's URI and source text, for cross-file definition lookup.
+#[derive(Debug, Clone)]
+pub struct SchemaSource {
+    pub uri: Url,
+    pub text: String,
+}
+
 /// Result of analyzing a single document against the workspace schema.
 pub struct AnalysisResult {
     pub diagnostics: Vec<SgDiagnostic>,
     pub context: Context,
     pub source: String,
     pub uri: Url,
+    /// Schema files that were loaded into context (for cross-file go-to-def).
+    pub schema_sources: Vec<SchemaSource>,
 }

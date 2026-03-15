@@ -84,7 +84,7 @@ fn extract_function_name(text: &str) -> Option<String> {
 
     // Walk backwards to collect valid function name characters (alphanumeric, _, ::).
     let bytes = trimmed.as_bytes();
-    let mut end = bytes.len();
+    let end = bytes.len();
     let mut start = end;
 
     while start > 0 {

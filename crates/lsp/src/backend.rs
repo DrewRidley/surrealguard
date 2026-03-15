@@ -207,6 +207,7 @@ impl LanguageServer for Backend {
             position,
             &result.context,
             &uri,
+            &result.schema_sources,
         ))
     }
 
