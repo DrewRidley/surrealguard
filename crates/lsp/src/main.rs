@@ -8,6 +8,7 @@ pub mod hover;
 mod signature;
 mod symbols;
 mod text;
+mod typegen;
 mod workspace;
 
 #[tokio::main]

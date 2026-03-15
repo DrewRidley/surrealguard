@@ -141,9 +141,28 @@ impl LanguageServer for Backend {
         self.publish_diagnostics(&uri).await;
     }
 
-    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+    async fn did_save(&self, _params: DidSaveTextDocumentParams) {
         // Re-analyze all documents since schema might have changed
         self.publish_all_diagnostics().await;
+
+        // Auto-generate TypeScript declarations
+        let result = {
+            let ws = self.workspace.read().await;
+            crate::typegen::generate_from_workspace(&ws)
+        };
+        if let Some((path, content)) = result {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(()) = std::fs::write(&path, &content) {
+                self.client
+                    .log_message(
+                        MessageType::INFO,
+                        format!("surrealguard: updated {}", path.display()),
+                    )
+                    .await;
+            }
+        }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
