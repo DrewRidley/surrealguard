@@ -1347,13 +1347,13 @@ fn resolve_function_call(
 
     // Check custom functions first
     if fn_name.starts_with("fn::") {
-        let custom_name = &fn_name[4..]; // strip "fn::"
-        // Clone data out to avoid borrow conflict
+        // Try both with and without fn:: prefix since storage varies
         let func_info = ctx
-            .get_function(custom_name)
-            .map(|f| (f.params.len(), f.return_type.clone()));
+            .get_function(&fn_name)
+            .or_else(|| ctx.get_function(&fn_name[4..]))
+            .map(|f| (f.params.len(), f.return_type.clone(), f.params.clone()));
 
-        if let Some((param_count, return_type)) = func_info {
+        if let Some((param_count, return_type, params)) = func_info {
             if param_count != arg_types.len() {
                 let span = Span::from_node(node);
                 ctx.emit(Diagnostic::error(
@@ -1368,6 +1368,24 @@ fn resolve_function_call(
                         if arg_types.len() == 1 { "was" } else { "were" }
                     ),
                 ));
+            }
+            // Check argument types against declared parameter types
+            for (i, ((param_name, param_type), arg_type)) in params.iter().zip(arg_types.iter()).enumerate() {
+                if !param_type.is_any() && !arg_type.is_any()
+                    && !crate::types::is_assignable(param_type, arg_type)
+                {
+                    let span = crate::functions::find_nth_arg_node(node, i)
+                        .map(|n| Span::from_node(&n))
+                        .unwrap_or_else(|| Span::from_node(node));
+                    ctx.emit(Diagnostic::warning(
+                        span,
+                        Code::WrongArgType,
+                        format!(
+                            "`{}` expects `{}` for parameter `{}`, found `{}`",
+                            fn_name, param_type, param_name, arg_type
+                        ),
+                    ));
+                }
             }
             return return_type.unwrap_or(Kind::Any);
         } else {
@@ -1395,7 +1413,9 @@ fn resolve_function_args(
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
         match child.kind() {
-            "function_name" | "builtin_function_name" | "identifier" if child.start_byte() == node.start_byte() => {
+            "function_name" | "builtin_function_name" | "custom_function_name" | "identifier"
+                if child.start_byte() == node.start_byte() =>
+            {
                 // Skip the function name
                 continue;
             }
@@ -1422,7 +1442,7 @@ fn collect_arg_nodes<'a>(node: &Node<'a>, source: &str) -> Vec<Node<'a>> {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
         match child.kind() {
-            "function_name" | "builtin_function_name" | "identifier"
+            "function_name" | "builtin_function_name" | "custom_function_name" | "identifier"
                 if child.start_byte() == node.start_byte() =>
             {
                 continue;

@@ -1402,3 +1402,71 @@ mod tests {
         // Issue 3: $aah param type resolution
         show("$aah comparison", &format!("{}\nSELECT * FROM user WHERE age > $aah;", schema));
     }
+
+    #[test]
+    fn gap_audit() {
+        let src = r#"
+DEFINE TABLE user SCHEMAFULL;
+DEFINE FIELD name ON user TYPE string;
+DEFINE FIELD age ON user TYPE int;
+DEFINE TABLE post SCHEMAFULL;
+DEFINE FIELD title ON post TYPE string;
+DEFINE FIELD author ON post TYPE record<user>;
+DEFINE TABLE wrote TYPE RELATION FROM user TO post;
+
+LET $a = (SELECT name FROM user);
+LET $b = SELECT VALUE name FROM user;
+LET $c = SELECT name AS n, age AS a FROM user;
+LET $d = 1 + 2;
+LET $e = "hello" + " world";
+LET $f = IF true { 'hello' } ELSE { 42 };
+"#;
+        let result = crate::analyze(src).unwrap();
+        let ctx = &result.context;
+        
+        let vars = ["$a", "$b", "$c", "$d", "$e", "$f"];
+        for var in &vars {
+            let typ = ctx.scope.lookup(var)
+                .map(|b| format!("{}", crate::types::display_kind(&b.typ)))
+                .unwrap_or_else(|| "NOT FOUND".to_string());
+            eprintln!("  {} = {}", var, typ);
+        }
+    }
+
+    #[test]
+    fn gap_audit_2() {
+        let src = r#"
+DEFINE TABLE user SCHEMAFULL;
+DEFINE FIELD name ON user TYPE string;
+DEFINE FIELD age ON user TYPE int;
+DEFINE TABLE post SCHEMAFULL;
+DEFINE FIELD title ON post TYPE string;
+DEFINE FIELD author ON post TYPE record<user>;
+DEFINE TABLE wrote TYPE RELATION FROM user TO post;
+DEFINE FIELD created_at ON wrote TYPE datetime;
+DEFINE FUNCTION fn::greet($name: string) -> string { RETURN "Hi " + $name; };
+
+SELECT author.name FROM post;
+fn::greet(42);
+LET $g = user:123;
+SELECT * FROM user:specific;
+INSERT INTO user (name, age) VALUES ('test', 'not_int');
+"#;
+        let result = crate::analyze(src).unwrap();
+        eprintln!("\n=== Gap Audit 2 ===");
+        for d in &result.diagnostics {
+            let sev = match d.severity { crate::Severity::Error => "ERR", crate::Severity::Warning => "WRN", _ => "HNT" };
+            eprintln!("  [{}] {} ({})", sev, d.message, d.code.id());
+        }
+    }
+
+    #[test]
+    fn fn_call_simple() {
+        let result = crate::analyze(r#"
+DEFINE FUNCTION fn::greet($name: string) -> string { RETURN "Hi " + $name; };
+fn::greet(42);
+"#).unwrap();
+        for d in &result.diagnostics {
+            eprintln!("  [{}] {}", d.code.id(), d.message);
+        }
+    }

@@ -599,13 +599,36 @@ fn parse_function_def(node: &Node, source: &str) -> Option<FunctionDef> {
 fn parse_param_list(node: &Node, source: &str) -> Vec<(String, Kind)> {
     let mut params = Vec::new();
     let mut cursor = node.walk();
-    for child in node.named_children(&mut cursor) {
-        if child.kind() == "param_definition" || child.kind() == "variable" {
-            let var_name = node_text(&child, source).to_string();
-            let typ = child_by_kind(&child, "type")
-                .and_then(|t| parse_type(&t, source))
-                .unwrap_or(Kind::Any);
-            params.push((var_name, typ));
+    let children: Vec<_> = node.named_children(&mut cursor).collect();
+
+    // Params can be structured as:
+    // 1. param_definition { variable_name, type } — wrapped
+    // 2. variable_name, type — flat (sequential children)
+    let mut i = 0;
+    while i < children.len() {
+        let child = &children[i];
+        match child.kind() {
+            "param_definition" | "variable" => {
+                let var_name = node_text(child, source).to_string();
+                let typ = child_by_kind(child, "type")
+                    .and_then(|t| parse_type(&t, source))
+                    .unwrap_or(Kind::Any);
+                params.push((var_name, typ));
+                i += 1;
+            }
+            "variable_name" => {
+                let var_name = node_text(child, source).to_string();
+                // Next sibling might be the type
+                let typ = if i + 1 < children.len() && children[i + 1].kind() == "type" {
+                    i += 1; // consume the type node
+                    parse_type(&children[i], source).unwrap_or(Kind::Any)
+                } else {
+                    Kind::Any
+                };
+                params.push((var_name, typ));
+                i += 1;
+            }
+            _ => { i += 1; }
         }
     }
     params

@@ -390,7 +390,10 @@ fn build_select_type(
         if let Some(pred) = predicates.first() {
             let typ = resolve_expr(pred, source, ctx, table);
             for ident in &find_all(pred, "identifier") {
-                if !is_inside_graph_path(ident) {
+                if !is_inside_graph_path(ident)
+                    && !is_inside_subscript(ident)
+                    && !is_inside_function_call(ident)
+                {
                     validate_field_on_table(ident, source, ctx, table);
                 }
             }
@@ -406,10 +409,15 @@ fn build_select_type(
         // Resolve the expression part (before AS alias if present)
         let typ = resolve_predicate_expr(pred, source, ctx, table);
 
-        // Validate field names, but skip identifiers inside graph paths
-        // (->wrote->post identifiers are table references, not fields)
+        // Validate top-level field names only. Skip identifiers inside:
+        // - graph paths (->wrote->post are table refs, not fields)
+        // - subscripts (author.name — `name` is on `author`, not the FROM table)
+        // - function calls (string::len — `len` is not a field)
         for ident in &find_all(pred, "identifier") {
-            if !is_inside_graph_path(ident) {
+            if !is_inside_graph_path(ident)
+                && !is_inside_subscript(ident)
+                && !is_inside_function_call(ident)
+            {
                 validate_field_on_table(ident, source, ctx, table);
             }
         }
@@ -547,6 +555,34 @@ fn is_inside_graph_path(node: &Node) -> bool {
             "graph_path" | "graph_predicate" | "graph_expression" => return true,
             // Stop at statement level
             k if k.ends_with("_statement") || k == "select_clause" => return false,
+            _ => {}
+        }
+        current = parent;
+    }
+    false
+}
+
+/// Check if an identifier is inside a subscript (e.g., `.name` in `author.name`).
+fn is_inside_subscript(node: &Node) -> bool {
+    let mut current = *node;
+    while let Some(parent) = current.parent() {
+        match parent.kind() {
+            "subscript" => return true,
+            k if k.ends_with("_statement") || k == "select_clause" || k == "predicate" => return false,
+            _ => {}
+        }
+        current = parent;
+    }
+    false
+}
+
+/// Check if an identifier is inside a function call (e.g., `len` in `string::len()`).
+fn is_inside_function_call(node: &Node) -> bool {
+    let mut current = *node;
+    while let Some(parent) = current.parent() {
+        match parent.kind() {
+            "function_call" | "builtin_function_name" | "function_name" | "custom_function_name" => return true,
+            k if k.ends_with("_statement") || k == "select_clause" || k == "predicate" => return false,
             _ => {}
         }
         current = parent;
