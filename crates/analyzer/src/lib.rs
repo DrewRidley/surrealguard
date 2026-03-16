@@ -1470,3 +1470,23 @@ fn::greet(42);
             eprintln!("  [{}] {}", d.code.id(), d.message);
         }
     }
+
+    #[test]
+    fn gap_audit_3() {
+        fn show(label: &str, src: &str) {
+            let result = crate::analyze(src).unwrap();
+            eprintln!("\n=== {} ===", label);
+            for d in &result.diagnostics {
+                let sev = match d.severity { crate::Severity::Error => "ERR", crate::Severity::Warning => "WRN", _ => "HNT" };
+                eprintln!("  [{}] {} ({})", sev, d.message, d.code.id());
+            }
+            if result.diagnostics.is_empty() { eprintln!("  (clean)"); }
+        }
+
+        let schema = "DEFINE TABLE user SCHEMAFULL;\nDEFINE FIELD name ON user TYPE string;\nDEFINE FIELD age ON user TYPE int;\nDEFINE TABLE post SCHEMAFULL;\nDEFINE FIELD title ON post TYPE string;\nDEFINE FIELD body ON post TYPE string;\nDEFINE FIELD author ON post TYPE record<user>;\nDEFINE TABLE wrote TYPE RELATION FROM user TO post;\nDEFINE FIELD created_at ON wrote TYPE datetime;";
+
+        show("author.{id,name}", &format!("{}\nSELECT title, body, author.{{id, name}} FROM post;", schema));
+        show("graph AS alias", &format!("{}\nLET $test = SELECT ->wrote->post AS posts FROM user;", schema));
+        show("graph.destructure", &format!("{}\nLET $res = SELECT ->wrote->post.{{title}} FROM user;", schema));
+        show("graph WHERE + destructure", &format!("{}\nLET $res = SELECT ->wrote[WHERE created_at > time::now()]->post.{{title}} FROM user;", schema));
+    }

@@ -178,18 +178,23 @@ fn collect_statement_hint(
 /// massive inline annotations that obscure the code.
 fn format_type_label(kind: &Kind) -> String {
     match kind {
-        // Object literals with fields → show "object" instead of the full field list
+        // Object literals with fields → show field names (without types for brevity)
         Kind::Literal(crate::types::Literal::Object(fields)) => {
-            if fields.len() <= 2 {
-                // Small objects: show fields inline
+            if fields.len() <= 3 {
                 let field_strs: Vec<String> = fields
                     .iter()
                     .map(|(k, v)| format!("{}: {}", k, display_kind(v)))
                     .collect();
                 format!("{{ {} }}", field_strs.join(", "))
             } else {
-                // Large objects: just show field count
-                format!("object ({} fields)", fields.len())
+                // Show field names only, truncated
+                let names: Vec<&String> = fields.keys().collect();
+                let shown: Vec<String> = names.iter().take(4).map(|n| n.to_string()).collect();
+                if names.len() > 4 {
+                    format!("{{ {}, ... }}", shown.join(", "))
+                } else {
+                    format!("{{ {} }}", shown.join(", "))
+                }
             }
         }
         // Arrays of objects → abbreviate the element type

@@ -389,13 +389,8 @@ fn build_select_type(
     if is_value {
         if let Some(pred) = predicates.first() {
             let typ = resolve_expr(pred, source, ctx, table);
-            for ident in &find_all(pred, "identifier") {
-                if !is_inside_graph_path(ident)
-                    && !is_inside_subscript(ident)
-                    && !is_inside_function_call(ident)
-                {
-                    validate_field_on_table(ident, source, ctx, table);
-                }
+            if let Some(top_ident) = find_top_level_field_ident(pred) {
+                validate_field_on_table(&top_ident, source, ctx, table);
             }
             return typ;
         }
@@ -409,17 +404,11 @@ fn build_select_type(
         // Resolve the expression part (before AS alias if present)
         let typ = resolve_predicate_expr(pred, source, ctx, table);
 
-        // Validate top-level field names only. Skip identifiers inside:
-        // - graph paths (->wrote->post are table refs, not fields)
-        // - subscripts (author.name — `name` is on `author`, not the FROM table)
-        // - function calls (string::len — `len` is not a field)
-        for ident in &find_all(pred, "identifier") {
-            if !is_inside_graph_path(ident)
-                && !is_inside_subscript(ident)
-                && !is_inside_function_call(ident)
-            {
-                validate_field_on_table(ident, source, ctx, table);
-            }
+        // Only validate top-level field identifiers — those that are direct
+        // field references on the FROM table. Skip any identifiers nested inside
+        // paths, subscripts, destructures, graph edges, function calls, etc.
+        if let Some(top_ident) = find_top_level_field_ident(pred) {
+            validate_field_on_table(&top_ident, source, ctx, table);
         }
 
         let field_name = extract_field_name(pred, source);
@@ -544,6 +533,61 @@ fn extract_fetch_fields(node: &Node, source: &str) -> Vec<String> {
         }
     }
     fields
+}
+
+/// Find the top-level field identifier in a predicate — the first identifier
+/// that represents a direct field reference on the FROM table.
+///
+/// For `name` → returns `name`
+/// For `author.name` → returns `author` (name is on author, not the table)
+/// For `->wrote->post` → returns None (these are all table refs)
+/// For `string::len(name)` → returns None (function call, not field)
+/// For `author.{id, name}` → returns `author` (destructure fields are on author)
+fn find_top_level_field_ident<'a>(pred: &Node<'a>) -> Option<Node<'a>> {
+    // Walk down through transparent wrappers to find the first meaningful node
+    let mut current = *pred;
+    loop {
+        let mut cursor = current.walk();
+        let children: Vec<_> = current.named_children(&mut cursor).collect();
+
+        match current.kind() {
+            // Transparent wrappers — descend into first child
+            "predicate" | "value" | "base_value" | "expression"
+            | "inclusive_predicate" => {
+                if let Some(child) = children.first() {
+                    current = *child;
+                    continue;
+                }
+                return None;
+            }
+            // Direct identifier — this is what we want
+            "identifier" => return Some(current),
+            // Path expression — only validate the FIRST identifier (the root field)
+            "path" => {
+                if let Some(first) = children.first() {
+                    if first.kind() == "base_value" || first.kind() == "identifier" {
+                        // Find the identifier inside base_value
+                        let mut c2 = first.walk();
+                        for inner in first.named_children(&mut c2) {
+                            if inner.kind() == "identifier" {
+                                return Some(inner);
+                            }
+                        }
+                        if first.kind() == "identifier" {
+                            return Some(*first);
+                        }
+                    }
+                    // If path starts with graph_path (->), no top-level field
+                    if first.kind() == "graph_path" {
+                        return None;
+                    }
+                }
+                return None;
+            }
+            // Everything else (function calls, graph paths, etc.) — no field to validate
+            _ => return None,
+        }
+    }
 }
 
 /// Check if an identifier node is inside a graph path (->relation->target).
