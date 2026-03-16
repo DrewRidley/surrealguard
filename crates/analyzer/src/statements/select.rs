@@ -390,7 +390,9 @@ fn build_select_type(
         if let Some(pred) = predicates.first() {
             let typ = resolve_expr(pred, source, ctx, table);
             for ident in &find_all(pred, "identifier") {
-                validate_field_on_table(ident, source, ctx, table);
+                if !is_inside_graph_path(ident) {
+                    validate_field_on_table(ident, source, ctx, table);
+                }
             }
             return typ;
         }
@@ -404,8 +406,12 @@ fn build_select_type(
         // Resolve the expression part (before AS alias if present)
         let typ = resolve_predicate_expr(pred, source, ctx, table);
 
+        // Validate field names, but skip identifiers inside graph paths
+        // (->wrote->post identifiers are table references, not fields)
         for ident in &find_all(pred, "identifier") {
-            validate_field_on_table(ident, source, ctx, table);
+            if !is_inside_graph_path(ident) {
+                validate_field_on_table(ident, source, ctx, table);
+            }
         }
 
         let field_name = extract_field_name(pred, source);
@@ -530,6 +536,22 @@ fn extract_fetch_fields(node: &Node, source: &str) -> Vec<String> {
         }
     }
     fields
+}
+
+/// Check if an identifier node is inside a graph path (->relation->target).
+/// These identifiers are table references, not field references.
+fn is_inside_graph_path(node: &Node) -> bool {
+    let mut current = *node;
+    while let Some(parent) = current.parent() {
+        match parent.kind() {
+            "graph_path" | "graph_predicate" | "graph_expression" => return true,
+            // Stop at statement level
+            k if k.ends_with("_statement") || k == "select_clause" => return false,
+            _ => {}
+        }
+        current = parent;
+    }
+    false
 }
 
 fn validate_field_on_table(node: &Node, source: &str, ctx: &mut Context, table: Option<&str>) {

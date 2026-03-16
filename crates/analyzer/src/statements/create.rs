@@ -353,7 +353,7 @@ fn check_missing_required_fields(node: &Node, source: &str, ctx: &mut Context, t
             target_span,
             Code::MissingRequiredField,
             format!(
-                "missing required field `{}` in CREATE on table `{}`; field has no DEFAULT and is not computed",
+                "missing required field `{}`\non table `{}`",
                 field, table
             ),
         );
