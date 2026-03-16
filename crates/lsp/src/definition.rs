@@ -27,61 +27,47 @@ pub fn resolve(
         return None;
     }
 
-    // Walk up the tree to determine context
     let mut current = node;
     loop {
-        let Some(parent) = current.parent() else {
-            break;
-        };
+        let Some(parent) = current.parent() else { break; };
 
         match parent.kind() {
+            // Table references
             "from_clause" | "create_target" | "relate_subject"
                 if current.kind() == "identifier" =>
             {
-                return resolve_span(ctx.get_table(&text).map(|t| t.span), &text, "DEFINE TABLE", source, uri, schema_sources);
+                return find_definition(ctx, &text, DefKind::Table, None, source, uri, schema_sources);
             }
             "graph_path" | "graph_predicate" if current.kind() == "identifier" => {
-                return resolve_span(ctx.get_table(&text).map(|t| t.span), &text, "DEFINE TABLE", source, uri, schema_sources);
+                return find_definition(ctx, &text, DefKind::Table, None, source, uri, schema_sources);
             }
+            // Field references in clauses
             "field_assignment" | "where_clause" | "select_clause"
                 if current.kind() == "identifier" =>
             {
                 let table = find_statement_table(&parent, source);
-                if let Some(tbl) = &table {
-                    if let Some(field) = ctx.get_field(tbl, &text) {
-                        return resolve_span(Some(field.span), &text, "DEFINE FIELD", source, uri, schema_sources);
-                    }
-                }
-                for tbl_name in ctx.table_names() {
-                    if let Some(field) = ctx.get_field(tbl_name, &text) {
-                        return resolve_span(Some(field.span), &text, "DEFINE FIELD", source, uri, schema_sources);
-                    }
-                }
+                return find_definition(ctx, &text, DefKind::Field, table.as_deref(), source, uri, schema_sources);
             }
+            // Variables
             _ if current.kind() == "variable_name" || current.kind() == "variable" => {
                 let var = if text.starts_with('$') { text.clone() } else { format!("${text}") };
                 if let Some(binding) = ctx.scope.lookup(&var) {
-                    return resolve_span(Some(binding.span), &var, "LET", source, uri, schema_sources);
+                    return resolve_span(binding.span, "LET", &var, None, source, uri, schema_sources);
                 }
             }
+            // Functions
             _ if current.kind() == "custom_function_name" => {
-                if let Some(func) = ctx.get_function(&text) {
-                    return resolve_span(Some(func.span), &text, "DEFINE FUNCTION", source, uri, schema_sources);
-                }
+                return find_definition(ctx, &text, DefKind::Function, None, source, uri, schema_sources);
             }
             _ => {}
         }
 
-        // Object key inside CONTENT clause → field definition
+        // Object key (CONTENT clause, object literal) → field definition
         if current.kind() == "object_key"
             || (current.kind() == "identifier" && parent.kind() == "object_property")
         {
             let table = find_statement_table(&parent, source);
-            if let Some(tbl) = &table {
-                if let Some(field) = ctx.get_field(tbl, &text) {
-                    return resolve_span(Some(field.span), &text, "DEFINE FIELD", source, uri, schema_sources);
-                }
-            }
+            return find_definition(ctx, &text, DefKind::Field, table.as_deref(), source, uri, schema_sources);
         }
 
         // DML statement targets
@@ -89,7 +75,7 @@ pub fn resolve(
             match parent.kind() {
                 "update_statement" | "delete_statement" | "upsert_statement" => {
                     if is_target_identifier(&parent, &current) {
-                        return resolve_span(ctx.get_table(&text).map(|t| t.span), &text, "DEFINE TABLE", source, uri, schema_sources);
+                        return find_definition(ctx, &text, DefKind::Table, None, source, uri, schema_sources);
                     }
                 }
                 _ => {}
@@ -99,35 +85,74 @@ pub fn resolve(
         current = parent;
     }
 
-    // Fallback: try as table, then function
-    if let Some(table) = ctx.get_table(&text) {
-        return resolve_span(Some(table.span), &text, "DEFINE TABLE", source, uri, schema_sources);
+    // Fallback
+    if ctx.has_table(&text) {
+        return find_definition(ctx, &text, DefKind::Table, None, source, uri, schema_sources);
     }
-    if let Some(func) = ctx.get_function(&text) {
-        return resolve_span(Some(func.span), &text, "DEFINE FUNCTION", source, uri, schema_sources);
+    if ctx.get_function(&text).is_some() {
+        return find_definition(ctx, &text, DefKind::Function, None, source, uri, schema_sources);
     }
 
     None
 }
 
-/// Resolve a definition span to a Location, checking both the current file
-/// and cross-file schema sources.
-fn resolve_span(
-    span: Option<Span>,
+#[derive(Clone, Copy)]
+enum DefKind { Table, Field, Function }
+
+/// Find a definition by looking up the span in context, then resolving it
+/// against the current file or schema files.
+fn find_definition(
+    ctx: &Context,
     name: &str,
+    kind: DefKind,
+    table: Option<&str>,
+    source: &str,
+    uri: &Url,
+    schema_sources: &[SchemaSource],
+) -> Option<GotoDefinitionResponse> {
+    match kind {
+        DefKind::Table => {
+            let span = ctx.get_table(name)?.span;
+            resolve_span(span, "DEFINE TABLE", name, None, source, uri, schema_sources)
+        }
+        DefKind::Field => {
+            // Try specific table first, then all tables
+            if let Some(tbl) = table {
+                if let Some(field) = ctx.get_field(tbl, name) {
+                    return resolve_span(field.span, "DEFINE FIELD", name, Some(tbl), source, uri, schema_sources);
+                }
+            }
+            for tbl_name in ctx.table_names() {
+                if let Some(field) = ctx.get_field(tbl_name, name) {
+                    return resolve_span(field.span, "DEFINE FIELD", name, Some(tbl_name), source, uri, schema_sources);
+                }
+            }
+            None
+        }
+        DefKind::Function => {
+            let span = ctx.get_function(name)?.span;
+            resolve_span(span, "DEFINE FUNCTION", name, None, source, uri, schema_sources)
+        }
+    }
+}
+
+/// Resolve a span to an LSP Location, checking current file then schema files.
+fn resolve_span(
+    span: Span,
     define_keyword: &str,
+    name: &str,
+    table: Option<&str>,
     current_source: &str,
     current_uri: &Url,
     schema_sources: &[SchemaSource],
 ) -> Option<GotoDefinitionResponse> {
-    let span = span?;
     let start = span.start as usize;
     let end = span.end as usize;
 
-    // Check if span is valid in the current file and looks like a DEFINE statement.
+    // Try current file
     if end <= current_source.len() && start < end {
         let span_text = &current_source[start..end];
-        if is_definition_text(span_text, name, define_keyword) {
+        if is_definition_text(span_text, name) {
             let range = byte_range_to_lsp(current_source, start, end);
             return Some(GotoDefinitionResponse::Scalar(Location {
                 uri: current_uri.clone(),
@@ -136,12 +161,11 @@ fn resolve_span(
         }
     }
 
-    // Search schema files — first try the span offset, then text search
+    // Try schema files — first by span offset, then by text search
     for schema in schema_sources {
-        // Try the span offset in this file
         if end <= schema.text.len() && start < end {
             let span_text = &schema.text[start..end];
-            if is_definition_text(span_text, name, define_keyword) {
+            if is_definition_text(span_text, name) {
                 let range = byte_range_to_lsp(&schema.text, start, end);
                 return Some(GotoDefinitionResponse::Scalar(Location {
                     uri: schema.uri.clone(),
@@ -149,8 +173,12 @@ fn resolve_span(
                 }));
             }
         }
-        // Text search: find "DEFINE FIELD age" or "DEFINE TABLE user" in the file
-        let search = format!("{} {}", define_keyword, name);
+
+        // Text search with table context for precision
+        let search = match (define_keyword, table) {
+            ("DEFINE FIELD", Some(tbl)) => format!("DEFINE FIELD {} ON {}", name, tbl),
+            _ => format!("{} {}", define_keyword, name),
+        };
         if let Some(pos) = schema.text.find(&search) {
             let stmt_end = schema.text[pos..]
                 .find(';')
@@ -167,8 +195,8 @@ fn resolve_span(
     None
 }
 
-/// Check if span text looks like an actual definition, not just any code containing the name.
-fn is_definition_text(text: &str, name: &str, _define_keyword: &str) -> bool {
+/// Check if span text is a DEFINE/LET statement, not arbitrary code.
+fn is_definition_text(text: &str, name: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.starts_with("--") || trimmed.starts_with("//") {
         return false;
@@ -176,7 +204,6 @@ fn is_definition_text(text: &str, name: &str, _define_keyword: &str) -> bool {
     if !trimmed.contains(name) {
         return false;
     }
-    // Must start with DEFINE or LET — not arbitrary code like "SET age = 30"
     let upper = trimmed.to_uppercase();
     upper.starts_with("DEFINE ") || upper.starts_with("LET ")
 }
