@@ -52,7 +52,6 @@ pub fn resolve(
                         return resolve_span(Some(field.span), &text, "DEFINE FIELD", source, uri, schema_sources);
                     }
                 }
-                // Try all tables
                 for tbl_name in ctx.table_names() {
                     if let Some(field) = ctx.get_field(tbl_name, &text) {
                         return resolve_span(Some(field.span), &text, "DEFINE FIELD", source, uri, schema_sources);
@@ -71,6 +70,18 @@ pub fn resolve(
                 }
             }
             _ => {}
+        }
+
+        // Object key inside CONTENT clause → field definition
+        if current.kind() == "object_key"
+            || (current.kind() == "identifier" && parent.kind() == "object_property")
+        {
+            let table = find_statement_table(&parent, source);
+            if let Some(tbl) = &table {
+                if let Some(field) = ctx.get_field(tbl, &text) {
+                    return resolve_span(Some(field.span), &text, "DEFINE FIELD", source, uri, schema_sources);
+                }
+            }
         }
 
         // DML statement targets
@@ -113,10 +124,10 @@ fn resolve_span(
     let start = span.start as usize;
     let end = span.end as usize;
 
-    // Check if span is valid in the current file and points to actual definition text
-    if end <= current_source.len() {
+    // Check if span is valid in the current file and looks like a DEFINE statement.
+    if end <= current_source.len() && start < end {
         let span_text = &current_source[start..end];
-        if span_text.contains(name) && !span_text.trim_start().starts_with("--") {
+        if is_definition_text(span_text, name, define_keyword) {
             let range = byte_range_to_lsp(current_source, start, end);
             return Some(GotoDefinitionResponse::Scalar(Location {
                 uri: current_uri.clone(),
@@ -125,11 +136,12 @@ fn resolve_span(
         }
     }
 
-    // Search schema files for the definition
+    // Search schema files — first try the span offset, then text search
     for schema in schema_sources {
-        if end <= schema.text.len() {
+        // Try the span offset in this file
+        if end <= schema.text.len() && start < end {
             let span_text = &schema.text[start..end];
-            if span_text.contains(name) && !span_text.trim_start().starts_with("--") {
+            if is_definition_text(span_text, name, define_keyword) {
                 let range = byte_range_to_lsp(&schema.text, start, end);
                 return Some(GotoDefinitionResponse::Scalar(Location {
                     uri: schema.uri.clone(),
@@ -137,10 +149,13 @@ fn resolve_span(
                 }));
             }
         }
-        // Also try searching the entire file for the DEFINE statement
-        if let Some(pos) = schema.text.find(&format!("{} {}", define_keyword, name)) {
-            // Find the end of the statement (next semicolon)
-            let stmt_end = schema.text[pos..].find(';').map(|i| pos + i + 1).unwrap_or(pos + name.len());
+        // Text search: find "DEFINE FIELD age" or "DEFINE TABLE user" in the file
+        let search = format!("{} {}", define_keyword, name);
+        if let Some(pos) = schema.text.find(&search) {
+            let stmt_end = schema.text[pos..]
+                .find(';')
+                .map(|i| pos + i + 1)
+                .unwrap_or(pos + search.len());
             let range = byte_range_to_lsp(&schema.text, pos, stmt_end);
             return Some(GotoDefinitionResponse::Scalar(Location {
                 uri: schema.uri.clone(),
@@ -150,4 +165,18 @@ fn resolve_span(
     }
 
     None
+}
+
+/// Check if span text looks like an actual definition, not just any code containing the name.
+fn is_definition_text(text: &str, name: &str, _define_keyword: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.starts_with("--") || trimmed.starts_with("//") {
+        return false;
+    }
+    if !trimmed.contains(name) {
+        return false;
+    }
+    // Must start with DEFINE or LET — not arbitrary code like "SET age = 30"
+    let upper = trimmed.to_uppercase();
+    upper.starts_with("DEFINE ") || upper.starts_with("LET ")
 }
