@@ -1699,7 +1699,19 @@ fn resolve_path_expr(
                     match inner.kind() {
                         "filter" => {
                             // filter: [WHERE condition] or [index]
-                            current_type = resolve_filter_node(&inner, &current_type, source, ctx, table);
+                            // For graph paths, resolve WHERE against the relation table
+                            let filter_table = child.prev_named_sibling()
+                                .and_then(|prev| {
+                                    if prev.kind() == "graph_path" {
+                                        crate::parser::find_all(&prev, "identifier")
+                                            .first()
+                                            .map(|id| node_text(id, source).to_string())
+                                    } else {
+                                        None
+                                    }
+                                });
+                            let effective_table = filter_table.as_deref().or(table);
+                            current_type = resolve_filter_node(&inner, &current_type, source, ctx, effective_table);
                         }
                         "subscript" => {
                             // subscript: ('.' | '?.') (identifier | '*' | method_call)
@@ -1840,24 +1852,40 @@ fn resolve_multi_hop_graph(
     table: Option<&str>,
     segments: &[(String, String, Span)],
 ) -> Kind {
-    // Resolve WHERE clauses in any graph_predicate nodes within this path
+    // Resolve WHERE clauses in graph_predicate nodes.
+    // The WHERE should resolve fields against the RELATION table, not the FROM table.
+    // e.g., ->(wrote WHERE created_at > ...) — `created_at` is on `wrote`, not `user`
     let predicates = crate::parser::find_all(node, "graph_predicate");
     for pred in &predicates {
+        // Find which relation this predicate belongs to
+        let relation_table = crate::parser::find_all(pred, "identifier")
+            .first()
+            .map(|id| node_text(id, source).to_string());
+        let relation_ref = relation_table.as_deref().or(table);
+
         if let Some(where_node) = crate::parser::child_by_kind(pred, "where_clause") {
-            resolve_where_clause(&where_node, source, ctx, table);
+            resolve_where_clause(&where_node, source, ctx, relation_ref);
         }
     }
 
-    // Resolve filter nodes (e.g., [WHERE ...] or [0]) in path_elements
+    // Resolve filter nodes (e.g., [WHERE ...] or [0]) in path_elements.
+    // Filters like ->wrote[WHERE ...] should resolve against the preceding relation.
     let filters = crate::parser::find_all(node, "filter");
     for filter_node in &filters {
+        // Walk up to find the preceding graph_path to get the relation name
+        let relation_table = filter_node.parent()
+            .and_then(|pe| pe.prev_named_sibling())
+            .and_then(|prev| crate::parser::find_all(&prev, "identifier").into_iter().last())
+            .map(|id| node_text(&id, source).to_string());
+        let relation_ref = relation_table.as_deref().or(table);
+
         if let Some(where_node) = crate::parser::child_by_kind(filter_node, "where_clause") {
-            resolve_where_clause(&where_node, source, ctx, table);
+            resolve_where_clause(&where_node, source, ctx, relation_ref);
         } else {
-            // Resolve index/value expressions for type checking
             let mut cursor = filter_node.walk();
-            for child in filter_node.named_children(&mut cursor) {
-                resolve_expr(&child, source, ctx, table);
+            let children: Vec<_> = filter_node.named_children(&mut cursor).collect();
+            for child in &children {
+                resolve_expr(child, source, ctx, relation_ref);
             }
         }
     }
