@@ -1376,3 +1376,29 @@ mod tests {
         assert!(!is_valid_cast(&line, &point), "cast point to line should be invalid");
     }
 }
+
+    #[test]
+    fn debug_user_issues() {
+        fn show(label: &str, source: &str) {
+            let result = crate::analyze(source).unwrap();
+            eprintln!("\n=== {} ===", label);
+            if result.diagnostics.is_empty() {
+                eprintln!("  (no diagnostics)");
+            }
+            for d in &result.diagnostics {
+                let sev = match d.severity { crate::Severity::Error => "ERR", crate::Severity::Warning => "WRN", crate::Severity::Hint => "HNT" };
+                eprintln!("  [{}] {} ({})", sev, d.message, d.code.id());
+            }
+        }
+
+        let schema = "DEFINE TABLE user SCHEMAFULL;\nDEFINE FIELD name ON user TYPE string;\nDEFINE FIELD age ON user TYPE int;\nDEFINE FIELD email ON user TYPE string;\nDEFINE FIELD active ON user TYPE bool;\nDEFINE PARAM $aah VALUE 5;";
+
+        // Issue 1: SELECT with typo field on schemafull
+        show("Typo field 'ag'", &format!("{}\nSELECT name, ag FROM user;", schema));
+
+        // Issue 2: CONTENT clause type mismatch
+        show("CONTENT age='test'", &format!("{}\nUPDATE user CONTENT {{ age: 'test', active: true }};", schema));
+
+        // Issue 3: $aah param type resolution
+        show("$aah comparison", &format!("{}\nSELECT * FROM user WHERE age > $aah;", schema));
+    }

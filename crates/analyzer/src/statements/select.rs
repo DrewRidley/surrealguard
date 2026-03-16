@@ -535,22 +535,26 @@ fn extract_fetch_fields(node: &Node, source: &str) -> Vec<String> {
 fn validate_field_on_table(node: &Node, source: &str, ctx: &mut Context, table: Option<&str>) {
     if let Some(tbl) = table {
         let field_name = node_text(node, source);
-        if ctx.strict {
-            if let Some(table_def) = ctx.get_table(tbl) {
-                if table_def.schema_mode == crate::context::SchemaMode::Schemafull
-                    && ctx.get_field(tbl, field_name).is_none()
-                    && field_name != "id"
-                {
-                    let span = Span::from_node(node);
-                    ctx.emit(Diagnostic::error(
-                        span,
-                        Code::UndefinedFieldOnSchemafull,
-                        format!(
-                            "field `{}` is not defined on table `{}`",
-                            field_name, tbl
-                        ),
-                    ));
-                }
+        // Validate on schemafull tables regardless of strict mode —
+        // schemafull tables explicitly define their fields, so accessing
+        // an undefined field is always a bug.
+        if let Some(table_def) = ctx.get_table(tbl) {
+            if table_def.schema_mode == crate::context::SchemaMode::Schemafull
+                && ctx.get_field(tbl, field_name).is_none()
+                && field_name != "id"
+                && field_name != "*"
+            {
+                let span = Span::from_node(node);
+                let table_span = table_def.span;
+                ctx.emit(Diagnostic::warning(
+                    span,
+                    Code::UndefinedFieldOnSchemafull,
+                    format!(
+                        "field `{}` is not defined on table `{}`",
+                        field_name, tbl
+                    ),
+                )
+                .with_suggestion(format!("did you mean one of the defined fields? check DEFINE FIELD statements on `{}`", tbl)));
             }
         }
     }

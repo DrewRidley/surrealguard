@@ -88,10 +88,26 @@ fn analyze_param(node: &Node, source: &str, ctx: &mut Context) {
     }
 
     if let Some(name) = param_name {
-        // Type comes from the TYPE clause if present, otherwise infer from VALUE
+        // Type comes from TYPE clause if present, otherwise infer from VALUE expression
         let typ = child_by_kind(node, "type_clause")
             .and_then(|tc| child_by_kind(&tc, "type"))
             .and_then(|t| crate::schema::parse_type(&t, source))
+            .or_else(|| {
+                // Infer type from VALUE expression
+                let mut cursor2 = node.walk();
+                let children: Vec<_> = node.named_children(&mut cursor2).collect();
+                children.iter()
+                    .find(|c| {
+                        c.kind() != "keyword_define"
+                            && c.kind() != "keyword_param"
+                            && c.kind() != "variable_name"
+                            && c.kind() != "variable"
+                            && c.kind() != "parameter"
+                            && c.kind() != "type_clause"
+                            && !c.kind().starts_with("keyword_")
+                    })
+                    .map(|val| resolve_expr(val, source, ctx, None))
+            })
             .unwrap_or(Kind::Any);
 
         ctx.scope.bind(Binding {
