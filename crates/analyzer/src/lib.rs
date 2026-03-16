@@ -1490,3 +1490,22 @@ fn::greet(42);
         show("graph.destructure", &format!("{}\nLET $res = SELECT ->wrote->post.{{title}} FROM user;", schema));
         show("graph WHERE + destructure", &format!("{}\nLET $res = SELECT ->wrote[WHERE created_at > time::now()]->post.{{title}} FROM user;", schema));
     }
+
+    #[test]
+    fn graph_as_alias() {
+        let src = r#"
+DEFINE TABLE user SCHEMAFULL;
+DEFINE FIELD name ON user TYPE string;
+DEFINE TABLE post SCHEMAFULL;
+DEFINE FIELD title ON post TYPE string;
+DEFINE TABLE wrote TYPE RELATION FROM user TO post;
+LET $res = SELECT ->wrote->post.{title} AS titles FROM user;
+"#;
+        let result = crate::analyze(src).unwrap();
+        if let Some(b) = result.context.scope.lookup("$res") {
+            eprintln!("$res type: {}", crate::types::display_kind(&b.typ));
+        }
+        for d in &result.diagnostics {
+            eprintln!("  {} ({})", d.message, d.code.id());
+        }
+    }

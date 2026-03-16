@@ -1999,34 +1999,20 @@ fn resolve_multi_hop_graph(
         }
     }
 
-    // Build result type from the last segment
+    // Graph traversal returns the records of the LAST target table.
+    // ->wrote->post returns array<record<post>>
+    // The full table type is used so field access (.title) works.
     let (_, ref last_table, _) = segments[segments.len() - 1];
-    let last_type = Kind::Array(
-        Box::new(Kind::Record(vec![Table::from(last_table.clone())])),
-        None,
-    );
 
-    // Build nested object type from inside out
-    if segments.len() <= 1 {
-        return last_type;
+    // Try to build the full table type for better downstream inference
+    if let Some(table_type) = ctx.build_table_type(last_table) {
+        Kind::Array(Box::new(table_type), None)
+    } else {
+        Kind::Array(
+            Box::new(Kind::Record(vec![Table::from(last_table.clone())])),
+            None,
+        )
     }
-
-    let mut result = last_type;
-    for i in (0..segments.len() - 1).rev() {
-        let key = format!("{}{}", segments[i + 1].0, segments[i + 1].1);
-        let mut fields = std::collections::BTreeMap::new();
-        fields.insert(key, result);
-        if i == 0 {
-            let outer_key = format!("{}{}", segments[i].0, segments[i].1);
-            let mut outer_fields = std::collections::BTreeMap::new();
-            outer_fields.insert(outer_key, Kind::Literal(Literal::Object(fields)));
-            result = Kind::Literal(Literal::Object(outer_fields));
-        } else {
-            result = Kind::Literal(Literal::Object(fields));
-        }
-    }
-
-    result
 }
 
 fn resolve_accessor(base_type: &Kind, node: &Node, source: &str, ctx: &mut Context) -> Kind {
