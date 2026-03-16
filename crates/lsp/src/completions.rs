@@ -137,7 +137,9 @@ fn check_node_context(node: &tree_sitter::Node, source: &str) -> Option<Ctx> {
             Some(Ctx::SetFields(table.unwrap_or_default()))
         }
         "where_clause" => {
-            let table = find_table_from_ancestor(node, source);
+            // Check if this WHERE is inside a graph filter [WHERE ...]
+            // If so, resolve fields against the relation table, not FROM table
+            let table = find_where_clause_table(node, source);
             Some(Ctx::Expression(table))
         }
         "select_clause" => {
@@ -159,6 +161,17 @@ fn check_node_context(node: &tree_sitter::Node, source: &str) -> Option<Ctx> {
         "graph_path" | "graph_predicate" => {
             let table = find_table_from_ancestor(node, source);
             Some(Ctx::GraphEdge(table))
+        }
+        // Inside a destructure (author.{id, name}) → fields of the base
+        "destructure" | "destructure_field" => {
+            // Walk up to find the path, then find what the base resolves to
+            let base_table = find_destructure_base_table(node, source);
+            Some(Ctx::SetFields(base_table.unwrap_or_default()))
+        }
+        // Inside a filter [WHERE ...] on a graph edge
+        "filter" => {
+            let relation = find_filter_relation(node, source);
+            Some(Ctx::Expression(relation))
         }
         "type_clause" | "type" | "parameterized_type" | "type_name" => {
             Some(Ctx::TypeName)
@@ -193,10 +206,22 @@ fn check_parent_context(parent: &tree_sitter::Node, current: &tree_sitter::Node,
                 Some(Ctx::SetFields(table.unwrap_or_default()))
             }
         }
-        "where_clause" | "select_clause" | "order_clause" | "group_clause"
+        "where_clause" => {
+            let table = find_where_clause_table(parent, source);
+            Some(Ctx::Expression(table))
+        }
+        "select_clause" | "order_clause" | "group_clause"
         | "split_clause" | "omit_clause" | "fetch_clause" => {
             let table = find_table_from_ancestor(parent, source);
             Some(Ctx::Expression(table))
+        }
+        "destructure" | "destructure_field" => {
+            let base = find_destructure_base_table(parent, source);
+            Some(Ctx::SetFields(base.unwrap_or_default()))
+        }
+        "filter" => {
+            let relation = find_filter_relation(parent, source);
+            Some(Ctx::Expression(relation))
         }
         "content_clause" => {
             let table = find_table_from_ancestor(parent, source);
@@ -617,6 +642,86 @@ fn extract_namespace_from_text(text: &str) -> Option<String> {
 
 fn node_text<'a>(node: &tree_sitter::Node, source: &'a str) -> &'a str {
     node.utf8_text(source.as_bytes()).unwrap_or("").trim()
+}
+
+/// For a WHERE clause, determine the right table context.
+/// If inside a graph filter [WHERE ...], use the relation table.
+/// Otherwise use the FROM table.
+fn find_where_clause_table(node: &tree_sitter::Node, source: &str) -> Option<String> {
+    // Walk up to see if we're inside a filter (graph edge context)
+    let mut current = *node;
+    while let Some(parent) = current.parent() {
+        if parent.kind() == "filter" {
+            return find_filter_relation(&parent, source);
+        }
+        if parent.kind().ends_with("_statement") {
+            break;
+        }
+        current = parent;
+    }
+    find_table_from_ancestor(node, source)
+}
+
+/// Find the relation table for a filter node [WHERE ...] on a graph edge.
+/// Walks to the preceding graph_path sibling to get the relation name.
+fn find_filter_relation(node: &tree_sitter::Node, source: &str) -> Option<String> {
+    // The filter is inside a path_element. Its preceding sibling should be a graph_path.
+    let mut current = *node;
+    while let Some(parent) = current.parent() {
+        if parent.kind() == "path" || parent.kind() == "path_element" {
+            // Look at preceding sibling of the path_element containing this filter
+            if let Some(prev) = current.prev_named_sibling() {
+                if prev.kind() == "graph_path" {
+                    return first_identifier_in(&prev, source);
+                }
+            }
+        }
+        if parent.kind() == "path" {
+            // Also check direct children before the current path_element
+            let mut cursor = parent.walk();
+            let children: Vec<_> = parent.named_children(&mut cursor).collect();
+            if let Some(idx) = children.iter().position(|c| {
+                c.start_byte() <= node.start_byte() && c.end_byte() >= node.end_byte()
+            }) {
+                if idx > 0 {
+                    return first_identifier_in(&children[idx - 1], source);
+                }
+            }
+            break;
+        }
+        current = parent;
+    }
+    // Fallback to FROM table
+    find_table_from_ancestor(node, source)
+}
+
+/// Find the base table for a destructure (author.{id, name}).
+/// The base is the identifier before the destructure in the path.
+fn find_destructure_base_table(node: &tree_sitter::Node, source: &str) -> Option<String> {
+    let mut current = *node;
+    while let Some(parent) = current.parent() {
+        if parent.kind() == "path" {
+            // Find the base_value/identifier at the start of the path
+            let mut cursor = parent.walk();
+            let children: Vec<_> = parent.named_children(&mut cursor).collect();
+
+            // Check for graph path ending (->wrote->post.{title})
+            // The table is the last graph target before the destructure
+            for i in (0..children.len()).rev() {
+                if children[i].kind() == "path_element" || children[i].kind() == "graph_path" {
+                    if let Some(ident) = first_identifier_in(&children[i], source) {
+                        return Some(ident);
+                    }
+                }
+                if children[i].kind() == "base_value" {
+                    return first_identifier_in(&children[i], source);
+                }
+            }
+            break;
+        }
+        current = parent;
+    }
+    None
 }
 
 /// Walk up from a node to find the enclosing statement and extract its target table.
