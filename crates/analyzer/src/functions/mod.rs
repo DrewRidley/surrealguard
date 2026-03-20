@@ -431,3 +431,48 @@ pub fn resolve_builtin(
         }
     }
 }
+
+/// Quick return type lookup for v2 — returns the return type of a builtin
+/// function without doing argument validation.
+pub fn resolve_builtin_return_type(name: &str) -> Kind {
+    let parts: Vec<&str> = name.splitn(2, "::").collect();
+    if parts.len() != 2 {
+        return Kind::Any;
+    }
+    let (namespace, func) = (parts[0], parts[1]);
+    match namespace {
+        "string" => match func {
+            "len" | "words" => Kind::Number,
+            "lowercase" | "uppercase" | "trim" | "slug" | "reverse"
+            | "capitalize" | "concat" | "join" | "replace" | "repeat"
+            | "slice" => Kind::String,
+            "contains" | "starts_with" | "ends_with" => Kind::Bool,
+            "split" => Kind::Array(Box::new(Kind::String), None),
+            _ => Kind::Any,
+        },
+        "array" => match func {
+            "len" => Kind::Number,
+            "push" | "sort" | "reverse" | "flatten" | "distinct"
+            | "filter" | "map" | "concat" => Kind::Array(Box::new(Kind::Any), None),
+            "pop" | "first" | "last" | "find" => Kind::Any,
+            _ => Kind::Any,
+        },
+        "math" => match func {
+            "abs" | "ceil" | "floor" | "round" | "sum" | "mean"
+            | "max" | "min" | "sqrt" | "log" | "pow" => Kind::Number,
+            _ => Kind::Any,
+        },
+        "crypto" => Kind::String,
+        "time" => match func {
+            "now" => Kind::Datetime,
+            "unix" | "secs" | "millis" | "micros" | "nanos" => Kind::Number,
+            _ => Kind::Any,
+        },
+        "type" => match func {
+            f if f.starts_with("is::") => Kind::Bool,
+            _ => Kind::Any,
+        },
+        "count" => Kind::Number,
+        _ => Kind::Any,
+    }
+}

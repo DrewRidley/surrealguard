@@ -21,7 +21,7 @@
 pub mod config;
 pub mod context;
 pub mod diagnostic;
-mod functions;
+pub(crate) mod functions;
 pub mod hints;
 pub mod parser;
 pub mod permissions;
@@ -30,6 +30,7 @@ pub mod schema;
 pub mod scope;
 pub mod span;
 pub mod statements;
+pub mod v2;
 pub mod types;
 
 // Re-export core types for convenience
