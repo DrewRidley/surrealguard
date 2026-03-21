@@ -14,3 +14,7 @@ pub mod insert;
 pub mod upsert;
 pub mod relate;
 pub mod let_stmt;
+pub mod if_stmt;
+pub mod for_stmt;
+pub mod define;
+pub mod remove;
