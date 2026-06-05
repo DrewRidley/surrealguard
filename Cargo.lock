@@ -3418,6 +3418,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "surrealguard-diagnostics"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "surrealguard-syntax",
+]
+
+[[package]]
 name = "surrealguard-lsp"
 version = "0.1.0"
 dependencies = [

@@ -15,10 +15,11 @@
 - Do not start by deleting working analyzer behavior.
 - Do not commit `.DS_Store` files.
 - Keep every migration step behavior-preserving unless the task explicitly says otherwise.
-- Use `cargo test --workspace -- --nocapture` as the broad regression gate.
-- Prefer small commits that each leave the workspace compiling.
+- Use `cargo test --workspace -- --nocapture` as the broad regression gate, except while the upstream grammar compatibility break is intentionally isolated. During that phase, use focused v3 crate tests plus `cargo check` gates and record legacy analyzer failures.
+- Prefer small commits that each leave the v3 workspace path compiling.
 - When a public type or JSON shape is introduced, add tests for it immediately.
 - `docs/DESIGN.md` is the source of truth. If this plan conflicts with it, update the plan or the design doc before coding.
+- Treat finding classification as a foundational product contract, not a renderer detail. The rebuild starts around stable finding codes, category families, configurable lint policy, suppressions, and structured data so LSP, CLI/CI, MCP, and host adapters all consume the same semantics.
 
 ## Baseline commands
 

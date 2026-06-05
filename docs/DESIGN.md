@@ -307,6 +307,17 @@ This should not be silently accepted as fully analyzed. It should be reported as
 
 Diagnostics are semantic facts produced by the analyzer.
 
+The v3 rebuild should be organized around this classification model from the beginning. Diagnostics, warnings, lints, hints, partial-analysis notices, suppressions, and policy severity resolution are not output formatting concerns. They are the public contract that lets the same engine power editor UX, CI baselines, MCP responses, Rust macro errors, TypeScript transformer feedback, and future quick fixes without each adapter reinventing meaning.
+
+A valid query can still produce lints. An invalid query should produce errors. A query that cannot be fully proven because of dynamic host-language input should produce dynamic/partial-analysis findings. These are separate categories even when they share one transport shape.
+
+```text
+syntax/schema/type/param/graph findings  -> correctness
+permission/dynamic findings              -> safety and analysis confidence
+lint findings                            -> configurable project policy
+hint facts                               -> non-problem editor/agent context
+```
+
 ```rust
 struct Diagnostic {
     span: SourceSpan,

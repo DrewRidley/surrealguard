@@ -1,0 +1,10 @@
+[package]
+name = "surrealguard-diagnostics"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Structured findings, severities, lint policy, and suppressions for SurrealGuard"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+surrealguard-syntax.path = "../syntax"
