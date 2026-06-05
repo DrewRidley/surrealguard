@@ -3442,6 +3442,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "surrealguard-syntax"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tree-sitter",
+ "tree-sitter-surrealql",
+]
+
+[[package]]
 name = "surrealguard-typegen"
 version = "0.1.0"
 dependencies = [

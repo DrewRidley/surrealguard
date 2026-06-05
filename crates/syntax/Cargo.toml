@@ -1,0 +1,11 @@
+[package]
+name = "surrealguard-syntax"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Tree-sitter syntax facade and source span primitives for SurrealGuard"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+tree-sitter.workspace = true
+tree-sitter-surrealql.workspace = true
