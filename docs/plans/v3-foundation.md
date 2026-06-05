@@ -4,18 +4,18 @@
 
 **Goal:** Build the v3 foundation described in `docs/DESIGN.md`: a tree-sitter-based SurrealQL semantic intelligence engine with stable spans, diagnostics, lints, owned types, workspace analysis, LSP/CLI/MCP surfaces, and a first embedded-query bridge spike.
 
-**Architecture:** Keep the current tested analyzer behavior as the safety net while introducing v3 layers incrementally. Add syntax/source/diagnostic/type/workspace contracts first, then route CLI/LSP/MCP and host adapters through the same `AnalysisOutput` model. Avoid deleting legacy paths until v3 paths cover their behavior.
+**Architecture:** Treat the current analyzer/core/codegen/CLI implementation as reference material, not as a compatibility contract. Add syntax/source/diagnostic/type/workspace contracts first, then route CLI/LSP/MCP and host adapters through the same `AnalysisOutput` model. Quarantine or delete legacy paths when they slow the v3 design; only re-adopt old behavior deliberately.
 
-**Tech Stack:** Rust workspace, tree-sitter SurrealQL grammar, tower-lsp, serde/serde_json, TOML config, existing analyzer tests, future MCP server crate.
+**Tech Stack:** Rust workspace, tree-sitter SurrealQL grammar, tower-lsp, serde/serde_json, TOML config, focused v3 tests, old analyzer tests as reference cases only, future MCP server crate.
 
 ---
 
 ## Ground rules
 
-- Do not start by deleting working analyzer behavior.
+- This is a ground-up rewrite. Do not preserve old analyzer behavior by default.
 - Do not commit `.DS_Store` files.
-- Keep every migration step behavior-preserving unless the task explicitly says otherwise.
-- Use `cargo test --workspace -- --nocapture` as the broad regression gate, except while the upstream grammar compatibility break is intentionally isolated. During that phase, use focused v3 crate tests plus `cargo check` gates and record legacy analyzer failures.
+- Quarantine or delete legacy paths once they block clarity, compile gates, or the new crate boundaries.
+- Use focused v3 crate tests as the correctness gate and `cargo check`/maintained-workspace checks as compile gates. Do not use old analyzer tests as a required regression gate.
 - Prefer small commits that each leave the v3 workspace path compiling.
 - When a public type or JSON shape is introduced, add tests for it immediately.
 - `docs/DESIGN.md` is the source of truth. If this plan conflicts with it, update the plan or the design doc before coding.
@@ -28,8 +28,8 @@ Run before starting implementation:
 ```bash
 git status --short
 git branch --show-current
-cargo test --workspace --no-run
-cargo test --workspace -- --nocapture
+cargo test -p surrealguard-syntax -p surrealguard-diagnostics -- --nocapture
+cargo check --workspace
 ```
 
 Expected baseline from design pass:
@@ -37,7 +37,9 @@ Expected baseline from design pass:
 ```text
 branch: redesign-v3-foundation
 known dirty files: .DS_Store, crates/.DS_Store, docs/DESIGN.md, docs/plans/v3-foundation.md
-cargo tests: passing
+cargo focused v3 tests: passing
+cargo check --workspace: passing
+legacy analyzer tests: reference-only, not a gate
 ```
 
 Before any commit:
@@ -321,19 +323,19 @@ It should:
 - collect tree-sitter error nodes into `SyntaxDiagnostic`
 - keep the partial tree
 
-**Step 3: Preserve current analyzer API**
+**Step 3: Decide whether to keep any legacy API shim**
 
-If current analyzer exposes `parse_query`, keep it and delegate internally rather than changing callers broadly.
+If a legacy API shim helps during the transition, keep it thin and mark it legacy. Do not contort the v3 syntax facade to preserve old call shapes.
 
 **Step 4: Verify**
 
 Run:
 
 ```bash
-cargo test --workspace -- --nocapture
+cargo check --workspace
 ```
 
-Expected: all existing tests still pass.
+Expected: maintained workspace crates compile. Legacy analyzer behavior tests are reference-only and are not a gate.
 
 **Step 5: Commit**
 
@@ -436,7 +438,7 @@ pub struct Diagnostic {
 }
 ```
 
-If current code uses a different `Span`, add compatibility conversions temporarily.
+If current code uses a different `Span`, do not add broad compatibility conversions by default. Convert only at explicit legacy shims, or quarantine the legacy caller.
 
 **Step 2: Add structured data enum**
 
@@ -453,15 +455,15 @@ pub enum DiagnosticData {
 
 Use boxed or stringified types temporarily if owned `Type` is not ready.
 
-**Step 3: Preserve current render text**
+**Step 3: Keep render text stable only for new diagnostic contracts**
 
-Do not rewrite every message in this task. Add structured payload while keeping existing human output stable enough for current tests.
+Do not rewrite every message in this task. Add structured payload and snapshot only the new diagnostic contracts; old human-output tests are reference-only.
 
 **Step 4: Verify**
 
 ```bash
-cargo test -p surrealguard-analyzer
-cargo test --workspace -- --nocapture
+cargo test -p surrealguard-diagnostics
+cargo check --workspace
 ```
 
 Expected: passes.
@@ -593,7 +595,7 @@ git commit -m "feat: parse surrealguard suppressions"
 
 ### Task 3.1: Add owned type model module
 
-**Objective:** Introduce SurrealGuard-owned type representation without removing existing `surrealdb::sql::Kind` usage yet.
+**Objective:** Introduce SurrealGuard-owned type representation as the v3 semantic contract. Existing `surrealdb::sql::Kind` usage is legacy and should not shape the public model.
 
 **Files:**
 - Create: `crates/analyzer/src/type_model.rs`
@@ -656,18 +658,18 @@ git add crates/analyzer
 git commit -m "feat: add owned SurrealGuard type model"
 ```
 
-### Task 3.2: Add compatibility conversion from existing Kind
+### Task 3.2: Add explicit optional import mapping from SurrealDB Kind
 
-**Objective:** Let current analyzer continue working while new APIs move toward owned types.
+**Objective:** If useful for schema ingestion or differential tests, provide a narrow import mapping from SurrealDB `Kind` into the owned type model. This is not a compatibility layer for preserving the old analyzer.
 
 **Files:**
 - Modify: `crates/analyzer/src/type_model.rs`
 - Modify: `crates/analyzer/src/types.rs`
 - Add tests
 
-**Step 1: Add conversion function**
+**Step 1: Add import function**
 
-Add conversion from existing `surrealdb::sql::Kind` to `type_model::Type`.
+Add an explicitly named import function from `surrealdb::sql::Kind` to `type_model::Type`, behind a module boundary that makes the dependency easy to remove later.
 
 Important mapping decisions:
 
@@ -683,7 +685,7 @@ Test common kinds and the regex sentinel behavior.
 
 ```bash
 cargo test -p surrealguard-analyzer type_model
-cargo test --workspace -- --nocapture
+cargo check --workspace
 ```
 
 Expected: passes.
@@ -692,7 +694,7 @@ Expected: passes.
 
 ```bash
 git add crates/analyzer
-git commit -m "feat: convert legacy kinds to owned types"
+git commit -m "feat: add SurrealDB kind import mapping"
 ```
 
 ### Task 3.3: Add type compatibility module
@@ -1005,7 +1007,7 @@ Use a tiny schema and query. Test that diagnostics flow through.
 
 ```bash
 cargo test -p surrealguard-workspace analysis
-cargo test --workspace -- --nocapture
+cargo check --workspace
 ```
 
 Expected: passes.
@@ -1046,13 +1048,13 @@ Depend on `surrealguard-workspace`.
 
 **Step 3: Preserve existing CLI commands temporarily**
 
-Do not remove legacy commands unless tests cover them.
+Legacy commands may be removed or quarantined once the v3 `check` path has its own contract tests and help output.
 
 **Step 4: Verify**
 
 ```bash
 cargo run -p surrealguard-cli -- check --help
-cargo test --workspace -- --nocapture
+cargo check --workspace
 ```
 
 Expected: help works, tests pass.
@@ -1143,7 +1145,7 @@ Use source registry line index, not ad hoc conversion.
 
 ```bash
 cargo test -p surrealguard-lsp
-cargo test --workspace -- --nocapture
+cargo check --workspace
 ```
 
 Expected: passes.
@@ -1185,7 +1187,7 @@ Follow `docs/DX_SPEC.md`: no noisy metadata, precise type info, no keyword hover
 
 ```bash
 cargo test -p surrealguard-lsp hover inlay
-cargo test --workspace -- --nocapture
+cargo check --workspace
 ```
 
 Expected: passes.
@@ -1348,7 +1350,7 @@ Native proc-macro span can be coarse for now.
 
 ```bash
 cargo test -p surrealguard-macros
-cargo test --workspace -- --nocapture
+cargo check --workspace
 ```
 
 Expected: passes.
@@ -1431,7 +1433,7 @@ State:
 **Step 2: Verify no behavior change**
 
 ```bash
-cargo test --workspace -- --nocapture
+cargo check --workspace
 ```
 
 Expected: passes.
@@ -1465,7 +1467,7 @@ Be honest about in-progress v3 foundation.
 **Step 4: Verify**
 
 ```bash
-cargo test --workspace -- --nocapture
+cargo check --workspace
 ```
 
 Expected: passes.

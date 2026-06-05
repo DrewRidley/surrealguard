@@ -48,7 +48,7 @@ The v3 minimum viable product is narrower than the full vision:
 1. analyze physical `.surql` schema and query files with exact diagnostics
 2. expose the same analysis through CLI and LSP
 3. expose enough structured analysis for an MCP server to answer LLM-agent questions without scraping CLI text
-4. preserve the current analyzer's tested semantic behavior
+4. define v3 semantics through explicit contracts and focused tests, using old analyzer behavior only as optional reference material
 5. remove SurrealDB internal AST and type enums from public analyzer APIs
 6. prove the embedded-source model with one host adapter spike before generalizing it
 
@@ -693,11 +693,11 @@ crates/
 
 This is a target shape, not a requirement to rewrite everything at once.
 
-Current code should be migrated carefully:
+Current code should be treated as reference material, not as the compatibility contract:
 
-- preserve the tested behavior in `crates/analyzer`
-- treat `crates/core` as legacy v1 unless proven otherwise
-- treat `crates/codegen` and old watch-mode CLI as fallback or legacy paths
+- treat `crates/core`, current `crates/analyzer`, `crates/codegen`, and old watch-mode CLI behavior as legacy unless a behavior is explicitly re-adopted into v3
+- mine old code and tests for useful cases, but do not let them block the ground-up design
+- build new v3 behavior from the design doc, typed contracts, and focused tests written for those contracts
 - move toward an owned type model before deep host-adapter work
 - move source ids and cross-file definition locations into a workspace layer
 
@@ -978,26 +978,27 @@ Recommended sequence:
 4. Introduce source ids, source registry, and source spans without changing analyzer behavior.
 5. Introduce stable diagnostic code enums, structured diagnostic payloads, and renderer-independent hints.
 6. Add lint configuration and suppression parsing, initially with a small lint set.
-7. Move tests out of `crates/analyzer/src/lib.rs` into focused test modules.
-8. Introduce an owned type model behind compatibility conversions.
+7. Quarantine legacy analyzer tests as reference cases, not workspace gates.
+8. Introduce an owned type model without compatibility conversions unless a specific old behavior is intentionally re-adopted.
 9. Add generic function signature support for built-ins and interpolation holes.
 10. Split workspace concerns out of the LSP crate.
 11. Rebuild CLI `check` on the workspace/analyzer path.
 12. Add machine-readable analysis output for CLI and MCP.
-13. Remove or quarantine legacy v1 crates after behavior is covered by v3 paths.
+13. Remove or quarantine legacy v1/v2 crates once the v3 crate boundaries exist, without requiring one-for-one behavior coverage.
 14. Build one embedded-query adapter spike, preferably Rust `surql!` if compile-time checking is the first product wedge.
 15. Build TypeScript/JavaScript tagged-template editor support.
 16. Build Python string/f-string editor support.
 
-Do not start by deleting working analyzer behavior. The current analyzer test suite is the safety net.
+This is a ground-up rewrite. Do not preserve old behavior by default. The old analyzer test suite is reference input only; the safety net is the new v3 test suite attached to the new contracts.
 
 Each migration step needs an acceptance gate:
 
-- existing workspace tests still pass
+- focused v3 tests for the changed contract pass
+- workspace compile/check passes for maintained crates
 - diagnostics keep or improve span precision
 - no new public dependency on SurrealDB internal AST or analyzer-host internals
 - CLI and LSP use the same analyzer output shape
-- legacy paths are marked as legacy before removal
+- legacy paths are marked as legacy before removal, unless they are fully quarantined outside the maintained workspace
 
 ## Open questions
 
