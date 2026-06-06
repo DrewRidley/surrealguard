@@ -3,6 +3,10 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+pub mod compatibility;
+
+pub use compatibility::{assignability, is_assignable_to, Compatibility};
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Type {
     Any,
@@ -175,7 +179,9 @@ impl ObjectField {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 pub struct FieldPermissions {
     readable: bool,
     writable: bool,
@@ -213,6 +219,12 @@ pub struct TableSet {
 }
 
 impl TableSet {
+    pub fn new(tables: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            tables: tables.into_iter().map(Into::into).collect(),
+        }
+    }
+
     pub fn one(table: impl Into<String>) -> Self {
         let mut tables = BTreeSet::new();
         tables.insert(table.into());
@@ -322,7 +334,10 @@ mod tests {
 
     #[test]
     fn optional_type_formats_predictably() {
-        assert_eq!(Type::Optional(Box::new(Type::String)).to_string(), "string?");
+        assert_eq!(
+            Type::Optional(Box::new(Type::String)).to_string(),
+            "string?"
+        );
     }
 
     #[test]
@@ -337,10 +352,7 @@ mod tests {
         assert!(object.field("name").expect("field exists").is_optional());
         assert!(object.field("name").expect("field exists").is_readonly());
         assert_eq!(
-            object
-                .field("name")
-                .expect("field exists")
-                .permissions(),
+            object.field("name").expect("field exists").permissions(),
             &FieldPermissions::read_only()
         );
     }
