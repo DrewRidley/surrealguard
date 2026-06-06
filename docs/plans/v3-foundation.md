@@ -543,7 +543,8 @@ git commit -m "feat: add diagnostic lint config"
 **Objective:** Parse explicit suppressions in `.surql` comments and host comments.
 
 **Files:**
-- Create or modify: `crates/analyzer/src/suppression.rs`
+- Create or modify: `crates/diagnostics/src/suppression.rs`
+- Modify: `crates/diagnostics/src/lib.rs`
 - Add tests
 
 **Step 1: Implement parser**
@@ -577,7 +578,7 @@ Test:
 **Step 3: Verify**
 
 ```bash
-cargo test --workspace suppression
+cargo test -p surrealguard-diagnostics suppression
 ```
 
 Expected: passes.
@@ -585,7 +586,7 @@ Expected: passes.
 **Step 4: Commit**
 
 ```bash
-git add crates/analyzer
+git add crates/diagnostics docs/plans/v3-foundation.md
 git commit -m "feat: parse surrealguard suppressions"
 ```
 
