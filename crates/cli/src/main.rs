@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use serde::Serialize;
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -23,7 +24,11 @@ enum Commands {
     Init,
 
     /// Check schema and queries without generating output
-    Check,
+    Check {
+        /// Emit machine-readable JSON diagnostics
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Generate code once and exit
     Run,
@@ -47,7 +52,7 @@ path = "src/queries.ts"
 format = true
 "#;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 struct CheckSummary {
     sources_checked: usize,
     diagnostics: usize,
@@ -56,7 +61,47 @@ struct CheckSummary {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CheckFailed {
-    diagnostics: Vec<String>,
+    summary: CheckSummary,
+    diagnostics: Vec<CheckDiagnostic>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+struct CheckDiagnostic {
+    code: String,
+    severity: &'static str,
+    source: String,
+    range: CheckRange,
+    message: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+struct CheckRange {
+    start: u32,
+    end: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+struct CheckJson<'a> {
+    summary: &'a CheckSummary,
+    diagnostics: &'a [CheckDiagnostic],
+}
+
+impl fmt::Display for CheckDiagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}: {}", self.code, self.source, self.message)
+    }
+}
+
+impl CheckDiagnostic {
+    fn from_message(message: String) -> Self {
+        Self {
+            code: "S0000".into(),
+            severity: "error",
+            source: "".into(),
+            range: CheckRange { start: 0, end: 0 },
+            message,
+        }
+    }
 }
 
 impl fmt::Display for CheckFailed {
@@ -74,13 +119,26 @@ impl Error for CheckFailed {}
 fn run_check(start_dir: &Path) -> Result<CheckSummary, CheckFailed> {
     let root = find_workspace_root(start_dir);
     let config = load_workspace_config(&root).map_err(|error| CheckFailed {
-        diagnostics: vec![error.to_string()],
+        summary: CheckSummary {
+            sources_checked: 0,
+            diagnostics: 1,
+            errors: 1,
+        },
+        diagnostics: vec![CheckDiagnostic::from_message(error.to_string())],
     })?;
     let mut workspace = Workspace::new(config.clone());
 
     for path in discover_surrealql_sources(&root, &config) {
         let text = fs::read_to_string(&path).map_err(|error| CheckFailed {
-            diagnostics: vec![format!("{}: {error}", path.display())],
+            summary: CheckSummary {
+                sources_checked: 0,
+                diagnostics: 1,
+                errors: 1,
+            },
+            diagnostics: vec![CheckDiagnostic::from_message(format!(
+                "{}: {error}",
+                path.display()
+            ))],
         })?;
         workspace.add_file_source(path, text);
     }
@@ -90,12 +148,17 @@ fn run_check(start_dir: &Path) -> Result<CheckSummary, CheckFailed> {
         .diagnostics
         .iter()
         .map(|finding| {
-            format!(
-                "{} {}: {}",
-                finding.code(),
-                finding.span().source(),
-                finding.message()
-            )
+            let range = finding.span().range();
+            CheckDiagnostic {
+                code: finding.code().to_string(),
+                severity: severity_name(finding.effective_severity()),
+                source: finding.span().source().to_string(),
+                range: CheckRange {
+                    start: range.start(),
+                    end: range.end(),
+                },
+                message: finding.message().to_string(),
+            }
         })
         .collect();
     let errors = analysis
@@ -110,9 +173,30 @@ fn run_check(start_dir: &Path) -> Result<CheckSummary, CheckFailed> {
     };
 
     if errors > 0 {
-        Err(CheckFailed { diagnostics })
+        Err(CheckFailed {
+            summary,
+            diagnostics,
+        })
     } else {
         Ok(summary)
+    }
+}
+
+fn render_check_json(
+    summary: &CheckSummary,
+    diagnostics: &[CheckDiagnostic],
+) -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(&CheckJson {
+        summary,
+        diagnostics,
+    })
+}
+
+fn severity_name(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Error => "error",
+        Severity::Warning => "warning",
+        Severity::Hint => "hint",
     }
 }
 
@@ -225,6 +309,41 @@ mod tests {
         assert_eq!(summary.sources_checked, 1);
     }
 
+    #[test]
+    fn check_json_output_uses_stable_diagnostic_keys() {
+        let root = temp_project_dir("json-check");
+        fs::create_dir_all(root.join("queries")).expect("create queries dir");
+        fs::write(root.join("surrealguard.toml"), "").expect("write config");
+        fs::write(root.join("queries/bad.surql"), "SELECT * FROM ;").expect("write query");
+
+        let err = run_check(&root).expect_err("syntax diagnostics should fail check");
+        let json = render_check_json(&err.summary, &err.diagnostics).expect("json renders");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+
+        assert_eq!(value["summary"]["sources_checked"], 1);
+        assert_eq!(value["summary"]["diagnostics"], 1);
+        assert_eq!(value["summary"]["errors"], 1);
+        assert_eq!(value["diagnostics"][0]["code"], "S0001");
+        assert_eq!(value["diagnostics"][0]["severity"], "error");
+        assert!(value["diagnostics"][0]["source"]
+            .as_str()
+            .unwrap()
+            .contains("bad.surql"));
+        assert_eq!(value["diagnostics"][0]["message"], "SurrealQL syntax error");
+        assert!(value["diagnostics"][0]["range"]["start"].is_number());
+        assert!(value["diagnostics"][0]["range"]["end"].is_number());
+    }
+
+    #[test]
+    fn check_accepts_json_flag() {
+        let cli = Cli::try_parse_from(["surrealguard", "check", "--json"]).expect("cli parses");
+
+        match cli.command {
+            Commands::Check { json } => assert!(json),
+            _ => panic!("expected check command"),
+        }
+    }
+
     fn temp_project_dir(name: &str) -> std::path::PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -251,19 +370,37 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("Created surrealguard.toml");
             Ok(())
         }
-        Commands::Check => {
-            println!("Checking SurrealQL sources...");
+        Commands::Check { json } => {
+            if !json {
+                println!("Checking SurrealQL sources...");
+            }
             match run_check(&env::current_dir()?) {
                 Ok(summary) => {
-                    println!(
-                        "Checked {} source(s), found {} diagnostic(s)",
-                        summary.sources_checked, summary.diagnostics
-                    );
-                    println!("All checks passed!");
+                    if json {
+                        println!(
+                            "{}",
+                            render_check_json(&summary, &[])
+                                .expect("json serialization should not fail")
+                        );
+                    } else {
+                        println!(
+                            "Checked {} source(s), found {} diagnostic(s)",
+                            summary.sources_checked, summary.diagnostics
+                        );
+                        println!("All checks passed!");
+                    }
                     Ok(())
                 }
                 Err(error) => {
-                    eprintln!("{error}");
+                    if json {
+                        println!(
+                            "{}",
+                            render_check_json(&error.summary, &error.diagnostics)
+                                .expect("json serialization should not fail")
+                        );
+                    } else {
+                        eprintln!("{error}");
+                    }
                     std::process::exit(1);
                 }
             }
@@ -284,7 +421,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             println!("Starting watch mode...");
                             surrealguard_codegen::watch(&config)?;
                         }
-                        Commands::Init | Commands::Check => unreachable!(),
+                        Commands::Init | Commands::Check { .. } => unreachable!(),
                     }
                     Ok(())
                 }
