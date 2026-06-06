@@ -36,6 +36,7 @@ Build the ground-up SurrealGuard rewrite around stable syntax, diagnostics, type
 - LSP diagnostics routed through workspace analysis.
 - Removed replaced crates and codegen/watch commands from the maintained workspace.
 - Schema indexing for `DEFINE TABLE` declarations, duplicate table diagnostics, and `DEFINE FIELD ... ON ... TYPE ...` declarations with simple type mapping.
+- Basic query table-reference validation for `SELECT`, `CREATE`, `UPDATE`, and `DELETE`.
 
 ## Completed slice: schema index
 
@@ -64,24 +65,24 @@ cargo test --workspace -- --nocapture
 cargo check --workspace
 ```
 
-## Slice 3: basic query table references
+## Completed slice: basic query table references
 
 Objective: validate table references in basic statements.
 
-Initial statement forms:
+Implemented statement forms:
 
 - `SELECT ... FROM <table>`
 - `CREATE <table>`
 - `UPDATE <table>`
 - `DELETE <table>`
-- `RELATE <from> -> <relation> -> <to>`
 
 Tests:
 
 - known tables pass
 - unknown tables produce semantic findings
 - spans point at the unknown table identifier
-- CLI and LSP surface the same finding model
+- source-specific diagnostics and workspace diagnostics receive the same finding
+- syntax-error sources skip semantic table-reference validation to avoid noisy follow-on errors
 
 ## Slice 4: expression and result skeleton
 

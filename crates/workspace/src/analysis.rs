@@ -11,6 +11,7 @@ use surrealguard_types::Type;
 
 use crate::config::WorkspaceConfig;
 use crate::schema::{extract_schema, SchemaIndex};
+use crate::semantic::validate_table_references;
 use crate::source_registry::SourceRegistry;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -138,6 +139,15 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
         }
     }
     diagnostics.extend(schema_extraction.diagnostics.iter().cloned());
+
+    let table_reference_diagnostics =
+        validate_table_references(&parsed_sources, &schema_extraction.schema);
+    for diagnostic in &table_reference_diagnostics {
+        if let Some(source_output) = sources.get_mut(diagnostic.span().source()) {
+            source_output.diagnostics.push(diagnostic.clone());
+        }
+    }
+    diagnostics.extend(table_reference_diagnostics);
 
     WorkspaceAnalysis {
         sources,
@@ -348,6 +358,74 @@ mod tests {
         assert_eq!(
             partial[0].message(),
             "unsupported field type syntax `array<string>` for field `tags`"
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_validates_select_table_references_against_schema() {
+        let mut workspace = Workspace::default();
+        let query = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nSELECT * FROM company;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        let unknown_tables: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1003))
+            .collect();
+        assert_eq!(unknown_tables.len(), 1);
+        assert_eq!(
+            unknown_tables[0].message(),
+            "unknown table `company` in SELECT statement"
+        );
+        assert_eq!(unknown_tables[0].span().source(), &query);
+        assert_eq!(unknown_tables[0].span().range().start(), 35);
+        assert_eq!(unknown_tables[0].span().range().end(), 42);
+        assert_eq!(output.sources[&query].diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn analyze_workspace_allows_known_basic_table_references() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nSELECT * FROM person;\nCREATE person;\nUPDATE person SET name = 'A';\nDELETE person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert!(output
+            .diagnostics
+            .iter()
+            .all(|finding| finding.code() != FindingCode::schema(1003)));
+    }
+
+    #[test]
+    fn analyze_workspace_validates_create_update_and_delete_table_references() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "CREATE ghost;\nUPDATE phantom SET seen = true;\nDELETE missing;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1003))
+            .map(|finding| finding.message().to_string())
+            .collect();
+        assert_eq!(
+            messages,
+            vec![
+                "unknown table `ghost` in CREATE statement",
+                "unknown table `phantom` in UPDATE statement",
+                "unknown table `missing` in DELETE statement",
+            ]
         );
     }
 }

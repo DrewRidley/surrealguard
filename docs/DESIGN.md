@@ -133,7 +133,7 @@ Pipeline:
 7. apply policy and suppressions
 8. return structured `AnalysisOutput`
 
-Current implementation covers source discovery, syntax diagnostics, table indexing, and field declaration indexing for simple schema types. Query semantics starts with table-reference validation.
+Current implementation covers source discovery, syntax diagnostics, table indexing, field declaration indexing for simple schema types, and basic query table-reference validation. Expression/result semantics are still placeholders.
 
 ## CLI contract
 
@@ -182,19 +182,19 @@ The semantic engine analyzes embedded sources through the same parser and worksp
 
 ## Next implementation slice
 
-The next slice is basic query table-reference validation in `surrealguard-workspace`:
+The next slice is expression and result-analysis scaffolding in `surrealguard-workspace`:
 
-1. inspect basic statement forms that name tables
-2. validate `SELECT ... FROM <table>` against the schema index
-3. validate `CREATE <table>`, `UPDATE <table>`, and `DELETE <table>` against the schema index
-4. preserve table-reference spans for CLI/LSP diagnostics
-5. surface unknown table references as stable semantic findings
+1. add `StatementAnalysis` emission for parsed statements
+2. preserve statement spans and stable statement kinds
+3. collect `$param` references with spans
+4. add explicit partial-analysis markers for unsupported/dynamic statement structures
+5. keep table-reference diagnostics flowing through CLI and LSP unchanged
 
 Acceptance gates:
 
-- focused tests for known and unknown table references
-- spans point at the unknown table identifier
-- CLI and LSP continue consuming the same workspace findings
+- focused tests for statement spans/kinds
+- focused tests for parameter collection
+- unsupported constructs do not panic and return explicit partial-analysis data
 - `cargo test --workspace -- --nocapture`
 - `cargo check --workspace`
 - no references in maintained code or tests to removed crate names
