@@ -701,44 +701,45 @@ git commit -m "feat: add SurrealDB kind import mapping"
 
 ### Task 3.3: Add type compatibility module
 
-**Objective:** Centralize assignability and operator compatibility rules.
+**Objective:** Centralize type assignability as part of the owned type contract. Operator compatibility can build on this later when the semantic analyzer exists.
 
 **Files:**
-- Create: `crates/analyzer/src/type_compat.rs`
-- Modify: `crates/analyzer/src/lib.rs`
+- Create: `crates/types/src/compatibility.rs`
+- Modify: `crates/types/src/lib.rs`
 - Add tests
 
 **Step 1: Add API**
 
 ```rust
 pub enum Compatibility {
-    Compatible,
-    Incompatible { expected: Type, found: Type },
-    Unknown { reason: UnknownReason },
+    Assignable,
+    NotAssignable,
+    Unknown,
 }
 
-pub fn assignable(expected: &Type, found: &Type) -> Compatibility;
-pub fn comparable(left: &Type, right: &Type) -> Compatibility;
-pub fn operator_result(op: Operator, left: &Type, right: &Type) -> Result<Type, TypeError>;
+pub fn assignability(source: &Type, target: &Type) -> Compatibility;
+pub fn is_assignable_to(source: &Type, target: &Type) -> bool;
 ```
 
 **Step 2: Add focused tests**
 
 Test:
-
-- `int` accepts integer literal
-- `string` rejects int
-- `optional<string>` accepts `none` or `null` only if design says so
+- exact type equality
+- `int` widens to `number`
+- literals assign to primitive parents
+- `optional<string>` accepts `none` and `string` but not `null`
+- union source and union target behavior
+- arrays, records, geometry, and structural objects
 - `Unknown` propagates without pretending to be `Any`
 
 **Step 3: Do not migrate all analyzer uses yet**
 
-This task only creates and tests the module.
+This task only creates and tests the owned type compatibility module. Legacy analyzer `Kind` compatibility remains reference material until explicitly replaced.
 
 **Step 4: Verify**
 
 ```bash
-cargo test -p surrealguard-analyzer type_compat
+cargo test -p surrealguard-types compatibility
 ```
 
 Expected: passes.
@@ -746,17 +747,17 @@ Expected: passes.
 **Step 5: Commit**
 
 ```bash
-git add crates/analyzer
-git commit -m "feat: add type compatibility rules"
+git add crates/types
+git commit -m "feat: add type assignability rules"
 ```
 
 ### Task 3.4: Add generic function signature model
 
-**Objective:** Represent built-in functions with reusable generic signatures instead of ad hoc matching.
+**Objective:** Represent built-in functions with reusable generic signatures instead of ad hoc matching, using the owned type model rather than legacy analyzer types.
 
 **Files:**
-- Create or modify: `crates/analyzer/src/functions/signature.rs`
-- Modify existing function registry modules
+- Create: `crates/types/src/signature.rs`
+- Modify: `crates/types/src/lib.rs`
 - Add tests
 
 **Step 1: Add signature types**
@@ -765,17 +766,23 @@ Implement:
 
 ```rust
 pub struct FunctionSig {
-    pub name: FunctionName,
+    pub name: String,
     pub generics: Vec<GenericParam>,
     pub params: Vec<ParamType>,
-    pub returns: ReturnType,
+    pub returns: TypeExpr,
 }
 
 pub enum ParamType {
-    Exact(Type),
-    Generic(GenericRef),
-    OneOf(Vec<Type>),
+    Type(TypeExpr),
     Variadic(Box<ParamType>),
+}
+
+pub enum TypeExpr {
+    Exact(Type),
+    Generic(String),
+    Array(Box<TypeExpr>),
+    Optional(Box<TypeExpr>),
+    OneOf(Vec<TypeExpr>),
 }
 ```
 
@@ -786,6 +793,7 @@ Start with simple local constraint solving:
 - bind generic `T` from argument type
 - reuse bound `T` in return type
 - detect conflicting generic bindings
+- use owned type assignability for exact parameters
 
 **Step 3: Add tests**
 
@@ -793,12 +801,14 @@ Test examples:
 
 - `array::len<T>(array<T>) -> int`
 - `array::first<T>(array<T>) -> option<T>`
-- conflicting generic binding emits a type/param diagnostic
+- repeated generic parameters reuse the same binding
+- conflicting generic binding reports a structured `SignatureError`
+- exact parameters use assignability rules
 
 **Step 4: Verify**
 
 ```bash
-cargo test -p surrealguard-analyzer function_signature
+cargo test -p surrealguard-types signature
 ```
 
 Expected: passes.
@@ -806,8 +816,8 @@ Expected: passes.
 **Step 5: Commit**
 
 ```bash
-git add crates/analyzer
-git commit -m "feat: add generic function signatures"
+git add crates/types docs/plans/v3-foundation.md
+git commit -m "feat: add generic function signature solver"
 ```
 
 ---

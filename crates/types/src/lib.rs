@@ -4,8 +4,12 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 pub mod compatibility;
+pub mod signature;
 
 pub use compatibility::{assignability, is_assignable_to, Compatibility};
+pub use signature::{
+    match_signature, FunctionSig, GenericParam, ParamType, SignatureError, SignatureMatch, TypeExpr,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Type {
