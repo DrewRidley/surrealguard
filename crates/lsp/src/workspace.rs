@@ -9,6 +9,8 @@ use std::path::PathBuf;
 use tower_lsp::lsp_types::Url;
 
 use surrealguard_analyzer::{self as sg, Context, Diagnostic as SgDiagnostic};
+use surrealguard_diagnostics::Finding;
+use surrealguard_workspace::{analyze_workspace, Workspace as AnalysisWorkspace};
 
 /// A tracked document in the workspace.
 #[derive(Debug, Clone)]
@@ -43,10 +45,8 @@ impl Workspace {
 
     /// Update a document's content (on open or change).
     pub fn upsert(&mut self, uri: Url, text: String, version: i32) {
-        self.documents.insert(
-            uri.clone(),
-            Document { uri, text, version },
-        );
+        self.documents
+            .insert(uri.clone(), Document { uri, text, version });
     }
 
     /// Remove a document (on close).
@@ -129,7 +129,10 @@ impl Workspace {
                     let span_text = &target_text[start..end];
                     // Reject spans that point into comments
                     let trimmed = span_text.trim_start();
-                    if trimmed.starts_with("--") || trimmed.starts_with("//") || trimmed.starts_with('#') {
+                    if trimmed.starts_with("--")
+                        || trimmed.starts_with("//")
+                        || trimmed.starts_with('#')
+                    {
                         return false;
                     }
                     // Validate: span text should contain the referenced identifier
@@ -161,6 +164,56 @@ impl Workspace {
         })
     }
 
+    /// Analyze a document through the shared surrealguard-workspace pipeline.
+    ///
+    /// This is diagnostics-only for now: hover, completions, definitions, and
+    /// inlay hints still consume the legacy analyzer context until those APIs
+    /// are migrated onto the shared facade.
+    pub fn diagnostic_analysis(&self, uri: &Url) -> Option<DiagnosticAnalysisResult> {
+        let target = self.documents.get(uri)?;
+
+        if target.text.trim().is_empty() {
+            return Some(DiagnosticAnalysisResult {
+                diagnostics: Vec::new(),
+                source: target.text.clone(),
+                uri: uri.clone(),
+            });
+        }
+
+        let mut analysis_workspace = AnalysisWorkspace::default();
+        let mut target_source = None;
+
+        let mut documents: Vec<_> = self.documents.values().collect();
+        documents.sort_by(|left, right| left.uri.as_str().cmp(right.uri.as_str()));
+
+        for doc in documents {
+            let source_id = match doc.uri.to_file_path() {
+                Ok(path) => analysis_workspace.add_file_source(path, doc.text.clone()),
+                Err(_) => {
+                    analysis_workspace.add_virtual_source(doc.uri.to_string(), doc.text.clone())
+                }
+            };
+
+            if doc.uri == *uri {
+                target_source = Some(source_id);
+            }
+        }
+
+        let target_source = target_source?;
+        let workspace_output = analyze_workspace(&analysis_workspace);
+        let diagnostics = workspace_output
+            .sources
+            .get(&target_source)
+            .map(|source_output| source_output.diagnostics.clone())
+            .unwrap_or_default();
+
+        Some(DiagnosticAnalysisResult {
+            diagnostics,
+            source: target.text.clone(),
+            uri: uri.clone(),
+        })
+    }
+
     /// Scan workspace folders for .surql files and load them.
     pub fn scan_folders(&mut self) {
         for root in &self.roots.clone() {
@@ -169,7 +222,11 @@ impl Workspace {
                 .filter_map(|e| e.ok())
             {
                 let path = entry.path();
-                if path.extension().map(|e| e == "surql" || e == "surrealql").unwrap_or(false) {
+                if path
+                    .extension()
+                    .map(|e| e == "surql" || e == "surrealql")
+                    .unwrap_or(false)
+                {
                     if let Ok(text) = std::fs::read_to_string(path) {
                         if let Ok(uri) = Url::from_file_path(path) {
                             self.upsert(uri, text, 0);
@@ -196,4 +253,36 @@ pub struct AnalysisResult {
     pub uri: Url,
     /// Schema files that were loaded into context (for cross-file go-to-def).
     pub schema_sources: Vec<SchemaSource>,
+}
+
+/// Diagnostics-only result from the shared workspace analysis facade.
+pub struct DiagnosticAnalysisResult {
+    pub diagnostics: Vec<Finding>,
+    pub source: String,
+    pub uri: Url,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_analysis_uses_workspace_finding_pipeline_for_target_document() {
+        let mut workspace = Workspace::new();
+        let target_uri = Url::parse("file:///workspace/query.surql").expect("valid uri");
+        workspace.upsert(target_uri.clone(), "SELECT * FROM ;".into(), 1);
+
+        let analysis = workspace
+            .diagnostic_analysis(&target_uri)
+            .expect("target document should be analyzed");
+
+        assert_eq!(analysis.uri, target_uri);
+        assert_eq!(analysis.source, "SELECT * FROM ;");
+        assert_eq!(analysis.diagnostics.len(), 1);
+        assert_eq!(analysis.diagnostics[0].code().to_string(), "S0001");
+        assert_eq!(
+            analysis.diagnostics[0].span().source().as_str(),
+            "file:///workspace/query.surql"
+        );
+    }
 }

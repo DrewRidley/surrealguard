@@ -1,7 +1,5 @@
 //! LSP backend — implements the LanguageServer trait.
 
-use std::path::PathBuf;
-
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -12,7 +10,7 @@ use surrealguard_analyzer::hints::{collect_type_hints, TypeHintKind};
 use crate::definition;
 use crate::diagnostics;
 use crate::hover;
-use crate::text::{byte_range_to_lsp, offset_to_position};
+use crate::text::offset_to_position;
 use crate::workspace::Workspace;
 
 pub struct Backend {
@@ -32,7 +30,7 @@ impl Backend {
     async fn publish_diagnostics(&self, uri: &Url) {
         let result = {
             let ws = self.workspace.read().await;
-            ws.analyze_document(uri)
+            ws.diagnostic_analysis(uri)
         };
 
         let Some(result) = result else {
@@ -42,7 +40,9 @@ impl Backend {
         let lsp_diagnostics: Vec<Diagnostic> = result
             .diagnostics
             .iter()
-            .map(|d| diagnostics::to_lsp_diagnostic(&result.source, &result.uri, d))
+            .map(|d| {
+                diagnostics::workspace_finding_to_lsp_diagnostic(&result.source, &result.uri, d)
+            })
             .collect();
 
         self.client
@@ -90,8 +90,11 @@ impl LanguageServer for Backend {
                 completion_provider: Some(CompletionOptions {
                     resolve_provider: Some(false),
                     trigger_characters: Some(vec![
-                        ".".into(), ":".into(), "$".into(),
-                        ">".into(), " ".into(),
+                        ".".into(),
+                        ":".into(),
+                        "$".into(),
+                        ">".into(),
+                        " ".into(),
                     ]),
                     ..CompletionOptions::default()
                 }),

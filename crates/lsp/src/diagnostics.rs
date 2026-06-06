@@ -2,60 +2,70 @@
 //!
 //! Handles span-to-range conversion and related information formatting.
 
-use tower_lsp::lsp_types::{
-    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString, Url,
-};
+use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Url};
 
-use surrealguard_analyzer::{self as sg};
+use surrealguard_diagnostics::{Finding, Severity as WorkspaceSeverity};
 
 use crate::text::byte_range_to_lsp;
 
-/// Convert a surrealguard diagnostic to an LSP diagnostic.
-pub fn to_lsp_diagnostic(source: &str, uri: &Url, diag: &sg::Diagnostic) -> Diagnostic {
-    let range = byte_range_to_lsp(source, diag.span.start as usize, diag.span.end as usize);
+/// Convert a workspace-analysis finding to an LSP diagnostic.
+pub fn workspace_finding_to_lsp_diagnostic(
+    source: &str,
+    _uri: &Url,
+    finding: &Finding,
+) -> Diagnostic {
+    let range = finding.span().range();
+    let range = byte_range_to_lsp(source, range.start() as usize, range.end() as usize);
 
-    let severity = match diag.severity {
-        sg::Severity::Error => DiagnosticSeverity::ERROR,
-        sg::Severity::Warning => DiagnosticSeverity::WARNING,
-        sg::Severity::Hint => DiagnosticSeverity::HINT,
-    };
-
-    // Build message: main message + optional suggestion
-    let mut message = diag.message.clone();
-    if let Some(suggestion) = &diag.suggestion {
-        message.push_str(&format!("\nhelp: {suggestion}"));
-    }
-
-    // Convert related information (only valid same-file spans)
-    let related_information = if diag.related.is_empty() {
-        None
-    } else {
-        let valid: Vec<_> = diag
-            .related
-            .iter()
-            .filter_map(|rel| {
-                let rel_range = byte_range_to_lsp(
-                    source,
-                    rel.span.start as usize,
-                    rel.span.end as usize,
-                );
-                Some(DiagnosticRelatedInformation {
-                    location: Location::new(uri.clone(), rel_range),
-                    message: rel.message.clone(),
-                })
-            })
-            .collect();
-
-        if valid.is_empty() { None } else { Some(valid) }
+    let severity = match finding.effective_severity() {
+        WorkspaceSeverity::Error => DiagnosticSeverity::ERROR,
+        WorkspaceSeverity::Warning => DiagnosticSeverity::WARNING,
+        WorkspaceSeverity::Hint => DiagnosticSeverity::HINT,
     };
 
     Diagnostic {
         range,
         severity: Some(severity),
-        code: Some(NumberOrString::String(diag.code.id().to_string())),
+        code: Some(NumberOrString::String(finding.code().to_string())),
         source: Some("surrealguard".to_string()),
-        message,
-        related_information,
+        message: finding.message().to_string(),
+        related_information: None,
         ..Diagnostic::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use surrealguard_diagnostics::{Finding, FindingCode, Severity};
+    use surrealguard_syntax::source::SourceId;
+    use surrealguard_syntax::span::{ByteRange, SourceSpan};
+
+    #[test]
+    fn workspace_finding_converts_to_lsp_diagnostic_contract() {
+        let uri = Url::parse("file:///workspace/query.surql").expect("valid uri");
+        let source = "SELECT * FROM ;";
+        let finding = Finding::new(
+            SourceSpan::new(
+                SourceId::new("file:///workspace/query.surql"),
+                ByteRange::new(14, 14).expect("valid range"),
+            ),
+            FindingCode::syntax(1),
+            Severity::Error,
+            "unexpected syntax",
+        );
+
+        let diagnostic = workspace_finding_to_lsp_diagnostic(source, &uri, &finding);
+
+        assert_eq!(
+            diagnostic.code,
+            Some(NumberOrString::String("S0001".into()))
+        );
+        assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::ERROR));
+        assert_eq!(diagnostic.source, Some("surrealguard".into()));
+        assert_eq!(diagnostic.message, "unexpected syntax");
+        assert_eq!(diagnostic.range.start.line, 0);
+        assert_eq!(diagnostic.range.start.character, 14);
+        assert_eq!(diagnostic.range.end, diagnostic.range.start);
     }
 }

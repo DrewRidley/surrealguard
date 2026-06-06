@@ -11,6 +11,9 @@ path = "src/main.rs"
 
 [dependencies]
 surrealguard-analyzer = { path = "../analyzer" }
+surrealguard-diagnostics = { path = "../diagnostics" }
+surrealguard-syntax = { path = "../syntax" }
+surrealguard-workspace = { path = "../workspace" }
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync"] }
 tree-sitter.workspace = true
