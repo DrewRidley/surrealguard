@@ -1,0 +1,12 @@
+[package]
+name = "surrealguard-workspace"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "SurrealGuard workspace, config, and source registry layer"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+surrealguard-diagnostics = { path = "../diagnostics" }
+surrealguard-syntax = { path = "../syntax" }
+surrealguard-types = { path = "../types" }
