@@ -865,6 +865,7 @@ dependencies = [
  "surrealguard-syntax",
  "surrealguard-types",
  "toml",
+ "tree-sitter",
 ]
 
 [[package]]

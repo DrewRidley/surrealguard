@@ -10,6 +10,7 @@ use surrealguard_syntax::span::{ByteRange, SourceSpan};
 use surrealguard_types::Type;
 
 use crate::config::WorkspaceConfig;
+use crate::schema::{extract_schema, SchemaIndex};
 use crate::source_registry::SourceRegistry;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,6 +31,7 @@ pub struct AnalysisOutput {
 pub struct WorkspaceAnalysis {
     pub sources: BTreeMap<SourceId, AnalysisOutput>,
     pub diagnostics: Vec<Finding>,
+    pub schema: SchemaIndex,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,16 +117,32 @@ pub fn analyze_source(workspace: &Workspace, source: SourceId) -> AnalysisOutput
 pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
     let mut sources = BTreeMap::new();
     let mut diagnostics = Vec::new();
+    let mut parsed_sources = Vec::new();
 
     for source in workspace.registry.source_ids() {
         let output = analyze_source(workspace, source.clone());
         diagnostics.extend(output.diagnostics.iter().cloned());
         sources.insert(source.clone(), output);
+
+        if let Some(text) = workspace.registry.text(source) {
+            if let Ok(parsed) = parse_source(source.clone(), text) {
+                parsed_sources.push(parsed);
+            }
+        }
     }
+
+    let schema_extraction = extract_schema(&parsed_sources);
+    for diagnostic in &schema_extraction.diagnostics {
+        if let Some(source_output) = sources.get_mut(diagnostic.span().source()) {
+            source_output.diagnostics.push(diagnostic.clone());
+        }
+    }
+    diagnostics.extend(schema_extraction.diagnostics.iter().cloned());
 
     WorkspaceAnalysis {
         sources,
         diagnostics,
+        schema: schema_extraction.schema,
     }
 }
 
@@ -214,5 +232,49 @@ mod tests {
         assert!(output.sources[&good].diagnostics.is_empty());
         assert_eq!(output.sources[&bad].diagnostics.len(), 1);
         assert_eq!(output.diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn analyze_workspace_indexes_define_table_declarations() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE company SCHEMAFULL;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(output.schema.tables.len(), 2);
+        assert_eq!(output.schema.tables["person"].name, "person");
+        assert_eq!(output.schema.tables["company"].source, source);
+        let span = &output.schema.tables["person"].name_span;
+        assert_eq!(span.source(), &source);
+        assert_eq!(span.range().start(), 13);
+        assert_eq!(span.range().end(), 19);
+    }
+
+    #[test]
+    fn analyze_workspace_reports_duplicate_table_declarations() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(output.schema.tables.len(), 1);
+        let duplicates: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1001))
+            .collect();
+        assert_eq!(duplicates.len(), 1);
+        assert_eq!(
+            duplicates[0].message(),
+            "duplicate table definition `person`"
+        );
+        assert_eq!(duplicates[0].span().range().start(), 34);
+        assert_eq!(duplicates[0].span().range().end(), 40);
     }
 }
