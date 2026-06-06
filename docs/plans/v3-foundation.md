@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build the ground-up SurrealGuard rewrite around stable syntax, diagnostics, types, workspace analysis, CLI, LSP, MCP, and host adapters.
+Build the ground-up SurrealGuard rewrite around stable tree-sitter syntax, diagnostics, SurrealDB-backed semantic kinds, workspace analysis, CLI, LSP, MCP, and host adapters.
 
 `docs/DESIGN.md` is the source of truth. This plan tracks the next practical slices only.
 
@@ -12,16 +12,19 @@ Build the ground-up SurrealGuard rewrite around stable syntax, diagnostics, type
 - Add tests for every public contract before or with implementation.
 - Use `cargo test --workspace -- --nocapture` and `cargo check --workspace` as gates.
 - Do not add generated-file or watch-mode behavior as a default product path.
-- Do not add references to removed crate names in maintained code, tests, or docs.
+- Do not add references that endorse removed crate names in maintained code, tests, or docs. Historical references must be explicitly marked as obsolete.
 
 ## Current maintained workspace
 
 - `crates/syntax`
 - `crates/diagnostics`
-- `crates/types`
 - `crates/workspace`
 - `crates/cli`
 - `crates/lsp`
+
+Obsolete cleanup target:
+
+- `crates/types` / `surrealguard-types` exists from an earlier slice but should be removed from the maintained architecture. Use tree-sitter CST nodes for syntax and `surrealdb::types::Kind` / other public SurrealDB types for semantic kind/value facts.
 
 ## Completed foundation
 
@@ -29,13 +32,13 @@ Build the ground-up SurrealGuard rewrite around stable syntax, diagnostics, type
 - Source IDs and source spans.
 - Stable finding code families.
 - Severity policy and suppression parsing.
-- Owned type model and assignability rules.
+- Obsolete earlier slice: owned type model and assignability rules in `surrealguard-types`. Do not extend; replace with `surrealdb::types::Kind` and response-shape facts.
 - Generic function signature solving.
 - Workspace source registry and syntax-analysis pipeline.
 - CLI `check` routed through workspace analysis with stable JSON output.
 - LSP diagnostics routed through workspace analysis.
 - Removed replaced crates and codegen/watch commands from the maintained workspace.
-- Schema indexing for `DEFINE TABLE` declarations, duplicate table diagnostics, and `DEFINE FIELD ... ON ... TYPE ...` declarations with simple type mapping.
+- Schema indexing for `DEFINE TABLE` declarations, duplicate table diagnostics, and `DEFINE FIELD ... ON ... TYPE ...` declarations. The current simple type mapping is obsolete and should be converted to SurrealDB `Kind`.
 - Basic query table-reference validation for `SELECT`, `CREATE`, `UPDATE`, and `DELETE`.
 - Statement analysis records for parsed statements and parameter collection for `$param` references.
 - Simple SELECT projection field validation against indexed `DEFINE FIELD` declarations.
@@ -56,7 +59,7 @@ Implemented:
 5. Returned the schema index in workspace analysis output.
 6. Extracted `DEFINE FIELD <field> ON <table> TYPE <type>` declarations.
 7. Preserved dotted field paths as structured field paths.
-8. Mapped simple SurrealQL type names into `surrealguard-types`.
+8. Mapped simple SurrealQL type names into the obsolete `surrealguard-types` model; this must be replaced with `surrealdb::types::Kind` before deeper SELECT work continues.
 9. Emitted findings for fields on unknown tables.
 10. Emitted explicit partial-analysis findings for unsupported field type syntax.
 
@@ -95,7 +98,7 @@ Implemented:
 1. Emit `StatementAnalysis` for parsed statements.
 2. Preserve statement spans and stable statement kinds.
 3. Collect `$param` references by name with source spans.
-4. Keep `result_type: None` as the explicit result-shape placeholder.
+4. Current code keeps `result_type: None` as the explicit placeholder; replace this obsolete field with `result_shape` during Slice 6.
 5. Skip statement and parameter analysis for syntax-error sources to avoid noisy recovered-tree output.
 
 Tests:
@@ -127,30 +130,45 @@ Tests:
 - wildcard projections do not emit field diagnostics
 - spans point at the unknown projected field identifier
 
-## Slice 6: SELECT wildcard and result-shape scaffolding
+## Slice 6: type-system correction and SELECT IR
 
-Objective: move from validation-only SELECT analysis to statement result schemas.
+Objective: correct the architecture before adding more SELECT semantics.
 
-Initial statement forms:
+Required correction:
 
-- `SELECT * FROM <table>`
-- `SELECT <field>, <nested.field> FROM <table>`
+1. Stop extending `surrealguard-types`.
+2. Add the real `surrealdb` crate with default features disabled.
+3. Store schema leaf kinds as `surrealdb::types::Kind`.
+4. Replace `StatementAnalysis.result_type` with a response-shape contract that uses SurrealDB public kinds at the leaves.
+5. Build SELECT semantics from tree-sitter CST node kinds: `SelectStatement`, `Fields`, `Predicate`, `OmitClause`, `FetchClause`, `ReturnClause`, modifiers, and graph `Lookup*` nodes.
 
-Tasks:
-
-1. Populate `StatementAnalysis.result_type` for simple SELECT statements.
-2. Expand wildcard projections from indexed `DEFINE FIELD` declarations when available.
-3. Infer projected object result shapes for simple field lists.
-4. Keep schemaless, unknown, dynamic, and graph forms explicitly partial or unknown.
+Comprehensive plan: `docs/plans/2026-06-06-select-semantics.md`.
 
 Tests:
 
-- `SELECT * FROM person` returns an array/object shape with indexed fields when schema is known
-- `SELECT name, profile.email FROM person` returns a projected object shape
+- schema field kinds map to `surrealdb::types::Kind`
+- `SelectIr` extracts `AS`, `OMIT`, `FETCH`, `RETURN`, `ONLY`, row modifiers, and graph lookup nodes
+- `SELECT * FROM person` returns an array/object response shape with indexed fields when schema is known
+- `SELECT name, profile.email FROM person` returns a projected object response shape
+- `SELECT VALUE name FROM person` unwraps the row object to an array of the field kind
 - tables without field declarations do not claim precise field shapes
-- graph traversal queries remain partial/unknown for now
+- graph traversal queries are represented in IR and remain partial until relation metadata lands
 
-## Slice 7: host adapter spike
+## Slice 7: comprehensive SELECT semantics
+
+Objective: implement the SELECT variants from `docs/plans/2026-06-06-select-semantics.md` after the type-system correction and SELECT IR exist.
+
+Order:
+
+1. simple source/cardinality and wildcard projections
+2. named projections, nested paths, `AS`, and `VALUE`
+3. `OMIT`
+4. row-context `WHERE`, ordering, and row-preserving modifiers
+5. `FETCH` materialization
+6. relation metadata and graph traversal (`->`, `<-`, `<->`, graph-local WHERE)
+7. `RETURN` and advanced modifier partials (`GROUP`, `SPLIT`, `EXPLAIN`)
+
+## Slice 8: host adapter spike
 
 Objective: prove embedded-query analysis with one host language.
 
