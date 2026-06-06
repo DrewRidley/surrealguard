@@ -3377,6 +3377,8 @@ dependencies = [
  "surrealdb",
  "surrealguard-codegen",
  "surrealguard-core",
+ "surrealguard-diagnostics",
+ "surrealguard-workspace",
  "thiserror 1.0.69",
  "toml",
  "walkdir",

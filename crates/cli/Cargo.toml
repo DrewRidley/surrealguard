@@ -8,6 +8,8 @@ surrealdb.workspace = true
 thiserror.workspace = true
 surrealguard-core = { path = "../core" }
 surrealguard-codegen = { path = "../codegen" }
+surrealguard-diagnostics = { path = "../diagnostics" }
+surrealguard-workspace = { path = "../workspace" }
 clap = { version = "4", features = ["derive"]}
 # Needed for some weird reason :(
 clap_derive = { version = "4.0.0-rc.1"}
