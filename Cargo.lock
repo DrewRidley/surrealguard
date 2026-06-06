@@ -3475,6 +3475,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "surrealguard-workspace"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "surrealguard-diagnostics",
+ "surrealguard-syntax",
+ "surrealguard-types",
+]
+
+[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
