@@ -35,56 +35,34 @@ Build the ground-up SurrealGuard rewrite around stable syntax, diagnostics, type
 - CLI `check` routed through workspace analysis with stable JSON output.
 - LSP diagnostics routed through workspace analysis.
 - Removed replaced crates and codegen/watch commands from the maintained workspace.
+- Schema indexing for `DEFINE TABLE` declarations, duplicate table diagnostics, and `DEFINE FIELD ... ON ... TYPE ...` declarations with simple type mapping.
 
-## Slice 1: schema index
+## Completed slice: schema index
 
 Objective: extract enough schema facts from `.surql` sources to support semantic diagnostics.
 
-Tasks:
+Implemented:
 
-1. Add workspace-owned schema structs:
+1. Added workspace-owned schema structs:
    - `SchemaIndex`
    - `TableDef`
    - `FieldDef`
-   - `RelationDef`
-2. Extract `DEFINE TABLE <name>` declarations.
-3. Preserve definition spans.
-4. Emit duplicate table definition findings.
-5. Return the schema index in workspace analysis output.
-
-Tests:
-
-- table definitions are indexed by name
-- definition spans point at the table name
-- duplicate table declarations produce one stable semantic finding
-- syntax findings and schema findings are returned together
+2. Extracted `DEFINE TABLE <name>` declarations.
+3. Preserved table and field definition spans.
+4. Emitted duplicate table definition findings.
+5. Returned the schema index in workspace analysis output.
+6. Extracted `DEFINE FIELD <field> ON <table> TYPE <type>` declarations.
+7. Preserved dotted field paths as structured field paths.
+8. Mapped simple SurrealQL type names into `surrealguard-types`.
+9. Emitted findings for fields on unknown tables.
+10. Emitted explicit partial-analysis findings for unsupported field type syntax.
 
 Verification:
 
 ```bash
-cargo test -p surrealguard-workspace -- --nocapture
 cargo test --workspace -- --nocapture
 cargo check --workspace
 ```
-
-## Slice 2: schemafull field declarations
-
-Objective: index field types from schema declarations.
-
-Tasks:
-
-1. Extract `DEFINE FIELD <field> ON <table> TYPE <type>`.
-2. Support dotted field paths as structured field paths.
-3. Map simple SurrealQL type names into `surrealguard-types`.
-4. Emit findings for fields on unknown tables.
-5. Preserve definition spans for field names and table names.
-
-Tests:
-
-- simple field declarations are indexed
-- nested field paths are preserved
-- unknown target table produces a semantic finding
-- unsupported type syntax becomes an explicit partial-analysis finding
 
 ## Slice 3: basic query table references
 

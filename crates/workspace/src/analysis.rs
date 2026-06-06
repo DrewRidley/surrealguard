@@ -277,4 +277,77 @@ mod tests {
         assert_eq!(duplicates[0].span().range().start(), 34);
         assert_eq!(duplicates[0].span().range().end(), 40);
     }
+
+    #[test]
+    fn analyze_workspace_indexes_schemafull_field_declarations() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD profile.name ON person TYPE string;"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        let fields = &output.schema.tables["person"].fields;
+        assert_eq!(fields.len(), 1);
+        let field = &fields["profile.name"];
+        assert_eq!(field.path, vec!["profile", "name"]);
+        assert_eq!(field.table, "person");
+        assert_eq!(field.ty, Type::String);
+        assert_eq!(field.source, source);
+        assert_eq!(field.name_span.range().start(), 45);
+        assert_eq!(field.name_span.range().end(), 57);
+        assert_eq!(field.table_span.range().start(), 61);
+        assert_eq!(field.table_span.range().end(), 67);
+    }
+
+    #[test]
+    fn analyze_workspace_reports_fields_on_unknown_tables() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE FIELD name ON person TYPE string;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert!(output.schema.tables.is_empty());
+        let unknown_table: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1002))
+            .collect();
+        assert_eq!(unknown_table.len(), 1);
+        assert_eq!(
+            unknown_table[0].message(),
+            "field `name` targets unknown table `person`"
+        );
+        assert_eq!(unknown_table[0].span().range().start(), 21);
+        assert_eq!(unknown_table[0].span().range().end(), 27);
+    }
+
+    #[test]
+    fn analyze_workspace_marks_unsupported_field_type_syntax_as_partial_analysis() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD tags ON person TYPE array<string>;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        let field = &output.schema.tables["person"].fields["tags"];
+        assert!(matches!(field.ty, Type::Unknown(_)));
+        let partial: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::dynamic(6001))
+            .collect();
+        assert_eq!(partial.len(), 1);
+        assert_eq!(
+            partial[0].message(),
+            "unsupported field type syntax `array<string>` for field `tags`"
+        );
+    }
 }

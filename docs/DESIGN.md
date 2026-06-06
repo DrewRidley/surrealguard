@@ -133,7 +133,7 @@ Pipeline:
 7. apply policy and suppressions
 8. return structured `AnalysisOutput`
 
-Current implementation covers steps 1 through 4. Semantic work starts at schema indexing.
+Current implementation covers source discovery, syntax diagnostics, table indexing, and field declaration indexing for simple schema types. Query semantics starts with table-reference validation.
 
 ## CLI contract
 
@@ -182,17 +182,19 @@ The semantic engine analyzes embedded sources through the same parser and worksp
 
 ## Next implementation slice
 
-The next slice is schema indexing in `surrealguard-workspace`:
+The next slice is basic query table-reference validation in `surrealguard-workspace`:
 
-1. introduce schema data structures owned by the workspace crate
-2. extract `DEFINE TABLE` declarations from parsed SurrealQL
-3. attach definition spans for later LSP definition links
-4. surface duplicate table definitions as `Exxxx` findings
-5. keep CLI and LSP unchanged except for consuming richer workspace output
+1. inspect basic statement forms that name tables
+2. validate `SELECT ... FROM <table>` against the schema index
+3. validate `CREATE <table>`, `UPDATE <table>`, and `DELETE <table>` against the schema index
+4. preserve table-reference spans for CLI/LSP diagnostics
+5. surface unknown table references as stable semantic findings
 
 Acceptance gates:
 
-- focused tests for schema extraction and duplicate-table findings
+- focused tests for known and unknown table references
+- spans point at the unknown table identifier
+- CLI and LSP continue consuming the same workspace findings
 - `cargo test --workspace -- --nocapture`
 - `cargo check --workspace`
 - no references in maintained code or tests to removed crate names
