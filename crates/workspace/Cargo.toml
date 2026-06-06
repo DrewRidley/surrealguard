@@ -10,3 +10,4 @@ serde = { version = "1", features = ["derive"] }
 surrealguard-diagnostics = { path = "../diagnostics" }
 surrealguard-syntax = { path = "../syntax" }
 surrealguard-types = { path = "../types" }
+toml = "0.8"

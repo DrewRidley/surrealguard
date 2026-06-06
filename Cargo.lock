@@ -3482,6 +3482,7 @@ dependencies = [
  "surrealguard-diagnostics",
  "surrealguard-syntax",
  "surrealguard-types",
+ "toml",
 ]
 
 [[package]]
