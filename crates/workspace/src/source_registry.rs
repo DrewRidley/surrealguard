@@ -82,6 +82,10 @@ impl SourceRegistry {
     pub fn line_index(&self, source: &SourceId) -> Option<&LineIndex> {
         self.source(source).map(RegisteredSource::line_index)
     }
+
+    pub fn source_ids(&self) -> impl Iterator<Item = &SourceId> {
+        self.sources.keys()
+    }
 }
 
 impl RegisteredSource {
