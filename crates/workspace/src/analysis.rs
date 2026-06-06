@@ -11,7 +11,9 @@ use surrealguard_types::Type;
 
 use crate::config::WorkspaceConfig;
 use crate::schema::{extract_schema, SchemaIndex};
-use crate::semantic::{analyze_parsed_source, validate_table_references};
+use crate::semantic::{
+    analyze_parsed_source, validate_select_projection_fields, validate_table_references,
+};
 use crate::source_registry::SourceRegistry;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -152,6 +154,15 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
         }
     }
     diagnostics.extend(table_reference_diagnostics);
+
+    let select_projection_diagnostics =
+        validate_select_projection_fields(&parsed_sources, &schema_extraction.schema);
+    for diagnostic in &select_projection_diagnostics {
+        if let Some(source_output) = sources.get_mut(diagnostic.span().source()) {
+            source_output.diagnostics.push(diagnostic.clone());
+        }
+    }
+    diagnostics.extend(select_projection_diagnostics);
 
     WorkspaceAnalysis {
         sources,
@@ -502,5 +513,69 @@ mod tests {
         assert_eq!(source_output.diagnostics.len(), 1);
         assert!(source_output.statements.is_empty());
         assert!(source_output.inferred_params.is_empty());
+    }
+
+    #[test]
+    fn analyze_workspace_allows_known_select_projection_fields() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD profile.email ON person TYPE string;\nSELECT name, profile.email FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert!(output
+            .diagnostics
+            .iter()
+            .all(|finding| finding.code() != FindingCode::schema(1004)));
+    }
+
+    #[test]
+    fn analyze_workspace_reports_unknown_select_projection_fields() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nSELECT nickname, profile.phone FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let unknown_fields: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .collect();
+
+        assert_eq!(unknown_fields.len(), 2);
+        assert_eq!(
+            unknown_fields[0].message(),
+            "unknown field `nickname` on table `person`"
+        );
+        assert_eq!(unknown_fields[0].span().source(), &source);
+        assert_eq!(unknown_fields[0].span().range().start(), 69);
+        assert_eq!(unknown_fields[0].span().range().end(), 77);
+        assert_eq!(
+            unknown_fields[1].message(),
+            "unknown field `profile.phone` on table `person`"
+        );
+        assert_eq!(unknown_fields[1].span().range().start(), 79);
+        assert_eq!(unknown_fields[1].span().range().end(), 92);
+        assert_eq!(output.sources[&source].diagnostics.len(), 2);
+    }
+
+    #[test]
+    fn analyze_workspace_skips_wildcard_select_projection_field_validation() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nSELECT * FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert!(output
+            .diagnostics
+            .iter()
+            .all(|finding| finding.code() != FindingCode::schema(1004)));
     }
 }

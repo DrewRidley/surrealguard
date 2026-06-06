@@ -58,6 +58,28 @@ pub fn validate_table_references(
     diagnostics
 }
 
+pub fn validate_select_projection_fields(
+    parsed_sources: &[ParsedSource],
+    schema: &SchemaIndex,
+) -> Vec<Finding> {
+    let mut diagnostics = Vec::new();
+
+    for parsed in parsed_sources {
+        if !parsed.syntax_diagnostics().is_empty() {
+            continue;
+        }
+
+        collect_select_projection_field_diagnostics(
+            parsed.tree().root_node(),
+            parsed,
+            schema,
+            &mut diagnostics,
+        );
+    }
+
+    diagnostics
+}
+
 fn collect_statement_analysis(
     node: Node<'_>,
     parsed: &ParsedSource,
@@ -139,11 +161,67 @@ fn collect_table_reference_diagnostics(
     }
 }
 
+fn collect_select_projection_field_diagnostics(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if node.kind() == "SelectStatement" {
+        validate_select_projection_fields_for_statement(node, parsed, schema, diagnostics);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_select_projection_field_diagnostics(child, parsed, schema, diagnostics);
+    }
+}
+
+fn validate_select_projection_fields_for_statement(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    diagnostics: &mut Vec<Finding>,
+) {
+    let Some(table_ref) = select_table_references(node, parsed.text())
+        .into_iter()
+        .next()
+    else {
+        return;
+    };
+    let Some(table) = schema.tables.get(table_ref.name) else {
+        return;
+    };
+    if table.fields.is_empty() {
+        return;
+    }
+
+    for field_ref in select_projection_fields(node, parsed.text()) {
+        if !table.fields.contains_key(field_ref.name) {
+            diagnostics.push(Finding::new(
+                node_span(field_ref.node, parsed.source_id().clone()),
+                FindingCode::schema(1004),
+                Severity::Error,
+                format!(
+                    "unknown field `{}` on table `{}`",
+                    field_ref.name, table.name
+                ),
+            ));
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct TableReference<'tree> {
     name: &'tree str,
     node: Node<'tree>,
     statement: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct FieldReference<'tree> {
+    name: &'tree str,
+    node: Node<'tree>,
 }
 
 fn select_table_references<'tree>(
@@ -218,6 +296,54 @@ fn leading_table_references<'tree>(
     }
 
     references
+}
+
+fn select_projection_fields<'tree>(
+    node: Node<'tree>,
+    source: &'tree str,
+) -> Vec<FieldReference<'tree>> {
+    let mut cursor = node.walk();
+    let Some(fields_node) = node
+        .children(&mut cursor)
+        .find(|child| child.kind() == "Fields")
+    else {
+        return Vec::new();
+    };
+
+    let mut references = Vec::new();
+    let mut fields_cursor = fields_node.walk();
+    for child in fields_node.children(&mut fields_cursor) {
+        if child.kind() == "Any" {
+            continue;
+        }
+        if child.kind() != "Predicate" {
+            continue;
+        }
+
+        if let Some(field_node) = simple_projection_field_node(child) {
+            references.push(FieldReference {
+                name: node_text(field_node, source).trim(),
+                node: field_node,
+            });
+        }
+    }
+
+    references
+}
+
+fn simple_projection_field_node(node: Node<'_>) -> Option<Node<'_>> {
+    let mut cursor = node.walk();
+    let mut children = node.children(&mut cursor).filter(|child| child.is_named());
+    let child = children.next()?;
+    if children.next().is_some() {
+        return None;
+    }
+
+    if matches!(child.kind(), "Ident" | "Path") {
+        Some(child)
+    } else {
+        None
+    }
 }
 
 fn statement_kind(node: Node<'_>, source: &str) -> Option<String> {

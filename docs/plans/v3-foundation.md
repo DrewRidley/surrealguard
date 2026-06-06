@@ -38,6 +38,7 @@ Build the ground-up SurrealGuard rewrite around stable syntax, diagnostics, type
 - Schema indexing for `DEFINE TABLE` declarations, duplicate table diagnostics, and `DEFINE FIELD ... ON ... TYPE ...` declarations with simple type mapping.
 - Basic query table-reference validation for `SELECT`, `CREATE`, `UPDATE`, and `DELETE`.
 - Statement analysis records for parsed statements and parameter collection for `$param` references.
+- Simple SELECT projection field validation against indexed `DEFINE FIELD` declarations.
 
 ## Completed slice: schema index
 
@@ -103,13 +104,21 @@ Tests:
 - parameters are collected and repeated references merge by name
 - syntax-error sources do not emit statement or parameter analysis
 
-## Slice 5: field-aware SELECT projection validation
+## Completed slice: field-aware SELECT projection validation
 
 Objective: validate simple projected fields against indexed schema fields.
 
 Initial statement form:
 
 - `SELECT <field>, <nested.field> FROM <table>`
+
+Implemented:
+
+1. Read simple projection fields from `SELECT <field>, ... FROM <table>` statements.
+2. Validate projected field names against `DEFINE FIELD` declarations for the target table.
+3. Skip wildcard projections and dynamic expressions until result-shape inference lands.
+4. Preserve projection spans for CLI/LSP diagnostics.
+5. Emit `E1004` findings for unknown projected fields.
 
 Tests:
 
@@ -118,7 +127,30 @@ Tests:
 - wildcard projections do not emit field diagnostics
 - spans point at the unknown projected field identifier
 
-## Slice 6: host adapter spike
+## Slice 6: SELECT wildcard and result-shape scaffolding
+
+Objective: move from validation-only SELECT analysis to statement result schemas.
+
+Initial statement forms:
+
+- `SELECT * FROM <table>`
+- `SELECT <field>, <nested.field> FROM <table>`
+
+Tasks:
+
+1. Populate `StatementAnalysis.result_type` for simple SELECT statements.
+2. Expand wildcard projections from indexed `DEFINE FIELD` declarations when available.
+3. Infer projected object result shapes for simple field lists.
+4. Keep schemaless, unknown, dynamic, and graph forms explicitly partial or unknown.
+
+Tests:
+
+- `SELECT * FROM person` returns an array/object shape with indexed fields when schema is known
+- `SELECT name, profile.email FROM person` returns a projected object shape
+- tables without field declarations do not claim precise field shapes
+- graph traversal queries remain partial/unknown for now
+
+## Slice 7: host adapter spike
 
 Objective: prove embedded-query analysis with one host language.
 

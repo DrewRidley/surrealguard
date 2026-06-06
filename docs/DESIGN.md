@@ -133,7 +133,7 @@ Pipeline:
 7. apply policy and suppressions
 8. return structured `AnalysisOutput`
 
-Current implementation covers source discovery, syntax diagnostics, table indexing, field declaration indexing for simple schema types, basic query table-reference validation, statement analysis records, and query parameter collection. Deep expression/result semantics are still placeholders.
+Current implementation covers source discovery, syntax diagnostics, table indexing, field declaration indexing for simple schema types, basic query table-reference validation, statement analysis records, query parameter collection, and simple SELECT projection field validation. Deep expression/result semantics are still placeholders.
 
 Each parsed statement should eventually infer a response schema: the statement span and kind, input parameter requirements, result shape/type, and any partial-analysis limitations. Diagnostics should be emitted from that shared semantic model so CLI, LSP, MCP, and host adapters all explain the same facts rather than reimplementing rules per surface.
 
@@ -184,19 +184,19 @@ The semantic engine analyzes embedded sources through the same parser and worksp
 
 ## Next implementation slice
 
-The next slice is field-aware `SELECT` projection validation in `surrealguard-workspace`:
+The next slice is SELECT wildcard/result-shape scaffolding in `surrealguard-workspace`:
 
-1. read simple projection fields from `SELECT <field>, ... FROM <table>` statements
-2. validate projected field names against `DEFINE FIELD` declarations for the target table
-3. skip wildcard projections and dynamic expressions until result-shape inference lands
-4. preserve projection spans for CLI/LSP diagnostics
-5. emit explicit semantic findings for unknown projected fields
+1. represent simple SELECT result shapes in `StatementAnalysis.result_type`
+2. expand `SELECT * FROM <table>` from indexed `DEFINE FIELD` declarations when available
+3. infer `SELECT <field>, ... FROM <table>` as an array of projected object shapes
+4. keep schemaless or partially-known tables explicitly partial instead of over-claiming precision
+5. leave graph traversals (`->`, `<-`, `<->`) as explicit partial analysis until the graph slice
 
 Acceptance gates:
 
-- focused tests for known and unknown projected fields
-- wildcard projections do not emit field diagnostics
-- spans point at the unknown projected field identifier
+- focused tests for `SELECT *` field expansion from schema
+- focused tests for projected object result shapes
+- schemaless/unknown result shapes remain partial/unknown
 - `cargo test --workspace -- --nocapture`
 - `cargo check --workspace`
 - no references in maintained code or tests to removed crate names
