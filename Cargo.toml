@@ -1,5 +1,12 @@
 [workspace]
-members = ["crates/core", "crates/codegen", "crates/macros", "crates/cli", "crates/analyzer", "crates/lsp", "crates/typegen", "crates/syntax", "crates/diagnostics", "crates/types", "crates/workspace"]
+members = [
+    "crates/cli",
+    "crates/diagnostics",
+    "crates/lsp",
+    "crates/syntax",
+    "crates/types",
+    "crates/workspace",
+]
 resolver = "2"
 
 [workspace.package]
@@ -8,12 +15,9 @@ edition = "2021"
 authors = ["Drew Ridley"]
 readme = "README.md"
 repository = "https://github.com/DrewRidley/surrealguard.git"
-description = "Type-safe query builder and static analyzer for SurrealDB with automatic TypeScript type generation"
+description = "Static analysis for SurrealQL embedded across host languages"
 license = "MIT OR Apache-2.0"
 
-
 [workspace.dependencies]
-surrealdb = { version = "2.1.4", features = [], default-features = false}
-thiserror = "1"
 tree-sitter = "0.26"
 tree-sitter-surrealql = { path = "../tree-sitter-surrealql" }

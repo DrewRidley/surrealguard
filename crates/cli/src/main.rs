@@ -5,7 +5,6 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use surrealguard_codegen::{self, CodegenError, Config};
 use surrealguard_diagnostics::Severity;
 use surrealguard_workspace::config::WorkspaceConfig;
 use surrealguard_workspace::{analyze_workspace, Workspace};
@@ -29,12 +28,6 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-
-    /// Generate code once and exit
-    Run,
-
-    /// Generate code and watch for changes
-    Watch,
 }
 
 const EXAMPLE_CONFIG: &str = r#"version = "1.0"
@@ -344,6 +337,12 @@ mod tests {
         }
     }
 
+    #[test]
+    fn codegen_commands_are_not_part_of_the_rewrite_cli() {
+        assert!(Cli::try_parse_from(["surrealguard", "run"]).is_err());
+        assert!(Cli::try_parse_from(["surrealguard", "watch"]).is_err());
+    }
+
     fn temp_project_dir(name: &str) -> std::path::PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -403,34 +402,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                     std::process::exit(1);
                 }
-            }
-        }
-        cmd => {
-            match Config::find_and_load(&env::current_dir()?) {
-                Ok((config, config_dir)) => {
-                    env::set_current_dir(&config_dir)?;
-                    println!("Using configuration from: {}", config_dir.display());
-
-                    match cmd {
-                        Commands::Run => {
-                            println!("Generating code...");
-                            surrealguard_codegen::generate(&config)?;
-                            println!("Done!");
-                        }
-                        Commands::Watch => {
-                            println!("Starting watch mode...");
-                            surrealguard_codegen::watch(&config)?;
-                        }
-                        Commands::Init | Commands::Check { .. } => unreachable!(),
-                    }
-                    Ok(())
-                }
-                Err(CodegenError::ConfigNotFound(_)) => {
-                    eprintln!("Error: No surrealguard.toml found in current directory or parent directories");
-                    eprintln!("Run 'surrealguard init' to create a new config file");
-                    std::process::exit(1);
-                }
-                Err(e) => Err(e.into()),
             }
         }
     }
