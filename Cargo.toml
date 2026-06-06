@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/codegen", "crates/macros", "crates/cli", "crates/analyzer", "crates/lsp", "crates/typegen", "crates/syntax", "crates/diagnostics"]
+members = ["crates/core", "crates/codegen", "crates/macros", "crates/cli", "crates/analyzer", "crates/lsp", "crates/typegen", "crates/syntax", "crates/diagnostics", "crates/types"]
 resolver = "2"
 
 [workspace.package]

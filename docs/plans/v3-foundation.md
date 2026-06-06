@@ -594,13 +594,14 @@ git commit -m "feat: parse surrealguard suppressions"
 
 ## Phase 3: Owned type model and generic signatures
 
-### Task 3.1: Add owned type model module
+### Task 3.1: Add owned type model crate
 
 **Objective:** Introduce SurrealGuard-owned type representation as the v3 semantic contract. Existing `surrealdb::sql::Kind` usage is legacy and should not shape the public model.
 
 **Files:**
-- Create: `crates/analyzer/src/type_model.rs`
-- Modify: `crates/analyzer/src/lib.rs`
+- Modify: `Cargo.toml`
+- Create: `crates/types/Cargo.toml`
+- Create: `crates/types/src/lib.rs`
 
 **Step 1: Add core enum**
 
@@ -647,7 +648,7 @@ Test:
 **Step 3: Verify**
 
 ```bash
-cargo test -p surrealguard-analyzer type_model
+cargo test -p surrealguard-types
 ```
 
 Expected: passes.
@@ -655,7 +656,7 @@ Expected: passes.
 **Step 4: Commit**
 
 ```bash
-git add crates/analyzer
+git add Cargo.toml crates/types docs/plans/v3-foundation.md
 git commit -m "feat: add owned SurrealGuard type model"
 ```
 
