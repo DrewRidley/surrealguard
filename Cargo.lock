@@ -3431,16 +3431,11 @@ dependencies = [
 name = "surrealguard-lsp"
 version = "0.1.0"
 dependencies = [
- "serde",
- "serde_json",
- "surrealguard-analyzer",
  "surrealguard-diagnostics",
  "surrealguard-syntax",
  "surrealguard-workspace",
  "tokio",
  "tower-lsp",
- "tree-sitter",
- "tree-sitter-surrealql",
  "walkdir",
 ]
 

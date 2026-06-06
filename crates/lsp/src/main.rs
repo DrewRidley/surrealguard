@@ -1,14 +1,8 @@
 use tower_lsp::{LspService, Server};
 
 mod backend;
-mod completions;
-mod definition;
 mod diagnostics;
-pub mod hover;
-mod signature;
-mod symbols;
 mod text;
-mod typegen;
 mod workspace;
 
 #[tokio::main]

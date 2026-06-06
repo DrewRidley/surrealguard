@@ -2,18 +2,14 @@
 //!
 //! Handles span-to-range conversion and related information formatting.
 
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Url};
+use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString};
 
 use surrealguard_diagnostics::{Finding, Severity as WorkspaceSeverity};
 
 use crate::text::byte_range_to_lsp;
 
 /// Convert a workspace-analysis finding to an LSP diagnostic.
-pub fn workspace_finding_to_lsp_diagnostic(
-    source: &str,
-    _uri: &Url,
-    finding: &Finding,
-) -> Diagnostic {
+pub fn workspace_finding_to_lsp_diagnostic(source: &str, finding: &Finding) -> Diagnostic {
     let range = finding.span().range();
     let range = byte_range_to_lsp(source, range.start() as usize, range.end() as usize);
 
@@ -43,7 +39,6 @@ mod tests {
 
     #[test]
     fn workspace_finding_converts_to_lsp_diagnostic_contract() {
-        let uri = Url::parse("file:///workspace/query.surql").expect("valid uri");
         let source = "SELECT * FROM ;";
         let finding = Finding::new(
             SourceSpan::new(
@@ -55,7 +50,7 @@ mod tests {
             "unexpected syntax",
         );
 
-        let diagnostic = workspace_finding_to_lsp_diagnostic(source, &uri, &finding);
+        let diagnostic = workspace_finding_to_lsp_diagnostic(source, &finding);
 
         assert_eq!(
             diagnostic.code,
