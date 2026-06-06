@@ -11,7 +11,7 @@ use surrealguard_types::Type;
 
 use crate::config::WorkspaceConfig;
 use crate::schema::{extract_schema, SchemaIndex};
-use crate::semantic::validate_table_references;
+use crate::semantic::{analyze_parsed_source, validate_table_references};
 use crate::source_registry::SourceRegistry;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -96,16 +96,20 @@ pub fn analyze_source(workspace: &Workspace, source: SourceId) -> AnalysisOutput
     };
 
     match parse_source(source.clone(), text) {
-        Ok(parsed) => AnalysisOutput {
-            diagnostics: parsed
+        Ok(parsed) => {
+            let syntax_diagnostics: Vec<_> = parsed
                 .syntax_diagnostics()
                 .iter()
                 .map(syntax_diagnostic_to_finding)
-                .collect(),
-            statements: Vec::new(),
-            inferred_params: Vec::new(),
-            result_type: None,
-        },
+                .collect();
+            let semantic_output = analyze_parsed_source(&parsed);
+            AnalysisOutput {
+                diagnostics: syntax_diagnostics,
+                statements: semantic_output.statements,
+                inferred_params: semantic_output.inferred_params,
+                result_type: None,
+            }
+        }
         Err(error) => AnalysisOutput {
             diagnostics: vec![parse_error_to_finding(source, error)],
             statements: Vec::new(),
@@ -187,15 +191,24 @@ fn parse_error_to_finding(source: SourceId, error: ParseError) -> Finding {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use surrealguard_types::UnknownReason;
 
     #[test]
-    fn analyze_query_returns_no_diagnostics_for_parseable_surrealql() {
+    fn analyze_query_returns_statement_analysis_for_parseable_surrealql() {
         let mut workspace = Workspace::default();
 
         let output = analyze_query(&mut workspace, "SELECT * FROM person;");
 
         assert!(output.diagnostics.is_empty());
-        assert!(output.statements.is_empty());
+        assert_eq!(output.statements.len(), 1);
+        assert_eq!(output.statements[0].kind, "select");
+        assert_eq!(
+            output.statements[0].span.source().as_str(),
+            "virtual://query#0"
+        );
+        assert_eq!(output.statements[0].span.range().start(), 0);
+        assert_eq!(output.statements[0].span.range().end(), 20);
+        assert!(output.statements[0].result_type.is_none());
         assert!(output.inferred_params.is_empty());
         assert!(output.result_type.is_none());
     }
@@ -427,5 +440,67 @@ mod tests {
                 "unknown table `missing` in DELETE statement",
             ]
         );
+    }
+
+    #[test]
+    fn analyze_workspace_emits_statement_analysis_for_registered_sources() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nSELECT * FROM person;\nCREATE person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let source_output = &output.sources[&source];
+
+        let kinds: Vec<_> = source_output
+            .statements
+            .iter()
+            .map(|statement| statement.kind.as_str())
+            .collect();
+        assert_eq!(kinds, vec!["define_table", "select", "create"]);
+        assert_eq!(source_output.statements[1].span.source(), &source);
+        assert_eq!(source_output.statements[1].span.range().start(), 21);
+        assert_eq!(source_output.statements[1].span.range().end(), 41);
+        assert!(source_output.statements[1].result_type.is_none());
+    }
+
+    #[test]
+    fn analyze_workspace_collects_query_parameters_by_name_with_spans() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nSELECT * FROM person WHERE id = $id OR owner = $id AND team = $team;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let params = &output.sources[&source].inferred_params;
+
+        assert_eq!(params.len(), 2);
+        assert_eq!(params[0].name, "id");
+        assert_eq!(params[0].ty, Type::Unknown(UnknownReason::Unresolved));
+        assert!(params[0].required);
+        assert_eq!(params[0].spans.len(), 2);
+        assert_eq!(params[0].spans[0].range().start(), 53);
+        assert_eq!(params[0].spans[0].range().end(), 56);
+        assert_eq!(params[0].spans[1].range().start(), 68);
+        assert_eq!(params[0].spans[1].range().end(), 71);
+        assert_eq!(params[1].name, "team");
+        assert_eq!(params[1].spans.len(), 1);
+        assert_eq!(params[1].spans[0].range().start(), 83);
+        assert_eq!(params[1].spans[0].range().end(), 88);
+    }
+
+    #[test]
+    fn analyze_workspace_skips_statement_and_param_analysis_for_syntax_error_sources() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source("query".into(), "SELECT * FROM ;".into());
+
+        let output = analyze_workspace(&workspace);
+        let source_output = &output.sources[&source];
+
+        assert_eq!(source_output.diagnostics.len(), 1);
+        assert!(source_output.statements.is_empty());
+        assert!(source_output.inferred_params.is_empty());
     }
 }

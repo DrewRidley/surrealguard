@@ -1,10 +1,40 @@
+use std::collections::BTreeMap;
+
 use surrealguard_diagnostics::{Finding, FindingCode, Severity};
 use surrealguard_syntax::parse::ParsedSource;
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
+use surrealguard_types::{Type, UnknownReason};
 use tree_sitter::Node;
 
+use crate::analysis::{ParamInference, StatementAnalysis};
 use crate::schema::SchemaIndex;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SemanticOutput {
+    pub statements: Vec<StatementAnalysis>,
+    pub inferred_params: Vec<ParamInference>,
+}
+
+pub fn analyze_parsed_source(parsed: &ParsedSource) -> SemanticOutput {
+    if !parsed.syntax_diagnostics().is_empty() {
+        return SemanticOutput::default();
+    }
+
+    let mut statements = Vec::new();
+    let mut params = BTreeMap::new();
+    collect_statement_analysis(
+        parsed.tree().root_node(),
+        parsed,
+        &mut statements,
+        &mut params,
+    );
+
+    SemanticOutput {
+        statements,
+        inferred_params: params.into_values().collect(),
+    }
+}
 
 pub fn validate_table_references(
     parsed_sources: &[ParsedSource],
@@ -26,6 +56,53 @@ pub fn validate_table_references(
     }
 
     diagnostics
+}
+
+fn collect_statement_analysis(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    statements: &mut Vec<StatementAnalysis>,
+    params: &mut BTreeMap<String, ParamInference>,
+) {
+    if let Some(kind) = statement_kind(node, parsed.text()) {
+        statements.push(StatementAnalysis {
+            span: node_span(node, parsed.source_id().clone()),
+            kind,
+            result_type: None,
+        });
+        collect_params(node, parsed, params);
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_statement_analysis(child, parsed, statements, params);
+    }
+}
+
+fn collect_params(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    params: &mut BTreeMap<String, ParamInference>,
+) {
+    if node.kind() == "VariableName" {
+        let name = param_name(node_text(node, parsed.text()));
+        params
+            .entry(name.clone())
+            .or_insert_with(|| ParamInference {
+                name,
+                ty: Type::Unknown(UnknownReason::Unresolved),
+                required: true,
+                spans: Vec::new(),
+            })
+            .spans
+            .push(node_span(node, parsed.source_id().clone()));
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_params(child, parsed, params);
+    }
 }
 
 fn collect_table_reference_diagnostics(
@@ -141,6 +218,51 @@ fn leading_table_references<'tree>(
     }
 
     references
+}
+
+fn statement_kind(node: Node<'_>, source: &str) -> Option<String> {
+    match node.kind() {
+        "DefineStatement" => define_statement_kind(node, source),
+        "SelectStatement" => Some("select".into()),
+        "CreateStatement" => Some("create".into()),
+        "UpdateStatement" => Some("update".into()),
+        "DeleteStatement" => Some("delete".into()),
+        "InsertStatement" => Some("insert".into()),
+        "RelateStatement" => Some("relate".into()),
+        "LetStatement" => Some("let".into()),
+        _ => None,
+    }
+}
+
+fn define_statement_kind(node: Node<'_>, source: &str) -> Option<String> {
+    let mut saw_define = false;
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        if child.kind() != "Keyword" {
+            continue;
+        }
+
+        let keyword = node_text(child, source).to_ascii_lowercase();
+        if !saw_define && keyword == "define" {
+            saw_define = true;
+            continue;
+        }
+
+        if saw_define {
+            return Some(format!("define_{keyword}"));
+        }
+    }
+
+    Some("define".into())
+}
+
+fn param_name(text: &str) -> String {
+    text.trim_start_matches('$')
+        .trim_matches('`')
+        .trim_matches('⟨')
+        .trim_matches('⟩')
+        .to_string()
 }
 
 fn is_data_or_modifier_clause(node: Node<'_>) -> bool {

@@ -133,7 +133,9 @@ Pipeline:
 7. apply policy and suppressions
 8. return structured `AnalysisOutput`
 
-Current implementation covers source discovery, syntax diagnostics, table indexing, field declaration indexing for simple schema types, and basic query table-reference validation. Expression/result semantics are still placeholders.
+Current implementation covers source discovery, syntax diagnostics, table indexing, field declaration indexing for simple schema types, basic query table-reference validation, statement analysis records, and query parameter collection. Deep expression/result semantics are still placeholders.
+
+Each parsed statement should eventually infer a response schema: the statement span and kind, input parameter requirements, result shape/type, and any partial-analysis limitations. Diagnostics should be emitted from that shared semantic model so CLI, LSP, MCP, and host adapters all explain the same facts rather than reimplementing rules per surface.
 
 ## CLI contract
 
@@ -182,19 +184,19 @@ The semantic engine analyzes embedded sources through the same parser and worksp
 
 ## Next implementation slice
 
-The next slice is expression and result-analysis scaffolding in `surrealguard-workspace`:
+The next slice is field-aware `SELECT` projection validation in `surrealguard-workspace`:
 
-1. add `StatementAnalysis` emission for parsed statements
-2. preserve statement spans and stable statement kinds
-3. collect `$param` references with spans
-4. add explicit partial-analysis markers for unsupported/dynamic statement structures
-5. keep table-reference diagnostics flowing through CLI and LSP unchanged
+1. read simple projection fields from `SELECT <field>, ... FROM <table>` statements
+2. validate projected field names against `DEFINE FIELD` declarations for the target table
+3. skip wildcard projections and dynamic expressions until result-shape inference lands
+4. preserve projection spans for CLI/LSP diagnostics
+5. emit explicit semantic findings for unknown projected fields
 
 Acceptance gates:
 
-- focused tests for statement spans/kinds
-- focused tests for parameter collection
-- unsupported constructs do not panic and return explicit partial-analysis data
+- focused tests for known and unknown projected fields
+- wildcard projections do not emit field diagnostics
+- spans point at the unknown projected field identifier
 - `cargo test --workspace -- --nocapture`
 - `cargo check --workspace`
 - no references in maintained code or tests to removed crate names

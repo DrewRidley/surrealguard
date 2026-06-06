@@ -37,6 +37,7 @@ Build the ground-up SurrealGuard rewrite around stable syntax, diagnostics, type
 - Removed replaced crates and codegen/watch commands from the maintained workspace.
 - Schema indexing for `DEFINE TABLE` declarations, duplicate table diagnostics, and `DEFINE FIELD ... ON ... TYPE ...` declarations with simple type mapping.
 - Basic query table-reference validation for `SELECT`, `CREATE`, `UPDATE`, and `DELETE`.
+- Statement analysis records for parsed statements and parameter collection for `$param` references.
 
 ## Completed slice: schema index
 
@@ -84,24 +85,40 @@ Tests:
 - source-specific diagnostics and workspace diagnostics receive the same finding
 - syntax-error sources skip semantic table-reference validation to avoid noisy follow-on errors
 
-## Slice 4: expression and result skeleton
+## Completed slice: expression and result skeleton
 
 Objective: introduce the shared semantic output shape before deeper inference.
 
-Tasks:
+Implemented:
 
-1. Add `StatementAnalysis`.
-2. Add `ResultShape` placeholders.
-3. Add parameter collection for `$param` references.
-4. Return partial-analysis markers for dynamic or unsupported structures.
+1. Emit `StatementAnalysis` for parsed statements.
+2. Preserve statement spans and stable statement kinds.
+3. Collect `$param` references by name with source spans.
+4. Keep `result_type: None` as the explicit result-shape placeholder.
+5. Skip statement and parameter analysis for syntax-error sources to avoid noisy recovered-tree output.
 
 Tests:
 
 - each statement has a stable span
-- parameters are collected with spans
-- unsupported constructs do not panic and return explicit partial-analysis data
+- parameters are collected and repeated references merge by name
+- syntax-error sources do not emit statement or parameter analysis
 
-## Slice 5: host adapter spike
+## Slice 5: field-aware SELECT projection validation
+
+Objective: validate simple projected fields against indexed schema fields.
+
+Initial statement form:
+
+- `SELECT <field>, <nested.field> FROM <table>`
+
+Tests:
+
+- known projected fields pass
+- unknown projected fields produce semantic findings
+- wildcard projections do not emit field diagnostics
+- spans point at the unknown projected field identifier
+
+## Slice 6: host adapter spike
 
 Objective: prove embedded-query analysis with one host language.
 
