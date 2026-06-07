@@ -90,7 +90,7 @@ fn collect_select_irs(node: Node<'_>, parsed: &ParsedSource, irs: &mut Vec<Selec
     }
 }
 
-fn select_ir_from_statement(node: Node<'_>, parsed: &ParsedSource) -> SelectIr {
+pub(crate) fn select_ir_from_statement(node: Node<'_>, parsed: &ParsedSource) -> SelectIr {
     let mut source = None;
     let mut projections = Vec::new();
     let mut only = false;

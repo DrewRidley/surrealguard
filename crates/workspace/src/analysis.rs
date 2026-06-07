@@ -569,6 +569,28 @@ mod tests {
     }
 
     #[test]
+    fn analyze_workspace_validates_aliased_select_projection_source_field() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nSELECT nickname AS display_name FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let unknown_fields: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .collect();
+
+        assert_eq!(unknown_fields.len(), 1);
+        assert_eq!(
+            unknown_fields[0].message(),
+            "unknown field `nickname` on table `person`"
+        );
+    }
+
+    #[test]
     fn analyze_workspace_skips_wildcard_select_projection_field_validation() {
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(

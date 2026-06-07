@@ -9,6 +9,7 @@ use tree_sitter::Node;
 
 use crate::analysis::{ParamInference, StatementAnalysis};
 use crate::schema::SchemaIndex;
+use crate::select_ir::{select_ir_from_statement, SelectProjection};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SemanticOutput {
@@ -133,25 +134,40 @@ fn collect_table_reference_diagnostics(
     schema: &SchemaIndex,
     diagnostics: &mut Vec<Finding>,
 ) {
-    let references = match node.kind() {
-        "SelectStatement" => select_table_references(node, parsed.text()),
-        "CreateStatement" => leading_table_references(node, parsed.text(), "CREATE"),
-        "UpdateStatement" => leading_table_references(node, parsed.text(), "UPDATE"),
-        "DeleteStatement" => leading_table_references(node, parsed.text(), "DELETE"),
-        _ => Vec::new(),
-    };
+    if node.kind() == "SelectStatement" {
+        let ir = select_ir_from_statement(node, parsed);
+        if let Some(source) = ir.source {
+            if let Some(table_name) = source.table {
+                if !schema.tables.contains_key(&table_name) {
+                    diagnostics.push(Finding::new(
+                        source.span,
+                        FindingCode::schema(1003),
+                        Severity::Error,
+                        format!("unknown table `{table_name}` in SELECT statement"),
+                    ));
+                }
+            }
+        }
+    } else {
+        let references = match node.kind() {
+            "CreateStatement" => leading_table_references(node, parsed.text(), "CREATE"),
+            "UpdateStatement" => leading_table_references(node, parsed.text(), "UPDATE"),
+            "DeleteStatement" => leading_table_references(node, parsed.text(), "DELETE"),
+            _ => Vec::new(),
+        };
 
-    for table_ref in references {
-        if !schema.tables.contains_key(table_ref.name) {
-            diagnostics.push(Finding::new(
-                node_span(table_ref.node, parsed.source_id().clone()),
-                FindingCode::schema(1003),
-                Severity::Error,
-                format!(
-                    "unknown table `{}` in {} statement",
-                    table_ref.name, table_ref.statement
-                ),
-            ));
+        for table_ref in references {
+            if !schema.tables.contains_key(table_ref.name) {
+                diagnostics.push(Finding::new(
+                    node_span(table_ref.node, parsed.source_id().clone()),
+                    FindingCode::schema(1003),
+                    Severity::Error,
+                    format!(
+                        "unknown table `{}` in {} statement",
+                        table_ref.name, table_ref.statement
+                    ),
+                ));
+            }
         }
     }
 
@@ -183,29 +199,30 @@ fn validate_select_projection_fields_for_statement(
     schema: &SchemaIndex,
     diagnostics: &mut Vec<Finding>,
 ) {
-    let Some(table_ref) = select_table_references(node, parsed.text())
-        .into_iter()
-        .next()
-    else {
+    let ir = select_ir_from_statement(node, parsed);
+    let Some(source) = ir.source else {
         return;
     };
-    let Some(table) = schema.tables.get(table_ref.name) else {
+    let Some(table_name) = source.table else {
+        return;
+    };
+    let Some(table) = schema.tables.get(&table_name) else {
         return;
     };
     if table.fields.is_empty() {
         return;
     }
 
-    for field_ref in select_projection_fields(node, parsed.text()) {
-        if !table.fields.contains_key(field_ref.name) {
+    for projection in ir.projections {
+        let SelectProjection::Field { path, .. } = projection else {
+            continue;
+        };
+        if !table.fields.contains_key(&path.text) {
             diagnostics.push(Finding::new(
-                node_span(field_ref.node, parsed.source_id().clone()),
+                path.span,
                 FindingCode::schema(1004),
                 Severity::Error,
-                format!(
-                    "unknown field `{}` on table `{}`",
-                    field_ref.name, table.name
-                ),
+                format!("unknown field `{}` on table `{}`", path.text, table.name),
             ));
         }
     }
@@ -216,46 +233,6 @@ struct TableReference<'tree> {
     name: &'tree str,
     node: Node<'tree>,
     statement: &'static str,
-}
-
-#[derive(Clone, Copy)]
-struct FieldReference<'tree> {
-    name: &'tree str,
-    node: Node<'tree>,
-}
-
-fn select_table_references<'tree>(
-    node: Node<'tree>,
-    source: &'tree str,
-) -> Vec<TableReference<'tree>> {
-    let mut saw_from = false;
-    let mut references = Vec::new();
-    let mut cursor = node.walk();
-
-    for child in node.children(&mut cursor) {
-        let text = node_text(child, source);
-        if child.kind() == "Keyword" {
-            let lower = text.to_ascii_lowercase();
-            if lower == "from" {
-                saw_from = true;
-            }
-            continue;
-        }
-
-        if !saw_from {
-            continue;
-        }
-
-        if is_identifier_like(child) {
-            references.push(TableReference {
-                name: table_name_from_node_text(text),
-                node: child,
-                statement: "SELECT",
-            });
-        }
-    }
-
-    references
 }
 
 fn leading_table_references<'tree>(
@@ -296,54 +273,6 @@ fn leading_table_references<'tree>(
     }
 
     references
-}
-
-fn select_projection_fields<'tree>(
-    node: Node<'tree>,
-    source: &'tree str,
-) -> Vec<FieldReference<'tree>> {
-    let mut cursor = node.walk();
-    let Some(fields_node) = node
-        .children(&mut cursor)
-        .find(|child| child.kind() == "Fields")
-    else {
-        return Vec::new();
-    };
-
-    let mut references = Vec::new();
-    let mut fields_cursor = fields_node.walk();
-    for child in fields_node.children(&mut fields_cursor) {
-        if child.kind() == "Any" {
-            continue;
-        }
-        if child.kind() != "Predicate" {
-            continue;
-        }
-
-        if let Some(field_node) = simple_projection_field_node(child) {
-            references.push(FieldReference {
-                name: node_text(field_node, source).trim(),
-                node: field_node,
-            });
-        }
-    }
-
-    references
-}
-
-fn simple_projection_field_node(node: Node<'_>) -> Option<Node<'_>> {
-    let mut cursor = node.walk();
-    let mut children = node.children(&mut cursor).filter(|child| child.is_named());
-    let child = children.next()?;
-    if children.next().is_some() {
-        return None;
-    }
-
-    if matches!(child.kind(), "Ident" | "Path") {
-        Some(child)
-    } else {
-        None
-    }
 }
 
 fn statement_kind(node: Node<'_>, source: &str) -> Option<String> {
