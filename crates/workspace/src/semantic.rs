@@ -8,8 +8,9 @@ use surrealguard_syntax::span::{ByteRange, SourceSpan};
 use tree_sitter::Node;
 
 use crate::analysis::{ParamInference, StatementAnalysis};
+use crate::response_shape::{FieldShape, PartialReason, ResponseShape};
 use crate::schema::SchemaIndex;
-use crate::select_ir::{select_ir_from_statement, SelectProjection};
+use crate::select_ir::{select_ir_from_statement, SelectIr, SelectProjection};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SemanticOutput {
@@ -79,6 +80,43 @@ pub fn validate_select_projection_fields(
     }
 
     diagnostics
+}
+
+pub fn infer_select_response_shapes(
+    parsed_sources: &[ParsedSource],
+    schema: &SchemaIndex,
+) -> Vec<(SourceSpan, ResponseShape)> {
+    let mut shapes = Vec::new();
+
+    for parsed in parsed_sources {
+        if !parsed.syntax_diagnostics().is_empty() {
+            continue;
+        }
+        collect_select_response_shapes(parsed.tree().root_node(), parsed, schema, &mut shapes);
+    }
+
+    shapes
+}
+
+fn collect_select_response_shapes(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    shapes: &mut Vec<(SourceSpan, ResponseShape)>,
+) {
+    if node.kind() == "SelectStatement" {
+        let ir = select_ir_from_statement(node, parsed);
+        shapes.push((
+            node_span(node, parsed.source_id().clone()),
+            response_shape_for_select(&ir, schema),
+        ));
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_select_response_shapes(child, parsed, schema, shapes);
+    }
 }
 
 fn collect_statement_analysis(
@@ -225,6 +263,151 @@ fn validate_select_projection_fields_for_statement(
                 format!("unknown field `{}` on table `{}`", path.text, table.name),
             ));
         }
+    }
+}
+
+fn response_shape_for_select(ir: &SelectIr, schema: &SchemaIndex) -> ResponseShape {
+    let Some(source) = &ir.source else {
+        return ResponseShape::Unknown {
+            reason: PartialReason::Unresolved,
+        };
+    };
+    if source.dynamic || !ir.graph_lookups.is_empty() {
+        return ResponseShape::Unknown {
+            reason: PartialReason::DynamicExpression,
+        };
+    }
+    let Some(table_name) = source.table.as_deref() else {
+        return ResponseShape::Unknown {
+            reason: PartialReason::Unresolved,
+        };
+    };
+    let Some(table) = schema.tables.get(table_name) else {
+        return ResponseShape::Unknown {
+            reason: PartialReason::Unresolved,
+        };
+    };
+    if table.fields.is_empty() {
+        return ResponseShape::Unknown {
+            reason: PartialReason::Unresolved,
+        };
+    }
+
+    let row_shape = if ir
+        .projections
+        .iter()
+        .any(|projection| matches!(projection, SelectProjection::Wildcard { .. }))
+    {
+        object_shape_for_all_fields(table)
+    } else if let Some(value_shape) = value_projection_shape(ir, table) {
+        value_shape
+    } else {
+        object_shape_for_projected_fields(ir, table)
+    };
+
+    if ir.only {
+        row_shape
+    } else {
+        ResponseShape::Array {
+            element: Box::new(row_shape),
+            max_len: None,
+        }
+    }
+}
+
+fn object_shape_for_all_fields(table: &crate::schema::TableDef) -> ResponseShape {
+    let fields = table
+        .fields
+        .iter()
+        .map(|(name, field)| {
+            (
+                name.clone(),
+                field_shape_from_schema_field(field, field.name_span.clone()),
+            )
+        })
+        .collect();
+
+    ResponseShape::Object {
+        fields,
+        open: false,
+    }
+}
+
+fn object_shape_for_projected_fields(
+    ir: &SelectIr,
+    table: &crate::schema::TableDef,
+) -> ResponseShape {
+    let mut fields = BTreeMap::new();
+
+    for projection in &ir.projections {
+        let SelectProjection::Field { path, alias, .. } = projection else {
+            continue;
+        };
+        let Some(field) = table.fields.get(&path.text) else {
+            fields.insert(
+                alias.clone().unwrap_or_else(|| path.text.clone()),
+                FieldShape {
+                    shape: ResponseShape::Unknown {
+                        reason: PartialReason::Unresolved,
+                    },
+                    kind: None,
+                    span: path.span.clone(),
+                    materialized_by_fetch: false,
+                    partial: vec![PartialReason::Unresolved],
+                },
+            );
+            continue;
+        };
+        fields.insert(
+            alias.clone().unwrap_or_else(|| path.text.clone()),
+            field_shape_from_schema_field(field, path.span.clone()),
+        );
+    }
+
+    ResponseShape::Object {
+        fields,
+        open: false,
+    }
+}
+
+fn value_projection_shape(ir: &SelectIr, table: &crate::schema::TableDef) -> Option<ResponseShape> {
+    let [SelectProjection::Field {
+        path, value: true, ..
+    }] = ir.projections.as_slice()
+    else {
+        return None;
+    };
+    let field = table.fields.get(&path.text)?;
+    Some(match field.kind.clone() {
+        Some(kind) => ResponseShape::Value { kind },
+        None => ResponseShape::Unknown {
+            reason: field
+                .partial
+                .first()
+                .cloned()
+                .unwrap_or(PartialReason::Unresolved),
+        },
+    })
+}
+
+fn field_shape_from_schema_field(field: &crate::schema::FieldDef, span: SourceSpan) -> FieldShape {
+    let shape = match field.kind.clone() {
+        Some(kind) => ResponseShape::Value { kind },
+        None => ResponseShape::Unknown {
+            reason: field
+                .partial
+                .first()
+                .cloned()
+                .unwrap_or(PartialReason::Unresolved),
+        },
+    };
+
+    FieldShape {
+        shape,
+        kind: field.kind.clone(),
+        span,
+        materialized_by_fetch: false,
+        partial: field.partial.clone(),
     }
 }
 

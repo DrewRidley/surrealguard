@@ -12,7 +12,8 @@ use surrealguard_syntax::span::{ByteRange, SourceSpan};
 use crate::config::WorkspaceConfig;
 use crate::schema::{extract_schema, SchemaIndex};
 use crate::semantic::{
-    analyze_parsed_source, validate_select_projection_fields, validate_table_references,
+    analyze_parsed_source, infer_select_response_shapes, validate_select_projection_fields,
+    validate_table_references,
 };
 use crate::source_registry::SourceRegistry;
 
@@ -163,6 +164,21 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
         }
     }
     diagnostics.extend(select_projection_diagnostics);
+
+    let select_response_shapes =
+        infer_select_response_shapes(&parsed_sources, &schema_extraction.schema);
+    for (span, shape) in select_response_shapes {
+        if let Some(source_output) = sources.get_mut(span.source()) {
+            for statement in &mut source_output.statements {
+                if statement.span == span {
+                    statement.response_shape = Some(shape.clone());
+                }
+            }
+            if source_output.response_shape.is_none() {
+                source_output.response_shape = Some(shape);
+            }
+        }
+    }
 
     WorkspaceAnalysis {
         sources,
@@ -478,7 +494,12 @@ mod tests {
         assert_eq!(source_output.statements[1].span.source(), &source);
         assert_eq!(source_output.statements[1].span.range().start(), 21);
         assert_eq!(source_output.statements[1].span.range().end(), 41);
-        assert!(source_output.statements[1].response_shape.is_none());
+        assert!(matches!(
+            source_output.statements[1].response_shape,
+            Some(ResponseShape::Unknown {
+                reason: PartialReason::Unresolved
+            })
+        ));
     }
 
     #[test]
@@ -604,5 +625,112 @@ mod tests {
             .diagnostics
             .iter()
             .all(|finding| finding.code() != FindingCode::schema(1004)));
+    }
+
+    #[test]
+    fn analyze_workspace_infers_select_wildcard_response_shape_from_schema() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD age ON person TYPE int;\nSELECT * FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        let Some(ResponseShape::Array {
+            element,
+            max_len: None,
+        }) = &select.response_shape
+        else {
+            panic!(
+                "expected array response shape, got {:?}",
+                select.response_shape
+            );
+        };
+        let ResponseShape::Object {
+            fields,
+            open: false,
+        } = element.as_ref()
+        else {
+            panic!("expected object element, got {element:?}");
+        };
+        assert_eq!(fields["name"].kind, Some(Kind::String));
+        assert_eq!(fields["age"].kind, Some(Kind::Int));
+    }
+
+    #[test]
+    fn analyze_workspace_infers_select_projection_response_shape() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD profile.email ON person TYPE string;\nSELECT name, profile.email AS email FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        let Some(ResponseShape::Array {
+            element,
+            max_len: None,
+        }) = &select.response_shape
+        else {
+            panic!(
+                "expected array response shape, got {:?}",
+                select.response_shape
+            );
+        };
+        let ResponseShape::Object {
+            fields,
+            open: false,
+        } = element.as_ref()
+        else {
+            panic!("expected object element, got {element:?}");
+        };
+        assert_eq!(
+            fields.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["email", "name"]
+        );
+        assert_eq!(fields["name"].kind, Some(Kind::String));
+        assert_eq!(fields["email"].kind, Some(Kind::String));
+    }
+
+    #[test]
+    fn analyze_workspace_infers_select_value_response_shape() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nSELECT VALUE name FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        let Some(ResponseShape::Array {
+            element,
+            max_len: None,
+        }) = &select.response_shape
+        else {
+            panic!(
+                "expected array response shape, got {:?}",
+                select.response_shape
+            );
+        };
+        assert_eq!(
+            element.as_ref(),
+            &ResponseShape::Value { kind: Kind::String }
+        );
     }
 }
