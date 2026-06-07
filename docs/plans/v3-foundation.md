@@ -158,17 +158,19 @@ Tests:
 
 Objective: implement SELECT variants from `docs/plans/2026-06-06-select-semantics.md` now that the type-system correction is complete.
 
-Order:
+Completed:
 
-1. tree-sitter SELECT IR extraction for fields, sources, aliases, `ONLY`, `OMIT`, `FETCH`, `RETURN`, modifiers, and graph lookup nodes
-2. route existing SELECT table-reference and projection validation through the IR
-3. simple source/cardinality and wildcard projections
-4. named projections, nested paths, `AS`, and `VALUE`
-5. `OMIT`
-6. row-context `WHERE`, ordering, and row-preserving modifiers
-7. `FETCH` materialization
-8. relation metadata and graph traversal (`->`, `<-`, `<->`, graph-local WHERE)
-9. `RETURN` and advanced modifier partials (`GROUP`, `SPLIT`, `EXPLAIN`)
+1. tree-sitter SELECT IR extraction for fields, sources, aliases, `ONLY`, `OMIT`, `FETCH`, and graph lookup nodes
+2. existing SELECT table-reference and projection validation routed through the IR
+3. first response-shape inference for schema-backed wildcard projections, named projections, aliases, and `SELECT VALUE <field>`
+4. schemaless and graph traversal SELECTs report explicit unknown/partial response shapes instead of claiming precision
+
+Remaining order:
+
+1. row-context `WHERE`, ordering, and row-preserving modifiers
+2. `FETCH` materialization
+3. relation metadata and graph traversal (`->`, `<-`, `<->`, graph-local WHERE)
+4. `RETURN` and advanced modifier partials (`GROUP`, `SPLIT`, `EXPLAIN`)
 
 ## Slice 8: host adapter spike
 
