@@ -4,9 +4,9 @@
 
 **Goal:** Build comprehensive SELECT semantic analysis for SurrealQL using tree-sitter CST nodes as the syntax authority and SurrealDB's own Rust types for value/kind facts. Do not invent a parallel `surrealguard-types` type system.
 
-**Architecture:** The analyzer lowers each tree-sitter `SelectStatement` into an internal semantic IR that keeps node kind, byte span, and source text for every SELECT component. The IR is not a replacement AST and not a custom type system; it is a small analysis index over the tree-sitter CST. Result-shape inference produces `ResponseShape` facts for diagnostics/adapters, with leaf scalar kinds represented by `surrealdb::types::Kind` and runtime-value interoperability represented by `surrealdb::types::Value`, `RecordId`, `Object`, `Array`, `Table`, etc. Host adapters then map this response shape into Rust macro output, TypeScript transformer output, LSP hovers, CLI JSON, or MCP facts.
+**Architecture:** The analyzer lowers each tree-sitter `SelectStatement` into an internal semantic IR that keeps node kind, byte span, and source text for every SELECT component. The IR is not a replacement AST and not a custom type system; it is a small analysis index over the tree-sitter CST. Result-shape inference produces `ResponseShape` facts for diagnostics/adapters, with leaf scalar kinds represented by `surrealdb_types::Kind` and runtime-value interoperability represented by `surrealdb_types::Value`, `RecordId`, `Object`, `Array`, `Table`, etc. Host adapters then map this response shape into Rust macro output, TypeScript transformer output, LSP hovers, CLI JSON, or MCP facts.
 
-**Tech Stack:** Rust, `tree-sitter`, local `tree-sitter-surrealql`, `surrealguard-syntax`, `surrealdb = { version = "3.1.3", default-features = false }` via the public `surrealdb::types` re-export, `surrealguard-diagnostics`, and `surrealguard-workspace`.
+**Tech Stack:** Rust, `tree-sitter`, local `tree-sitter-surrealql`, `surrealguard-syntax`, `surrealdb-types = "3.1.3"`, `surrealguard-diagnostics`, and `surrealguard-workspace`.
 
 ---
 
@@ -14,7 +14,7 @@
 
 1. No `surrealguard-types` crate in the maintained design.
 2. No custom SurrealQL parser or custom AST for syntax; tree-sitter nodes are the syntax source of truth.
-3. No parallel enum for SurrealDB scalar/data kinds; use `surrealdb::types::Kind` for schema field kinds and expression kind facts.
+3. No parallel enum for SurrealDB scalar/data kinds; use `surrealdb_types::Kind` for schema field kinds and expression kind facts.
 4. No fake precision. Dynamic or unsupported SELECT forms must emit explicit partial-analysis facts and diagnostics instead of claiming a precise response shape.
 5. Every SELECT feature lands test-first, with grammar/CST tests and semantic/result-shape tests.
 6. Diagnostics and result-shape inference consume the same SELECT IR so CLI, LSP, Rust proc macro, TypeScript transformer, and MCP behavior cannot drift.
@@ -79,8 +79,8 @@ These structs can expose helper methods, but they must preserve the original tre
 `ResponseShape` is an analyzer output contract, not a SurrealDB type replacement:
 
 - `Unknown { reason }`
-- `Value { kind: surrealdb::types::Kind }`
-- `Record { table: surrealdb::types::Table }`
+- `Value { kind: surrealdb_types::Kind }`
+- `Record { table: surrealdb_types::Table }`
 - `Object { fields: BTreeMap<String, FieldShape>, open: bool }`
 - `Array { element: Box<ResponseShape>, max_len: Option<u64> }`
 - `Set { element: Box<ResponseShape>, max_len: Option<u64> }`
@@ -90,20 +90,20 @@ These structs can expose helper methods, but they must preserve the original tre
 `FieldShape` contains:
 
 - `shape: ResponseShape`
-- `kind: Option<surrealdb::types::Kind>` when the schema kind is known
+- `kind: Option<surrealdb_types::Kind>` when the schema kind is known
 - `span: SourceSpan` of the schema field declaration
 - `materialized_by_fetch: bool`
 - `partial: Vec<PartialReason>`
 
-This is intentionally a response schema, not a duplicate of `surrealdb::types::Kind`. Leaves use `Kind`; object/array layout is query response structure needed by tools.
+This is intentionally a response schema, not a duplicate of `surrealdb_types::Kind`. Leaves use `Kind`; object/array layout is query response structure needed by tools.
 
 ### Schema facts
 
 Schema index facts should store:
 
-- table name as `surrealdb::types::Table` where possible
-- record/table kinds as `surrealdb::types::Kind::Record` / `Kind::Table`
-- scalar field kinds as `surrealdb::types::Kind`
+- table name as `surrealdb_types::Table` where possible
+- record/table kinds as `surrealdb_types::Kind::Record` / `Kind::Table`
+- scalar field kinds as `surrealdb_types::Kind`
 - original CST node and source span for all definitions
 - relation metadata: relation table, `IN` table set, `OUT` table set, edge fields, spans
 
@@ -343,15 +343,15 @@ Every diagnostic must include the smallest useful tree-sitter node span.
 
 ### Phase 0: remove the custom type-system direction
 
-Objective: stop extending `surrealguard-types` and pivot the maintained design to tree-sitter + SurrealDB public types.
+Objective: completed. The maintained design now uses tree-sitter + upstream SurrealDB public types instead of `surrealguard-types`.
 
 Tasks:
 
-1. Add `surrealdb = { version = "3.1.3", default-features = false }` to workspace dependencies.
+1. Added `surrealdb-types = "3.1.3"` to workspace dependencies.
 2. Introduce `ResponseShape` in `crates/workspace/src/response_shape.rs` or `crates/semantics` if a semantics crate is created.
-3. Use `surrealdb::types::Kind`, `Table`, `RecordId`, `Object`, `Array`, `Value` where applicable.
-4. Replace `StatementAnalysis.result_type` with `result_shape: Option<ResponseShape>`.
-5. Replace field schema kind storage with `surrealdb::types::Kind`.
+3. Use `surrealdb_types::Kind`, `Table`, `RecordId`, `Object`, `Array`, `Value` where applicable.
+4. `StatementAnalysis` now exposes `response_shape: Option<ResponseShape>`.
+5. Field schema kind storage now uses `surrealdb_types::Kind`.
 6. Keep any removed `surrealguard-types` tests only as historical reference; do not port its type hierarchy.
 
 Tests:
@@ -365,7 +365,7 @@ Verification:
 ```bash
 cargo test -p surrealguard-workspace -- --nocapture
 cargo check --workspace
-git grep -n "surrealguard-types\|surrealguard_types" -- . ':!target' ':!docs/archive/**'
+git grep -n "surrealguard-types\|surrealguard_types" -- crates Cargo.toml README.md || true
 ```
 
 Expected: no maintained-code references after the migration phase is complete.
@@ -474,7 +474,7 @@ Shared helpers:
 - `workspace_with(query: &str) -> (WorkspaceAnalysis, SourceId)`
 - `select_statement(output, source) -> &StatementAnalysis`
 - `select_shape(output, source) -> &ResponseShape`
-- `assert_object_field(shape, field, kind)` where `kind` is `surrealdb::types::Kind`
+- `assert_object_field(shape, field, kind)` where `kind` is `surrealdb_types::Kind`
 - `assert_partial(shape, reason)`
 - `assert_finding(output, code, message_substring)`
 
@@ -497,6 +497,7 @@ For doc-only planning commits:
 ```bash
 git diff --check
 git grep -n "SurrealGuard-owned type model\|surrealguard-types\|surrealguard_types" docs README.md crates || true
+# Remaining matches must be historical/anti-pattern notes only.
 ```
 
 Any remaining references must clearly identify legacy/current-code cleanup, not endorse a custom type model.

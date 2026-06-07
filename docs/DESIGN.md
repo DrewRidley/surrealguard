@@ -12,7 +12,7 @@ Current maintained direction:
 - `surrealguard`: CLI surface.
 - `surrealguard-lsp`: LSP diagnostics surface.
 
-Legacy note: the repo currently still contains `crates/types` / `surrealguard-types` from an earlier rewrite slice. That direction is obsolete. The maintained design must remove it rather than extend it.
+Legacy note: `crates/types` / `surrealguard-types` was removed during the v3 cleanup. The maintained design must not reintroduce a custom SurrealDB scalar/type hierarchy.
 
 ## Product shape
 
@@ -37,7 +37,7 @@ The core product is the analysis engine, not generated files or watch-mode codeg
 
 - No runtime query builder.
 - No dependency on SurrealDB internal Rust AST as public analyzer APIs.
-- No custom analyzer-owned SurrealDB scalar/type hierarchy. Schema leaf kinds must use the public `surrealdb::types::Kind` re-export from the actual `surrealdb` crate, and syntax structure must come from tree-sitter CST nodes.
+- No custom analyzer-owned SurrealDB scalar/type hierarchy. Schema leaf kinds must use upstream `surrealdb_types::Kind`, and syntax structure must come from tree-sitter CST nodes.
 - No generated files required for the normal editor or compile-time experience.
 - No compatibility promises for removed implementations.
 - No hidden uncertainty. Partial analysis must be explicit.
@@ -54,7 +54,7 @@ Tree-sitter provides:
 - language injection support for embedded queries
 - a shared parser model across standalone files, LSP, and host-language adapters
 
-SurrealDB's parser is not the semantic input for this analyzer. SurrealGuard owns its source registry and span model, but query syntax is read from tree-sitter CST nodes. When semantic facts need SurrealDB value or kind concepts, use the public types exposed by the real `surrealdb` crate (`surrealdb::types::*`) instead of creating analyzer-local copies.
+SurrealDB's parser is not the semantic input for this analyzer. SurrealGuard owns its source registry and span model, but query syntax is read from tree-sitter CST nodes. When semantic facts need SurrealDB value or kind concepts, use upstream SurrealDB public value/kind crates such as `surrealdb-types` instead of creating analyzer-local copies.
 
 ## Source and span model
 
@@ -104,7 +104,7 @@ SurrealGuard must not maintain a duplicate SurrealDB scalar/type hierarchy.
 Rules:
 
 - Parse structure from tree-sitter CST nodes.
-- Store schema leaf kinds as `surrealdb::types::Kind` through the public `surrealdb::types` re-export.
+- Store schema leaf kinds as upstream `surrealdb_types::Kind`.
 - Use other actual SurrealDB public types where they fit: `Value`, `RecordId`, `Table`, `Object`, `Array`, `Set`, etc.
 - Keep analyzer-owned structs only for analysis relationships that SurrealDB does not provide directly: source spans, response object fields, partial-analysis reasons, graph traversal facts, and host-adapter mappings.
 
@@ -127,7 +127,7 @@ Pipeline:
 7. apply policy and suppressions
 8. return structured `AnalysisOutput`
 
-Current implementation covers source discovery, syntax diagnostics, table indexing, field declaration indexing for simple schema kinds, basic query table-reference validation, statement analysis records, query parameter collection, and simple SELECT projection field validation. The repo still has obsolete `surrealguard-types` plumbing from the previous direction; the next implementation slice should remove that dependency and replace `result_type` with a response-shape contract backed by `surrealdb::types::Kind`. Deep expression/result semantics are still placeholders.
+Current implementation covers source discovery, syntax diagnostics, table indexing, field declaration indexing for simple schema kinds backed by `surrealdb_types::Kind`, basic query table-reference validation, statement analysis records, query parameter collection, and simple SELECT projection field validation. The obsolete `surrealguard-types` crate has been deleted, and `StatementAnalysis` now exposes `response_shape` as the placeholder for future result inference. Deep expression/result semantics are still placeholders.
 
 Each parsed statement should eventually infer a response schema: the statement span and kind, input parameter requirements, result shape/type, and any partial-analysis limitations. Diagnostics should be emitted from that shared semantic model so CLI, LSP, MCP, and host adapters all explain the same facts rather than reimplementing rules per surface.
 
@@ -178,21 +178,21 @@ The semantic engine analyzes embedded sources through the same parser and worksp
 
 ## Next implementation slice
 
-The next slice is a correction before further SELECT implementation:
+The type-system cleanup is complete. The next slice is SELECT IR and first response-shape inference:
 
-1. remove the maintained dependency on the obsolete `surrealguard-types` crate
-2. add the real `surrealdb` crate with default features disabled and use `surrealdb::types::Kind` for schema kinds
-3. introduce analyzer response-shape facts that describe query output structure without duplicating SurrealDB scalar types
-4. build a tree-sitter-backed SELECT IR from `SelectStatement`, `Fields`, `OmitClause`, `FetchClause`, `ReturnClause`, and graph `Lookup*` CST nodes
-5. then implement SELECT wildcard/result-shape scaffolding in `surrealguard-workspace`
+1. build a tree-sitter-backed SELECT IR from `SelectStatement`, `Fields`, `OmitClause`, `FetchClause`, `ReturnClause`, `ONLY`, modifiers, and graph `Lookup*` CST nodes
+2. route existing SELECT table and projection validation through that IR instead of the current ad hoc child scans
+3. infer initial response shapes for `SELECT * FROM <table>`, named projections, aliases, and `SELECT VALUE <field>` using schema fields backed by `surrealdb_types::Kind`
+4. keep schemaless, dynamic-source, expression, and graph cases explicit as `ResponseShape::Unknown` plus `PartialReason` facts
+5. expose the response shapes through the existing workspace output without adding host adapters yet
 
 The SELECT plan is `docs/plans/2026-06-06-select-semantics.md`.
 
 Acceptance gates:
 
-- no new code depends on `surrealguard-types` or `surrealguard_types`
-- schema field kind tests assert `surrealdb::types::Kind` values
+- no maintained code depends on `surrealguard-types` or `surrealguard_types`
 - SELECT CST extraction tests cover fields, `AS`, `OMIT`, `FETCH`, `RETURN`, `ONLY`, modifiers, and graph lookups
+- existing table-reference and projection diagnostics are preserved after routing through SELECT IR
 - focused tests for `SELECT *` field expansion from schema
 - focused tests for projected object response shapes
 - schemaless/unknown result shapes remain partial/unknown
