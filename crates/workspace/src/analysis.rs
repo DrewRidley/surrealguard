@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::response_shape::ResponseShape;
 use serde::{Deserialize, Serialize};
 use surrealguard_diagnostics::{Finding, FindingCode, Severity};
 use surrealguard_syntax::parse::{
@@ -7,7 +8,6 @@ use surrealguard_syntax::parse::{
 };
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
-use surrealguard_types::Type;
 
 use crate::config::WorkspaceConfig;
 use crate::schema::{extract_schema, SchemaIndex};
@@ -27,7 +27,7 @@ pub struct AnalysisOutput {
     pub diagnostics: Vec<Finding>,
     pub statements: Vec<StatementAnalysis>,
     pub inferred_params: Vec<ParamInference>,
-    pub result_type: Option<Type>,
+    pub response_shape: Option<ResponseShape>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,13 +41,13 @@ pub struct WorkspaceAnalysis {
 pub struct StatementAnalysis {
     pub span: SourceSpan,
     pub kind: String,
-    pub result_type: Option<Type>,
+    pub response_shape: Option<ResponseShape>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParamInference {
     pub name: String,
-    pub ty: Type,
+    pub kind: Option<surrealdb_types::Kind>,
     pub required: bool,
     pub spans: Vec<SourceSpan>,
 }
@@ -109,14 +109,14 @@ pub fn analyze_source(workspace: &Workspace, source: SourceId) -> AnalysisOutput
                 diagnostics: syntax_diagnostics,
                 statements: semantic_output.statements,
                 inferred_params: semantic_output.inferred_params,
-                result_type: None,
+                response_shape: None,
             }
         }
         Err(error) => AnalysisOutput {
             diagnostics: vec![parse_error_to_finding(source, error)],
             statements: Vec::new(),
             inferred_params: Vec::new(),
-            result_type: None,
+            response_shape: None,
         },
     }
 }
@@ -202,7 +202,8 @@ fn parse_error_to_finding(source: SourceId, error: ParseError) -> Finding {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_types::UnknownReason;
+    use crate::response_shape::PartialReason;
+    use surrealdb_types::Kind;
 
     #[test]
     fn analyze_query_returns_statement_analysis_for_parseable_surrealql() {
@@ -219,9 +220,9 @@ mod tests {
         );
         assert_eq!(output.statements[0].span.range().start(), 0);
         assert_eq!(output.statements[0].span.range().end(), 20);
-        assert!(output.statements[0].result_type.is_none());
+        assert!(output.statements[0].response_shape.is_none());
         assert!(output.inferred_params.is_empty());
-        assert!(output.result_type.is_none());
+        assert!(output.response_shape.is_none());
     }
 
     #[test]
@@ -328,7 +329,7 @@ mod tests {
         let field = &fields["profile.name"];
         assert_eq!(field.path, vec!["profile", "name"]);
         assert_eq!(field.table, "person");
-        assert_eq!(field.ty, Type::String);
+        assert_eq!(field.kind, Some(Kind::String));
         assert_eq!(field.source, source);
         assert_eq!(field.name_span.range().start(), 45);
         assert_eq!(field.name_span.range().end(), 57);
@@ -372,7 +373,11 @@ mod tests {
         let output = analyze_workspace(&workspace);
 
         let field = &output.schema.tables["person"].fields["tags"];
-        assert!(matches!(field.ty, Type::Unknown(_)));
+        assert!(field.kind.is_none());
+        assert_eq!(
+            field.partial,
+            vec![PartialReason::UnsupportedSyntax("array<string>".into())]
+        );
         let partial: Vec<_> = output
             .diagnostics
             .iter()
@@ -473,7 +478,7 @@ mod tests {
         assert_eq!(source_output.statements[1].span.source(), &source);
         assert_eq!(source_output.statements[1].span.range().start(), 21);
         assert_eq!(source_output.statements[1].span.range().end(), 41);
-        assert!(source_output.statements[1].result_type.is_none());
+        assert!(source_output.statements[1].response_shape.is_none());
     }
 
     #[test]
@@ -489,7 +494,7 @@ mod tests {
 
         assert_eq!(params.len(), 2);
         assert_eq!(params[0].name, "id");
-        assert_eq!(params[0].ty, Type::Unknown(UnknownReason::Unresolved));
+        assert_eq!(params[0].kind, None);
         assert!(params[0].required);
         assert_eq!(params[0].spans.len(), 2);
         assert_eq!(params[0].spans[0].range().start(), 53);

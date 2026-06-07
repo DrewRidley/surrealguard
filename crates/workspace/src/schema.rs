@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use surrealdb_types::Kind;
 use surrealguard_diagnostics::{Finding, FindingCode, Severity};
 use surrealguard_syntax::parse::ParsedSource;
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
-use surrealguard_types::{NumberKind, Type, UnknownReason};
+
+use crate::response_shape::PartialReason;
 use tree_sitter::Node;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,7 +27,8 @@ pub struct TableDef {
 pub struct FieldDef {
     pub path: Vec<String>,
     pub table: String,
-    pub ty: Type,
+    pub kind: Option<Kind>,
+    pub partial: Vec<PartialReason>,
     pub source: SourceId,
     pub name_span: SourceSpan,
     pub table_span: SourceSpan,
@@ -198,18 +201,24 @@ fn extract_field_def(node: Node<'_>, parsed: &ParsedSource) -> Option<FieldDef> 
     let table_node = table_node?;
     let field_text = node_text(field_node, parsed.text()).trim();
     let table_text = node_text(table_node, parsed.text()).trim();
-    let (ty, type_span) = match type_node {
-        Some(type_node) => (
-            parse_field_type(node_text(type_node, parsed.text()).trim()),
-            Some(node_span(type_node, parsed.source_id().clone())),
-        ),
-        None => (Type::Unknown(UnknownReason::Unresolved), None),
+    let (kind, partial, type_span) = match type_node {
+        Some(type_node) => {
+            let type_text = node_text(type_node, parsed.text()).trim();
+            let parsed_type = parse_field_kind(type_text);
+            (
+                parsed_type.kind,
+                parsed_type.partial,
+                Some(node_span(type_node, parsed.source_id().clone())),
+            )
+        }
+        None => (None, vec![PartialReason::Unresolved], None),
     };
 
     Some(FieldDef {
         path: field_text.split('.').map(str::to_string).collect(),
         table: table_text.to_string(),
-        ty,
+        kind,
+        partial,
         source: parsed.source_id().clone(),
         name_span: node_span(field_node, parsed.source_id().clone()),
         table_span: node_span(table_node, parsed.source_id().clone()),
@@ -218,9 +227,10 @@ fn extract_field_def(node: Node<'_>, parsed: &ParsedSource) -> Option<FieldDef> 
 }
 
 fn unsupported_type_diagnostic(field: &FieldDef) -> Option<Finding> {
-    let Type::Unknown(UnknownReason::UnsupportedSyntax(type_text)) = &field.ty else {
-        return None;
-    };
+    let type_text = field.partial.iter().find_map(|reason| match reason {
+        PartialReason::UnsupportedSyntax(type_text) => Some(type_text),
+        PartialReason::Unresolved | PartialReason::DynamicExpression => None,
+    })?;
 
     Some(Finding::new(
         field
@@ -237,24 +247,40 @@ fn unsupported_type_diagnostic(field: &FieldDef) -> Option<Finding> {
     ))
 }
 
-fn parse_field_type(type_text: &str) -> Type {
-    match type_text.to_ascii_lowercase().as_str() {
-        "any" => Type::Any,
-        "none" => Type::None,
-        "null" => Type::Null,
-        "bool" => Type::Bool,
-        "boolean" => Type::Bool,
-        "string" => Type::String,
-        "number" => Type::Number(NumberKind::Number),
-        "int" => Type::Number(NumberKind::Int),
-        "float" => Type::Number(NumberKind::Float),
-        "decimal" => Type::Number(NumberKind::Decimal),
-        "datetime" => Type::Datetime,
-        "duration" => Type::Duration,
-        "uuid" => Type::Uuid,
-        "bytes" => Type::Bytes,
-        "record" => Type::Record(Default::default()),
-        other => Type::Unknown(UnknownReason::UnsupportedSyntax(other.to_string())),
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ParsedFieldKind {
+    kind: Option<Kind>,
+    partial: Vec<PartialReason>,
+}
+
+fn parse_field_kind(type_text: &str) -> ParsedFieldKind {
+    let kind = match type_text.to_ascii_lowercase().as_str() {
+        "any" => Some(Kind::Any),
+        "none" => Some(Kind::None),
+        "null" => Some(Kind::Null),
+        "bool" | "boolean" => Some(Kind::Bool),
+        "string" => Some(Kind::String),
+        "number" => Some(Kind::Number),
+        "int" => Some(Kind::Int),
+        "float" => Some(Kind::Float),
+        "decimal" => Some(Kind::Decimal),
+        "datetime" => Some(Kind::Datetime),
+        "duration" => Some(Kind::Duration),
+        "uuid" => Some(Kind::Uuid),
+        "bytes" => Some(Kind::Bytes),
+        "record" => Some(Kind::Record(Vec::new())),
+        _ => None,
+    };
+
+    match kind {
+        Some(kind) => ParsedFieldKind {
+            kind: Some(kind),
+            partial: Vec::new(),
+        },
+        None => ParsedFieldKind {
+            kind: None,
+            partial: vec![PartialReason::UnsupportedSyntax(type_text.to_string())],
+        },
     }
 }
 

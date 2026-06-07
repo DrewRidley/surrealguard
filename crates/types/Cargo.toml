@@ -1,9 +1,0 @@
-[package]
-name = "surrealguard-types"
-version.workspace = true
-edition.workspace = true
-publish = false
-description = "Owned SurrealGuard semantic type model"
-
-[dependencies]
-serde = { version = "1", features = ["derive"] }

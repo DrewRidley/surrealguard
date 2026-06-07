@@ -4,7 +4,6 @@ members = [
     "crates/diagnostics",
     "crates/lsp",
     "crates/syntax",
-    "crates/types",
     "crates/workspace",
 ]
 resolver = "2"
@@ -21,3 +20,4 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 tree-sitter = "0.26"
 tree-sitter-surrealql = { path = "../tree-sitter-surrealql" }
+surrealdb-types = "3.1.3"

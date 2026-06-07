@@ -9,6 +9,6 @@ description = "SurrealGuard workspace, config, and source registry layer"
 serde = { version = "1", features = ["derive"] }
 surrealguard-diagnostics = { path = "../diagnostics" }
 surrealguard-syntax = { path = "../syntax" }
-surrealguard-types = { path = "../types" }
+surrealdb-types.workspace = true
 tree-sitter.workspace = true
 toml = "0.8"

@@ -4,7 +4,7 @@ use surrealguard_diagnostics::{Finding, FindingCode, Severity};
 use surrealguard_syntax::parse::ParsedSource;
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
-use surrealguard_types::{Type, UnknownReason};
+
 use tree_sitter::Node;
 
 use crate::analysis::{ParamInference, StatementAnalysis};
@@ -90,7 +90,7 @@ fn collect_statement_analysis(
         statements.push(StatementAnalysis {
             span: node_span(node, parsed.source_id().clone()),
             kind,
-            result_type: None,
+            response_shape: None,
         });
         collect_params(node, parsed, params);
         return;
@@ -113,7 +113,7 @@ fn collect_params(
             .entry(name.clone())
             .or_insert_with(|| ParamInference {
                 name,
-                ty: Type::Unknown(UnknownReason::Unresolved),
+                kind: None,
                 required: true,
                 spans: Vec::new(),
             })
