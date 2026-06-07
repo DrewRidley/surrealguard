@@ -10,7 +10,9 @@ use tree_sitter::Node;
 use crate::analysis::{ParamInference, StatementAnalysis};
 use crate::response_shape::{FieldShape, PartialReason, ResponseShape};
 use crate::schema::SchemaIndex;
-use crate::select_ir::{select_ir_from_statement, FieldPath, SelectIr, SelectProjection};
+use crate::select_ir::{
+    select_ir_from_statement, FieldPath, SelectIr, SelectModifier, SelectProjection,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SemanticOutput {
@@ -311,9 +313,16 @@ fn response_shape_for_select(ir: &SelectIr, schema: &SchemaIndex) -> ResponseSha
     } else {
         ResponseShape::Array {
             element: Box::new(row_shape),
-            max_len: None,
+            max_len: literal_limit_max_len(ir),
         }
     }
+}
+
+fn literal_limit_max_len(ir: &SelectIr) -> Option<u64> {
+    ir.modifiers.iter().find_map(|modifier| match modifier {
+        SelectModifier::Limit { max_len, .. } => *max_len,
+        _ => None,
+    })
 }
 
 fn apply_omit_to_shape(shape: ResponseShape, omit: &[FieldPath]) -> ResponseShape {

@@ -767,4 +767,31 @@ mod tests {
             vec!["name"]
         );
     }
+
+    #[test]
+    fn analyze_workspace_infers_literal_limit_as_array_max_len() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nSELECT name FROM person LIMIT 5;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        let Some(ResponseShape::Array {
+            element: _,
+            max_len: Some(5),
+        }) = &select.response_shape
+        else {
+            panic!(
+                "expected array with max_len=5, got {:?}",
+                select.response_shape
+            );
+        };
+    }
 }

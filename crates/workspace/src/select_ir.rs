@@ -49,7 +49,10 @@ pub struct FieldPath {
 pub enum SelectModifier {
     Where(SourceSpan),
     Order(SourceSpan),
-    Limit(SourceSpan),
+    Limit {
+        span: SourceSpan,
+        max_len: Option<u64>,
+    },
     Start(SourceSpan),
     Timeout(SourceSpan),
     Parallel(SourceSpan),
@@ -118,10 +121,10 @@ pub(crate) fn select_ir_from_statement(node: Node<'_>, parsed: &ParsedSource) ->
                 child,
                 parsed.source_id().clone(),
             ))),
-            "LimitClause" => modifiers.push(SelectModifier::Limit(node_span(
-                child,
-                parsed.source_id().clone(),
-            ))),
+            "LimitClause" => modifiers.push(SelectModifier::Limit {
+                span: node_span(child, parsed.source_id().clone()),
+                max_len: literal_limit_from_clause(child, parsed),
+            }),
             "StartClause" => modifiers.push(SelectModifier::Start(node_span(
                 child,
                 parsed.source_id().clone(),
@@ -146,6 +149,7 @@ pub(crate) fn select_ir_from_statement(node: Node<'_>, parsed: &ParsedSource) ->
                 child,
                 parsed.source_id().clone(),
             ))),
+            "LimitStartComboClause" => collect_modifier_clauses(child, parsed, &mut modifiers),
             "Keyword" => {
                 let keyword = node_text(child, parsed.text()).to_ascii_lowercase();
                 if keyword == "from" {
@@ -173,6 +177,46 @@ pub(crate) fn select_ir_from_statement(node: Node<'_>, parsed: &ParsedSource) ->
         modifiers,
         graph_lookups,
     }
+}
+
+fn collect_modifier_clauses(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    modifiers: &mut Vec<SelectModifier>,
+) {
+    match node.kind() {
+        "LimitClause" => modifiers.push(SelectModifier::Limit {
+            span: node_span(node, parsed.source_id().clone()),
+            max_len: literal_limit_from_clause(node, parsed),
+        }),
+        "StartClause" => modifiers.push(SelectModifier::Start(node_span(
+            node,
+            parsed.source_id().clone(),
+        ))),
+        _ => {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                collect_modifier_clauses(child, parsed, modifiers);
+            }
+        }
+    }
+}
+
+fn literal_limit_from_clause(clause: Node<'_>, parsed: &ParsedSource) -> Option<u64> {
+    let mut cursor = clause.walk();
+    for child in clause.children(&mut cursor) {
+        if child.kind() == "Number" || child.kind() == "Int" {
+            if let Some(limit) = literal_limit_from_clause(child, parsed) {
+                return Some(limit);
+            }
+            let text = node_text(child, parsed.text()).trim();
+            if let Ok(limit) = text.parse::<u64>() {
+                return Some(limit);
+            }
+        }
+    }
+    let text = node_text(clause, parsed.text()).trim();
+    text.parse::<u64>().ok()
 }
 
 fn projections_from_fields(fields_node: Node<'_>, parsed: &ParsedSource) -> Vec<SelectProjection> {
