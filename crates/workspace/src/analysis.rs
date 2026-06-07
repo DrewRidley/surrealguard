@@ -794,4 +794,31 @@ mod tests {
             );
         };
     }
+
+    #[test]
+    fn analyze_workspace_marks_fetched_fields_as_materialized() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD best_friend ON person TYPE record;\nSELECT * FROM person FETCH best_friend;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
+            panic!(
+                "expected array response shape, got {:?}",
+                select.response_shape
+            );
+        };
+        let ResponseShape::Object { fields, .. } = element.as_ref() else {
+            panic!("expected object element, got {element:?}");
+        };
+        assert!(fields["best_friend"].materialized_by_fetch);
+    }
 }

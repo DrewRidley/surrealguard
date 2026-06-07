@@ -307,6 +307,7 @@ fn response_shape_for_select(ir: &SelectIr, schema: &SchemaIndex) -> ResponseSha
         object_shape_for_projected_fields(ir, table)
     };
     let row_shape = apply_omit_to_shape(row_shape, &ir.omit);
+    let row_shape = apply_fetch_materialization(row_shape, &ir.fetch);
 
     if ir.only {
         row_shape
@@ -332,6 +333,20 @@ fn apply_omit_to_shape(shape: ResponseShape, omit: &[FieldPath]) -> ResponseShap
 
     for omitted in omit {
         fields.remove(&omitted.text);
+    }
+
+    ResponseShape::Object { fields, open }
+}
+
+fn apply_fetch_materialization(shape: ResponseShape, fetch: &[FieldPath]) -> ResponseShape {
+    let ResponseShape::Object { mut fields, open } = shape else {
+        return shape;
+    };
+
+    for fetched in fetch {
+        if let Some(field) = fields.get_mut(&fetched.text) {
+            field.materialized_by_fetch = true;
+        }
     }
 
     ResponseShape::Object { fields, open }
