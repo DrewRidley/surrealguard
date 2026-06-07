@@ -2,6 +2,7 @@ pub mod analysis;
 pub mod config;
 pub mod response_shape;
 pub mod schema;
+pub mod select_ir;
 pub mod semantic;
 pub mod source_registry;
 
