@@ -821,4 +821,29 @@ mod tests {
         };
         assert!(fields["best_friend"].materialized_by_fetch);
     }
+
+    #[test]
+    fn analyze_workspace_validates_omit_and_fetch_field_paths() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nSELECT * OMIT password FROM person FETCH friend;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let unknown_fields: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            unknown_fields,
+            vec![
+                "unknown field `password` on table `person`",
+                "unknown field `friend` on table `person`",
+            ]
+        );
+    }
 }

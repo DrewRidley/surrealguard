@@ -257,14 +257,30 @@ fn validate_select_projection_fields_for_statement(
         let SelectProjection::Field { path, .. } = projection else {
             continue;
         };
-        if !table.fields.contains_key(&path.text) {
-            diagnostics.push(Finding::new(
-                path.span,
-                FindingCode::schema(1004),
-                Severity::Error,
-                format!("unknown field `{}` on table `{}`", path.text, table.name),
-            ));
-        }
+        validate_field_path_on_table(path, table, diagnostics);
+    }
+
+    for path in ir.omit {
+        validate_field_path_on_table(path, table, diagnostics);
+    }
+
+    for path in ir.fetch {
+        validate_field_path_on_table(path, table, diagnostics);
+    }
+}
+
+fn validate_field_path_on_table(
+    path: FieldPath,
+    table: &crate::schema::TableDef,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if !table.fields.contains_key(&path.text) {
+        diagnostics.push(Finding::new(
+            path.span,
+            FindingCode::schema(1004),
+            Severity::Error,
+            format!("unknown field `{}` on table `{}`", path.text, table.name),
+        ));
     }
 }
 
