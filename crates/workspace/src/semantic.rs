@@ -10,7 +10,7 @@ use tree_sitter::Node;
 use crate::analysis::{ParamInference, StatementAnalysis};
 use crate::response_shape::{FieldShape, PartialReason, ResponseShape};
 use crate::schema::SchemaIndex;
-use crate::select_ir::{select_ir_from_statement, SelectIr, SelectProjection};
+use crate::select_ir::{select_ir_from_statement, FieldPath, SelectIr, SelectProjection};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SemanticOutput {
@@ -304,6 +304,7 @@ fn response_shape_for_select(ir: &SelectIr, schema: &SchemaIndex) -> ResponseSha
     } else {
         object_shape_for_projected_fields(ir, table)
     };
+    let row_shape = apply_omit_to_shape(row_shape, &ir.omit);
 
     if ir.only {
         row_shape
@@ -313,6 +314,18 @@ fn response_shape_for_select(ir: &SelectIr, schema: &SchemaIndex) -> ResponseSha
             max_len: None,
         }
     }
+}
+
+fn apply_omit_to_shape(shape: ResponseShape, omit: &[FieldPath]) -> ResponseShape {
+    let ResponseShape::Object { mut fields, open } = shape else {
+        return shape;
+    };
+
+    for omitted in omit {
+        fields.remove(&omitted.text);
+    }
+
+    ResponseShape::Object { fields, open }
 }
 
 fn object_shape_for_all_fields(table: &crate::schema::TableDef) -> ResponseShape {
