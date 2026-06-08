@@ -308,6 +308,57 @@ fn validate_select_projection_fields_for_statement(
     for path in ir.fetch {
         validate_field_path_on_table(path, table, diagnostics);
     }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "WhereClause" {
+            for path in row_context_field_paths_from_clause(child, parsed) {
+                validate_field_path_on_table(path, table, diagnostics);
+            }
+        }
+    }
+}
+
+fn row_context_field_paths_from_clause(clause: Node<'_>, parsed: &ParsedSource) -> Vec<FieldPath> {
+    let mut paths = Vec::new();
+    let mut cursor = clause.walk();
+    for child in clause.children(&mut cursor) {
+        collect_row_context_field_paths(child, parsed, &mut paths);
+    }
+    paths
+}
+
+fn collect_row_context_field_paths(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    paths: &mut Vec<FieldPath>,
+) {
+    if node.kind() == "VariableName" || node.kind() == "Keyword" {
+        return;
+    }
+
+    if is_row_context_field_path_node(node) {
+        paths.push(field_path_from_node(node, parsed));
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_row_context_field_paths(child, parsed, paths);
+    }
+}
+
+fn is_row_context_field_path_node(node: Node<'_>) -> bool {
+    matches!(node.kind(), "Ident" | "Path" | "Idiom")
+}
+
+fn field_path_from_node(node: Node<'_>, parsed: &ParsedSource) -> FieldPath {
+    let text = node_text(node, parsed.text()).trim().to_string();
+    FieldPath {
+        segments: text.split('.').map(str::to_string).collect(),
+        text,
+        span: node_span(node, parsed.source_id().clone()),
+    }
 }
 
 fn validate_field_path_on_table(

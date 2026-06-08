@@ -617,6 +617,25 @@ mod tests {
     }
 
     #[test]
+    fn analyze_workspace_reports_unknown_select_where_fields() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nSELECT * FROM person WHERE missing = true AND name = 'Ada';".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(messages, vec!["unknown field `missing` on table `person`"]);
+    }
+
+    #[test]
     fn analyze_workspace_validates_aliased_select_projection_source_field() {
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(
