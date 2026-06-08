@@ -160,17 +160,21 @@ Objective: implement SELECT variants from `docs/plans/2026-06-06-select-semantic
 
 Completed:
 
-1. tree-sitter SELECT IR extraction for fields, sources, aliases, `ONLY`, `OMIT`, `FETCH`, and graph lookup nodes
+1. tree-sitter SELECT IR extraction for fields, sources, aliases, `ONLY`, `OMIT`, `FETCH`, row modifiers, and graph lookup nodes
 2. existing SELECT table-reference and projection validation routed through the IR
-3. first response-shape inference for schema-backed wildcard projections, named projections, aliases, and `SELECT VALUE <field>`
-4. schemaless and graph traversal SELECTs report explicit unknown/partial response shapes instead of claiming precision
+3. response-shape inference for schema-backed wildcard projections, named projections, aliases, and `SELECT VALUE <field>`
+4. schema-backed `OMIT` shape subtraction
+5. literal `LIMIT` array cardinality bounds
+6. `FETCH` materialization flags on schema-backed fields
+7. unknown `OMIT` and `FETCH` fields validated through the same `E1004` field diagnostic path
+8. schemaless and graph traversal SELECTs report explicit unknown/partial response shapes instead of claiming precision
 
 Remaining order:
 
-1. row-context `WHERE`, ordering, and row-preserving modifiers
-2. `FETCH` materialization
+1. structured row-context modifier facts for `WHERE`, `ORDER`, `START`, `TIMEOUT`, and `PARALLEL`
+2. `RETURN` and advanced modifier partials (`GROUP`, `SPLIT`, `EXPLAIN`)
 3. relation metadata and graph traversal (`->`, `<-`, `<->`, graph-local WHERE)
-4. `RETURN` and advanced modifier partials (`GROUP`, `SPLIT`, `EXPLAIN`)
+4. parameter inference from SELECT predicates and modifiers
 
 ## Slice 8: host adapter spike
 

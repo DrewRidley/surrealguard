@@ -127,7 +127,7 @@ Pipeline:
 7. apply policy and suppressions
 8. return structured `AnalysisOutput`
 
-Current implementation covers source discovery, syntax diagnostics, table indexing, field declaration indexing for simple schema kinds backed by `surrealdb_types::Kind`, basic query table-reference validation, statement analysis records, query parameter collection, SELECT IR extraction, SELECT projection field validation through that IR, and first response-shape inference for schema-backed wildcard projections, named projections, aliases, and `SELECT VALUE <field>`. The obsolete `surrealguard-types` crate has been deleted. Deeper expression semantics, FETCH materialization, RETURN semantics, and graph traversal metadata are still partial.
+Current implementation covers source discovery, syntax diagnostics, table indexing, field declaration indexing for simple schema kinds backed by `surrealdb_types::Kind`, basic query table-reference validation, statement analysis records, query parameter collection, SELECT IR extraction, SELECT projection field validation through that IR, and response-shape inference for schema-backed wildcard projections, named projections, aliases, `SELECT VALUE <field>`, `ONLY`, schema-backed `OMIT`, literal `LIMIT`, and `FETCH` materialization flags. The obsolete `surrealguard-types` crate has been deleted. Deeper expression semantics, relation metadata, graph traversal inference, RETURN semantics, and advanced modifier partials are still partial.
 
 Each parsed statement should eventually infer a response schema: the statement span and kind, input parameter requirements, result shape/type, and any partial-analysis limitations. Diagnostics should be emitted from that shared semantic model so CLI, LSP, MCP, and host adapters all explain the same facts rather than reimplementing rules per surface.
 
@@ -178,13 +178,12 @@ The semantic engine analyzes embedded sources through the same parser and worksp
 
 ## Next implementation slice
 
-SELECT IR and first response-shape inference are now in place for schema-backed wildcard projections, named projections, aliases, and `SELECT VALUE <field>`. The next slice is deeper SELECT semantics:
+SELECT IR and response-shape inference now cover schema-backed wildcard projections, named projections, aliases, `SELECT VALUE <field>`, `ONLY`, schema-backed `OMIT`, literal `LIMIT`, and `FETCH` materialization flags. The next slice is to make remaining SELECT uncertainty explicit and structured:
 
-1. preserve row-context clauses such as `WHERE`, `ORDER`, `LIMIT`, `START`, `TIMEOUT`, and `PARALLEL` as row-preserving response-shape facts
-2. implement `OMIT` shape subtraction for schema-backed object shapes
-3. implement `FETCH` materialization facts without pretending relation metadata exists yet
-4. keep graph traversal, dynamic-source, `RETURN`, `GROUP`, `SPLIT`, and `EXPLAIN` cases explicit as `ResponseShape::Unknown` plus `PartialReason` facts until their semantics are modeled
-5. expose enough structured response-shape data for future LSP hover and host adapters without adding host adapters yet
+1. preserve row-context clauses such as `WHERE`, `ORDER`, `START`, `TIMEOUT`, and `PARALLEL` as row-preserving modifier facts
+2. keep graph traversal and dynamic-source cases explicit as `ResponseShape::Unknown` plus `PartialReason` facts until relation metadata is modeled
+3. keep `RETURN`, `GROUP`, `SPLIT`, and `EXPLAIN` cases explicit as partial/unknown until their semantics are modeled
+4. expose enough structured response-shape and modifier data for future LSP hover and host adapters without adding host adapters yet
 
 The SELECT plan is `docs/plans/2026-06-06-select-semantics.md`.
 
@@ -193,8 +192,7 @@ Acceptance gates:
 - no maintained code depends on `surrealguard-types` or `surrealguard_types`
 - existing SELECT IR extraction tests keep covering fields, `AS`, `OMIT`, `FETCH`, `ONLY`, and graph lookups
 - existing table-reference and projection diagnostics remain routed through SELECT IR
-- focused tests for row-preserving modifiers and `OMIT` shape subtraction
-- focused tests for `FETCH` materialization metadata once relation metadata has a placeholder contract
+- focused tests for row-preserving modifiers, `OMIT` shape subtraction, literal `LIMIT`, and `FETCH` materialization metadata
 - graph/dynamic/advanced modifier result shapes remain partial/unknown until modeled
 - `cargo test --workspace -- --nocapture`
 - `cargo check --workspace`
