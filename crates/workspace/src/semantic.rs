@@ -70,6 +70,28 @@ pub fn validate_table_references(
     diagnostics
 }
 
+pub fn validate_select_graph_references(
+    parsed_sources: &[ParsedSource],
+    schema: &SchemaIndex,
+) -> Vec<Finding> {
+    let mut diagnostics = Vec::new();
+
+    for parsed in parsed_sources {
+        if !parsed.syntax_diagnostics().is_empty() {
+            continue;
+        }
+
+        collect_select_graph_reference_diagnostics(
+            parsed.tree().root_node(),
+            parsed,
+            schema,
+            &mut diagnostics,
+        );
+    }
+
+    diagnostics
+}
+
 pub fn validate_select_projection_fields(
     parsed_sources: &[ParsedSource],
     schema: &SchemaIndex,
@@ -285,6 +307,88 @@ fn collect_table_reference_diagnostics(
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         collect_table_reference_diagnostics(child, parsed, schema, diagnostics);
+    }
+}
+
+fn collect_select_graph_reference_diagnostics(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if node.kind() == "SelectStatement" {
+        validate_graph_references_for_select_statement(node, parsed, schema, diagnostics);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_select_graph_reference_diagnostics(child, parsed, schema, diagnostics);
+    }
+}
+
+fn validate_graph_references_for_select_statement(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    diagnostics: &mut Vec<Finding>,
+) {
+    let ir = select_ir_from_statement(node, parsed);
+    if ir.graph_lookups.is_empty() {
+        return;
+    }
+
+    let [edge_lookup, target_lookup] = ir.graph_lookups.as_slice() else {
+        return;
+    };
+    let Some(source_table) = ir
+        .source
+        .as_ref()
+        .and_then(|source| source.table.as_deref())
+    else {
+        return;
+    };
+
+    let Some(edge_table) = edge_lookup.table.as_deref() else {
+        return;
+    };
+    let edge_relation = schema
+        .tables
+        .get(edge_table)
+        .and_then(|table| table.relation.as_ref());
+    if edge_relation.is_none() {
+        diagnostics.push(Finding::new(
+            edge_lookup.span.clone(),
+            FindingCode::graph(3001),
+            Severity::Error,
+            format!("unknown graph edge table `{edge_table}`"),
+        ));
+    }
+
+    let Some(target_table) = target_lookup.table.as_deref() else {
+        return;
+    };
+    let target_exists = schema.tables.contains_key(target_table);
+    if !target_exists {
+        diagnostics.push(Finding::new(
+            target_lookup.span.clone(),
+            FindingCode::graph(3002),
+            Severity::Error,
+            format!("unknown graph target table `{target_table}`"),
+        ));
+    }
+
+    if edge_relation.is_some()
+        && target_exists
+        && resolve_simple_graph_target_table(source_table, &ir, schema).is_none()
+    {
+        diagnostics.push(Finding::new(
+            node_span(node, parsed.source_id().clone()),
+            FindingCode::graph(3003),
+            Severity::Error,
+            format!(
+                "graph traversal `{source_table}->{edge_table}->{target_table}` does not match relation `{edge_table}` endpoints"
+            ),
+        ));
     }
 }
 

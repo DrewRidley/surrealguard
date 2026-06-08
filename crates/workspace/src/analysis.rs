@@ -13,7 +13,7 @@ use crate::config::WorkspaceConfig;
 use crate::schema::{extract_schema, SchemaIndex};
 use crate::semantic::{
     analyze_parsed_source, infer_select_param_kinds, infer_select_response_shapes,
-    validate_select_projection_fields, validate_table_references,
+    validate_select_graph_references, validate_select_projection_fields, validate_table_references,
 };
 use crate::source_registry::SourceRegistry;
 
@@ -164,6 +164,15 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
         }
     }
     diagnostics.extend(table_reference_diagnostics);
+
+    let graph_reference_diagnostics =
+        validate_select_graph_references(&parsed_sources, &schema_extraction.schema);
+    for diagnostic in &graph_reference_diagnostics {
+        if let Some(source_output) = sources.get_mut(diagnostic.span().source()) {
+            source_output.diagnostics.push(diagnostic.clone());
+        }
+    }
+    diagnostics.extend(graph_reference_diagnostics);
 
     let select_projection_diagnostics =
         validate_select_projection_fields(&parsed_sources, &schema_extraction.schema);
@@ -1017,5 +1026,52 @@ mod tests {
             panic!("expected object element, got {element:?}");
         };
         assert_eq!(fields["title"].kind, Some(Kind::String));
+    }
+
+    #[test]
+    fn analyze_workspace_reports_unknown_graph_edge_and_target_tables() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nSELECT * FROM person->missing->post;\nSELECT * FROM person->likes->ghost;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::graph(3001) || code == FindingCode::graph(3002)))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            messages,
+            vec![
+                "unknown graph edge table `missing`",
+                "unknown graph target table `ghost`",
+            ]
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_reports_mismatched_graph_relation_endpoints() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nSELECT * FROM post->likes->person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::graph(3003))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            messages,
+            vec!["graph traversal `post->likes->person` does not match relation `likes` endpoints"]
+        );
     }
 }
