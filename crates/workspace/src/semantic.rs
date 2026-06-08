@@ -326,6 +326,10 @@ fn validate_field_path_on_table(
 }
 
 fn response_shape_for_select(ir: &SelectIr, schema: &SchemaIndex) -> ResponseShape {
+    if let Some(reason) = advanced_select_partial_reason(ir) {
+        return ResponseShape::Unknown { reason };
+    }
+
     let Some(source) = &ir.source else {
         return ResponseShape::Unknown {
             reason: PartialReason::Unresolved,
@@ -374,6 +378,24 @@ fn response_shape_for_select(ir: &SelectIr, schema: &SchemaIndex) -> ResponseSha
             max_len: literal_limit_max_len(ir),
         }
     }
+}
+
+fn advanced_select_partial_reason(ir: &SelectIr) -> Option<PartialReason> {
+    if ir.return_clause.is_some() {
+        return Some(PartialReason::UnsupportedSyntax("RETURN".into()));
+    }
+
+    ir.modifiers.iter().find_map(|modifier| match modifier {
+        SelectModifier::Group(_) => Some(PartialReason::UnsupportedSyntax("GROUP".into())),
+        SelectModifier::Split(_) => Some(PartialReason::UnsupportedSyntax("SPLIT".into())),
+        SelectModifier::Explain(_) => Some(PartialReason::UnsupportedSyntax("EXPLAIN".into())),
+        SelectModifier::Where(_)
+        | SelectModifier::Order(_)
+        | SelectModifier::Limit { .. }
+        | SelectModifier::Start(_)
+        | SelectModifier::Timeout(_)
+        | SelectModifier::Parallel(_) => None,
+    })
 }
 
 fn literal_limit_max_len(ir: &SelectIr) -> Option<u64> {

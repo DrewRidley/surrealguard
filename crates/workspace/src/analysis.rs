@@ -895,4 +895,27 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn analyze_workspace_marks_grouped_select_response_shape_partial() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nSELECT name FROM person GROUP BY name;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        assert_eq!(
+            select.response_shape,
+            Some(ResponseShape::Unknown {
+                reason: PartialReason::UnsupportedSyntax("GROUP".into())
+            })
+        );
+    }
 }
