@@ -152,7 +152,7 @@ Tests:
 - `SELECT name, profile.email FROM person` returns a projected object response shape
 - `SELECT VALUE name FROM person` unwraps the row object to an array of the field kind
 - tables without field declarations do not claim precise field shapes
-- graph traversal queries are represented in IR and remain partial until relation metadata lands
+- graph traversal queries are represented in IR; simple relation-backed two-hop traversals infer target-table response shapes, while graph-local filters/selections remain partial
 
 ## Slice 7: SELECT IR and first response shapes
 
@@ -167,14 +167,18 @@ Completed:
 5. literal `LIMIT` array cardinality bounds
 6. `FETCH` materialization flags on schema-backed fields
 7. unknown `OMIT` and `FETCH` fields validated through the same `E1004` field diagnostic path
-8. schemaless and graph traversal SELECTs report explicit unknown/partial response shapes instead of claiming precision
+8. row-preserving SELECT modifier facts for `WHERE`, `ORDER`, `LIMIT`, `START`, `TIMEOUT`, and `PARALLEL`
+9. explicit partial/unknown response shapes for `RETURN`, `GROUP`, `SPLIT`, and `EXPLAIN`
+10. relation metadata indexing from `DEFINE TABLE ... TYPE RELATION IN ... OUT ...`
+11. simple relation-backed graph traversal response-shape inference for two-hop traversals such as `person->likes->post`
+12. schemaless and dynamic-source SELECTs report explicit unknown/partial response shapes instead of claiming precision
 
 Remaining order:
 
-1. structured row-context modifier facts for `WHERE`, `ORDER`, `START`, `TIMEOUT`, and `PARALLEL`
-2. `RETURN` and advanced modifier partials (`GROUP`, `SPLIT`, `EXPLAIN`)
-3. relation metadata and graph traversal (`->`, `<-`, `<->`, graph-local WHERE)
-4. parameter inference from SELECT predicates and modifiers
+1. validate row-context field references in `WHERE`, graph-local `WHERE`, and other modifier expressions
+2. parameter inference from SELECT predicates and modifiers
+3. richer graph traversal diagnostics for unknown/mismatched edge and target tables
+4. host adapter spike once the core response-shape/diagnostic facts are stable
 
 ## Slice 8: host adapter spike
 
