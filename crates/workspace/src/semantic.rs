@@ -11,7 +11,7 @@ use crate::analysis::{ParamInference, SelectModifierAnalysis, StatementAnalysis}
 use crate::response_shape::{FieldShape, PartialReason, ResponseShape};
 use crate::schema::SchemaIndex;
 use crate::select_ir::{
-    select_ir_from_statement, FieldPath, SelectIr, SelectModifier, SelectProjection,
+    select_ir_from_statement, FieldPath, GraphDirection, SelectIr, SelectModifier, SelectProjection,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -335,17 +335,17 @@ fn response_shape_for_select(ir: &SelectIr, schema: &SchemaIndex) -> ResponseSha
             reason: PartialReason::Unresolved,
         };
     };
-    if source.dynamic || !ir.graph_lookups.is_empty() {
+    if source.dynamic {
         return ResponseShape::Unknown {
             reason: PartialReason::DynamicExpression,
         };
     }
-    let Some(table_name) = source.table.as_deref() else {
+    let Some(table_name) = resolved_select_table_name(ir, schema) else {
         return ResponseShape::Unknown {
             reason: PartialReason::Unresolved,
         };
     };
-    let Some(table) = schema.tables.get(table_name) else {
+    let Some(table) = schema.tables.get(table_name.as_str()) else {
         return ResponseShape::Unknown {
             reason: PartialReason::Unresolved,
         };
@@ -378,6 +378,65 @@ fn response_shape_for_select(ir: &SelectIr, schema: &SchemaIndex) -> ResponseSha
             max_len: literal_limit_max_len(ir),
         }
     }
+}
+
+fn resolved_select_table_name(ir: &SelectIr, schema: &SchemaIndex) -> Option<String> {
+    let source_table = ir.source.as_ref()?.table.as_ref()?;
+    if ir.graph_lookups.is_empty() {
+        return Some(source_table.clone());
+    }
+
+    resolve_simple_graph_target_table(source_table, ir, schema)
+}
+
+fn resolve_simple_graph_target_table(
+    source_table: &str,
+    ir: &SelectIr,
+    schema: &SchemaIndex,
+) -> Option<String> {
+    let [edge_lookup, target_lookup] = ir.graph_lookups.as_slice() else {
+        return None;
+    };
+    let edge_table_name = edge_lookup.table.as_deref()?;
+    let target_table_name = target_lookup.table.as_deref()?;
+    let relation = schema.tables.get(edge_table_name)?.relation.as_ref()?;
+
+    match edge_lookup.direction {
+        GraphDirection::Out => {
+            relation.in_tables.iter().any(|table| table == source_table)
+                && relation
+                    .out_tables
+                    .iter()
+                    .any(|table| table == target_table_name)
+        }
+        GraphDirection::In => {
+            relation
+                .out_tables
+                .iter()
+                .any(|table| table == source_table)
+                && relation
+                    .in_tables
+                    .iter()
+                    .any(|table| table == target_table_name)
+        }
+        GraphDirection::Both => {
+            let source_is_in = relation.in_tables.iter().any(|table| table == source_table);
+            let source_is_out = relation
+                .out_tables
+                .iter()
+                .any(|table| table == source_table);
+            let target_is_in = relation
+                .in_tables
+                .iter()
+                .any(|table| table == target_table_name);
+            let target_is_out = relation
+                .out_tables
+                .iter()
+                .any(|table| table == target_table_name);
+            (source_is_in && target_is_out) || (source_is_out && target_is_in)
+        }
+    }
+    .then(|| target_table_name.to_string())
 }
 
 fn advanced_select_partial_reason(ir: &SelectIr) -> Option<PartialReason> {
