@@ -339,6 +339,24 @@ mod tests {
     }
 
     #[test]
+    fn analyze_workspace_indexes_define_table_relation_metadata() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let relation = output.schema.tables["likes"]
+            .relation
+            .as_ref()
+            .expect("likes is indexed as relation table");
+
+        assert_eq!(relation.in_tables, vec!["person"]);
+        assert_eq!(relation.out_tables, vec!["post"]);
+    }
+
+    #[test]
     fn analyze_workspace_indexes_schemafull_field_declarations() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(

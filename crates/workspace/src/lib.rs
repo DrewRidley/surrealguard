@@ -11,4 +11,4 @@ pub use analysis::{
     SelectModifierAnalysis, StatementAnalysis, Workspace, WorkspaceAnalysis,
 };
 pub use response_shape::{FieldShape, PartialReason, ResponseShape};
-pub use schema::{FieldDef, SchemaIndex, TableDef};
+pub use schema::{FieldDef, RelationDef, SchemaIndex, TableDef};

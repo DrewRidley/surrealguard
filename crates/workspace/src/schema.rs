@@ -21,6 +21,14 @@ pub struct TableDef {
     pub source: SourceId,
     pub name_span: SourceSpan,
     pub fields: BTreeMap<String, FieldDef>,
+    pub relation: Option<RelationDef>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelationDef {
+    pub in_tables: Vec<String>,
+    pub out_tables: Vec<String>,
+    pub span: SourceSpan,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,6 +160,54 @@ fn extract_table_def(node: Node<'_>, parsed: &ParsedSource) -> Option<TableDef> 
                 source: parsed.source_id().clone(),
                 name_span: node_span(child, parsed.source_id().clone()),
                 fields: BTreeMap::new(),
+                relation: relation_def_from_define_table(node, parsed),
+            });
+        }
+    }
+
+    None
+}
+
+fn relation_def_from_define_table(node: Node<'_>, parsed: &ParsedSource) -> Option<RelationDef> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() != "TableTypeClause" {
+            continue;
+        }
+
+        let mut is_relation = false;
+        let mut current_side = None;
+        let mut in_tables = Vec::new();
+        let mut out_tables = Vec::new();
+        let mut clause_cursor = child.walk();
+
+        for clause_child in child.children(&mut clause_cursor) {
+            let text = node_text(clause_child, parsed.text()).trim();
+            let upper = text.to_ascii_uppercase();
+            if clause_child.kind() == "Keyword" {
+                match upper.as_str() {
+                    "RELATION" => is_relation = true,
+                    "IN" => current_side = Some("in"),
+                    "OUT" => current_side = Some("out"),
+                    _ => {}
+                }
+                continue;
+            }
+
+            if is_identifier_like(clause_child) {
+                match current_side {
+                    Some("in") => in_tables.push(text.to_string()),
+                    Some("out") => out_tables.push(text.to_string()),
+                    _ => {}
+                }
+            }
+        }
+
+        if is_relation {
+            return Some(RelationDef {
+                in_tables,
+                out_tables,
+                span: node_span(child, parsed.source_id().clone()),
             });
         }
     }
