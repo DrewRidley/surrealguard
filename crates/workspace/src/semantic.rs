@@ -5,6 +5,7 @@ use surrealguard_syntax::parse::ParsedSource;
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
+use surrealdb_types::Kind;
 use tree_sitter::Node;
 
 use crate::analysis::{ParamInference, SelectModifierAnalysis, StatementAnalysis};
@@ -18,6 +19,13 @@ use crate::select_ir::{
 pub struct SemanticOutput {
     pub statements: Vec<StatementAnalysis>,
     pub inferred_params: Vec<ParamInference>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParamKindInference {
+    pub source: SourceId,
+    pub name: String,
+    pub kind: Kind,
 }
 
 pub fn analyze_parsed_source(parsed: &ParsedSource) -> SemanticOutput {
@@ -82,6 +90,28 @@ pub fn validate_select_projection_fields(
     }
 
     diagnostics
+}
+
+pub fn infer_select_param_kinds(
+    parsed_sources: &[ParsedSource],
+    schema: &SchemaIndex,
+) -> Vec<ParamKindInference> {
+    let mut inferences = Vec::new();
+
+    for parsed in parsed_sources {
+        if !parsed.syntax_diagnostics().is_empty() {
+            continue;
+        }
+
+        collect_select_param_kind_inferences(
+            parsed.tree().root_node(),
+            parsed,
+            schema,
+            &mut inferences,
+        );
+    }
+
+    inferences
 }
 
 pub fn infer_select_response_shapes(
@@ -359,6 +389,97 @@ fn field_path_from_node(node: Node<'_>, parsed: &ParsedSource) -> FieldPath {
         text,
         span: node_span(node, parsed.source_id().clone()),
     }
+}
+
+fn collect_select_param_kind_inferences(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    inferences: &mut Vec<ParamKindInference>,
+) {
+    if node.kind() == "SelectStatement" {
+        infer_param_kinds_for_select_statement(node, parsed, schema, inferences);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_select_param_kind_inferences(child, parsed, schema, inferences);
+    }
+}
+
+fn infer_param_kinds_for_select_statement(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    inferences: &mut Vec<ParamKindInference>,
+) {
+    let ir = select_ir_from_statement(node, parsed);
+    let Some(table_name) = resolved_select_table_name(&ir, schema) else {
+        return;
+    };
+    let Some(table) = schema.tables.get(table_name.as_str()) else {
+        return;
+    };
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "WhereClause" {
+            collect_param_kind_inferences_from_expression(child, parsed, table, inferences);
+        }
+    }
+}
+
+fn collect_param_kind_inferences_from_expression(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    inferences: &mut Vec<ParamKindInference>,
+) {
+    if node.kind() == "BinaryExpression" {
+        if let Some((field, param_name)) = direct_field_param_comparison(node, parsed) {
+            if let Some(field_def) = table.fields.get(&field.text) {
+                if let Some(kind) = field_def.kind.clone() {
+                    inferences.push(ParamKindInference {
+                        source: parsed.source_id().clone(),
+                        name: param_name,
+                        kind,
+                    });
+                }
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_param_kind_inferences_from_expression(child, parsed, table, inferences);
+    }
+}
+
+fn direct_field_param_comparison(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+) -> Option<(FieldPath, String)> {
+    let mut field = None;
+    let mut param = None;
+    let mut has_equality = false;
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "Operator" => {
+                if node_text(child, parsed.text()).trim() == "=" {
+                    has_equality = true;
+                }
+            }
+            "VariableName" => param = Some(param_name(node_text(child, parsed.text()))),
+            _ if is_row_context_field_path_node(child) => {
+                field = Some(field_path_from_node(child, parsed));
+            }
+            _ => {}
+        }
+    }
+
+    has_equality.then_some((field?, param?))
 }
 
 fn validate_field_path_on_table(

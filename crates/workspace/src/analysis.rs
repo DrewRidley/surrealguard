@@ -12,8 +12,8 @@ use surrealguard_syntax::span::{ByteRange, SourceSpan};
 use crate::config::WorkspaceConfig;
 use crate::schema::{extract_schema, SchemaIndex};
 use crate::semantic::{
-    analyze_parsed_source, infer_select_response_shapes, validate_select_projection_fields,
-    validate_table_references,
+    analyze_parsed_source, infer_select_param_kinds, infer_select_response_shapes,
+    validate_select_projection_fields, validate_table_references,
 };
 use crate::source_registry::SourceRegistry;
 
@@ -173,6 +173,22 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
         }
     }
     diagnostics.extend(select_projection_diagnostics);
+
+    let select_param_kind_inferences =
+        infer_select_param_kinds(&parsed_sources, &schema_extraction.schema);
+    for inference in select_param_kind_inferences {
+        if let Some(source_output) = sources.get_mut(&inference.source) {
+            if let Some(param) = source_output
+                .inferred_params
+                .iter_mut()
+                .find(|param| param.name == inference.name)
+            {
+                if param.kind.is_none() {
+                    param.kind = Some(inference.kind);
+                }
+            }
+        }
+    }
 
     let select_response_shapes =
         infer_select_response_shapes(&parsed_sources, &schema_extraction.schema);
@@ -553,6 +569,22 @@ mod tests {
         assert_eq!(params[1].spans.len(), 1);
         assert_eq!(params[1].spans[0].range().start(), 83);
         assert_eq!(params[1].spans[0].range().end(), 88);
+    }
+
+    #[test]
+    fn analyze_workspace_infers_param_kind_from_select_where_field_comparison() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nSELECT * FROM person WHERE name = $name;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let params = &output.sources[&source].inferred_params;
+
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "name");
+        assert_eq!(params[0].kind, Some(Kind::String));
     }
 
     #[test]
