@@ -7,7 +7,7 @@ use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
 use tree_sitter::Node;
 
-use crate::analysis::{ParamInference, StatementAnalysis};
+use crate::analysis::{ParamInference, SelectModifierAnalysis, StatementAnalysis};
 use crate::response_shape::{FieldShape, PartialReason, ResponseShape};
 use crate::schema::SchemaIndex;
 use crate::select_ir::{
@@ -132,6 +132,7 @@ fn collect_statement_analysis(
             span: node_span(node, parsed.source_id().clone()),
             kind,
             response_shape: None,
+            select_modifiers: select_modifier_analysis_for_node(node, parsed),
         });
         collect_params(node, parsed, params);
         return;
@@ -140,6 +141,46 @@ fn collect_statement_analysis(
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         collect_statement_analysis(child, parsed, statements, params);
+    }
+}
+
+fn select_modifier_analysis_for_node(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+) -> Vec<SelectModifierAnalysis> {
+    if node.kind() != "SelectStatement" {
+        return Vec::new();
+    }
+
+    select_ir_from_statement(node, parsed)
+        .modifiers
+        .into_iter()
+        .filter_map(|modifier| match modifier {
+            SelectModifier::Where(span) => Some(row_preserving_modifier("where", span, None)),
+            SelectModifier::Order(span) => Some(row_preserving_modifier("order", span, None)),
+            SelectModifier::Limit { span, max_len } => {
+                Some(row_preserving_modifier("limit", span, max_len))
+            }
+            SelectModifier::Start(span) => Some(row_preserving_modifier("start", span, None)),
+            SelectModifier::Timeout(span) => Some(row_preserving_modifier("timeout", span, None)),
+            SelectModifier::Parallel(span) => Some(row_preserving_modifier("parallel", span, None)),
+            SelectModifier::Group(_) | SelectModifier::Split(_) | SelectModifier::Explain(_) => {
+                None
+            }
+        })
+        .collect()
+}
+
+fn row_preserving_modifier(
+    kind: &str,
+    span: SourceSpan,
+    max_len: Option<u64>,
+) -> SelectModifierAnalysis {
+    SelectModifierAnalysis {
+        kind: kind.to_string(),
+        span,
+        row_preserving: true,
+        max_len,
     }
 }
 

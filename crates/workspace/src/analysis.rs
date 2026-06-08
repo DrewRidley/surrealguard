@@ -43,6 +43,15 @@ pub struct StatementAnalysis {
     pub span: SourceSpan,
     pub kind: String,
     pub response_shape: Option<ResponseShape>,
+    pub select_modifiers: Vec<SelectModifierAnalysis>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectModifierAnalysis {
+    pub kind: String,
+    pub span: SourceSpan,
+    pub row_preserving: bool,
+    pub max_len: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -843,6 +852,46 @@ mod tests {
             vec![
                 "unknown field `password` on table `person`",
                 "unknown field `friend` on table `person`",
+            ]
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_exposes_row_preserving_select_modifier_facts() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nSELECT name FROM person WHERE name = 'Ada' ORDER BY name LIMIT 5 START 2 TIMEOUT 1s PARALLEL;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        let modifiers: Vec<_> = select
+            .select_modifiers
+            .iter()
+            .map(|modifier| {
+                (
+                    modifier.kind.as_str(),
+                    modifier.row_preserving,
+                    modifier.max_len,
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            modifiers,
+            vec![
+                ("where", true, None),
+                ("order", true, None),
+                ("limit", true, Some(5)),
+                ("start", true, None),
+                ("timeout", true, None),
+                ("parallel", true, None),
             ]
         );
     }
