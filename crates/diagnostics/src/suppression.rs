@@ -200,8 +200,9 @@ mod tests {
 
     #[test]
     fn rejects_malformed_allow_directive() {
-        let error = parse_suppression_directive("surrealguard: allow lint.select_star", span(0, 37))
-            .expect_err("malformed allow directive should be rejected");
+        let error =
+            parse_suppression_directive("surrealguard: allow lint.select_star", span(0, 37))
+                .expect_err("malformed allow directive should be rejected");
 
         assert_eq!(error, SuppressionParseError::MalformedDirective);
     }
@@ -226,8 +227,9 @@ mod tests {
 
     #[test]
     fn named_target_matches_exact_lint_name() {
-        let parsed = parse_suppression_directive("surrealguard: allow(lint.select_star)", span(0, 40))
-            .expect("directive should parse");
+        let parsed =
+            parse_suppression_directive("surrealguard: allow(lint.select_star)", span(0, 40))
+                .expect("directive should parse");
 
         assert!(parsed.matches_name("lint.select_star"));
         assert!(!parsed.matches_name("lint.dynamic_query"));

@@ -175,10 +175,11 @@ Completed:
 13. simple parameter kind inference from `WHERE field = $param` comparisons
 14. graph traversal diagnostics for unknown edge tables, unknown target tables, and relation endpoint mismatches
 15. schemaless and dynamic-source SELECTs report explicit unknown/partial response shapes instead of claiming precision
+16. graph-local `WHERE` validation for relation-edge context in parenthesized graph lookups and bracketed graph filters
 
 Remaining order:
 
-1. graph-local `WHERE` and graph selection validation against relation-edge context
+1. graph-local selection/projection validation against relation-edge context
 2. richer parameter inference across more predicate operators and modifier expressions
 3. nested/object field-path modeling instead of flat dotted schema keys
 4. host adapter spike once the core response-shape/diagnostic facts are stable

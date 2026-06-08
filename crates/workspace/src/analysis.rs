@@ -1074,4 +1074,48 @@ mod tests {
             vec!["graph traversal `post->likes->person` does not match relation `likes` endpoints"]
         );
     }
+
+    #[test]
+    fn analyze_workspace_validates_parenthesized_graph_where_against_edge_fields() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nDEFINE FIELD created_at ON likes TYPE datetime;\nSELECT * FROM person->(likes WHERE created_at > $since)->post;\nSELECT * FROM person->(likes WHERE missing_since > $since)->post;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            messages,
+            vec!["unknown field `missing_since` on table `likes`"]
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_validates_bracketed_graph_filter_against_edge_fields() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nDEFINE FIELD created_at ON likes TYPE datetime;\nSELECT * FROM person->likes[WHERE created_at > $since]->post;\nSELECT * FROM person->likes[WHERE missing_since > $since]->post;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            messages,
+            vec!["unknown field `missing_since` on table `likes`"]
+        );
+    }
 }

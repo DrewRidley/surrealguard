@@ -87,7 +87,9 @@ pub enum ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseError::LanguageError => f.write_str("failed to load SurrealQL tree-sitter language"),
+            ParseError::LanguageError => {
+                f.write_str("failed to load SurrealQL tree-sitter language")
+            }
             ParseError::ParseFailed => f.write_str("tree-sitter parse returned None"),
         }
     }
@@ -105,7 +107,9 @@ pub fn parse_source(
         .set_language(&tree_sitter_surrealql::LANGUAGE.into())
         .map_err(|_| ParseError::LanguageError)?;
 
-    let tree = parser.parse(text.as_ref(), None).ok_or(ParseError::ParseFailed)?;
+    let tree = parser
+        .parse(text.as_ref(), None)
+        .ok_or(ParseError::ParseFailed)?;
     let mut syntax_diagnostics = Vec::new();
     collect_syntax_diagnostics(tree.root_node(), &source_id, &mut syntax_diagnostics);
 

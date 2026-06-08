@@ -415,6 +415,8 @@ fn validate_select_projection_fields_for_statement(
     diagnostics: &mut Vec<Finding>,
 ) {
     let ir = select_ir_from_statement(node, parsed);
+    validate_graph_local_where_fields_for_select_statement(node, parsed, schema, diagnostics);
+
     let Some(source) = ir.source else {
         return;
     };
@@ -460,6 +462,100 @@ fn row_context_field_paths_from_clause(clause: Node<'_>, parsed: &ParsedSource) 
         collect_row_context_field_paths(child, parsed, &mut paths);
     }
     paths
+}
+
+fn validate_graph_local_where_fields_for_select_statement(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    diagnostics: &mut Vec<Finding>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        validate_graph_local_where_fields_in_node(child, parsed, schema, diagnostics);
+    }
+}
+
+fn validate_graph_local_where_fields_in_node(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if node.kind() == "Path" {
+        validate_graph_local_where_fields_in_path(node, parsed, schema, diagnostics);
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        validate_graph_local_where_fields_in_node(child, parsed, schema, diagnostics);
+    }
+}
+
+fn validate_graph_local_where_fields_in_path(
+    path: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    diagnostics: &mut Vec<Finding>,
+) {
+    let mut cursor = path.walk();
+    let children: Vec<_> = path.children(&mut cursor).collect();
+
+    for (index, child) in children.iter().copied().enumerate() {
+        if child.kind() != "Lookup" {
+            continue;
+        }
+        let Some(edge_table_name) = graph_lookup_table_name_from_node(child, parsed) else {
+            continue;
+        };
+        let Some(edge_table) = schema.tables.get(&edge_table_name) else {
+            continue;
+        };
+        if edge_table.fields.is_empty() {
+            continue;
+        }
+
+        validate_where_descendants_on_table(child, parsed, edge_table, diagnostics);
+        if let Some(next) = children.get(index + 1).copied() {
+            if next.kind() == "Filter" {
+                validate_where_descendants_on_table(next, parsed, edge_table, diagnostics);
+            }
+        }
+    }
+}
+
+fn validate_where_descendants_on_table(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if node.kind() == "WhereClause" {
+        for path in row_context_field_paths_from_clause(node, parsed) {
+            validate_field_path_on_table(path, table, diagnostics);
+        }
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        validate_where_descendants_on_table(child, parsed, table, diagnostics);
+    }
+}
+
+fn graph_lookup_table_name_from_node(node: Node<'_>, parsed: &ParsedSource) -> Option<String> {
+    if is_identifier_like(node) {
+        return Some(node_text(node, parsed.text()).trim().to_string());
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(name) = graph_lookup_table_name_from_node(child, parsed) {
+            return Some(name);
+        }
+    }
+    None
 }
 
 fn collect_row_context_field_paths(
