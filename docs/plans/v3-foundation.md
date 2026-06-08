@@ -171,13 +171,16 @@ Completed:
 9. explicit partial/unknown response shapes for `RETURN`, `GROUP`, `SPLIT`, and `EXPLAIN`
 10. relation metadata indexing from `DEFINE TABLE ... TYPE RELATION IN ... OUT ...`
 11. simple relation-backed graph traversal response-shape inference for two-hop traversals such as `person->likes->post`
-12. schemaless and dynamic-source SELECTs report explicit unknown/partial response shapes instead of claiming precision
+12. row-context `WHERE` field validation against the resolved SELECT row table
+13. simple parameter kind inference from `WHERE field = $param` comparisons
+14. graph traversal diagnostics for unknown edge tables, unknown target tables, and relation endpoint mismatches
+15. schemaless and dynamic-source SELECTs report explicit unknown/partial response shapes instead of claiming precision
 
 Remaining order:
 
-1. validate row-context field references in `WHERE`, graph-local `WHERE`, and other modifier expressions
-2. parameter inference from SELECT predicates and modifiers
-3. richer graph traversal diagnostics for unknown/mismatched edge and target tables
+1. graph-local `WHERE` and graph selection validation against relation-edge context
+2. richer parameter inference across more predicate operators and modifier expressions
+3. nested/object field-path modeling instead of flat dotted schema keys
 4. host adapter spike once the core response-shape/diagnostic facts are stable
 
 ## Slice 8: host adapter spike

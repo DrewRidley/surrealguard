@@ -127,7 +127,7 @@ Pipeline:
 7. apply policy and suppressions
 8. return structured `AnalysisOutput`
 
-Current implementation covers source discovery, syntax diagnostics, table indexing, relation metadata for `DEFINE TABLE ... TYPE RELATION IN ... OUT ...`, field declaration indexing for simple schema kinds backed by `surrealdb_types::Kind`, basic query table-reference validation, statement analysis records, query parameter collection, SELECT IR extraction, SELECT projection field validation through that IR, row-preserving SELECT modifier facts, and response-shape inference for schema-backed wildcard projections, named projections, aliases, `SELECT VALUE <field>`, `ONLY`, schema-backed `OMIT`, literal `LIMIT`, `FETCH` materialization flags, and simple two-hop relation-backed graph traversals such as `person->likes->post`. `RETURN`, `GROUP`, `SPLIT`, and `EXPLAIN` currently produce explicit partial response shapes. The obsolete `surrealguard-types` crate has been deleted. Deeper expression semantics, graph-local WHERE/selection semantics, richer relation traversal diagnostics, and host-adapter inference are still partial.
+Current implementation covers source discovery, syntax diagnostics, table indexing, relation metadata for `DEFINE TABLE ... TYPE RELATION IN ... OUT ...`, field declaration indexing for simple schema kinds backed by `surrealdb_types::Kind`, basic query table-reference validation, statement analysis records, query parameter collection and simple field-comparison kind inference, SELECT IR extraction, SELECT projection field validation through that IR, row-context `WHERE` field validation, row-preserving SELECT modifier facts, graph traversal reference diagnostics, and response-shape inference for schema-backed wildcard projections, named projections, aliases, `SELECT VALUE <field>`, `ONLY`, schema-backed `OMIT`, literal `LIMIT`, `FETCH` materialization flags, and simple two-hop relation-backed graph traversals such as `person->likes->post`. `RETURN`, `GROUP`, `SPLIT`, and `EXPLAIN` currently produce explicit partial response shapes. The obsolete `surrealguard-types` crate has been deleted. Deeper expression semantics, graph-local WHERE/selection semantics, advanced parameter inference, and host-adapter inference are still partial.
 
 Each parsed statement should eventually infer a response schema: the statement span and kind, input parameter requirements, result shape/type, and any partial-analysis limitations. Diagnostics should be emitted from that shared semantic model so CLI, LSP, MCP, and host adapters all explain the same facts rather than reimplementing rules per surface.
 
@@ -178,12 +178,12 @@ The semantic engine analyzes embedded sources through the same parser and worksp
 
 ## Next implementation slice
 
-SELECT IR and response-shape inference now cover schema-backed wildcard projections, named projections, aliases, `SELECT VALUE <field>`, `ONLY`, schema-backed `OMIT`, literal `LIMIT`, `FETCH` materialization flags, relation metadata, simple relation-backed graph traversal response shapes, row-preserving modifier facts, and explicit partials for shape-changing/unsupported SELECT clauses. The next slice is to move beyond response shape into row-context expression semantics:
+SELECT IR and response-shape inference now cover schema-backed wildcard projections, named projections, aliases, `SELECT VALUE <field>`, `ONLY`, schema-backed `OMIT`, literal `LIMIT`, `FETCH` materialization flags, relation metadata, simple relation-backed graph traversal response shapes, row-context `WHERE` field validation, simple `WHERE field = $param` parameter kind inference, row-preserving modifier facts, graph traversal reference diagnostics, and explicit partials for shape-changing/unsupported SELECT clauses. The next slice is to turn these first-pass facts into broader expression semantics and host integration:
 
-1. validate row-context field references in `WHERE` and modifier expressions against the resolved row table
-2. infer parameter facts from SELECT predicates and modifiers, starting with field/parameter comparisons
-3. validate graph-local `WHERE` and graph selections against relation-edge context
-4. expose richer diagnostics for graph traversal failures instead of only falling back to unresolved response shapes
+1. validate graph-local `WHERE` and graph selections against relation-edge context
+2. support richer parameter inference across more predicate operators and modifier expressions
+3. model nested/object field paths instead of treating dotted paths as flat schema keys
+4. start the Rust host adapter spike once the core response-shape/diagnostic facts are stable
 
 The SELECT plan is `docs/plans/2026-06-06-select-semantics.md`.
 
@@ -192,7 +192,7 @@ Acceptance gates:
 - no maintained code depends on `surrealguard-types` or `surrealguard_types`
 - existing SELECT IR extraction tests keep covering fields, `AS`, `OMIT`, `FETCH`, `ONLY`, and graph lookups
 - existing table-reference and projection diagnostics remain routed through SELECT IR
-- focused tests for row-preserving modifiers, `OMIT` shape subtraction, literal `LIMIT`, `FETCH` materialization metadata, relation metadata indexing, and simple graph traversal response-shape inference
+- focused tests for row-preserving modifiers, `OMIT` shape subtraction, literal `LIMIT`, `FETCH` materialization metadata, relation metadata indexing, simple graph traversal response-shape inference, row-context `WHERE` diagnostics, parameter kind inference from field comparisons, and graph traversal reference diagnostics
 - dynamic/shape-changing modifier result shapes remain partial/unknown until modeled
 - `cargo test --workspace -- --nocapture`
 - `cargo check --workspace`
