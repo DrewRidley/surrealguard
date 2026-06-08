@@ -354,9 +354,7 @@ fn graph_lookup_from_node(node: Node<'_>, parsed: &ParsedSource) -> GraphLookup 
             "LookupRight" => direction = GraphDirection::Out,
             "LookupLeft" => direction = GraphDirection::In,
             "LookupBoth" => direction = GraphDirection::Both,
-            _ if is_identifier_like(child) => {
-                table = Some(node_text(child, parsed.text()).trim().to_string())
-            }
+            _ if table.is_none() => table = first_identifier_like_text(child, parsed),
             _ => {}
         }
     }
@@ -366,6 +364,20 @@ fn graph_lookup_from_node(node: Node<'_>, parsed: &ParsedSource) -> GraphLookup 
         table,
         span: node_span(node, parsed.source_id().clone()),
     }
+}
+
+fn first_identifier_like_text(node: Node<'_>, parsed: &ParsedSource) -> Option<String> {
+    if is_identifier_like(node) {
+        return Some(node_text(node, parsed.text()).trim().to_string());
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(text) = first_identifier_like_text(child, parsed) {
+            return Some(text);
+        }
+    }
+    None
 }
 
 fn field_path_from_node(node: Node<'_>, parsed: &ParsedSource) -> FieldPath {
@@ -546,6 +558,16 @@ mod tests {
                 .and_then(|source| source.table.as_deref()),
             Some("person")
         );
+        assert_eq!(ir.graph_lookups.len(), 2);
+        assert_eq!(ir.graph_lookups[0].direction, GraphDirection::Out);
+        assert_eq!(ir.graph_lookups[0].table.as_deref(), Some("likes"));
+        assert_eq!(ir.graph_lookups[1].table.as_deref(), Some("post"));
+    }
+
+    #[test]
+    fn extracts_parenthesized_graph_lookup_selection_table() {
+        let ir = first_ir("SELECT * FROM person->(likes WHERE created_at > $since)->post;");
+
         assert_eq!(ir.graph_lookups.len(), 2);
         assert_eq!(ir.graph_lookups[0].direction, GraphDirection::Out);
         assert_eq!(ir.graph_lookups[0].table.as_deref(), Some("likes"));

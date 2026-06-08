@@ -1054,6 +1054,25 @@ mod tests {
     }
 
     #[test]
+    fn analyze_workspace_reports_unknown_parenthesized_graph_edge_table() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nSELECT * FROM person->(missing WHERE created_at > $since)->post;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::graph(3001))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(messages, vec!["unknown graph edge table `missing`"]);
+    }
+
+    #[test]
     fn analyze_workspace_reports_mismatched_graph_relation_endpoints() {
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(
