@@ -176,11 +176,11 @@ Completed:
 14. graph traversal diagnostics for unknown edge tables, unknown target tables, and relation endpoint mismatches, including parenthesized graph lookup selections
 15. schemaless and dynamic-source SELECTs report explicit unknown/partial response shapes instead of claiming precision
 16. graph-local `WHERE` validation for relation-edge context in parenthesized graph lookups and bracketed graph filters
+17. nested/object field-path response shapes for schema-backed wildcard and projected fields, including parent-object validation and nested `OMIT`/`FETCH` handling
 
 Remaining order:
 
-1. nested/object field-path modeling instead of flat dotted schema keys
-2. host adapter spike once the core response-shape/diagnostic facts are stable
+1. host adapter spike once the core response-shape/diagnostic facts are stable
 
 ## Slice 8: host adapter spike
 

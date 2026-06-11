@@ -841,6 +841,190 @@ mod tests {
     }
 
     #[test]
+    fn analyze_workspace_infers_wildcard_response_shape_with_nested_object_fields() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD profile.name ON person TYPE string;\nDEFINE FIELD profile.email ON person TYPE string;\nSELECT * FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
+            panic!(
+                "expected array response shape, got {:?}",
+                select.response_shape
+            );
+        };
+        let ResponseShape::Object {
+            fields,
+            open: false,
+        } = element.as_ref()
+        else {
+            panic!("expected object element, got {element:?}");
+        };
+        assert_eq!(
+            fields.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["profile"]
+        );
+        let ResponseShape::Object {
+            fields: profile_fields,
+            open: false,
+        } = &fields["profile"].shape
+        else {
+            panic!("expected profile object, got {:?}", fields["profile"].shape);
+        };
+        assert_eq!(
+            profile_fields
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["email", "name"]
+        );
+        assert_eq!(profile_fields["name"].kind, Some(Kind::String));
+        assert_eq!(profile_fields["email"].kind, Some(Kind::String));
+    }
+
+    #[test]
+    fn analyze_workspace_infers_projected_nested_field_response_shape() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD profile.name ON person TYPE string;\nSELECT profile.name FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
+            panic!(
+                "expected array response shape, got {:?}",
+                select.response_shape
+            );
+        };
+        let ResponseShape::Object {
+            fields,
+            open: false,
+        } = element.as_ref()
+        else {
+            panic!("expected object element, got {element:?}");
+        };
+        let ResponseShape::Object {
+            fields: profile_fields,
+            open: false,
+        } = &fields["profile"].shape
+        else {
+            panic!("expected profile object, got {:?}", fields["profile"].shape);
+        };
+        assert_eq!(
+            profile_fields
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["name"]
+        );
+        assert_eq!(profile_fields["name"].kind, Some(Kind::String));
+    }
+
+    #[test]
+    fn analyze_workspace_validates_and_shapes_parent_object_paths() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD profile.name ON person TYPE string;\nSELECT profile FROM person WHERE profile = $profile;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        assert!(output
+            .diagnostics
+            .iter()
+            .all(|finding| finding.code() != FindingCode::schema(1004)));
+        let params = &output.sources[&source].inferred_params;
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "profile");
+        assert_eq!(params[0].kind, None);
+
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
+            panic!(
+                "expected array response shape, got {:?}",
+                select.response_shape
+            );
+        };
+        let ResponseShape::Object {
+            fields,
+            open: false,
+        } = element.as_ref()
+        else {
+            panic!("expected object element, got {element:?}");
+        };
+        let ResponseShape::Object {
+            fields: profile_fields,
+            open: false,
+        } = &fields["profile"].shape
+        else {
+            panic!("expected profile object, got {:?}", fields["profile"].shape);
+        };
+        assert_eq!(profile_fields["name"].kind, Some(Kind::String));
+    }
+
+    #[test]
+    fn analyze_workspace_applies_omit_to_nested_response_shape() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD profile.name ON person TYPE string;\nDEFINE FIELD profile.secret ON person TYPE string;\nSELECT * OMIT profile.secret FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
+            panic!(
+                "expected array response shape, got {:?}",
+                select.response_shape
+            );
+        };
+        let ResponseShape::Object {
+            fields,
+            open: false,
+        } = element.as_ref()
+        else {
+            panic!("expected object element, got {element:?}");
+        };
+        let ResponseShape::Object {
+            fields: profile_fields,
+            open: false,
+        } = &fields["profile"].shape
+        else {
+            panic!("expected profile object, got {:?}", fields["profile"].shape);
+        };
+        assert_eq!(
+            profile_fields
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["name"]
+        );
+    }
+
+    #[test]
     fn analyze_workspace_infers_select_value_response_shape() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
@@ -957,6 +1141,40 @@ mod tests {
             panic!("expected object element, got {element:?}");
         };
         assert!(fields["best_friend"].materialized_by_fetch);
+    }
+
+    #[test]
+    fn analyze_workspace_marks_nested_fetched_fields_as_materialized() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD profile.best_friend ON person TYPE record;\nSELECT * FROM person FETCH profile.best_friend;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
+            panic!(
+                "expected array response shape, got {:?}",
+                select.response_shape
+            );
+        };
+        let ResponseShape::Object { fields, .. } = element.as_ref() else {
+            panic!("expected object element, got {element:?}");
+        };
+        let ResponseShape::Object {
+            fields: profile_fields,
+            ..
+        } = &fields["profile"].shape
+        else {
+            panic!("expected profile object, got {:?}", fields["profile"].shape);
+        };
+        assert!(profile_fields["best_friend"].materialized_by_fetch);
     }
 
     #[test]

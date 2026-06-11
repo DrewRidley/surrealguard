@@ -718,7 +718,7 @@ fn collect_param_kind_inferences_from_expression(
 ) {
     if node.kind() == "BinaryExpression" {
         if let Some((field, param_name)) = direct_field_param_comparison(node, parsed) {
-            if let Some(field_def) = table.fields.get(&field.text) {
+            if let Some(field_def) = exact_field_def_for_path(table, &field) {
                 if let Some(kind) = field_def.kind.clone() {
                     inferences.push(ParamKindInference {
                         source: parsed.source_id().clone(),
@@ -835,7 +835,7 @@ fn validate_field_path_on_table(
     table: &crate::schema::TableDef,
     diagnostics: &mut Vec<Finding>,
 ) {
-    if !table.fields.contains_key(&path.text) {
+    if !field_path_exists_on_table(table, &path) {
         diagnostics.push(Finding::new(
             path.span,
             FindingCode::schema(1004),
@@ -843,6 +843,20 @@ fn validate_field_path_on_table(
             format!("unknown field `{}` on table `{}`", path.text, table.name),
         ));
     }
+}
+
+fn exact_field_def_for_path<'a>(
+    table: &'a crate::schema::TableDef,
+    path: &FieldPath,
+) -> Option<&'a crate::schema::FieldDef> {
+    table.fields.get(&path.segments.join("."))
+}
+
+fn field_path_exists_on_table(table: &crate::schema::TableDef, path: &FieldPath) -> bool {
+    exact_field_def_for_path(table, path).is_some()
+        || table.fields.values().any(|field| {
+            field.path.len() > path.segments.len() && field.path.starts_with(&path.segments)
+        })
 }
 
 fn response_shape_for_select(ir: &SelectIr, schema: &SchemaIndex) -> ResponseShape {
@@ -990,10 +1004,36 @@ fn apply_omit_to_shape(shape: ResponseShape, omit: &[FieldPath]) -> ResponseShap
     };
 
     for omitted in omit {
-        fields.remove(&omitted.text);
+        remove_field_path_from_object_fields(&mut fields, &omitted.segments);
     }
 
     ResponseShape::Object { fields, open }
+}
+
+fn remove_field_path_from_object_fields(
+    fields: &mut BTreeMap<String, FieldShape>,
+    segments: &[String],
+) {
+    let Some((first, rest)) = segments.split_first() else {
+        return;
+    };
+
+    if rest.is_empty() {
+        fields.remove(first);
+        return;
+    }
+
+    let Some(field) = fields.get_mut(first) else {
+        return;
+    };
+    let ResponseShape::Object {
+        fields: child_fields,
+        ..
+    } = &mut field.shape
+    else {
+        return;
+    };
+    remove_field_path_from_object_fields(child_fields, rest);
 }
 
 fn apply_fetch_materialization(shape: ResponseShape, fetch: &[FieldPath]) -> ResponseShape {
@@ -1002,30 +1042,37 @@ fn apply_fetch_materialization(shape: ResponseShape, fetch: &[FieldPath]) -> Res
     };
 
     for fetched in fetch {
-        if let Some(field) = fields.get_mut(&fetched.text) {
-            field.materialized_by_fetch = true;
-        }
+        mark_field_path_fetched(&mut fields, &fetched.segments);
     }
 
     ResponseShape::Object { fields, open }
 }
 
-fn object_shape_for_all_fields(table: &crate::schema::TableDef) -> ResponseShape {
-    let fields = table
-        .fields
-        .iter()
-        .map(|(name, field)| {
-            (
-                name.clone(),
-                field_shape_from_schema_field(field, field.name_span.clone()),
-            )
-        })
-        .collect();
+fn mark_field_path_fetched(fields: &mut BTreeMap<String, FieldShape>, segments: &[String]) {
+    let Some((first, rest)) = segments.split_first() else {
+        return;
+    };
 
-    ResponseShape::Object {
-        fields,
-        open: false,
+    let Some(field) = fields.get_mut(first) else {
+        return;
+    };
+    if rest.is_empty() {
+        field.materialized_by_fetch = true;
+        return;
     }
+
+    let ResponseShape::Object {
+        fields: child_fields,
+        ..
+    } = &mut field.shape
+    else {
+        return;
+    };
+    mark_field_path_fetched(child_fields, rest);
+}
+
+fn object_shape_for_all_fields(table: &crate::schema::TableDef) -> ResponseShape {
+    object_shape_for_field_prefix(table, &[])
 }
 
 fn object_shape_for_projected_fields(
@@ -1038,7 +1085,7 @@ fn object_shape_for_projected_fields(
         let SelectProjection::Field { path, alias, .. } = projection else {
             continue;
         };
-        let Some(field) = table.fields.get(&path.text) else {
+        let Some(field_shape) = field_shape_for_path(table, path) else {
             fields.insert(
                 alias.clone().unwrap_or_else(|| path.text.clone()),
                 FieldShape {
@@ -1053,16 +1100,117 @@ fn object_shape_for_projected_fields(
             );
             continue;
         };
-        fields.insert(
-            alias.clone().unwrap_or_else(|| path.text.clone()),
-            field_shape_from_schema_field(field, path.span.clone()),
-        );
+
+        if let Some(alias) = alias {
+            fields.insert(alias.clone(), field_shape);
+        } else {
+            insert_field_shape_at_path(&mut fields, &path.segments, field_shape);
+        }
     }
 
     ResponseShape::Object {
         fields,
         open: false,
     }
+}
+
+fn field_shape_for_path(table: &crate::schema::TableDef, path: &FieldPath) -> Option<FieldShape> {
+    let has_descendants = table.fields.values().any(|field| {
+        field.path.len() > path.segments.len() && field.path.starts_with(&path.segments)
+    });
+
+    if has_descendants {
+        return Some(FieldShape {
+            shape: object_shape_for_field_prefix(table, &path.segments),
+            kind: exact_field_def_for_path(table, path).and_then(|field| field.kind.clone()),
+            span: path.span.clone(),
+            materialized_by_fetch: false,
+            partial: Vec::new(),
+        });
+    }
+
+    exact_field_def_for_path(table, path)
+        .map(|field| field_shape_from_schema_field(field, path.span.clone()))
+}
+
+fn object_shape_for_field_prefix(
+    table: &crate::schema::TableDef,
+    prefix: &[String],
+) -> ResponseShape {
+    let mut fields = BTreeMap::new();
+
+    for field in table.fields.values() {
+        if field.path.len() <= prefix.len() || !field.path.starts_with(prefix) {
+            continue;
+        }
+
+        let segment = field.path[prefix.len()].clone();
+        if fields.contains_key(&segment) {
+            continue;
+        }
+
+        let child_prefix: Vec<_> = prefix
+            .iter()
+            .cloned()
+            .chain(std::iter::once(segment.clone()))
+            .collect();
+        let has_descendants = table.fields.values().any(|candidate| {
+            candidate.path.len() > child_prefix.len() && candidate.path.starts_with(&child_prefix)
+        });
+
+        let field_shape = if has_descendants {
+            FieldShape {
+                shape: object_shape_for_field_prefix(table, &child_prefix),
+                kind: None,
+                span: field.name_span.clone(),
+                materialized_by_fetch: false,
+                partial: Vec::new(),
+            }
+        } else {
+            field_shape_from_schema_field(field, field.name_span.clone())
+        };
+        fields.insert(segment, field_shape);
+    }
+
+    ResponseShape::Object {
+        fields,
+        open: false,
+    }
+}
+
+fn insert_field_shape_at_path(
+    fields: &mut BTreeMap<String, FieldShape>,
+    segments: &[String],
+    field_shape: FieldShape,
+) {
+    let Some((first, rest)) = segments.split_first() else {
+        return;
+    };
+
+    if rest.is_empty() {
+        fields.insert(first.clone(), field_shape);
+        return;
+    }
+
+    let parent = fields.entry(first.clone()).or_insert_with(|| FieldShape {
+        shape: ResponseShape::Object {
+            fields: BTreeMap::new(),
+            open: false,
+        },
+        kind: None,
+        span: field_shape.span.clone(),
+        materialized_by_fetch: false,
+        partial: Vec::new(),
+    });
+
+    let ResponseShape::Object {
+        fields: child_fields,
+        ..
+    } = &mut parent.shape
+    else {
+        return;
+    };
+    insert_field_shape_at_path(child_fields, rest, field_shape);
 }
 
 fn value_projection_shape(ir: &SelectIr, table: &crate::schema::TableDef) -> Option<ResponseShape> {
@@ -1072,7 +1220,7 @@ fn value_projection_shape(ir: &SelectIr, table: &crate::schema::TableDef) -> Opt
     else {
         return None;
     };
-    let field = table.fields.get(&path.text)?;
+    let field = exact_field_def_for_path(table, path)?;
     Some(match field.kind.clone() {
         Some(kind) => ResponseShape::Value { kind },
         None => ResponseShape::Unknown {
