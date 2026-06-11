@@ -114,6 +114,28 @@ pub fn validate_select_projection_fields(
     diagnostics
 }
 
+pub fn validate_mutation_fields(
+    parsed_sources: &[ParsedSource],
+    schema: &SchemaIndex,
+) -> Vec<Finding> {
+    let mut diagnostics = Vec::new();
+
+    for parsed in parsed_sources {
+        if !parsed.syntax_diagnostics().is_empty() {
+            continue;
+        }
+
+        collect_mutation_field_diagnostics(
+            parsed.tree().root_node(),
+            parsed,
+            schema,
+            &mut diagnostics,
+        );
+    }
+
+    diagnostics
+}
+
 pub fn infer_select_param_kinds(
     parsed_sources: &[ParsedSource],
     schema: &SchemaIndex,
@@ -490,6 +512,73 @@ fn row_context_field_paths_from_clause(clause: Node<'_>, parsed: &ParsedSource) 
         collect_row_context_field_paths(child, parsed, &mut paths);
     }
     paths
+}
+
+fn collect_mutation_field_diagnostics(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    diagnostics: &mut Vec<Finding>,
+) {
+    validate_mutation_fields_for_statement(node, parsed, schema, diagnostics);
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_mutation_field_diagnostics(child, parsed, schema, diagnostics);
+    }
+}
+
+fn validate_mutation_fields_for_statement(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    diagnostics: &mut Vec<Finding>,
+) {
+    let references = match node.kind() {
+        "CreateStatement" => leading_table_references(node, parsed.text(), "CREATE"),
+        "UpdateStatement" => leading_table_references(node, parsed.text(), "UPDATE"),
+        "UpsertStatement" => leading_table_references(node, parsed.text(), "UPSERT"),
+        _ => return,
+    };
+    let Some(table_ref) = references.first() else {
+        return;
+    };
+    let Some(table) = schema.tables.get(table_ref.name) else {
+        return;
+    };
+    if table.fields.is_empty() {
+        return;
+    }
+
+    validate_assignment_fields_on_table(node, parsed, table, diagnostics);
+}
+
+fn validate_assignment_fields_on_table(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if node.kind() == "FieldAssignment" {
+        if let Some(path) = assignment_field_path(node, parsed) {
+            validate_field_path_on_table(path, table, diagnostics);
+        }
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        validate_assignment_fields_on_table(child, parsed, table, diagnostics);
+    }
+}
+
+fn assignment_field_path(assignment: Node<'_>, parsed: &ParsedSource) -> Option<FieldPath> {
+    let mut cursor = assignment.walk();
+    let path = assignment
+        .children(&mut cursor)
+        .find(|child| is_row_context_field_path_node(*child))
+        .map(|child| field_path_from_node(child, parsed));
+    path
 }
 
 fn validate_graph_local_where_fields_for_select_statement(

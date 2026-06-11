@@ -132,6 +132,11 @@ Diagnostics:
 - reuse `E1004` for unknown fields
 - keep dynamic object spreads/variables partial rather than erroneous
 
+Current implementation:
+
+- validates statically named `FieldAssignment` nodes in `CREATE`, `UPDATE`, and `UPSERT` `SET`/`UNSET` clauses
+- leaves object-shaped data clauses (`CONTENT`, `MERGE`, `REPLACE`, `INSERT`, and `RELATE` data) to a follow-up slice
+
 ### Slice 4: mutation `WHERE` parameter-kind and field validation
 
 Objective: reuse SELECT predicate analysis for row-context predicates in `UPDATE`, `UPSERT`, and `DELETE`.

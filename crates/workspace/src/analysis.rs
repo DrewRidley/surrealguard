@@ -13,7 +13,8 @@ use crate::config::WorkspaceConfig;
 use crate::schema::{extract_schema, SchemaIndex};
 use crate::semantic::{
     analyze_parsed_source, infer_select_param_kinds, infer_select_response_shapes,
-    validate_select_graph_references, validate_select_projection_fields, validate_table_references,
+    validate_mutation_fields, validate_select_graph_references, validate_select_projection_fields,
+    validate_table_references,
 };
 use crate::source_registry::SourceRegistry;
 
@@ -182,6 +183,15 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
         }
     }
     diagnostics.extend(select_projection_diagnostics);
+
+    let mutation_field_diagnostics =
+        validate_mutation_fields(&parsed_sources, &schema_extraction.schema);
+    for diagnostic in &mutation_field_diagnostics {
+        if let Some(source_output) = sources.get_mut(diagnostic.span().source()) {
+            source_output.diagnostics.push(diagnostic.clone());
+        }
+    }
+    diagnostics.extend(mutation_field_diagnostics);
 
     let select_param_kind_inferences =
         infer_select_param_kinds(&parsed_sources, &schema_extraction.schema);
@@ -837,6 +847,33 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert_eq!(messages, vec!["unknown field `missing` on table `person`"]);
+    }
+
+    #[test]
+    fn analyze_workspace_reports_unknown_mutation_assignment_fields() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nCREATE person SET nickname = 'Ada', name = 'Ada';\nUPDATE person SET handle = 'ada', name = 'Ada';\nUPDATE person UNSET stale = true, name = true;\nUPSERT person SET alias = 'ada', name = 'Ada';".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            messages,
+            vec![
+                "unknown field `nickname` on table `person`",
+                "unknown field `handle` on table `person`",
+                "unknown field `stale` on table `person`",
+                "unknown field `alias` on table `person`",
+            ]
+        );
     }
 
     #[test]
