@@ -276,6 +276,87 @@ mod tests {
     }
 
     #[test]
+    fn analyze_query_emits_statement_analysis_for_all_parseable_statement_kinds() {
+        let mut workspace = Workspace::default();
+        let query = r#"
+BEGIN;
+CANCEL;
+COMMIT;
+INFO FOR DB;
+KILL 'abc';
+LIVE SELECT * FROM person;
+SHOW CHANGES FOR TABLE person;
+SLEEP 1s;
+USE NS app DB app;
+OPTION IMPORT;
+BREAK;
+CONTINUE;
+FOR $item IN [1] { RETURN $item; };
+THROW 'bad';
+IF true { RETURN 1; };
+LET $name = 'Ada';
+DELETE person;
+CREATE person;
+SELECT * FROM person;
+RELATE person:one->likes->post:one;
+UPDATE person SET name = 'Ada';
+REMOVE TABLE person;
+UPSERT person:one SET name = 'Ada';
+RETURN 1;
+ALTER TABLE person SCHEMAFULL;
+DEFINE TABLE person;
+REBUILD INDEX by_name ON TABLE person;
+INSERT INTO person { name: 'Ada' };
+"#;
+
+        let output = analyze_query(&mut workspace, query);
+
+        assert!(
+            output.diagnostics.is_empty(),
+            "expected all statement fixtures to parse cleanly, got {:?}",
+            output.diagnostics
+        );
+        let kinds: Vec<_> = output
+            .statements
+            .iter()
+            .map(|statement| statement.kind.as_str())
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                "begin",
+                "cancel",
+                "commit",
+                "info_for",
+                "kill",
+                "live_select",
+                "show",
+                "sleep",
+                "use",
+                "option",
+                "break",
+                "continue",
+                "for",
+                "throw",
+                "if_else",
+                "let",
+                "delete",
+                "create",
+                "select",
+                "relate",
+                "update",
+                "remove",
+                "upsert",
+                "return",
+                "alter",
+                "define_table",
+                "rebuild",
+                "insert",
+            ]
+        );
+    }
+
+    #[test]
     fn analyze_query_surfaces_syntax_diagnostics_with_source_spans() {
         let mut workspace = Workspace::default();
 
@@ -522,6 +603,35 @@ mod tests {
                 "unknown table `ghost` in CREATE statement",
                 "unknown table `phantom` in UPDATE statement",
                 "unknown table `missing` in DELETE statement",
+            ]
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_validates_table_references_for_non_select_statement_forms() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "UPSERT ghost SET seen = true;\nINSERT INTO phantom { seen: true };\nLIVE SELECT * FROM missing;\nALTER TABLE shadow SCHEMAFULL;\nREMOVE TABLE stale;\nREBUILD INDEX by_name ON TABLE absent;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let unknown_tables: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code() == FindingCode::schema(1003))
+            .map(|diagnostic| diagnostic.message().to_string())
+            .collect();
+
+        assert_eq!(
+            unknown_tables,
+            vec![
+                "unknown table `ghost` in UPSERT statement",
+                "unknown table `phantom` in INSERT statement",
+                "unknown table `missing` in LIVE SELECT statement",
+                "unknown table `shadow` in ALTER statement",
+                "unknown table `stale` in REMOVE statement",
+                "unknown table `absent` in REBUILD statement",
             ]
         );
     }

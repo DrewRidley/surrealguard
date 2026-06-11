@@ -180,9 +180,27 @@ Completed:
 
 Remaining order:
 
-1. host adapter spike once the core response-shape/diagnostic facts are stable
+1. broaden core `.surql` statement coverage before host adapters, tracked in `docs/plans/2026-06-11-surql-statement-coverage.md`
+2. host adapter spike once the core response-shape/diagnostic facts are stable
 
-## Slice 8: host adapter spike
+## Slice 8: core SurQL statement coverage
+
+Objective: make plain `.surql` analysis comprehensive enough that host adapters consume stable engine facts instead of inventing statement-specific behavior.
+
+Completed:
+
+1. stable `StatementAnalysis.kind` coverage for every parseable tree-sitter statement node currently exposed by the grammar
+2. unknown static table diagnostics for additional non-SELECT statements: `UPSERT`, `INSERT INTO`, `LIVE SELECT`, `ALTER TABLE`, `REMOVE TABLE`, and `REBUILD INDEX ... ON TABLE`
+
+Next:
+
+1. extend table-reference diagnostics to `SHOW CHANGES FOR TABLE` and `INFO FOR TABLE/TB` forms
+2. validate mutation data-clause field names for `CREATE`, `INSERT`, `UPDATE`, `UPSERT`, and `RELATE`
+3. reuse row-context predicate field validation and parameter-kind inference for `UPDATE`, `UPSERT`, and `DELETE`
+4. validate `RELATE` source/edge/target endpoint compatibility from relation metadata
+5. add conservative non-SELECT response shapes only after behavior is verified
+
+## Slice 9: host adapter spike
 
 Objective: prove embedded-query analysis with one host language.
 

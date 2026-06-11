@@ -286,6 +286,22 @@ fn collect_table_reference_diagnostics(
             "CreateStatement" => leading_table_references(node, parsed.text(), "CREATE"),
             "UpdateStatement" => leading_table_references(node, parsed.text(), "UPDATE"),
             "DeleteStatement" => leading_table_references(node, parsed.text(), "DELETE"),
+            "UpsertStatement" => leading_table_references(node, parsed.text(), "UPSERT"),
+            "InsertStatement" => {
+                table_references_after_keyword(node, parsed.text(), "INTO", "INSERT")
+            }
+            "LiveSelectStatement" => {
+                table_references_after_keyword(node, parsed.text(), "FROM", "LIVE SELECT")
+            }
+            "AlterStatement" => {
+                table_references_after_keyword(node, parsed.text(), "TABLE", "ALTER")
+            }
+            "RemoveStatement" => {
+                table_references_after_keyword(node, parsed.text(), "TABLE", "REMOVE")
+            }
+            "RebuildStatement" => {
+                table_references_after_keyword(node, parsed.text(), "TABLE", "REBUILD")
+            }
             _ => Vec::new(),
         };
 
@@ -1301,16 +1317,83 @@ fn leading_table_references<'tree>(
     references
 }
 
+fn table_references_after_keyword<'tree>(
+    node: Node<'tree>,
+    source: &'tree str,
+    keyword: &str,
+    statement: &'static str,
+) -> Vec<TableReference<'tree>> {
+    fn visit<'tree>(
+        node: Node<'tree>,
+        source: &'tree str,
+        keyword: &str,
+        statement: &'static str,
+        saw_keyword: &mut bool,
+        references: &mut Vec<TableReference<'tree>>,
+    ) {
+        let text = node_text(node, source);
+        if node.kind() == "Keyword" {
+            *saw_keyword = text.eq_ignore_ascii_case(keyword);
+        } else if *saw_keyword && is_identifier_like(node) {
+            references.push(TableReference {
+                name: table_name_from_node_text(text),
+                node,
+                statement,
+            });
+            *saw_keyword = false;
+        } else if *saw_keyword && (!node.is_named() || is_data_or_modifier_clause(node)) {
+            *saw_keyword = false;
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            visit(child, source, keyword, statement, saw_keyword, references);
+        }
+    }
+
+    let mut saw_keyword = false;
+    let mut references = Vec::new();
+    visit(
+        node,
+        source,
+        keyword,
+        statement,
+        &mut saw_keyword,
+        &mut references,
+    );
+    references
+}
+
 fn statement_kind(node: Node<'_>, source: &str) -> Option<String> {
     match node.kind() {
-        "DefineStatement" => define_statement_kind(node, source),
-        "SelectStatement" => Some("select".into()),
+        "AlterStatement" => Some("alter".into()),
+        "BeginStatement" => Some("begin".into()),
+        "BreakStatement" => Some("break".into()),
+        "CancelStatement" => Some("cancel".into()),
+        "CommitStatement" => Some("commit".into()),
+        "ContinueStatement" => Some("continue".into()),
         "CreateStatement" => Some("create".into()),
-        "UpdateStatement" => Some("update".into()),
+        "DefineStatement" => define_statement_kind(node, source),
         "DeleteStatement" => Some("delete".into()),
+        "ForStatement" => Some("for".into()),
+        "IfElseStatement" => Some("if_else".into()),
+        "InfoForStatement" => Some("info_for".into()),
         "InsertStatement" => Some("insert".into()),
-        "RelateStatement" => Some("relate".into()),
+        "KillStatement" => Some("kill".into()),
         "LetStatement" => Some("let".into()),
+        "LiveSelectStatement" => Some("live_select".into()),
+        "OptionStatement" => Some("option".into()),
+        "RebuildStatement" => Some("rebuild".into()),
+        "RelateStatement" => Some("relate".into()),
+        "RemoveStatement" => Some("remove".into()),
+        "ReturnStatement" => Some("return".into()),
+        "SelectStatement" => Some("select".into()),
+        "ShowStatement" => Some("show".into()),
+        "SleepStatement" => Some("sleep".into()),
+        "ThrowStatement" => Some("throw".into()),
+        "UpdateStatement" => Some("update".into()),
+        "UpsertStatement" => Some("upsert".into()),
+        "UseStatement" => Some("use".into()),
         _ => None,
     }
 }
