@@ -302,6 +302,18 @@ fn collect_table_reference_diagnostics(
             "RebuildStatement" => {
                 table_references_after_keyword(node, parsed.text(), "TABLE", "REBUILD")
             }
+            "ShowStatement" => table_references_after_keyword(node, parsed.text(), "TABLE", "SHOW"),
+            "InfoForStatement" => {
+                let mut references =
+                    table_references_after_keyword(node, parsed.text(), "TABLE", "INFO FOR");
+                references.extend(table_references_after_keyword(
+                    node,
+                    parsed.text(),
+                    "TB",
+                    "INFO FOR",
+                ));
+                references
+            }
             _ => Vec::new(),
         };
 

@@ -190,15 +190,14 @@ Objective: make plain `.surql` analysis comprehensive enough that host adapters 
 Completed:
 
 1. stable `StatementAnalysis.kind` coverage for every parseable tree-sitter statement node currently exposed by the grammar
-2. unknown static table diagnostics for additional non-SELECT statements: `UPSERT`, `INSERT INTO`, `LIVE SELECT`, `ALTER TABLE`, `REMOVE TABLE`, and `REBUILD INDEX ... ON TABLE`
+2. unknown static table diagnostics for additional non-SELECT statements: `UPSERT`, `INSERT INTO`, `LIVE SELECT`, `ALTER TABLE`, `REMOVE TABLE`, `REBUILD INDEX ... ON TABLE`, `SHOW CHANGES FOR TABLE`, and `INFO FOR TABLE/TB`
 
 Next:
 
-1. extend table-reference diagnostics to `SHOW CHANGES FOR TABLE` and `INFO FOR TABLE/TB` forms
-2. validate mutation data-clause field names for `CREATE`, `INSERT`, `UPDATE`, `UPSERT`, and `RELATE`
-3. reuse row-context predicate field validation and parameter-kind inference for `UPDATE`, `UPSERT`, and `DELETE`
-4. validate `RELATE` source/edge/target endpoint compatibility from relation metadata
-5. add conservative non-SELECT response shapes only after behavior is verified
+1. validate mutation data-clause field names for `CREATE`, `INSERT`, `UPDATE`, `UPSERT`, and `RELATE`
+2. reuse row-context predicate field validation and parameter-kind inference for `UPDATE`, `UPSERT`, and `DELETE`
+3. validate `RELATE` source/edge/target endpoint compatibility from relation metadata
+4. add conservative non-SELECT response shapes only after behavior is verified
 
 ## Slice 9: host adapter spike
 

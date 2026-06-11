@@ -104,7 +104,7 @@ Objective: catch obvious unknown-table misuse in plain `.surql` before host adap
 
 Tests:
 
-- unknown table diagnostics for `UPSERT`, `INSERT INTO`, `LIVE SELECT`, `ALTER TABLE`, `REMOVE TABLE`, `REBUILD INDEX ... ON TABLE`, and `SHOW CHANGES FOR TABLE`
+- unknown table diagnostics for `UPSERT`, `INSERT INTO`, `LIVE SELECT`, `ALTER TABLE`, `REMOVE TABLE`, `REBUILD INDEX ... ON TABLE`, `SHOW CHANGES FOR TABLE`, and `INFO FOR TABLE/TB`
 - known table fixtures for the same statements produce no `E1003`
 - spans point at the offending table identifier
 

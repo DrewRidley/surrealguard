@@ -612,7 +612,7 @@ INSERT INTO person { name: 'Ada' };
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(
             "query".into(),
-            "UPSERT ghost SET seen = true;\nINSERT INTO phantom { seen: true };\nLIVE SELECT * FROM missing;\nALTER TABLE shadow SCHEMAFULL;\nREMOVE TABLE stale;\nREBUILD INDEX by_name ON TABLE absent;".into(),
+            "UPSERT ghost SET seen = true;\nINSERT INTO phantom { seen: true };\nLIVE SELECT * FROM missing;\nALTER TABLE shadow SCHEMAFULL;\nREMOVE TABLE stale;\nREBUILD INDEX by_name ON TABLE absent;\nSHOW CHANGES FOR TABLE vanished;\nINFO FOR TABLE hidden;\nINFO FOR TB obscured;".into(),
         );
 
         let output = analyze_workspace(&workspace);
@@ -632,6 +632,9 @@ INSERT INTO person { name: 'Ada' };
                 "unknown table `shadow` in ALTER statement",
                 "unknown table `stale` in REMOVE statement",
                 "unknown table `absent` in REBUILD statement",
+                "unknown table `vanished` in SHOW statement",
+                "unknown table `hidden` in INFO FOR statement",
+                "unknown table `obscured` in INFO FOR statement",
             ]
         );
     }
