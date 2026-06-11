@@ -534,16 +534,26 @@ fn validate_mutation_fields_for_statement(
     schema: &SchemaIndex,
     diagnostics: &mut Vec<Finding>,
 ) {
-    let references = match node.kind() {
-        "CreateStatement" => leading_table_references(node, parsed.text(), "CREATE"),
-        "UpdateStatement" => leading_table_references(node, parsed.text(), "UPDATE"),
-        "UpsertStatement" => leading_table_references(node, parsed.text(), "UPSERT"),
+    let table_name = match node.kind() {
+        "CreateStatement" => leading_table_references(node, parsed.text(), "CREATE")
+            .first()
+            .map(|reference| reference.name.to_string()),
+        "UpdateStatement" => leading_table_references(node, parsed.text(), "UPDATE")
+            .first()
+            .map(|reference| reference.name.to_string()),
+        "UpsertStatement" => leading_table_references(node, parsed.text(), "UPSERT")
+            .first()
+            .map(|reference| reference.name.to_string()),
+        "InsertStatement" => table_references_after_keyword(node, parsed.text(), "INTO", "INSERT")
+            .first()
+            .map(|reference| reference.name.to_string()),
+        "RelateStatement" => relate_edge_table_name(node, parsed),
         _ => return,
     };
-    let Some(table_ref) = references.first() else {
+    let Some(table_name) = table_name else {
         return;
     };
-    let Some(table) = schema.tables.get(table_ref.name) else {
+    let Some(table) = schema.tables.get(&table_name) else {
         return;
     };
     if table.fields.is_empty() {
@@ -551,6 +561,8 @@ fn validate_mutation_fields_for_statement(
     }
 
     validate_assignment_fields_on_table(node, parsed, table, diagnostics);
+    validate_object_fields_on_table(node, parsed, table, diagnostics);
+    validate_insert_column_fields_on_table(node, parsed, table, diagnostics);
 }
 
 fn validate_assignment_fields_on_table(
@@ -579,6 +591,162 @@ fn assignment_field_path(assignment: Node<'_>, parsed: &ParsedSource) -> Option<
         .find(|child| is_row_context_field_path_node(*child))
         .map(|child| field_path_from_node(child, parsed));
     path
+}
+
+fn validate_object_fields_on_table(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    diagnostics: &mut Vec<Finding>,
+) {
+    match node.kind() {
+        "ContentClause" | "MergeClause" | "ReplaceClause" | "BulkInsert" => {
+            validate_object_descendants_on_table(node, parsed, table, diagnostics);
+            return;
+        }
+        "InsertStatement" => {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "Object" || child.kind() == "BulkInsert" {
+                    validate_object_descendants_on_table(child, parsed, table, diagnostics);
+                }
+            }
+        }
+        _ => {}
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        validate_object_fields_on_table(child, parsed, table, diagnostics);
+    }
+}
+
+fn validate_object_descendants_on_table(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if node.kind() == "Object" {
+        validate_object_properties_on_table(node, parsed, table, Vec::new(), diagnostics);
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        validate_object_descendants_on_table(child, parsed, table, diagnostics);
+    }
+}
+
+fn validate_object_properties_on_table(
+    object: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    prefix: Vec<String>,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if object.kind() == "ObjectProperty" {
+        let Some(key) = object_property_key(object, parsed) else {
+            return;
+        };
+        let segments: Vec<_> = prefix
+            .iter()
+            .cloned()
+            .chain(std::iter::once(key.name.clone()))
+            .collect();
+        let path = FieldPath {
+            text: segments.join("."),
+            segments: segments.clone(),
+            span: key.span,
+        };
+        validate_field_path_on_table(path, table, diagnostics);
+
+        if let Some(value_object) = object_property_value_object(object) {
+            validate_object_properties_on_table(value_object, parsed, table, segments, diagnostics);
+        }
+        return;
+    }
+
+    let mut cursor = object.walk();
+    for child in object.children(&mut cursor) {
+        if child.kind() != "Object" {
+            validate_object_properties_on_table(child, parsed, table, prefix.clone(), diagnostics);
+        }
+    }
+}
+
+struct ObjectKey {
+    name: String,
+    span: SourceSpan,
+}
+
+fn object_property_key(property: Node<'_>, parsed: &ParsedSource) -> Option<ObjectKey> {
+    let mut cursor = property.walk();
+    let key = property
+        .children(&mut cursor)
+        .find(|child| child.kind() == "ObjectKey")?;
+    Some(ObjectKey {
+        name: normalize_object_key(node_text(key, parsed.text())),
+        span: node_span(key, parsed.source_id().clone()),
+    })
+}
+
+fn object_property_value_object(property: Node<'_>) -> Option<Node<'_>> {
+    let mut cursor = property.walk();
+    let object = property
+        .children(&mut cursor)
+        .find(|child| child.kind() == "Object");
+    object
+}
+
+fn validate_insert_column_fields_on_table(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if node.kind() != "InsertStatement" {
+        return;
+    }
+    let Some(table_reference) =
+        table_references_after_keyword(node, parsed.text(), "INTO", "INSERT")
+            .into_iter()
+            .next()
+    else {
+        return;
+    };
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "Ident" && child.start_byte() > table_reference.node.end_byte() {
+            validate_field_path_on_table(field_path_from_node(child, parsed), table, diagnostics);
+        }
+    }
+}
+
+fn relate_edge_table_name(node: Node<'_>, parsed: &ParsedSource) -> Option<String> {
+    let mut saw_first_lookup = false;
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if matches!(child.kind(), "LookupRight" | "LookupLeft") {
+            saw_first_lookup = true;
+            continue;
+        }
+        if saw_first_lookup && is_identifier_like(child) {
+            return Some(table_name_from_node_text(node_text(child, parsed.text())).to_string());
+        }
+    }
+    None
+}
+
+fn normalize_object_key(text: &str) -> String {
+    text.trim()
+        .trim_matches('`')
+        .trim_matches('⟨')
+        .trim_matches('⟩')
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_string()
 }
 
 fn validate_graph_local_where_fields_for_select_statement(

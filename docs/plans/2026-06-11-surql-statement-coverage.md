@@ -135,7 +135,9 @@ Diagnostics:
 Current implementation:
 
 - validates statically named `FieldAssignment` nodes in `CREATE`, `UPDATE`, and `UPSERT` `SET`/`UNSET` clauses
-- leaves object-shaped data clauses (`CONTENT`, `MERGE`, `REPLACE`, `INSERT`, and `RELATE` data) to a follow-up slice
+- validates object keys in `CREATE CONTENT`, `INSERT INTO table { ... }`, bulk insert objects, `INSERT INTO table (field, ...) VALUES (...)`, `UPDATE`/`UPSERT` `MERGE`/`REPLACE`, and `RELATE ... CONTENT` against the relation edge table
+- validates nested object keys as dotted field paths, using prefix existence for parent objects
+- leaves dynamic object values/spreads partial rather than erroneous
 
 ### Slice 4: mutation `WHERE` parameter-kind and field validation
 

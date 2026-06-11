@@ -191,14 +191,13 @@ Completed:
 
 1. stable `StatementAnalysis.kind` coverage for every parseable tree-sitter statement node currently exposed by the grammar
 2. unknown static table diagnostics for additional non-SELECT statements: `UPSERT`, `INSERT INTO`, `LIVE SELECT`, `ALTER TABLE`, `REMOVE TABLE`, `REBUILD INDEX ... ON TABLE`, `SHOW CHANGES FOR TABLE`, and `INFO FOR TABLE/TB`
-3. `CREATE`, `UPDATE`, and `UPSERT` `SET`/`UNSET` assignment field diagnostics for statically named fields
+3. schema-backed mutation field diagnostics for statically named assignment fields and object keys in `CREATE`, `INSERT`, `UPDATE`, `UPSERT`, and `RELATE` data clauses
 
 Next:
 
-1. validate object-shaped mutation data-clause field names for `CREATE CONTENT`, `INSERT INTO`, `UPDATE`/`UPSERT` `MERGE`/`REPLACE`, and `RELATE`
-2. reuse row-context predicate field validation and parameter-kind inference for `UPDATE`, `UPSERT`, and `DELETE`
-3. validate `RELATE` source/edge/target endpoint compatibility from relation metadata
-4. add conservative non-SELECT response shapes only after behavior is verified
+1. reuse row-context predicate field validation and parameter-kind inference for `UPDATE`, `UPSERT`, and `DELETE`
+2. validate `RELATE` source/edge/target endpoint compatibility from relation metadata
+3. add conservative non-SELECT response shapes only after behavior is verified
 
 ## Slice 9: host adapter spike
 

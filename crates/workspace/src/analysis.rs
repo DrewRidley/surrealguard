@@ -877,6 +877,36 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_reports_unknown_object_mutation_fields() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD profile.email ON person TYPE string;\nDEFINE TABLE post;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nDEFINE FIELD created_at ON likes TYPE datetime;\nCREATE person CONTENT { nickname: 'Ada', profile: { phone: '555' }, name: 'Ada' };\nINSERT INTO person { handle: 'ada', name: 'Ada' };\nINSERT INTO person (alias, name) VALUES ('ada', 'Ada');\nUPDATE person MERGE { stale: true, name: 'Ada' };\nUPSERT person REPLACE { missing: true, name: 'Ada' };\nRELATE person:one->likes->post:one CONTENT { missing_since: time::now(), created_at: time::now() };".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            messages,
+            vec![
+                "unknown field `nickname` on table `person`",
+                "unknown field `profile.phone` on table `person`",
+                "unknown field `handle` on table `person`",
+                "unknown field `alias` on table `person`",
+                "unknown field `stale` on table `person`",
+                "unknown field `missing` on table `person`",
+                "unknown field `missing_since` on table `likes`",
+            ]
+        );
+    }
+
+    #[test]
     fn analyze_workspace_validates_aliased_select_projection_source_field() {
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(
