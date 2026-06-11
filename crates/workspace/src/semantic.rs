@@ -614,6 +614,10 @@ fn infer_param_kinds_for_select_statement(
     inferences: &mut Vec<ParamKindInference>,
 ) {
     let ir = select_ir_from_statement(node, parsed);
+    collect_graph_local_param_kind_inferences_for_select_statement(
+        node, parsed, schema, inferences,
+    );
+
     let Some(table_name) = resolved_select_table_name(&ir, schema) else {
         return;
     };
@@ -626,6 +630,83 @@ fn infer_param_kinds_for_select_statement(
         if child.kind() == "WhereClause" {
             collect_param_kind_inferences_from_expression(child, parsed, table, inferences);
         }
+    }
+}
+
+fn collect_graph_local_param_kind_inferences_for_select_statement(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    inferences: &mut Vec<ParamKindInference>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_graph_local_param_kind_inferences_in_node(child, parsed, schema, inferences);
+    }
+}
+
+fn collect_graph_local_param_kind_inferences_in_node(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    inferences: &mut Vec<ParamKindInference>,
+) {
+    if node.kind() == "Path" {
+        collect_graph_local_param_kind_inferences_in_path(node, parsed, schema, inferences);
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_graph_local_param_kind_inferences_in_node(child, parsed, schema, inferences);
+    }
+}
+
+fn collect_graph_local_param_kind_inferences_in_path(
+    path: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    inferences: &mut Vec<ParamKindInference>,
+) {
+    let mut cursor = path.walk();
+    let children: Vec<_> = path.children(&mut cursor).collect();
+
+    for (index, child) in children.iter().copied().enumerate() {
+        if child.kind() != "Lookup" {
+            continue;
+        }
+        let Some(edge_table_name) = graph_lookup_table_name_from_node(child, parsed) else {
+            continue;
+        };
+        let Some(edge_table) = schema.tables.get(&edge_table_name) else {
+            continue;
+        };
+
+        collect_param_kind_inferences_from_where_descendants(child, parsed, edge_table, inferences);
+        if let Some(next) = children.get(index + 1).copied() {
+            if next.kind() == "Filter" {
+                collect_param_kind_inferences_from_where_descendants(
+                    next, parsed, edge_table, inferences,
+                );
+            }
+        }
+    }
+}
+
+fn collect_param_kind_inferences_from_where_descendants(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    inferences: &mut Vec<ParamKindInference>,
+) {
+    if node.kind() == "WhereClause" {
+        collect_param_kind_inferences_from_expression(node, parsed, table, inferences);
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_param_kind_inferences_from_where_descendants(child, parsed, table, inferences);
     }
 }
 
@@ -659,27 +740,94 @@ fn direct_field_param_comparison(
     node: Node<'_>,
     parsed: &ParsedSource,
 ) -> Option<(FieldPath, String)> {
-    let mut field = None;
-    let mut param = None;
-    let mut has_equality = false;
     let mut cursor = node.walk();
+    let children: Vec<_> = node
+        .children(&mut cursor)
+        .filter(|child| child.is_named())
+        .collect();
 
-    for child in node.children(&mut cursor) {
-        match child.kind() {
-            "Operator" => {
-                if node_text(child, parsed.text()).trim() == "=" {
-                    has_equality = true;
-                }
-            }
-            "VariableName" => param = Some(param_name(node_text(child, parsed.text()))),
-            _ if is_row_context_field_path_node(child) => {
-                field = Some(field_path_from_node(child, parsed));
+    for (operator_index, child) in children.iter().copied().enumerate() {
+        if child.kind() != "Operator"
+            || !is_kind_inference_operator(node_text(child, parsed.text()).trim())
+        {
+            continue;
+        }
+
+        let left =
+            nearest_inference_operand(&children[..operator_index], parsed, OperandSide::Left)?;
+        let right =
+            nearest_inference_operand(&children[operator_index + 1..], parsed, OperandSide::Right)?;
+        match (left, right) {
+            (InferenceOperand::Field(field), InferenceOperand::Param(param))
+            | (InferenceOperand::Param(param), InferenceOperand::Field(field)) => {
+                return Some((field, param));
             }
             _ => {}
         }
     }
 
-    has_equality.then_some((field?, param?))
+    None
+}
+
+#[derive(Clone, Debug)]
+enum InferenceOperand {
+    Field(FieldPath),
+    Param(String),
+}
+
+#[derive(Clone, Copy, Debug)]
+enum OperandSide {
+    Left,
+    Right,
+}
+
+fn nearest_inference_operand(
+    nodes: &[Node<'_>],
+    parsed: &ParsedSource,
+    side: OperandSide,
+) -> Option<InferenceOperand> {
+    let ordered_nodes: Box<dyn Iterator<Item = Node<'_>> + '_> = match side {
+        OperandSide::Left => Box::new(nodes.iter().rev().copied()),
+        OperandSide::Right => Box::new(nodes.iter().copied()),
+    };
+
+    for node in ordered_nodes {
+        if let Some(operand) = nearest_inference_operand_in_node(node, parsed, side) {
+            return Some(operand);
+        }
+    }
+    None
+}
+
+fn nearest_inference_operand_in_node(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    side: OperandSide,
+) -> Option<InferenceOperand> {
+    match node.kind() {
+        "VariableName" => {
+            return Some(InferenceOperand::Param(param_name(node_text(
+                node,
+                parsed.text(),
+            ))));
+        }
+        "Keyword" | "Operator" => return None,
+        _ if is_row_context_field_path_node(node) => {
+            return Some(InferenceOperand::Field(field_path_from_node(node, parsed)));
+        }
+        _ => {}
+    }
+
+    let mut cursor = node.walk();
+    let children: Vec<_> = node
+        .children(&mut cursor)
+        .filter(|child| child.is_named())
+        .collect();
+    nearest_inference_operand(&children, parsed, side)
+}
+
+fn is_kind_inference_operator(operator: &str) -> bool {
+    matches!(operator, "=" | "!=" | "<" | "<=" | ">" | ">=")
 }
 
 fn validate_field_path_on_table(

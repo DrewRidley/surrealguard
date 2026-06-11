@@ -597,6 +597,56 @@ mod tests {
     }
 
     #[test]
+    fn analyze_workspace_infers_param_kinds_from_select_where_comparison_operators() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD name ON person TYPE string;\nSELECT * FROM person WHERE age > $min_age AND $max_age >= age AND name != $excluded_name;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let params = &output.sources[&source].inferred_params;
+        let param_kinds: Vec<_> = params
+            .iter()
+            .map(|param| (param.name.as_str(), param.kind.clone()))
+            .collect();
+
+        assert_eq!(
+            param_kinds,
+            vec![
+                ("excluded_name", Some(Kind::String)),
+                ("max_age", Some(Kind::Int)),
+                ("min_age", Some(Kind::Int)),
+            ]
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_infers_param_kinds_from_graph_local_predicates() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nDEFINE FIELD created_at ON likes TYPE datetime;\nDEFINE FIELD strength ON likes TYPE float;\nSELECT * FROM person->(likes WHERE created_at > $since AND strength >= $min_strength)->post;\nSELECT * FROM person->likes[WHERE created_at <= $before]->post;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let params = &output.sources[&source].inferred_params;
+        let param_kinds: Vec<_> = params
+            .iter()
+            .map(|param| (param.name.as_str(), param.kind.clone()))
+            .collect();
+
+        assert_eq!(
+            param_kinds,
+            vec![
+                ("before", Some(Kind::Datetime)),
+                ("min_strength", Some(Kind::Float)),
+                ("since", Some(Kind::Datetime)),
+            ]
+        );
+    }
+
+    #[test]
     fn analyze_workspace_skips_statement_and_param_analysis_for_syntax_error_sources() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source("query".into(), "SELECT * FROM ;".into());
