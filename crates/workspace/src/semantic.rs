@@ -136,7 +136,7 @@ pub fn validate_mutation_fields(
     diagnostics
 }
 
-pub fn infer_select_param_kinds(
+pub fn infer_param_kinds(
     parsed_sources: &[ParsedSource],
     schema: &SchemaIndex,
 ) -> Vec<ParamKindInference> {
@@ -148,6 +148,12 @@ pub fn infer_select_param_kinds(
         }
 
         collect_select_param_kind_inferences(
+            parsed.tree().root_node(),
+            parsed,
+            schema,
+            &mut inferences,
+        );
+        collect_mutation_param_kind_inferences(
             parsed.tree().root_node(),
             parsed,
             schema,
@@ -534,22 +540,7 @@ fn validate_mutation_fields_for_statement(
     schema: &SchemaIndex,
     diagnostics: &mut Vec<Finding>,
 ) {
-    let table_name = match node.kind() {
-        "CreateStatement" => leading_table_references(node, parsed.text(), "CREATE")
-            .first()
-            .map(|reference| reference.name.to_string()),
-        "UpdateStatement" => leading_table_references(node, parsed.text(), "UPDATE")
-            .first()
-            .map(|reference| reference.name.to_string()),
-        "UpsertStatement" => leading_table_references(node, parsed.text(), "UPSERT")
-            .first()
-            .map(|reference| reference.name.to_string()),
-        "InsertStatement" => table_references_after_keyword(node, parsed.text(), "INTO", "INSERT")
-            .first()
-            .map(|reference| reference.name.to_string()),
-        "RelateStatement" => relate_edge_table_name(node, parsed),
-        _ => return,
-    };
+    let table_name = mutation_table_name(node, parsed);
     let Some(table_name) = table_name else {
         return;
     };
@@ -563,6 +554,29 @@ fn validate_mutation_fields_for_statement(
     validate_assignment_fields_on_table(node, parsed, table, diagnostics);
     validate_object_fields_on_table(node, parsed, table, diagnostics);
     validate_insert_column_fields_on_table(node, parsed, table, diagnostics);
+    validate_where_descendants_on_table(node, parsed, table, diagnostics);
+}
+
+fn mutation_table_name(node: Node<'_>, parsed: &ParsedSource) -> Option<String> {
+    match node.kind() {
+        "CreateStatement" => leading_table_references(node, parsed.text(), "CREATE")
+            .first()
+            .map(|reference| reference.name.to_string()),
+        "UpdateStatement" => leading_table_references(node, parsed.text(), "UPDATE")
+            .first()
+            .map(|reference| reference.name.to_string()),
+        "DeleteStatement" => leading_table_references(node, parsed.text(), "DELETE")
+            .first()
+            .map(|reference| reference.name.to_string()),
+        "UpsertStatement" => leading_table_references(node, parsed.text(), "UPSERT")
+            .first()
+            .map(|reference| reference.name.to_string()),
+        "InsertStatement" => table_references_after_keyword(node, parsed.text(), "INTO", "INSERT")
+            .first()
+            .map(|reference| reference.name.to_string()),
+        "RelateStatement" => relate_edge_table_name(node, parsed),
+        _ => None,
+    }
 }
 
 fn validate_assignment_fields_on_table(
@@ -907,6 +921,46 @@ fn infer_param_kinds_for_select_statement(
         return;
     };
     let Some(table) = schema.tables.get(table_name.as_str()) else {
+        return;
+    };
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "WhereClause" {
+            collect_param_kind_inferences_from_expression(child, parsed, table, inferences);
+        }
+    }
+}
+
+fn collect_mutation_param_kind_inferences(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    inferences: &mut Vec<ParamKindInference>,
+) {
+    if matches!(
+        node.kind(),
+        "UpdateStatement" | "UpsertStatement" | "DeleteStatement"
+    ) {
+        infer_param_kinds_for_mutation_statement(node, parsed, schema, inferences);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_mutation_param_kind_inferences(child, parsed, schema, inferences);
+    }
+}
+
+fn infer_param_kinds_for_mutation_statement(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    inferences: &mut Vec<ParamKindInference>,
+) {
+    let Some(table_name) = mutation_table_name(node, parsed) else {
+        return;
+    };
+    let Some(table) = schema.tables.get(&table_name) else {
         return;
     };
 

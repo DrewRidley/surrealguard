@@ -143,11 +143,15 @@ Current implementation:
 
 Objective: reuse SELECT predicate analysis for row-context predicates in `UPDATE`, `UPSERT`, and `DELETE`.
 
-Tests:
+Current implementation:
 
-- `UPDATE person SET active = true WHERE age > $min_age` infers `$min_age: int`
-- unknown `WHERE` field in UPDATE/DELETE/UPSERT emits `E1004`
-- reversed operand comparisons infer parameter kind
+- validates statically named `WHERE` fields in `UPDATE`, `UPSERT`, and `DELETE` against the target table schema
+- reuses row-context comparison analysis to infer parameter kinds from mutation `WHERE` predicates
+- supports reversed operand comparisons such as `$max_age >= age`
+
+Diagnostics:
+
+- reuses `E1004` for unknown row-context fields
 
 ### Slice 5: RELATE relation endpoint validation
 

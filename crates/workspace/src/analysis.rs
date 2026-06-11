@@ -12,7 +12,7 @@ use surrealguard_syntax::span::{ByteRange, SourceSpan};
 use crate::config::WorkspaceConfig;
 use crate::schema::{extract_schema, SchemaIndex};
 use crate::semantic::{
-    analyze_parsed_source, infer_select_param_kinds, infer_select_response_shapes,
+    analyze_parsed_source, infer_param_kinds, infer_select_response_shapes,
     validate_mutation_fields, validate_select_graph_references, validate_select_projection_fields,
     validate_table_references,
 };
@@ -193,9 +193,8 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
     }
     diagnostics.extend(mutation_field_diagnostics);
 
-    let select_param_kind_inferences =
-        infer_select_param_kinds(&parsed_sources, &schema_extraction.schema);
-    for inference in select_param_kind_inferences {
+    let param_kind_inferences = infer_param_kinds(&parsed_sources, &schema_extraction.schema);
+    for inference in param_kind_inferences {
         if let Some(source_output) = sources.get_mut(&inference.source) {
             if let Some(param) = source_output
                 .inferred_params
@@ -902,6 +901,59 @@ INSERT INTO person { name: 'Ada' };
                 "unknown field `stale` on table `person`",
                 "unknown field `missing` on table `person`",
                 "unknown field `missing_since` on table `likes`",
+            ]
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_reports_unknown_mutation_where_fields() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD age ON person TYPE int;\nUPDATE person SET name = 'Ada' WHERE missing > 0 AND age > 18;\nUPSERT person SET name = 'Ada' WHERE ghost = true AND name = 'Ada';\nDELETE person WHERE stale = true AND age < 99;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            messages,
+            vec![
+                "unknown field `missing` on table `person`",
+                "unknown field `ghost` on table `person`",
+                "unknown field `stale` on table `person`",
+            ]
+        );
+        assert_eq!(output.sources[&source].diagnostics.len(), 3);
+    }
+
+    #[test]
+    fn analyze_workspace_infers_param_kinds_from_mutation_where_comparisons() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD name ON person TYPE string;\nUPDATE person SET name = 'Ada' WHERE age > $min_age AND $max_age >= age;\nUPSERT person SET name = 'Ada' WHERE name != $excluded_name;\nDELETE person WHERE age <= $delete_before;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let params = &output.sources[&source].inferred_params;
+        let param_kinds: Vec<_> = params
+            .iter()
+            .map(|param| (param.name.as_str(), param.kind.clone()))
+            .collect();
+
+        assert_eq!(
+            param_kinds,
+            vec![
+                ("delete_before", Some(Kind::Int)),
+                ("excluded_name", Some(Kind::String)),
+                ("max_age", Some(Kind::Int)),
+                ("min_age", Some(Kind::Int)),
             ]
         );
     }
