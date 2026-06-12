@@ -372,8 +372,14 @@ fn collect_select_graph_reference_diagnostics(
     schema: &SchemaIndex,
     diagnostics: &mut Vec<Finding>,
 ) {
-    if node.kind() == "SelectStatement" {
-        validate_graph_references_for_select_statement(node, parsed, schema, diagnostics);
+    match node.kind() {
+        "SelectStatement" => {
+            validate_graph_references_for_select_statement(node, parsed, schema, diagnostics)
+        }
+        "RelateStatement" => {
+            validate_graph_references_for_relate_statement(node, parsed, schema, diagnostics)
+        }
+        _ => {}
     }
 
     let mut cursor = node.walk();
@@ -446,6 +452,98 @@ fn validate_graph_references_for_select_statement(
             ),
         ));
     }
+}
+
+fn validate_graph_references_for_relate_statement(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    diagnostics: &mut Vec<Finding>,
+) {
+    let Some(relate) = relate_graph_reference(node, parsed) else {
+        return;
+    };
+
+    let source_exists = schema.tables.contains_key(&relate.source_table);
+    if !source_exists {
+        diagnostics.push(Finding::new(
+            relate.source_span.clone(),
+            FindingCode::graph(3002),
+            Severity::Error,
+            format!("unknown RELATE source table `{}`", relate.source_table),
+        ));
+    }
+
+    let edge_relation = schema
+        .tables
+        .get(&relate.edge_table)
+        .and_then(|table| table.relation.as_ref());
+    if edge_relation.is_none() {
+        diagnostics.push(Finding::new(
+            relate.edge_span.clone(),
+            FindingCode::graph(3001),
+            Severity::Error,
+            format!("unknown RELATE edge table `{}`", relate.edge_table),
+        ));
+    }
+
+    let target_exists = schema.tables.contains_key(&relate.target_table);
+    if !target_exists {
+        diagnostics.push(Finding::new(
+            relate.target_span.clone(),
+            FindingCode::graph(3002),
+            Severity::Error,
+            format!("unknown RELATE target table `{}`", relate.target_table),
+        ));
+    }
+
+    if let Some(relation) = edge_relation {
+        let endpoints_match = relation
+            .in_tables
+            .iter()
+            .any(|table| table == &relate.source_table)
+            && relation
+                .out_tables
+                .iter()
+                .any(|table| table == &relate.target_table);
+        if source_exists && target_exists && !endpoints_match {
+            diagnostics.push(Finding::new(
+                node_span(node, parsed.source_id().clone()),
+                FindingCode::graph(3003),
+                Severity::Error,
+                format!(
+                    "RELATE traversal `{}->{}->{}` does not match relation `{}` endpoints",
+                    relate.source_table, relate.edge_table, relate.target_table, relate.edge_table
+                ),
+            ));
+        }
+    }
+}
+
+struct RelateGraphReference {
+    source_table: String,
+    source_span: SourceSpan,
+    edge_table: String,
+    edge_span: SourceSpan,
+    target_table: String,
+    target_span: SourceSpan,
+}
+
+fn relate_graph_reference(node: Node<'_>, parsed: &ParsedSource) -> Option<RelateGraphReference> {
+    let mut cursor = node.walk();
+    let mut children = node.children(&mut cursor);
+    let source = children.find(|child| child.kind() == "RecordId")?;
+    let edge = children.find(|child| is_identifier_like(*child))?;
+    let target = children.find(|child| child.kind() == "RecordId")?;
+
+    Some(RelateGraphReference {
+        source_table: table_name_from_node_text(node_text(source, parsed.text())).to_string(),
+        source_span: node_span(source, parsed.source_id().clone()),
+        edge_table: table_name_from_node_text(node_text(edge, parsed.text())).to_string(),
+        edge_span: node_span(edge, parsed.source_id().clone()),
+        target_table: table_name_from_node_text(node_text(target, parsed.text())).to_string(),
+        target_span: node_span(target, parsed.source_id().clone()),
+    })
 }
 
 fn collect_select_projection_field_diagnostics(

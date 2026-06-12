@@ -1595,6 +1595,72 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_allows_matching_relate_relation_endpoints() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nRELATE person:one->likes->post:one;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert!(output
+            .diagnostics
+            .iter()
+            .all(|finding| finding.code() != FindingCode::graph(3003)));
+    }
+
+    #[test]
+    fn analyze_workspace_reports_mismatched_relate_relation_endpoints() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nRELATE post:one->likes->person:one;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let mismatches: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::graph(3003))
+            .collect();
+
+        assert_eq!(mismatches.len(), 1);
+        assert_eq!(
+            mismatches[0].message(),
+            "RELATE traversal `post->likes->person` does not match relation `likes` endpoints"
+        );
+        assert_eq!(mismatches[0].span().source(), &source);
+        assert_eq!(output.sources[&source].diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn analyze_workspace_reports_unknown_relate_edge_and_target_tables() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nRELATE person:one->missing->post:one;\nRELATE person:one->likes->ghost:one;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::graph(3001) || code == FindingCode::graph(3002)))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            messages,
+            vec![
+                "unknown RELATE edge table `missing`",
+                "unknown RELATE edge table `likes`",
+                "unknown RELATE target table `ghost`",
+            ]
+        );
+    }
+
+    #[test]
     fn analyze_workspace_validates_parenthesized_graph_where_against_edge_fields() {
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(

@@ -157,12 +157,18 @@ Diagnostics:
 
 Objective: apply relation metadata to `RELATE source->edge->target` statements.
 
-Tests:
+Current implementation:
 
-- known relation endpoints pass
-- unknown edge table emits graph/unknown-table diagnostic
-- endpoint mismatch reports source/target incompatibility
-- edge data fields validate against the relation table schema
+- validates `RELATE` source and target record tables against the relation edge table's `IN`/`OUT` metadata
+- reports unknown or non-relation edge tables with graph diagnostics
+- reports unknown target tables with graph diagnostics
+- keeps edge data field validation on `RELATE ... CONTENT` against the relation table schema from the mutation data-clause slice
+
+Diagnostics:
+
+- reuses `E3001` for unknown/non-relation RELATE edge tables
+- reuses `E3002` for unknown RELATE source/target tables
+- reuses `E3003` for relation endpoint mismatches
 
 ### Slice 6: conservative non-SELECT response shapes
 
