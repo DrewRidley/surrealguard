@@ -12,9 +12,9 @@ use surrealguard_syntax::span::{ByteRange, SourceSpan};
 use crate::config::WorkspaceConfig;
 use crate::schema::{extract_schema, SchemaIndex};
 use crate::semantic::{
-    analyze_parsed_source, infer_param_kinds, infer_select_response_shapes,
-    validate_mutation_fields, validate_select_graph_references, validate_select_projection_fields,
-    validate_table_references,
+    analyze_parsed_source, infer_non_select_response_shapes, infer_param_kinds,
+    infer_select_response_shapes, validate_mutation_fields, validate_select_graph_references,
+    validate_select_projection_fields, validate_table_references,
 };
 use crate::source_registry::SourceRegistry;
 
@@ -208,16 +208,28 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
         }
     }
 
-    let select_response_shapes =
+    let mut response_shapes =
         infer_select_response_shapes(&parsed_sources, &schema_extraction.schema);
-    for (span, shape) in select_response_shapes {
+    response_shapes.extend(infer_non_select_response_shapes(
+        &parsed_sources,
+        &schema_extraction.schema,
+    ));
+    let mut response_shape_counts_by_source = BTreeMap::new();
+    for (span, _) in &response_shapes {
+        *response_shape_counts_by_source
+            .entry(span.source().clone())
+            .or_insert(0usize) += 1;
+    }
+    for (span, shape) in response_shapes {
         if let Some(source_output) = sources.get_mut(span.source()) {
             for statement in &mut source_output.statements {
                 if statement.span == span {
                     statement.response_shape = Some(shape.clone());
                 }
             }
-            if source_output.response_shape.is_none() {
+            if response_shape_counts_by_source[span.source()] == 1
+                && source_output.response_shape.is_none()
+            {
                 source_output.response_shape = Some(shape);
             }
         }
@@ -1285,6 +1297,95 @@ INSERT INTO person { name: 'Ada' };
             element.as_ref(),
             &ResponseShape::Value { kind: Kind::String }
         );
+    }
+
+    #[test]
+    fn analyze_workspace_infers_mutation_row_response_shape_from_schema() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD age ON person TYPE int;\nCREATE person SET name = 'Ada', age = 30 RETURN AFTER;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let create = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "create")
+            .expect("create statement exists");
+
+        let Some(ResponseShape::Array { element, .. }) = &create.response_shape else {
+            panic!(
+                "expected array response shape, got {:?}",
+                create.response_shape
+            );
+        };
+        let ResponseShape::Object {
+            fields,
+            open: false,
+        } = element.as_ref()
+        else {
+            panic!("expected object element, got {element:?}");
+        };
+        assert_eq!(fields["name"].kind, Some(Kind::String));
+        assert_eq!(fields["age"].kind, Some(Kind::Int));
+    }
+
+    #[test]
+    fn analyze_workspace_marks_mutation_return_none_as_empty_array_shape() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nUPDATE person SET name = 'Ada' RETURN NONE;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let update = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "update")
+            .expect("update statement exists");
+
+        assert_eq!(
+            update.response_shape,
+            Some(ResponseShape::Array {
+                element: Box::new(ResponseShape::Unknown {
+                    reason: PartialReason::UnsupportedSyntax("RETURN NONE".into())
+                }),
+                max_len: Some(0),
+            })
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_marks_mutation_return_diff_and_fields_partial() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nUPDATE person SET name = 'Ada' RETURN DIFF;\nCREATE person SET name = 'Ada' RETURN name;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let source_output = &output.sources[&source];
+        let shapes: Vec<_> = source_output
+            .statements
+            .iter()
+            .filter(|statement| statement.kind == "update" || statement.kind == "create")
+            .map(|statement| statement.response_shape.clone())
+            .collect();
+
+        assert_eq!(
+            shapes,
+            vec![
+                Some(ResponseShape::Unknown {
+                    reason: PartialReason::UnsupportedSyntax("RETURN DIFF".into())
+                }),
+                Some(ResponseShape::Unknown {
+                    reason: PartialReason::UnsupportedSyntax("RETURN fields".into())
+                }),
+            ]
+        );
+        assert!(source_output.response_shape.is_none());
     }
 
     #[test]

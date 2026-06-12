@@ -60,12 +60,12 @@ Before this plan, statement analysis only named `DEFINE`, `SELECT`, `CREATE`, `U
 | --- | --- | --- |
 | `select` | already has table, projection, row/graph field, param-kind, graph relation, nested shape coverage | implemented for many SELECT forms; keep expanding from SELECT plan |
 | `live_select` | validate source table and field/filter/fetch paths like SELECT where grammar permits | live stream/event shape later; partial until modeled |
-| `create` | validate target table/record table, data-clause fields, params | `RETURN`-dependent object/array shape later |
-| `insert` | validate `INTO` table and inserted object/column fields | inserted rows shape later |
-| `update` | validate target table/record table, `SET`/`MERGE`/`REPLACE`/`PATCH`/`UNSET`, `WHERE`, `RETURN` | `RETURN`-dependent shape later |
-| `upsert` | same table/data/where coverage as UPDATE | `RETURN`-dependent shape later |
-| `delete` | validate target table/record table and `WHERE` fields | `RETURN`-dependent shape later |
-| `relate` | validate source/edge/target tables and relation endpoint compatibility; validate data fields on edge table | edge record shape later |
+| `create` | validate target table/record table, data-clause fields, params | conservative full-row array shape for default/`RETURN BEFORE`/`RETURN AFTER`; empty array for `RETURN NONE`; `RETURN DIFF`/field projections partial |
+| `insert` | validate `INTO` table and inserted object/column fields | conservative full-row array shape for default/row-returning forms; empty array for `RETURN NONE`; `RETURN DIFF`/field projections partial |
+| `update` | validate target table/record table, `SET`/`MERGE`/`REPLACE`/`PATCH`/`UNSET`, `WHERE`, `RETURN` | conservative full-row array shape for default/`RETURN BEFORE`/`RETURN AFTER`; empty array for `RETURN NONE`; `RETURN DIFF`/field projections partial |
+| `upsert` | same table/data/where coverage as UPDATE | conservative full-row array shape for default/`RETURN BEFORE`/`RETURN AFTER`; empty array for `RETURN NONE`; `RETURN DIFF`/field projections partial |
+| `delete` | validate target table/record table and `WHERE` fields | conservative full-row array shape for default/`RETURN BEFORE`/`RETURN AFTER`; empty array for `RETURN NONE`; `RETURN DIFF`/field projections partial |
+| `relate` | validate source/edge/target tables and relation endpoint compatibility; validate data fields on edge table | conservative edge-row array shape for default/`RETURN BEFORE`/`RETURN AFTER`; empty array for `RETURN NONE`; `RETURN DIFF`/field projections partial |
 | `define_table` | schema indexing, duplicate diagnostics, relation metadata | no runtime result shape initially |
 | `define_field` | schema indexing, field-on-unknown-table diagnostics, supported `Kind` extraction | no runtime result shape initially |
 | other `define_*` | statement kind and spans first; targeted semantic checks only as needed | no runtime result shape initially |
@@ -174,11 +174,13 @@ Diagnostics:
 
 Objective: add response shapes for mutation statements only after verified behavior.
 
-Tasks:
+Current implementation:
 
-- verify SurrealDB behavior for default and `RETURN BEFORE|AFTER|DIFF|NONE|Fields` forms
-- represent unverified forms as `ResponseShape::Unknown` with partial reason
-- keep source-level `response_shape` unambiguous for multi-statement files
+- verified SurrealDB 3.0.5 behavior locally for default and `RETURN BEFORE|AFTER|DIFF|NONE|Fields` mutation forms
+- infers conservative schema-backed full-row array shapes for `CREATE`, `INSERT`, `UPDATE`, `UPSERT`, `DELETE`, and `RELATE` when the statement uses the default row-returning behavior or explicit `RETURN BEFORE`/`RETURN AFTER`
+- represents `RETURN NONE` as an empty array shape (`max_len: Some(0)`)
+- keeps `RETURN DIFF` and `RETURN <fields>` partial/unknown until patch-array and mutation projection shapes are modeled
+- keeps source-level `response_shape` set only when exactly one statement in that source has a response shape, avoiding ambiguous first-result behavior in multi-statement files
 
 ## Verification gates
 

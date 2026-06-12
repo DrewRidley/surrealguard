@@ -194,10 +194,11 @@ Completed:
 3. schema-backed mutation field diagnostics for statically named assignment fields and object keys in `CREATE`, `INSERT`, `UPDATE`, `UPSERT`, and `RELATE` data clauses
 4. row-context `WHERE` field diagnostics and parameter-kind inference for `UPDATE`, `UPSERT`, and `DELETE`
 5. `RELATE` source/edge/target endpoint validation from relation metadata
+6. conservative non-SELECT response shapes for mutation statements: schema-backed row arrays for default/`RETURN BEFORE`/`RETURN AFTER`, empty arrays for `RETURN NONE`, and explicit partials for `RETURN DIFF`/field projections
 
 Next:
 
-1. add conservative non-SELECT response shapes only after behavior is verified
+1. model mutation `RETURN <fields>` projections and `RETURN DIFF` patch-array shapes when needed
 
 ## Slice 9: host adapter spike
 

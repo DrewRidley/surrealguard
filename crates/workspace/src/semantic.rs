@@ -180,6 +180,129 @@ pub fn infer_select_response_shapes(
     shapes
 }
 
+pub fn infer_non_select_response_shapes(
+    parsed_sources: &[ParsedSource],
+    schema: &SchemaIndex,
+) -> Vec<(SourceSpan, ResponseShape)> {
+    let mut shapes = Vec::new();
+
+    for parsed in parsed_sources {
+        if !parsed.syntax_diagnostics().is_empty() {
+            continue;
+        }
+        collect_non_select_response_shapes(parsed.tree().root_node(), parsed, schema, &mut shapes);
+    }
+
+    shapes
+}
+
+fn collect_non_select_response_shapes(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    shapes: &mut Vec<(SourceSpan, ResponseShape)>,
+) {
+    if matches!(
+        node.kind(),
+        "CreateStatement"
+            | "InsertStatement"
+            | "UpdateStatement"
+            | "UpsertStatement"
+            | "DeleteStatement"
+            | "RelateStatement"
+    ) {
+        shapes.push((
+            node_span(node, parsed.source_id().clone()),
+            response_shape_for_mutation(node, parsed, schema),
+        ));
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_non_select_response_shapes(child, parsed, schema, shapes);
+    }
+}
+
+fn response_shape_for_mutation(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+) -> ResponseShape {
+    match mutation_return_mode(node, parsed) {
+        MutationReturnMode::None => ResponseShape::Array {
+            element: Box::new(ResponseShape::Unknown {
+                reason: PartialReason::UnsupportedSyntax("RETURN NONE".into()),
+            }),
+            max_len: Some(0),
+        },
+        MutationReturnMode::Diff => ResponseShape::Unknown {
+            reason: PartialReason::UnsupportedSyntax("RETURN DIFF".into()),
+        },
+        MutationReturnMode::Fields => ResponseShape::Unknown {
+            reason: PartialReason::UnsupportedSyntax("RETURN fields".into()),
+        },
+        MutationReturnMode::Rows => {
+            let Some(table_name) = mutation_table_name(node, parsed) else {
+                return ResponseShape::Unknown {
+                    reason: PartialReason::Unresolved,
+                };
+            };
+            let Some(table) = schema.tables.get(&table_name) else {
+                return ResponseShape::Unknown {
+                    reason: PartialReason::Unresolved,
+                };
+            };
+            if table.fields.is_empty() {
+                return ResponseShape::Unknown {
+                    reason: PartialReason::Unresolved,
+                };
+            }
+            ResponseShape::Array {
+                element: Box::new(object_shape_for_all_fields(table)),
+                max_len: None,
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MutationReturnMode {
+    Rows,
+    None,
+    Diff,
+    Fields,
+}
+
+fn mutation_return_mode(node: Node<'_>, parsed: &ParsedSource) -> MutationReturnMode {
+    let Some(return_clause) = find_descendant_kind(node, "ReturnClause") else {
+        return MutationReturnMode::Rows;
+    };
+    let text = node_text(return_clause, parsed.text()).to_ascii_uppercase();
+    if text.contains("NONE") {
+        MutationReturnMode::None
+    } else if text.contains("DIFF") {
+        MutationReturnMode::Diff
+    } else if text.contains("BEFORE") || text.contains("AFTER") {
+        MutationReturnMode::Rows
+    } else {
+        MutationReturnMode::Fields
+    }
+}
+
+fn find_descendant_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>> {
+    if node.kind() == kind {
+        return Some(node);
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(found) = find_descendant_kind(child, kind) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 fn collect_select_response_shapes(
     node: Node<'_>,
     parsed: &ParsedSource,
