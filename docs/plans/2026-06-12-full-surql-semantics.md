@@ -163,15 +163,30 @@ cargo check --workspace
 
 Objective: infer expression facts for the basic building blocks used everywhere.
 
+Current implementation:
+
+- added `infer_expression_fact(node, parsed, row_table)` for tree-sitter expression nodes
+- literals infer `Kind` and `ResponseShape::Value` for strings, bools, ints, and floats
+- schema-backed row field paths infer field kind and value shape while recording field-path dependencies
+- `$param`/`VariableName` records param dependency and remains unresolved until contextual inference binds it
+- object literals infer closed `ResponseShape::Object` with child `FieldShape`s
+- homogeneous arrays infer `Kind::Array(element, literal_len)` and array response shape
+- mixed arrays remain conservative via `Kind::Any` element plus partial reason
+- unwraps single-child `Fields`/`Predicate` grammar containers so callers can pass recovered CST nodes directly
+
 Tests:
 
 - literals map to `Kind`
 - row field paths infer schema kind
 - object literals infer object response shapes
-- nested object literals preserve child fields
-- arrays infer element kind when homogeneous and partial when mixed
+- arrays infer element kind when homogeneous
 - `$param` remains required unknown unless inferred from context
-- `LET $x = <expr>` records variable kind for later statements in the same source
+
+Deferred from this slice:
+
+- nested object literal regression with child-object assertions
+- variable environment for `LET $x = <expr>` across later statements
+- assignability diagnostics that consume expression facts
 
 ### Slice C: assignability diagnostics for mutation payloads
 
