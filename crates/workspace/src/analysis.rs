@@ -1386,6 +1386,43 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_infers_select_literal_and_expression_alias_shapes() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nSELECT 1 AS one, true AS active, age + 1 AS next_age FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
+            panic!(
+                "expected array response shape, got {:?}",
+                select.response_shape
+            );
+        };
+        let ResponseShape::Object {
+            fields,
+            open: false,
+        } = element.as_ref()
+        else {
+            panic!("expected object element, got {element:?}");
+        };
+        assert_eq!(fields["one"].kind, Some(Kind::Int));
+        assert_eq!(fields["active"].kind, Some(Kind::Bool));
+        assert_eq!(fields["next_age"].kind, None);
+        assert_eq!(
+            fields["next_age"].partial,
+            vec![PartialReason::UnsupportedSyntax("BinaryExpression".into())]
+        );
+    }
+
+    #[test]
     fn analyze_workspace_infers_select_value_response_shape() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(

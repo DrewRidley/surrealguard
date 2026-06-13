@@ -2020,35 +2020,97 @@ fn object_shape_for_projected_fields(
     let mut fields = BTreeMap::new();
 
     for projection in &ir.projections {
-        let SelectProjection::Field { path, alias, .. } = projection else {
-            continue;
-        };
-        let Some(field_shape) = field_shape_for_path(table, path) else {
-            fields.insert(
-                alias.clone().unwrap_or_else(|| path.text.clone()),
-                FieldShape {
-                    shape: ResponseShape::Unknown {
-                        reason: PartialReason::Unresolved,
-                    },
-                    kind: None,
-                    span: path.span.clone(),
-                    materialized_by_fetch: false,
-                    partial: vec![PartialReason::Unresolved],
-                },
-            );
-            continue;
-        };
+        match projection {
+            SelectProjection::Field { path, alias, .. } => {
+                let Some(field_shape) = field_shape_for_path(table, path) else {
+                    fields.insert(
+                        alias.clone().unwrap_or_else(|| path.text.clone()),
+                        FieldShape {
+                            shape: ResponseShape::Unknown {
+                                reason: PartialReason::Unresolved,
+                            },
+                            kind: None,
+                            span: path.span.clone(),
+                            materialized_by_fetch: false,
+                            partial: vec![PartialReason::Unresolved],
+                        },
+                    );
+                    continue;
+                };
 
-        if let Some(alias) = alias {
-            fields.insert(alias.clone(), field_shape);
-        } else {
-            insert_field_shape_at_path(&mut fields, &path.segments, field_shape);
+                if let Some(alias) = alias {
+                    fields.insert(alias.clone(), field_shape);
+                } else {
+                    insert_field_shape_at_path(&mut fields, &path.segments, field_shape);
+                }
+            }
+            SelectProjection::Dynamic {
+                span,
+                alias,
+                expression_kind,
+                expression_text,
+                ..
+            } => {
+                let key = alias.clone().unwrap_or_else(|| expression_text.clone());
+                fields.insert(
+                    key,
+                    field_shape_for_dynamic_select_expression(
+                        span.clone(),
+                        expression_kind.as_deref(),
+                        expression_text,
+                    ),
+                );
+            }
+            SelectProjection::Wildcard { .. } => {}
         }
     }
 
     ResponseShape::Object {
         fields,
         open: false,
+    }
+}
+
+fn field_shape_for_dynamic_select_expression(
+    span: SourceSpan,
+    expression_kind: Option<&str>,
+    expression_text: &str,
+) -> FieldShape {
+    let kind = match expression_kind {
+        Some("Number") => {
+            if expression_text.contains('.') {
+                Some(Kind::Float)
+            } else {
+                Some(Kind::Int)
+            }
+        }
+        Some("String") => Some(Kind::String),
+        Some("Bool") => Some(Kind::Bool),
+        _ => None,
+    };
+    let partial = if kind.is_none() {
+        vec![PartialReason::UnsupportedSyntax(
+            expression_kind.unwrap_or("expression").to_string(),
+        )]
+    } else {
+        Vec::new()
+    };
+    let shape = match kind.clone() {
+        Some(kind) => ResponseShape::Value { kind },
+        None => ResponseShape::Unknown {
+            reason: partial
+                .first()
+                .cloned()
+                .unwrap_or(PartialReason::Unresolved),
+        },
+    };
+
+    FieldShape {
+        shape,
+        kind,
+        span,
+        materialized_by_fetch: false,
+        partial,
     }
 }
 

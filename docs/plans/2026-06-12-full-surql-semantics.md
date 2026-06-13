@@ -245,13 +245,19 @@ Deferred from this slice:
 
 Objective: model `SELECT 1 AS one`, function calls, binary expressions, and expression aliases without requiring field lookup.
 
-Tests:
+Current implementation:
 
-- `SELECT 1 AS one FROM person` returns `one: Kind::Int`
-- `SELECT name AS display FROM person` preserves alias kind
-- `SELECT age + 1 AS next_age FROM person` infers numeric kind or partial if numeric rules are not precise yet
-- `SELECT count() AS total FROM person GROUP ALL` follows aggregate/group semantics once verified
-- expression without alias is either represented with a stable expression key or explicit partial
+- `SELECT 1 AS one FROM person` returns projected field `one: Kind::Int`
+- boolean/string/float literal projection aliases map to their literal kinds
+- existing field aliases such as `SELECT name AS display FROM person` preserve the source field kind
+- unsupported expression projections with aliases are represented as explicit partial fields instead of disappearing from the shape; for example `SELECT age + 1 AS next_age FROM person` produces `next_age` with `UnsupportedSyntax("BinaryExpression")`
+- unaliased dynamic expressions use the expression text as a stable provisional field key
+
+Deferred from this slice:
+
+- binary expression numeric rules and result-kind inference
+- function call signatures, arity diagnostics, and return kinds
+- aggregate/group semantics such as `SELECT count() AS total FROM person GROUP ALL`
 
 ### Slice F: function signature table
 

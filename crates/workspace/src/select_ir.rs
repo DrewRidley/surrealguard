@@ -35,6 +35,10 @@ pub enum SelectProjection {
     },
     Dynamic {
         span: SourceSpan,
+        alias: Option<String>,
+        expression_kind: Option<String>,
+        expression_text: String,
+        value: bool,
     },
 }
 
@@ -251,6 +255,7 @@ fn projection_from_predicate(
     value: bool,
 ) -> SelectProjection {
     let mut field_node = None;
+    let mut expression_node = None;
     let mut alias = None;
     let mut saw_as = false;
     let mut cursor = predicate.walk();
@@ -267,14 +272,22 @@ fn projection_from_predicate(
             alias = Some(node_text(child, parsed.text()).trim().to_string());
             continue;
         }
+        if expression_node.is_none() && !matches!(child.kind(), "Keyword") {
+            expression_node = Some(child);
+        }
         if field_node.is_none() && is_field_path_node(child) {
             field_node = Some(child);
         }
     }
 
     let Some(field_node) = field_node else {
+        let expression = expression_node.unwrap_or(predicate);
         return SelectProjection::Dynamic {
-            span: node_span(predicate, parsed.source_id().clone()),
+            span: node_span(expression, parsed.source_id().clone()),
+            alias,
+            expression_kind: Some(expression.kind().to_string()),
+            expression_text: node_text(expression, parsed.text()).trim().to_string(),
+            value,
         };
     };
 
@@ -583,7 +596,7 @@ mod tests {
             match self {
                 SelectProjection::Wildcard { span }
                 | SelectProjection::Field { span, .. }
-                | SelectProjection::Dynamic { span } => span,
+                | SelectProjection::Dynamic { span, .. } => span,
             }
         }
     }
