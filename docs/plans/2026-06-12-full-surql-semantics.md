@@ -192,14 +192,31 @@ Deferred from this slice:
 
 Objective: validate value expressions assigned to schema fields.
 
+Current implementation:
+
+- emits `E2001` for statically known mutation value-kind mismatches
+- covers `CREATE`/`UPDATE`/`UPSERT` field-level `SET` assignments
+- covers object payloads in `CONTENT`, `MERGE`, and `REPLACE`
+- covers object insert forms through existing object traversal
+- covers tuple `INSERT INTO table (fields...) VALUES (values...)`
+- uses `ExpressionFact` inference for literal/object/array/field/param facts
+- skips dynamic params and unknown expressions instead of false-positive errors
+- keeps unknown field diagnostics (`E1004`) separate from type mismatch diagnostics (`E2001`)
+
 Tests:
 
 - `CREATE person SET age = 'old'` reports `E2001`
 - `UPDATE person MERGE { age: 'old' }` reports `E2001`
-- `UPSERT person CONTENT { profile: { email: 10 } }` reports nested mismatch
-- `INSERT INTO person (age) VALUES ('old')` reports mismatch
-- valid `SET`, object payload, tuple insert, and RELATE edge payload forms pass
-- dynamic vars produce param inference/partial, not false errors
+- `UPSERT person CONTENT { age: 'old' }` reports `E2001`
+- `INSERT INTO person (age) VALUES ('old')` reports `E2001`
+- dynamic params produce no type mismatch until contextual inference binds them
+
+Deferred from this slice:
+
+- nested mismatch regression for `profile.email`
+- relation edge payload type mismatches
+- tuple/bulk insert row-count and arity diagnostics
+- richer assignability for unions, literal kinds, records, arrays, option/none/null, and object schemas
 
 ### Slice D: mutation `RETURN <fields>` and `RETURN DIFF`
 

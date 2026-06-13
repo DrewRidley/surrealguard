@@ -9,6 +9,7 @@ use surrealdb_types::Kind;
 use tree_sitter::Node;
 
 use crate::analysis::{ParamInference, SelectModifierAnalysis, StatementAnalysis};
+use crate::expression::infer_expression_fact;
 use crate::response_shape::{FieldShape, PartialReason, ResponseShape};
 use crate::schema::SchemaIndex;
 use crate::select_ir::{
@@ -776,6 +777,7 @@ fn validate_mutation_fields_for_statement(
     validate_object_fields_on_table(node, parsed, table, diagnostics);
     validate_insert_column_fields_on_table(node, parsed, table, diagnostics);
     validate_where_descendants_on_table(node, parsed, table, diagnostics);
+    validate_mutation_value_assignability(node, parsed, table, diagnostics);
 }
 
 fn mutation_table_name(node: Node<'_>, parsed: &ParsedSource) -> Option<String> {
@@ -956,6 +958,273 @@ fn validate_insert_column_fields_on_table(
         if child.kind() == "Ident" && child.start_byte() > table_reference.node.end_byte() {
             validate_field_path_on_table(field_path_from_node(child, parsed), table, diagnostics);
         }
+    }
+}
+
+fn validate_mutation_value_assignability(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    diagnostics: &mut Vec<Finding>,
+) {
+    validate_assignment_value_assignability(node, parsed, table, diagnostics);
+    validate_object_value_assignability(node, parsed, table, diagnostics);
+    validate_insert_tuple_value_assignability(node, parsed, table, diagnostics);
+}
+
+fn validate_assignment_value_assignability(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if node.kind() == "FieldAssignment" {
+        if let (Some(path), Some(value)) = (
+            assignment_field_path(node, parsed),
+            assignment_value_node(node),
+        ) {
+            validate_value_kind_for_field(path, value, parsed, table, diagnostics);
+        }
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        validate_assignment_value_assignability(child, parsed, table, diagnostics);
+    }
+}
+
+fn assignment_value_node(assignment: Node<'_>) -> Option<Node<'_>> {
+    let mut cursor = assignment.walk();
+    assignment
+        .children(&mut cursor)
+        .filter(|child| child.is_named() && !is_row_context_field_path_node(*child))
+        .last()
+}
+
+fn validate_object_value_assignability(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    diagnostics: &mut Vec<Finding>,
+) {
+    match node.kind() {
+        "ContentClause" | "MergeClause" | "ReplaceClause" | "BulkInsert" => {
+            validate_object_value_descendants(node, parsed, table, diagnostics);
+            return;
+        }
+        "InsertStatement" => {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "Object" || child.kind() == "BulkInsert" {
+                    validate_object_value_descendants(child, parsed, table, diagnostics);
+                }
+            }
+        }
+        _ => {}
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        validate_object_value_assignability(child, parsed, table, diagnostics);
+    }
+}
+
+fn validate_object_value_descendants(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if node.kind() == "Object" {
+        validate_object_property_values_on_table(node, parsed, table, Vec::new(), diagnostics);
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        validate_object_value_descendants(child, parsed, table, diagnostics);
+    }
+}
+
+fn validate_object_property_values_on_table(
+    object: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    prefix: Vec<String>,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if object.kind() == "ObjectProperty" {
+        let Some(key) = object_property_key(object, parsed) else {
+            return;
+        };
+        let segments: Vec<_> = prefix
+            .iter()
+            .cloned()
+            .chain(std::iter::once(key.name.clone()))
+            .collect();
+        let path = FieldPath {
+            text: segments.join("."),
+            segments: segments.clone(),
+            span: key.span,
+        };
+
+        if let Some(value_object) = object_property_value_object(object) {
+            validate_object_property_values_on_table(
+                value_object,
+                parsed,
+                table,
+                segments,
+                diagnostics,
+            );
+        } else if let Some(value) = object_property_value_node(object) {
+            validate_value_kind_for_field(path, value, parsed, table, diagnostics);
+        }
+        return;
+    }
+
+    let mut cursor = object.walk();
+    for child in object.children(&mut cursor) {
+        if child.kind() != "Object" {
+            validate_object_property_values_on_table(
+                child,
+                parsed,
+                table,
+                prefix.clone(),
+                diagnostics,
+            );
+        }
+    }
+}
+
+fn object_property_value_node(property: Node<'_>) -> Option<Node<'_>> {
+    let mut cursor = property.walk();
+    property
+        .children(&mut cursor)
+        .filter(|child| child.is_named() && child.kind() != "ObjectKey")
+        .last()
+}
+
+fn validate_insert_tuple_value_assignability(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if node.kind() != "InsertStatement" {
+        return;
+    }
+    let Some(table_reference) =
+        table_references_after_keyword(node, parsed.text(), "INTO", "INSERT")
+            .into_iter()
+            .next()
+    else {
+        return;
+    };
+
+    let mut cursor = node.walk();
+    let children: Vec<_> = node.children(&mut cursor).collect();
+    let Some(values_keyword_index) = children.iter().position(|child| {
+        child.kind() == "Keyword" && node_text(*child, parsed.text()).eq_ignore_ascii_case("VALUES")
+    }) else {
+        return;
+    };
+
+    let columns: Vec<_> = children
+        .iter()
+        .take(values_keyword_index)
+        .filter(|child| {
+            child.kind() == "Ident" && child.start_byte() > table_reference.node.end_byte()
+        })
+        .map(|child| field_path_from_node(*child, parsed))
+        .collect();
+    let values: Vec<_> = children
+        .iter()
+        .skip(values_keyword_index + 1)
+        .filter(|child| child.is_named())
+        .copied()
+        .collect();
+
+    for (path, value) in columns.into_iter().zip(values) {
+        validate_value_kind_for_field(path, value, parsed, table, diagnostics);
+    }
+}
+
+fn validate_value_kind_for_field(
+    path: FieldPath,
+    value: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    diagnostics: &mut Vec<Finding>,
+) {
+    let Some(field) = exact_field_def_for_path(table, &path) else {
+        return;
+    };
+    let Some(expected) = field.kind.clone() else {
+        return;
+    };
+    let fact = infer_expression_fact(value, parsed, Some(table));
+    let Some(actual) = fact.kind else {
+        return;
+    };
+    if kind_is_assignable_to(&actual, &expected) {
+        return;
+    }
+
+    diagnostics.push(Finding::new(
+        fact.span,
+        FindingCode::type_error(2001),
+        Severity::Error,
+        format!(
+            "value assigned to `{}` has type `{}`, expected `{}`",
+            path.text,
+            kind_name(&actual),
+            kind_name(&expected)
+        ),
+    ));
+}
+
+fn kind_is_assignable_to(actual: &Kind, expected: &Kind) -> bool {
+    if matches!(expected, Kind::Any) || actual == expected {
+        return true;
+    }
+    matches!(
+        (actual, expected),
+        (
+            Kind::Int | Kind::Float | Kind::Decimal | Kind::Number,
+            Kind::Number
+        ) | (Kind::Int, Kind::Float)
+            | (Kind::Int, Kind::Decimal)
+    )
+}
+
+fn kind_name(kind: &Kind) -> &'static str {
+    match kind {
+        Kind::Any => "any",
+        Kind::None => "none",
+        Kind::Null => "null",
+        Kind::Bool => "bool",
+        Kind::Bytes => "bytes",
+        Kind::Datetime => "datetime",
+        Kind::Decimal => "decimal",
+        Kind::Duration => "duration",
+        Kind::Float => "float",
+        Kind::Int => "int",
+        Kind::Number => "number",
+        Kind::Object => "object",
+        Kind::String => "string",
+        Kind::Uuid => "uuid",
+        Kind::Regex => "regex",
+        Kind::Table(_) => "table",
+        Kind::Record(_) => "record",
+        Kind::Geometry(_) => "geometry",
+        Kind::Either(_) => "either",
+        Kind::Set(_, _) => "set",
+        Kind::Array(_, _) => "array",
+        Kind::Function(_, _) => "function",
+        Kind::Range => "range",
+        Kind::Literal(_) => "literal",
+        Kind::File(_) => "file",
     }
 }
 

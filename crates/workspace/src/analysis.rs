@@ -918,6 +918,51 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_reports_mutation_value_type_mismatches() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD name ON person TYPE string;\nCREATE person SET age = 'old', name = 'Ada';\nUPDATE person MERGE { age: 'old', name: 'Ada' };\nUPSERT person CONTENT { age: 'old', name: 'Ada' };\nINSERT INTO person (age, name) VALUES ('old', 'Ada');".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::type_error(2001))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            messages,
+            vec![
+                "value assigned to `age` has type `string`, expected `int`",
+                "value assigned to `age` has type `string`, expected `int`",
+                "value assigned to `age` has type `string`, expected `int`",
+                "value assigned to `age` has type `string`, expected `int`",
+            ]
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_skips_type_mismatch_for_dynamic_mutation_params() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nCREATE person SET age = $age;\nUPDATE person MERGE { age: $age };".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let type_errors: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::type_error(2001))
+            .collect();
+
+        assert!(type_errors.is_empty());
+    }
+
+    #[test]
     fn analyze_workspace_reports_unknown_mutation_where_fields() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
