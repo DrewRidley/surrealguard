@@ -180,8 +180,9 @@ Completed:
 
 Remaining order:
 
-1. broaden core `.surql` statement coverage before host adapters, tracked in `docs/plans/2026-06-11-surql-statement-coverage.md`
-2. host adapter spike once the core response-shape/diagnostic facts are stable
+1. full SurQL semantic coverage before host adapters, tracked in `docs/plans/2026-06-12-full-surql-semantics.md`
+2. keep the older SELECT and statement-coverage plans as supporting historical detail, not the host-adapter gate
+3. host adapter spike only after the full core readiness gate passes
 
 ## Slice 8: core SurQL statement coverage
 
@@ -198,13 +199,17 @@ Completed:
 
 Next:
 
-1. model mutation `RETURN <fields>` projections and `RETURN DIFF` patch-array shapes when needed
+1. follow the full semantic coverage plan in `docs/plans/2026-06-12-full-surql-semantics.md`
+2. start with expression fact scaffolding, then literal/path/variable/object/array inference
+3. keep host adapters blocked until the full core readiness gate passes
 
-## Slice 9: host adapter spike
+## Slice 9: deferred host adapter spike
 
-Objective: prove embedded-query analysis with one host language.
+Objective: prove embedded-query analysis with one host language, after core semantic readiness.
 
-Preferred first spike: Rust `surql!` macro checking against project schema.
+Status: blocked until `docs/plans/2026-06-12-full-surql-semantics.md` reaches its Slice K readiness audit and every adapter-facing semantic fact comes from the shared core.
+
+Preferred first spike after unblock: Rust `surql!` macro checking against project schema.
 
 Tasks:
 

@@ -2,7 +2,7 @@
 
 > **For Hermes:** Use test-driven-development skill for each implementation slice.
 
-**Goal:** Complete core `.surql` statement analysis before any host-language adapters, so Rust macros, TypeScript transformers, CLI, LSP, and MCP all consume the same statement, diagnostic, parameter, and response-shape facts.
+**Goal:** Complete core `.surql` statement analysis before any host-language adapters, so Rust macros, TypeScript transformers, CLI, LSP, and MCP all consume the same statement, expression, diagnostic, parameter, and response-shape facts. This plan is now the narrower statement-coverage support plan; the broader adapter gate is `docs/plans/2026-06-12-full-surql-semantics.md`.
 
 **Architecture:** Keep tree-sitter SurrealQL as the syntax authority. The workspace semantic layer records every parseable statement kind, validates statically knowable schema references in plain `.surql`, collects parameters everywhere, and infers response shapes only where semantics are understood. Host adapters come after this engine-level coverage is explicit and tested.
 

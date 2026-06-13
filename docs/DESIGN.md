@@ -127,7 +127,7 @@ Pipeline:
 7. apply policy and suppressions
 8. return structured `AnalysisOutput`
 
-Current implementation covers source discovery, syntax diagnostics, table indexing, relation metadata for `DEFINE TABLE ... TYPE RELATION IN ... OUT ...`, field declaration indexing for simple schema kinds backed by `surrealdb_types::Kind`, basic query table-reference validation, statement analysis records, query parameter collection and simple field-comparison kind inference, SELECT IR extraction, SELECT projection field validation through that IR, row-context `WHERE` field validation, row-preserving SELECT modifier facts, graph traversal reference diagnostics, and response-shape inference for schema-backed wildcard projections, named projections, aliases, `SELECT VALUE <field>`, `ONLY`, schema-backed `OMIT`, literal `LIMIT`, `FETCH` materialization flags, and simple two-hop relation-backed graph traversals such as `person->likes->post`. `RETURN`, `GROUP`, `SPLIT`, and `EXPLAIN` currently produce explicit partial response shapes. The obsolete `surrealguard-types` crate has been deleted. Deeper expression semantics, graph-local WHERE/selection semantics, advanced parameter inference, and host-adapter inference are still partial.
+Current implementation covers source discovery, syntax diagnostics, table indexing, relation metadata for `DEFINE TABLE ... TYPE RELATION IN ... OUT ...`, field declaration indexing for simple schema kinds backed by `surrealdb_types::Kind`, broad static table-reference validation, statement analysis records, query parameter collection and simple field-comparison kind inference, SELECT IR extraction, SELECT projection field validation through that IR, row-context `WHERE` field validation, graph-local edge `WHERE` validation, row-preserving SELECT modifier facts, graph traversal diagnostics, relation-backed graph traversal response-shape inference, nested/object field-path modeling, mutation field diagnostics for `SET`/`UNSET`/object payloads/tuple insert columns, mutation `WHERE` diagnostics and param inference, RELATE endpoint validation, and conservative mutation response shapes for default/`RETURN BEFORE`/`RETURN AFTER`/`RETURN NONE`. `RETURN DIFF`, mutation `RETURN <fields>`, SELECT `GROUP`/`SPLIT`/`EXPLAIN`, block values, function calls, and broad expression semantics still produce explicit partial/unknown facts or are not yet fully modeled. The obsolete `surrealguard-types` crate has been deleted. Host-adapter inference is intentionally deferred until the core `.surql` engine has full statement/expression/type coverage.
 
 Each parsed statement should eventually infer a response schema: the statement span and kind, input parameter requirements, result shape/type, and any partial-analysis limitations. Diagnostics should be emitted from that shared semantic model so CLI, LSP, MCP, and host adapters all explain the same facts rather than reimplementing rules per surface.
 
@@ -167,32 +167,37 @@ Future LSP features should only be added when the shared analysis output exposes
 
 Embedded queries should not be special cases inside semantic analysis.
 
-Host adapters should produce sources with:
+Host adapters should eventually produce sources with:
 
 - host source ID
 - embedded source text
 - byte mapping from embedded query offsets back to host offsets
 - host metadata needed for parameter/result integration
 
-The semantic engine analyzes embedded sources through the same parser and workspace contracts.
+The semantic engine analyzes embedded sources through the same parser and workspace contracts. Host adapters are gated on core `.surql` readiness: no Rust macro, TypeScript transformer, or other adapter should own statement semantics, expression typing, function checking, graph validation, or response-shape inference. Adapters should only map host spans/parameter types into the shared engine once that engine has full plain-SurrealQL coverage.
 
 ## Next implementation slice
 
-SELECT IR and response-shape inference now cover schema-backed wildcard projections, named projections, aliases, `SELECT VALUE <field>`, `ONLY`, schema-backed `OMIT`, literal `LIMIT`, `FETCH` materialization flags, relation metadata, simple relation-backed graph traversal response shapes, row-context `WHERE` field validation, simple `WHERE field = $param` parameter kind inference, row-preserving modifier facts, graph traversal reference diagnostics, and explicit partials for shape-changing/unsupported SELECT clauses. The next slice is to turn these first-pass facts into broader expression semantics and host integration:
+The next work is full SurQL semantic coverage, not host integration. The source-of-truth plan is `docs/plans/2026-06-12-full-surql-semantics.md`, with supporting historical plans in `docs/plans/2026-06-06-select-semantics.md` and `docs/plans/2026-06-11-surql-statement-coverage.md`.
 
-1. validate graph-local `WHERE` and graph selections against relation-edge context
-2. support richer parameter inference across more predicate operators and modifier expressions
-3. model nested/object field paths instead of treating dotted paths as flat schema keys
-4. start the Rust host adapter spike once the core response-shape/diagnostic facts are stable
+Immediate focus:
 
-The SELECT plan is `docs/plans/2026-06-06-select-semantics.md`.
+1. introduce expression fact scaffolding without changing current behavior
+2. infer literal/path/variable/object/array expression facts
+3. validate assignability for mutation payloads and field assignments
+4. model mutation `RETURN <fields>` and `RETURN DIFF`
+5. expand SELECT expression projections, function signatures, block/LET/RETURN/IF/FOR semantics, graph traversal semantics, and remaining statement coverage
+
+Host adapters may start only after the full core readiness gate passes.
 
 Acceptance gates:
 
 - no maintained code depends on `surrealguard-types` or `surrealguard_types`
-- existing SELECT IR extraction tests keep covering fields, `AS`, `OMIT`, `FETCH`, `ONLY`, and graph lookups
-- existing table-reference and projection diagnostics remain routed through SELECT IR
-- focused tests for row-preserving modifiers, `OMIT` shape subtraction, literal `LIMIT`, `FETCH` materialization metadata, relation metadata indexing, simple graph traversal response-shape inference, row-context `WHERE` diagnostics, parameter kind inference from field comparisons, and graph traversal reference diagnostics
-- dynamic/shape-changing modifier result shapes remain partial/unknown until modeled
+- every parseable statement kind has stable analysis facts
+- expression facts cover literals, paths, variables, objects, arrays, functions, subqueries, blocks, and dynamic/partial cases
+- function calls have signature-based arity/argument/return analysis where statically known
+- mutation, SELECT, graph traversal, block, and schema-object misuse diagnostics are emitted from the shared core
+- response shapes are modeled or explicitly partial for every statement category
+- host adapters do not implement independent SurrealQL semantic rules
 - `cargo test --workspace -- --nocapture`
 - `cargo check --workspace`
