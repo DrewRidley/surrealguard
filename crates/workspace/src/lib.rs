@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod config;
+pub mod expression;
 pub mod response_shape;
 pub mod schema;
 pub mod select_ir;
@@ -10,5 +11,6 @@ pub use analysis::{
     analyze_query, analyze_source, analyze_workspace, AnalysisOutput, ParamInference,
     SelectModifierAnalysis, StatementAnalysis, Workspace, WorkspaceAnalysis,
 };
+pub use expression::{ExpressionFact, ExpressionValueClass};
 pub use response_shape::{FieldShape, PartialReason, ResponseShape};
 pub use schema::{FieldDef, RelationDef, SchemaIndex, TableDef};

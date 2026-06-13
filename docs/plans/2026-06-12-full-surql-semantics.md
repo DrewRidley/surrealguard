@@ -133,17 +133,23 @@ Start with a deliberately small signature table and expand it in verified slices
 
 Objective: introduce `ExpressionFact`, `StatementSemantics` helpers, and reusable assignability predicates without changing existing behavior.
 
+Current implementation:
+
+- added `ExpressionFact`, `ExpressionValueClass`, and `ExpressionDependencies` in `crates/workspace/src/expression.rs`
+- expression facts carry `SourceSpan`, optional `surrealdb_types::Kind`, optional `ResponseShape`, value class, partial reasons, and dependency metadata
+- exported expression fact types from `surrealguard-workspace`
+- no analyzer pipeline behavior or diagnostics changed in this scaffolding slice
+
 Tests:
 
-- expression fact model serializes with `Kind` leaves and partial reasons
-- response shapes remain unchanged for existing SELECT/mutation tests
-- no diagnostics change yet
+- expression fact model preserves `Kind`, response shape, value class, and partial reasons
+- expression fact model tracks dependency metadata without introducing a custom database type system
+- existing SELECT/mutation response-shape tests remain the regression gate for unchanged behavior
 
 Files:
 
 - create `crates/workspace/src/expression.rs`
 - modify `crates/workspace/src/lib.rs`
-- modify `crates/workspace/src/semantic.rs` only to thread helpers where needed
 
 Verification:
 
