@@ -228,12 +228,18 @@ Deferred from this slice:
 
 Objective: replace current mutation partials with verified shapes.
 
-Tasks:
+Current implementation:
 
-- smoke test SurrealDB 3.x for `CREATE/UPDATE/UPSERT/DELETE/RELATE RETURN <fields>` and `RETURN DIFF`
-- infer projected object array shape for `RETURN <fields>` using the same projection engine as SELECT where possible
-- infer `RETURN DIFF` patch-array shape, or a structured partial if patch payload shape is too dynamic
-- keep `RETURN NONE` empty array behavior
+- smoke-tested SurrealDB 3.0.5 locally against `UPDATE ... RETURN name, age`, `UPDATE ... RETURN DIFF`, and `DELETE ... RETURN name`
+- infers `RETURN <fields>` as an array of closed projected objects using schema-backed field shapes, including nested field paths like `profile.email`
+- infers `RETURN DIFF` as an array of patch arrays; each patch object has `op: string`, `path: string`, and `value: any`
+- keeps `RETURN NONE` as an empty array shape
+
+Deferred from this slice:
+
+- field-return validation diagnostics for unknown mutation return fields
+- exact `value` kind in `RETURN DIFF` patches
+- expression/function returns inside mutation `RETURN`, beyond direct field projections
 
 ### Slice E: SELECT expression projections and aliases
 

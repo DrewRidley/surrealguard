@@ -230,6 +230,17 @@ fn response_shape_for_mutation(
     parsed: &ParsedSource,
     schema: &SchemaIndex,
 ) -> ResponseShape {
+    let Some(table_name) = mutation_table_name(node, parsed) else {
+        return ResponseShape::Unknown {
+            reason: PartialReason::Unresolved,
+        };
+    };
+    let Some(table) = schema.tables.get(&table_name) else {
+        return ResponseShape::Unknown {
+            reason: PartialReason::Unresolved,
+        };
+    };
+
     match mutation_return_mode(node, parsed) {
         MutationReturnMode::None => ResponseShape::Array {
             element: Box::new(ResponseShape::Unknown {
@@ -237,23 +248,9 @@ fn response_shape_for_mutation(
             }),
             max_len: Some(0),
         },
-        MutationReturnMode::Diff => ResponseShape::Unknown {
-            reason: PartialReason::UnsupportedSyntax("RETURN DIFF".into()),
-        },
-        MutationReturnMode::Fields => ResponseShape::Unknown {
-            reason: PartialReason::UnsupportedSyntax("RETURN fields".into()),
-        },
+        MutationReturnMode::Diff => mutation_return_diff_shape(node, parsed),
+        MutationReturnMode::Fields => mutation_return_fields_shape(node, parsed, table),
         MutationReturnMode::Rows => {
-            let Some(table_name) = mutation_table_name(node, parsed) else {
-                return ResponseShape::Unknown {
-                    reason: PartialReason::Unresolved,
-                };
-            };
-            let Some(table) = schema.tables.get(&table_name) else {
-                return ResponseShape::Unknown {
-                    reason: PartialReason::Unresolved,
-                };
-            };
             if table.fields.is_empty() {
                 return ResponseShape::Unknown {
                     reason: PartialReason::Unresolved,
@@ -264,6 +261,89 @@ fn response_shape_for_mutation(
                 max_len: None,
             }
         }
+    }
+}
+
+fn mutation_return_fields_shape(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+) -> ResponseShape {
+    let Some(return_clause) = find_descendant_kind(node, "ReturnClause") else {
+        return ResponseShape::Unknown {
+            reason: PartialReason::Unresolved,
+        };
+    };
+    let mut fields = BTreeMap::new();
+    collect_return_field_shapes(return_clause, parsed, table, &mut fields);
+    if fields.is_empty() {
+        return ResponseShape::Unknown {
+            reason: PartialReason::Unresolved,
+        };
+    }
+
+    ResponseShape::Array {
+        element: Box::new(ResponseShape::Object {
+            fields,
+            open: false,
+        }),
+        max_len: None,
+    }
+}
+
+fn collect_return_field_shapes(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    fields: &mut BTreeMap<String, FieldShape>,
+) {
+    if is_row_context_field_path_node(node) {
+        let path = field_path_from_node(node, parsed);
+        if let Some(field_shape) = field_shape_for_path(table, &path) {
+            insert_field_shape_at_path(fields, &path.segments, field_shape);
+        }
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.is_named() && !matches!(child.kind(), "Keyword" | "Literal") {
+            collect_return_field_shapes(child, parsed, table, fields);
+        }
+    }
+}
+
+fn mutation_return_diff_shape(node: Node<'_>, parsed: &ParsedSource) -> ResponseShape {
+    let span = find_descendant_kind(node, "ReturnClause")
+        .map(|clause| node_span(clause, parsed.source_id().clone()))
+        .unwrap_or_else(|| node_span(node, parsed.source_id().clone()));
+    let mut fields = BTreeMap::new();
+    for (name, kind) in [
+        ("op", Kind::String),
+        ("path", Kind::String),
+        ("value", Kind::Any),
+    ] {
+        fields.insert(
+            name.to_string(),
+            FieldShape {
+                shape: ResponseShape::Value { kind: kind.clone() },
+                kind: Some(kind),
+                span: span.clone(),
+                materialized_by_fetch: false,
+                partial: Vec::new(),
+            },
+        );
+    }
+
+    ResponseShape::Array {
+        element: Box::new(ResponseShape::Array {
+            element: Box::new(ResponseShape::Object {
+                fields,
+                open: false,
+            }),
+            max_len: None,
+        }),
+        max_len: None,
     }
 }
 

@@ -1475,34 +1475,81 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
-    fn analyze_workspace_marks_mutation_return_diff_and_fields_partial() {
+    fn analyze_workspace_infers_mutation_return_field_projection_shape() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
             "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nUPDATE person SET name = 'Ada' RETURN DIFF;\nCREATE person SET name = 'Ada' RETURN name;".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD profile.email ON person TYPE string;\nUPDATE person SET age = 42 RETURN name, profile.email;".into(),
         );
 
         let output = analyze_workspace(&workspace);
-        let source_output = &output.sources[&source];
-        let shapes: Vec<_> = source_output
+        let update = output.sources[&source]
             .statements
             .iter()
-            .filter(|statement| statement.kind == "update" || statement.kind == "create")
-            .map(|statement| statement.response_shape.clone())
-            .collect();
+            .find(|statement| statement.kind == "update")
+            .expect("update statement exists");
 
+        let Some(ResponseShape::Array { element, .. }) = &update.response_shape else {
+            panic!(
+                "expected array response shape, got {:?}",
+                update.response_shape
+            );
+        };
+        let ResponseShape::Object {
+            fields,
+            open: false,
+        } = element.as_ref()
+        else {
+            panic!("expected object element, got {element:?}");
+        };
         assert_eq!(
-            shapes,
-            vec![
-                Some(ResponseShape::Unknown {
-                    reason: PartialReason::UnsupportedSyntax("RETURN DIFF".into())
-                }),
-                Some(ResponseShape::Unknown {
-                    reason: PartialReason::UnsupportedSyntax("RETURN fields".into())
-                }),
-            ]
+            fields.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["name", "profile"]
         );
-        assert!(source_output.response_shape.is_none());
+        assert_eq!(fields["name"].kind, Some(Kind::String));
+        let ResponseShape::Object {
+            fields: profile, ..
+        } = &fields["profile"].shape
+        else {
+            panic!("expected profile object, got {:?}", fields["profile"].shape);
+        };
+        assert_eq!(profile["email"].kind, Some(Kind::String));
+    }
+
+    #[test]
+    fn analyze_workspace_infers_mutation_return_diff_patch_shape() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nUPDATE person SET name = 'Ada' RETURN DIFF;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let update = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "update")
+            .expect("update statement exists");
+
+        let Some(ResponseShape::Array { element, .. }) = &update.response_shape else {
+            panic!(
+                "expected outer array response shape, got {:?}",
+                update.response_shape
+            );
+        };
+        let ResponseShape::Array { element: patch, .. } = element.as_ref() else {
+            panic!("expected patch array element, got {element:?}");
+        };
+        let ResponseShape::Object {
+            fields,
+            open: false,
+        } = patch.as_ref()
+        else {
+            panic!("expected patch object, got {patch:?}");
+        };
+        assert_eq!(fields["op"].kind, Some(Kind::String));
+        assert_eq!(fields["path"].kind, Some(Kind::String));
+        assert_eq!(fields["value"].kind, Some(Kind::Any));
     }
 
     #[test]
