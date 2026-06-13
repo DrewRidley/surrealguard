@@ -1145,8 +1145,37 @@ fn validate_insert_tuple_value_assignability(
         .copied()
         .collect();
 
-    for (path, value) in columns.into_iter().zip(values) {
-        validate_value_kind_for_field(path, value, parsed, table, diagnostics);
+    if columns.is_empty() {
+        return;
+    }
+
+    if values.len() % columns.len() != 0 {
+        diagnostics.push(Finding::new(
+            node_span(node, parsed.source_id().clone()),
+            FindingCode::type_error(2002),
+            Severity::Error,
+            format!(
+                "INSERT tuple has {} {} for {} {}",
+                values.len(),
+                pluralize(values.len(), "value", "values"),
+                columns.len(),
+                pluralize(columns.len(), "field", "fields")
+            ),
+        ));
+    }
+
+    for (index, value) in values.into_iter().enumerate() {
+        if let Some(path) = columns.get(index % columns.len()).cloned() {
+            validate_value_kind_for_field(path, value, parsed, table, diagnostics);
+        }
+    }
+}
+
+fn pluralize(count: usize, singular: &'static str, plural: &'static str) -> &'static str {
+    if count == 1 {
+        singular
+    } else {
+        plural
     }
 }
 

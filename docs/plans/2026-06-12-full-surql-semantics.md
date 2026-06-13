@@ -199,6 +199,10 @@ Current implementation:
 - covers object payloads in `CONTENT`, `MERGE`, and `REPLACE`
 - covers object insert forms through existing object traversal
 - covers tuple `INSERT INTO table (fields...) VALUES (values...)`
+- covers nested object payload paths like `profile.email`
+- covers `RELATE ... CONTENT` / `MERGE` edge payload values against relation table fields
+- emits `E2002` when flat tuple `INSERT` value counts are not divisible by the field count
+- checks tuple insert values across flattened multi-row `VALUES` forms by cycling schema fields over values
 - uses `ExpressionFact` inference for literal/object/array/field/param facts
 - skips dynamic params and unknown expressions instead of false-positive errors
 - keeps unknown field diagnostics (`E1004`) separate from type mismatch diagnostics (`E2001`)
@@ -209,14 +213,16 @@ Tests:
 - `UPDATE person MERGE { age: 'old' }` reports `E2001`
 - `UPSERT person CONTENT { age: 'old' }` reports `E2001`
 - `INSERT INTO person (age) VALUES ('old')` reports `E2001`
+- `UPDATE person MERGE { profile: { email: 10 } }` reports nested `E2001`
+- `RELATE person:one->likes->post:one CONTENT { created_at: 'yesterday' }` reports edge payload `E2001`
+- `INSERT INTO person (age, name) VALUES (1)` reports arity `E2002`
+- `INSERT INTO person (age, name) VALUES (1, 'Ada'), ('old', 'Grace')` checks both flattened rows
 - dynamic params produce no type mismatch until contextual inference binds them
 
 Deferred from this slice:
 
-- nested mismatch regression for `profile.email`
-- relation edge payload type mismatches
-- tuple/bulk insert row-count and arity diagnostics
 - richer assignability for unions, literal kinds, records, arrays, option/none/null, and object schemas
+- exact tuple row boundary modeling beyond flattened arity modulo checks
 
 ### Slice D: mutation `RETURN <fields>` and `RETURN DIFF`
 
