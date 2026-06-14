@@ -305,14 +305,15 @@ Current implementation:
 
 - source-level LET facts collect literal/expression kind and shape for simple top-level declarations
 - LET values can depend on earlier LET facts for simple variable and binary expressions, e.g. `LET $age = 42; LET $next = $age + 1; RETURN $next` resolves `$next` as `int`
-- LET variables are excluded from query parameter inference, so `$age` from `LET $age = 42` no longer appears as an external required param
+- LET variables are excluded from query parameter inference only after their declaration has been encountered; a forward use such as `LET $y = $x + 1; LET $x = 1` still records `$x` as an external/dynamic param use
+- repeated LET declarations use last-write-wins for later references and returns, matching SurrealDB 3.0.5 smoke behavior (`LET $x = 1; LET $x = 's'; RETURN $x` returns `'s'`)
 - `RETURN $age` resolves to the LET variable response shape when the variable is statically known
 - mutation assignability can use LET variable kinds, so `LET $age = 42; CREATE person SET age = $age` validates and `LET $age = 'old'; ... age = $age` reports `E2001`
 - dependent LET variables participate in mutation assignability, so `LET $next = $age + 1; CREATE person SET age = $next` validates when prior facts establish `int`
 
 Deferred from this slice:
 
-- lexical scopes/block ordering; current LET facts are conservative source-level facts
+- lexical/block scopes remain deferred; current LET facts are conservative source-level facts
 - LET dependency support beyond simple prior variable references inside binary expressions
 - IF/ELSE branch shape merging
 - FOR loop variable kind inference and block shape

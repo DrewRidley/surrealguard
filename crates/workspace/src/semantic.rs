@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use surrealguard_diagnostics::{Finding, FindingCode, Severity};
 use surrealguard_syntax::parse::ParsedSource;
@@ -48,6 +48,11 @@ pub fn analyze_parsed_source(parsed: &ParsedSource) -> SemanticOutput {
         parsed,
         &let_variables,
         &mut statements,
+    );
+    collect_params_ordered(
+        parsed.tree().root_node(),
+        parsed,
+        &mut BTreeSet::new(),
         &mut params,
     );
 
@@ -486,7 +491,6 @@ fn collect_statement_analysis(
     parsed: &ParsedSource,
     let_variables: &BTreeMap<String, LetVariableFact>,
     statements: &mut Vec<StatementAnalysis>,
-    params: &mut BTreeMap<String, ParamInference>,
 ) {
     if let Some(kind) = statement_kind(node, parsed.text()) {
         statements.push(StatementAnalysis {
@@ -495,13 +499,12 @@ fn collect_statement_analysis(
             response_shape: None,
             select_modifiers: select_modifier_analysis_for_node(node, parsed),
         });
-        collect_params(node, parsed, let_variables, params);
         return;
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_statement_analysis(child, parsed, let_variables, statements, params);
+        collect_statement_analysis(child, parsed, let_variables, statements);
     }
 }
 
@@ -675,33 +678,52 @@ fn row_preserving_modifier(
     }
 }
 
-fn collect_params(
+fn collect_params_ordered(
     node: Node<'_>,
     parsed: &ParsedSource,
-    let_variables: &BTreeMap<String, LetVariableFact>,
+    declared_lets: &mut BTreeSet<String>,
     params: &mut BTreeMap<String, ParamInference>,
 ) {
+    if node.kind() == "LetStatement" {
+        if let Some(value_node) = let_value_node(node) {
+            collect_params_ordered(value_node, parsed, declared_lets, params);
+        }
+        if let Some(name_node) = let_variable_name_node(node) {
+            declared_lets.insert(param_name(node_text(name_node, parsed.text())));
+        }
+        return;
+    }
+
     if node.kind() == "VariableName" {
         let name = param_name(node_text(node, parsed.text()));
-        if let_variables.contains_key(&name) {
-            return;
+        if !declared_lets.contains(&name) {
+            collect_param_variable(name, node, parsed, params);
         }
-        params
-            .entry(name.clone())
-            .or_insert_with(|| ParamInference {
-                name,
-                kind: None,
-                required: true,
-                spans: Vec::new(),
-            })
-            .spans
-            .push(node_span(node, parsed.source_id().clone()));
+        return;
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_params(child, parsed, let_variables, params);
+        collect_params_ordered(child, parsed, declared_lets, params);
     }
+}
+
+fn collect_param_variable(
+    name: String,
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    params: &mut BTreeMap<String, ParamInference>,
+) {
+    params
+        .entry(name.clone())
+        .or_insert_with(|| ParamInference {
+            name,
+            kind: None,
+            required: true,
+            spans: Vec::new(),
+        })
+        .spans
+        .push(node_span(node, parsed.source_id().clone()));
 }
 
 fn collect_table_reference_diagnostics(

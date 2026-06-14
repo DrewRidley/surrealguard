@@ -859,6 +859,67 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_uses_latest_let_shadow_for_return_shape() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "LET $x = 1;\nLET $x = 's';\nRETURN $x;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let source_output = &output.sources[&source];
+        let return_statement = source_output
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "return")
+            .expect("return statement exists");
+
+        assert!(source_output.inferred_params.is_empty());
+        assert_eq!(
+            return_statement.response_shape,
+            Some(ResponseShape::Value { kind: Kind::String })
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_preserves_prior_let_dependency_before_shadowing() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "LET $x = 1;\nLET $y = $x + 1;\nLET $x = 's';\nRETURN $y;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let source_output = &output.sources[&source];
+        let return_statement = source_output
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "return")
+            .expect("return statement exists");
+
+        assert!(source_output.inferred_params.is_empty());
+        assert_eq!(
+            return_statement.response_shape,
+            Some(ResponseShape::Value { kind: Kind::Int })
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_treats_forward_let_use_as_external_param() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "LET $y = $x + 1;\nLET $x = 1;\nRETURN $y;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let params = &output.sources[&source].inferred_params;
+
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "x");
+    }
+
+    #[test]
     fn analyze_workspace_infers_param_kinds_from_function_signatures() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
