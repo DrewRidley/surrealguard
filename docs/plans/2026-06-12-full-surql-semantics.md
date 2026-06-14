@@ -263,22 +263,33 @@ Deferred from this slice:
 
 Objective: implement built-in function arity, argument kind checking, and return inference.
 
-Start signatures:
+Current implementation:
 
-- `count()`
-- `array::len(array)`
-- `string::len(string)`
-- `math::sum(array<number>)` or verified SurrealDB equivalent
-- `type::table(string)` and `type::thing(table/string, id)` as dynamic-source helpers
-- a small set of `time::*`, `string::*`, `array::*`, `object::*`, `record::*` only after behavior is verified
+- verified SurrealDB 3.0.5 behavior locally for:
+  - `string::len(name)` -> integer length
+  - `array::len(tags)` -> integer length
+  - `count()` -> integer aggregate/count value
+  - `string::len()` runtime arity error wording
+  - `string::len(tags)` runtime argument-kind error behavior
+- parser CST shape is `FunctionCall(FunctionName, ArgumentList(...))`
+- SELECT projection shape inference maps known function calls to `Kind::Int` return fields
+- diagnostics now report:
+  - `E2002` unknown function
+  - `E2003` wrong arity
+  - `E2004` wrong argument kind
 
-Tests:
+Initial signature table:
 
-- wrong arity reports `E2003`
-- wrong arg kind reports `E2004`
-- valid calls infer return kind
-- unknown function reports `E2002` unless grammar/source marks it as dynamic/user-defined and unresolved
-- function call params infer expected kind from signature
+- `count() -> int`
+- `array::len(array) -> int`
+- `string::len(string) -> int`
+
+Deferred from this slice:
+
+- param kind inference from function signatures
+- function calls outside SELECT statement contexts
+- richer signatures for `math::*`, `time::*`, `object::*`, `record::*`, etc.
+- overloads, optional args, and SurrealDB-specific aggregate/group semantics beyond return kind
 
 ### Slice G: LET, RETURN, block, IF/ELSE, FOR semantics
 

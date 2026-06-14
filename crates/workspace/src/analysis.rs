@@ -13,8 +13,8 @@ use crate::config::WorkspaceConfig;
 use crate::schema::{extract_schema, SchemaIndex};
 use crate::semantic::{
     analyze_parsed_source, infer_non_select_response_shapes, infer_param_kinds,
-    infer_select_response_shapes, validate_mutation_fields, validate_select_graph_references,
-    validate_select_projection_fields, validate_table_references,
+    infer_select_response_shapes, validate_function_calls, validate_mutation_fields,
+    validate_select_graph_references, validate_select_projection_fields, validate_table_references,
 };
 use crate::source_registry::SourceRegistry;
 
@@ -192,6 +192,15 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
         }
     }
     diagnostics.extend(mutation_field_diagnostics);
+
+    let function_call_diagnostics =
+        validate_function_calls(&parsed_sources, &schema_extraction.schema);
+    for diagnostic in &function_call_diagnostics {
+        if let Some(source_output) = sources.get_mut(diagnostic.span().source()) {
+            source_output.diagnostics.push(diagnostic.clone());
+        }
+    }
+    diagnostics.extend(function_call_diagnostics);
 
     let param_kind_inferences = infer_param_kinds(&parsed_sources, &schema_extraction.schema);
     for inference in param_kind_inferences {
@@ -1420,6 +1429,71 @@ INSERT INTO person { name: 'Ada' };
             fields["next_age"].partial,
             vec![PartialReason::UnsupportedSyntax("BinaryExpression".into())]
         );
+    }
+
+    #[test]
+    fn analyze_workspace_infers_function_projection_shapes() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD tags ON person TYPE array<string>;\nSELECT string::len(name) AS name_len, array::len(tags) AS tag_count, count() AS total FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
+            panic!(
+                "expected array response shape, got {:?}",
+                select.response_shape
+            );
+        };
+        let ResponseShape::Object {
+            fields,
+            open: false,
+        } = element.as_ref()
+        else {
+            panic!("expected object element, got {element:?}");
+        };
+        assert_eq!(fields["name_len"].kind, Some(Kind::Int));
+        assert_eq!(fields["tag_count"].kind, Some(Kind::Int));
+        assert_eq!(fields["total"].kind, Some(Kind::Int));
+    }
+
+    #[test]
+    fn analyze_workspace_reports_function_arity_and_argument_kind_mismatches() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nSELECT string::len(), string::len(age), array::len(age), unknown::fn(age) FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let source_output = &output.sources[&source];
+        let messages: Vec<_> = source_output
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        assert!(messages.iter().any(|(code, message)| {
+            code == "E2003" && message == "function `string::len` expects 1 argument, got 0"
+        }));
+        assert!(messages.iter().any(|(code, message)| {
+            code == "E2004"
+                && message == "argument 1 to `string::len` has type `int`, expected `string`"
+        }));
+        assert!(messages.iter().any(|(code, message)| {
+            code == "E2004"
+                && message == "argument 1 to `array::len` has type `int`, expected `array`"
+        }));
+        assert!(messages.iter().any(|(code, message)| {
+            code == "E2002" && message == "unknown function `unknown::fn`"
+        }));
     }
 
     #[test]

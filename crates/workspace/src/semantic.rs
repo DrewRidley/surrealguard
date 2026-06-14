@@ -137,6 +137,28 @@ pub fn validate_mutation_fields(
     diagnostics
 }
 
+pub fn validate_function_calls(
+    parsed_sources: &[ParsedSource],
+    schema: &SchemaIndex,
+) -> Vec<Finding> {
+    let mut diagnostics = Vec::new();
+
+    for parsed in parsed_sources {
+        if !parsed.syntax_diagnostics().is_empty() {
+            continue;
+        }
+
+        collect_function_call_diagnostics(
+            parsed.tree().root_node(),
+            parsed,
+            schema,
+            &mut diagnostics,
+        );
+    }
+
+    diagnostics
+}
+
 pub fn infer_param_kinds(
     parsed_sources: &[ParsedSource],
     schema: &SchemaIndex,
@@ -748,6 +770,175 @@ fn relate_graph_reference(node: Node<'_>, parsed: &ParsedSource) -> Option<Relat
         target_table: table_name_from_node_text(node_text(target, parsed.text())).to_string(),
         target_span: node_span(target, parsed.source_id().clone()),
     })
+}
+
+fn collect_function_call_diagnostics(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if node.kind() == "SelectStatement" {
+        let ir = select_ir_from_statement(node, parsed);
+        let table =
+            resolved_select_table_name(&ir, schema).and_then(|name| schema.tables.get(&name));
+        validate_function_calls_in_node(node, parsed, table, diagnostics);
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_function_call_diagnostics(child, parsed, schema, diagnostics);
+    }
+}
+
+fn validate_function_calls_in_node(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    row_table: Option<&crate::schema::TableDef>,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if node.kind() == "FunctionCall" {
+        validate_function_call(node, parsed, row_table, diagnostics);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        validate_function_calls_in_node(child, parsed, row_table, diagnostics);
+    }
+}
+
+fn validate_function_call(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    row_table: Option<&crate::schema::TableDef>,
+    diagnostics: &mut Vec<Finding>,
+) {
+    let Some(name) = function_call_name(node, parsed) else {
+        return;
+    };
+    let args = function_call_args(node);
+    let Some(signature) = function_signature(&name) else {
+        diagnostics.push(Finding::new(
+            node_span(node, parsed.source_id().clone()),
+            FindingCode::type_error(2002),
+            Severity::Error,
+            format!("unknown function `{name}`"),
+        ));
+        return;
+    };
+
+    if args.len() != signature.args.len() {
+        diagnostics.push(Finding::new(
+            node_span(node, parsed.source_id().clone()),
+            FindingCode::type_error(2003),
+            Severity::Error,
+            format!(
+                "function `{name}` expects {} {}, got {}",
+                signature.args.len(),
+                pluralize_word("argument", signature.args.len()),
+                args.len()
+            ),
+        ));
+        return;
+    }
+
+    for (index, (arg, expected)) in args.iter().zip(signature.args.iter()).enumerate() {
+        let fact = infer_expression_fact(*arg, parsed, row_table);
+        let Some(actual) = fact.kind else {
+            continue;
+        };
+        if function_arg_kind_matches(&actual, expected) {
+            continue;
+        }
+        diagnostics.push(Finding::new(
+            fact.span,
+            FindingCode::type_error(2004),
+            Severity::Error,
+            format!(
+                "argument {} to `{name}` has type `{}`, expected `{}`",
+                index + 1,
+                kind_name(&actual),
+                function_arg_kind_name(expected)
+            ),
+        ));
+    }
+}
+
+#[derive(Clone, Debug)]
+struct FunctionSignature {
+    args: Vec<FunctionArgKind>,
+    return_kind: Kind,
+}
+
+#[derive(Clone, Debug)]
+enum FunctionArgKind {
+    Exact(Kind),
+    Array,
+}
+
+fn function_signature(name: &str) -> Option<FunctionSignature> {
+    match name {
+        "string::len" => Some(FunctionSignature {
+            args: vec![FunctionArgKind::Exact(Kind::String)],
+            return_kind: Kind::Int,
+        }),
+        "array::len" => Some(FunctionSignature {
+            args: vec![FunctionArgKind::Array],
+            return_kind: Kind::Int,
+        }),
+        "count" => Some(FunctionSignature {
+            args: Vec::new(),
+            return_kind: Kind::Int,
+        }),
+        _ => None,
+    }
+}
+
+fn function_arg_kind_matches(actual: &Kind, expected: &FunctionArgKind) -> bool {
+    match expected {
+        FunctionArgKind::Exact(expected) => kind_is_assignable_to(actual, expected),
+        FunctionArgKind::Array => matches!(actual, Kind::Array(_, _) | Kind::Set(_, _)),
+    }
+}
+
+fn function_arg_kind_name(expected: &FunctionArgKind) -> &'static str {
+    match expected {
+        FunctionArgKind::Exact(kind) => kind_name(kind),
+        FunctionArgKind::Array => "array",
+    }
+}
+
+fn pluralize_word(word: &str, count: usize) -> String {
+    if count == 1 {
+        word.to_string()
+    } else {
+        format!("{word}s")
+    }
+}
+
+fn function_call_name(node: Node<'_>, parsed: &ParsedSource) -> Option<String> {
+    let name = first_child_kind(node, "FunctionName")?;
+    Some(node_text(name, parsed.text()).trim().to_string())
+}
+
+fn function_call_args(node: Node<'_>) -> Vec<Node<'_>> {
+    let Some(arguments) = first_child_kind(node, "ArgumentList") else {
+        return Vec::new();
+    };
+    let mut cursor = arguments.walk();
+    arguments
+        .children(&mut cursor)
+        .filter(|child| child.is_named())
+        .collect()
+}
+
+fn first_child_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>> {
+    let mut cursor = node.walk();
+    let found = node
+        .children(&mut cursor)
+        .find(|child| child.kind() == kind);
+    found
 }
 
 fn collect_select_projection_field_diagnostics(
@@ -2077,6 +2268,8 @@ fn field_shape_for_dynamic_select_expression(
     expression_text: &str,
 ) -> FieldShape {
     let kind = match expression_kind {
+        Some("FunctionCall") => function_name_from_expression_text(expression_text)
+            .and_then(|name| function_signature(name).map(|signature| signature.return_kind)),
         Some("Number") => {
             if expression_text.contains('.') {
                 Some(Kind::Float)
@@ -2112,6 +2305,10 @@ fn field_shape_for_dynamic_select_expression(
         materialized_by_fetch: false,
         partial,
     }
+}
+
+fn function_name_from_expression_text(expression_text: &str) -> Option<&str> {
+    expression_text.split_once('(').map(|(name, _)| name.trim())
 }
 
 fn field_shape_for_path(table: &crate::schema::TableDef, path: &FieldPath) -> Option<FieldShape> {
