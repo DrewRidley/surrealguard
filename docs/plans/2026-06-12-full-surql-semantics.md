@@ -250,12 +250,15 @@ Current implementation:
 - `SELECT 1 AS one FROM person` returns projected field `one: Kind::Int`
 - boolean/string/float literal projection aliases map to their literal kinds
 - existing field aliases such as `SELECT name AS display FROM person` preserve the source field kind
-- unsupported expression projections with aliases are represented as explicit partial fields instead of disappearing from the shape; for example `SELECT age + 1 AS next_age FROM person` produces `next_age` with `UnsupportedSyntax("BinaryExpression")`
+- simple binary expression projections infer result kinds when both operands are statically known and compatible:
+  - numeric `+`, `-`, `*`, `/` over `int`/`float` returns `int` unless either operand is `float`
+  - string `+` over two strings returns `string`
+- incompatible known binary operands emit `E2005`, for example `age + name` reports `operator `+` cannot combine `int` and `string``
 - unaliased dynamic expressions use the expression text as a stable provisional field key
 
 Deferred from this slice:
 
-- binary expression numeric rules and result-kind inference
+- richer expression operators beyond simple numeric/string binary compatibility
 - function call signatures, arity diagnostics, and return kinds
 - aggregate/group semantics such as `SELECT count() AS total FROM person GROUP ALL`
 

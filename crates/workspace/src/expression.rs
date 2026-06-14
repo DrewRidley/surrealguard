@@ -93,6 +93,7 @@ pub fn infer_expression_fact(
         "VariableName" => infer_variable_expression_fact(node, parsed),
         "Object" => infer_object_expression_fact(node, parsed, row_table),
         "Array" => infer_array_expression_fact(node, parsed, row_table),
+        "BinaryExpression" => infer_binary_expression_fact(node, parsed, row_table),
         _ if is_identifier_like(node) => infer_field_path_expression_fact(node, parsed, row_table),
         _ => ExpressionFact::new(
             node_span(node, parsed.source_id().clone()),
@@ -276,6 +277,97 @@ fn infer_array_expression_fact(
             .push(PartialReason::UnsupportedSyntax("mixed array".into()));
     }
     fact
+}
+
+fn infer_binary_expression_fact(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    row_table: Option<&TableDef>,
+) -> ExpressionFact {
+    let Some((left, operator, right)) = binary_expression_parts(node) else {
+        return ExpressionFact::new(
+            node_span(node, parsed.source_id().clone()),
+            ExpressionValueClass::Unknown,
+        )
+        .with_partial(PartialReason::UnsupportedSyntax("BinaryExpression".into()));
+    };
+
+    let left_fact = infer_expression_fact(left, parsed, row_table);
+    let right_fact = infer_expression_fact(right, parsed, row_table);
+    let operator_text = node_text(operator, parsed.text()).trim();
+
+    let mut fact = ExpressionFact::new(
+        node_span(node, parsed.source_id().clone()),
+        ExpressionValueClass::Unknown,
+    );
+    fact.dependencies
+        .field_paths
+        .extend(left_fact.dependencies.field_paths);
+    fact.dependencies
+        .field_paths
+        .extend(right_fact.dependencies.field_paths);
+    fact.dependencies
+        .params
+        .extend(left_fact.dependencies.params);
+    fact.dependencies
+        .params
+        .extend(right_fact.dependencies.params);
+    fact.partial.extend(left_fact.partial);
+    fact.partial.extend(right_fact.partial);
+
+    if let (Some(left_kind), Some(right_kind)) = (&left_fact.kind, &right_fact.kind) {
+        if let Some(kind) = binary_expression_result_kind(operator_text, left_kind, right_kind) {
+            fact.kind = Some(kind.clone());
+            fact.shape = Some(ResponseShape::Value { kind });
+            fact.partial.clear();
+            return fact;
+        }
+    }
+
+    fact.partial
+        .push(PartialReason::UnsupportedSyntax("BinaryExpression".into()));
+    fact
+}
+
+fn binary_expression_parts<'tree>(
+    node: Node<'tree>,
+) -> Option<(Node<'tree>, Node<'tree>, Node<'tree>)> {
+    let mut cursor = node.walk();
+    let children: Vec<_> = node
+        .children(&mut cursor)
+        .filter(|child| child.is_named())
+        .collect();
+    let operator_index = children
+        .iter()
+        .position(|child| child.kind() == "Operator")?;
+    let left = children[..operator_index]
+        .iter()
+        .rev()
+        .copied()
+        .find(|child| child.kind() != "Operator")?;
+    let right = children[operator_index + 1..]
+        .iter()
+        .copied()
+        .find(|child| child.kind() != "Operator")?;
+    Some((left, children[operator_index], right))
+}
+
+fn binary_expression_result_kind(operator: &str, left: &Kind, right: &Kind) -> Option<Kind> {
+    match operator {
+        "+" if matches!(left, Kind::String) && matches!(right, Kind::String) => Some(Kind::String),
+        "+" | "-" | "*" | "/" if is_numeric_kind(left) && is_numeric_kind(right) => {
+            if matches!(left, Kind::Float) || matches!(right, Kind::Float) {
+                Some(Kind::Float)
+            } else {
+                Some(Kind::Int)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn is_numeric_kind(kind: &Kind) -> bool {
+    matches!(kind, Kind::Int | Kind::Float | Kind::Number)
 }
 
 fn array_element_nodes(array: Node<'_>) -> Vec<Node<'_>> {

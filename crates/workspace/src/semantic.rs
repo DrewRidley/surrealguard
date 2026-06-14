@@ -416,7 +416,7 @@ fn collect_select_response_shapes(
         let ir = select_ir_from_statement(node, parsed);
         shapes.push((
             node_span(node, parsed.source_id().clone()),
-            response_shape_for_select(&ir, schema),
+            response_shape_for_select(&ir, parsed, schema),
         ));
         return;
     }
@@ -801,6 +801,9 @@ fn validate_function_calls_in_node(
     if node.kind() == "FunctionCall" {
         validate_function_call(node, parsed, row_table, diagnostics);
     }
+    if node.kind() == "BinaryExpression" {
+        validate_binary_expression(node, parsed, row_table, diagnostics);
+    }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -863,6 +866,78 @@ fn validate_function_call(
             ),
         ));
     }
+}
+
+fn validate_binary_expression(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    row_table: Option<&crate::schema::TableDef>,
+    diagnostics: &mut Vec<Finding>,
+) {
+    let Some((left, operator, right)) = binary_expression_parts(node) else {
+        return;
+    };
+    let left_fact = infer_expression_fact(left, parsed, row_table);
+    let right_fact = infer_expression_fact(right, parsed, row_table);
+    let (Some(left_kind), Some(right_kind)) = (&left_fact.kind, &right_fact.kind) else {
+        return;
+    };
+    let operator_text = node_text(operator, parsed.text()).trim();
+    if binary_expression_result_kind(operator_text, left_kind, right_kind).is_some() {
+        return;
+    }
+
+    diagnostics.push(Finding::new(
+        node_span(node, parsed.source_id().clone()),
+        FindingCode::type_error(2005),
+        Severity::Error,
+        format!(
+            "operator `{operator_text}` cannot combine `{}` and `{}`",
+            kind_name(left_kind),
+            kind_name(right_kind)
+        ),
+    ));
+}
+
+fn binary_expression_parts<'tree>(
+    node: Node<'tree>,
+) -> Option<(Node<'tree>, Node<'tree>, Node<'tree>)> {
+    let mut cursor = node.walk();
+    let children: Vec<_> = node
+        .children(&mut cursor)
+        .filter(|child| child.is_named())
+        .collect();
+    let operator_index = children
+        .iter()
+        .position(|child| child.kind() == "Operator")?;
+    let left = children[..operator_index]
+        .iter()
+        .rev()
+        .copied()
+        .find(|child| child.kind() != "Operator")?;
+    let right = children[operator_index + 1..]
+        .iter()
+        .copied()
+        .find(|child| child.kind() != "Operator")?;
+    Some((left, children[operator_index], right))
+}
+
+fn binary_expression_result_kind(operator: &str, left: &Kind, right: &Kind) -> Option<Kind> {
+    match operator {
+        "+" if matches!(left, Kind::String) && matches!(right, Kind::String) => Some(Kind::String),
+        "+" | "-" | "*" | "/" if is_numeric_kind(left) && is_numeric_kind(right) => {
+            if matches!(left, Kind::Float) || matches!(right, Kind::Float) {
+                Some(Kind::Float)
+            } else {
+                Some(Kind::Int)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn is_numeric_kind(kind: &Kind) -> bool {
+    matches!(kind, Kind::Int | Kind::Float | Kind::Number)
 }
 
 #[derive(Clone, Debug)]
@@ -939,6 +1014,24 @@ fn first_child_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>>
         .children(&mut cursor)
         .find(|child| child.kind() == kind);
     found
+}
+
+fn exact_node_for_span<'tree>(node: Node<'tree>, span: &SourceSpan) -> Option<Node<'tree>> {
+    let start = span.range().start() as usize;
+    let end = span.range().end() as usize;
+    if node.start_byte() == start && node.end_byte() == end {
+        return Some(node);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.start_byte() <= start && child.end_byte() >= end {
+            if let Some(found) = exact_node_for_span(child, span) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }
 
 fn collect_select_projection_field_diagnostics(
@@ -2042,7 +2135,11 @@ fn field_path_exists_on_table(table: &crate::schema::TableDef, path: &FieldPath)
         })
 }
 
-fn response_shape_for_select(ir: &SelectIr, schema: &SchemaIndex) -> ResponseShape {
+fn response_shape_for_select(
+    ir: &SelectIr,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+) -> ResponseShape {
     if let Some(reason) = advanced_select_partial_reason(ir) {
         return ResponseShape::Unknown { reason };
     }
@@ -2082,7 +2179,7 @@ fn response_shape_for_select(ir: &SelectIr, schema: &SchemaIndex) -> ResponseSha
     } else if let Some(value_shape) = value_projection_shape(ir, table) {
         value_shape
     } else {
-        object_shape_for_projected_fields(ir, table)
+        object_shape_for_projected_fields(ir, parsed, table)
     };
     let row_shape = apply_omit_to_shape(row_shape, &ir.omit);
     let row_shape = apply_fetch_materialization(row_shape, &ir.fetch);
@@ -2260,6 +2357,7 @@ fn object_shape_for_all_fields(table: &crate::schema::TableDef) -> ResponseShape
 
 fn object_shape_for_projected_fields(
     ir: &SelectIr,
+    parsed: &ParsedSource,
     table: &crate::schema::TableDef,
 ) -> ResponseShape {
     let mut fields = BTreeMap::new();
@@ -2303,6 +2401,8 @@ fn object_shape_for_projected_fields(
                         span.clone(),
                         expression_kind.as_deref(),
                         expression_text,
+                        parsed,
+                        table,
                     ),
                 );
             }
@@ -2320,8 +2420,13 @@ fn field_shape_for_dynamic_select_expression(
     span: SourceSpan,
     expression_kind: Option<&str>,
     expression_text: &str,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
 ) -> FieldShape {
+    let expression_fact = exact_node_for_span(parsed.tree().root_node(), &span)
+        .map(|node| infer_expression_fact(node, parsed, Some(table)));
     let kind = match expression_kind {
+        Some("BinaryExpression") => expression_fact.as_ref().and_then(|fact| fact.kind.clone()),
         Some("FunctionCall") => function_name_from_expression_text(expression_text)
             .and_then(|name| function_signature(name).map(|signature| signature.return_kind)),
         Some("Number") => {

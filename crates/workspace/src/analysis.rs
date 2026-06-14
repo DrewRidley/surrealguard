@@ -1457,11 +1457,63 @@ INSERT INTO person { name: 'Ada' };
         };
         assert_eq!(fields["one"].kind, Some(Kind::Int));
         assert_eq!(fields["active"].kind, Some(Kind::Bool));
-        assert_eq!(fields["next_age"].kind, None);
-        assert_eq!(
-            fields["next_age"].partial,
-            vec![PartialReason::UnsupportedSyntax("BinaryExpression".into())]
+        assert_eq!(fields["next_age"].kind, Some(Kind::Int));
+        assert!(fields["next_age"].partial.is_empty());
+    }
+
+    #[test]
+    fn analyze_workspace_infers_binary_expression_projection_shapes() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD score ON person TYPE float;\nDEFINE FIELD name ON person TYPE string;\nSELECT age + 1 AS next_age, score + 1 AS next_score, name + '!' AS excited FROM person;".into(),
         );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
+            panic!(
+                "expected array response shape, got {:?}",
+                select.response_shape
+            );
+        };
+        let ResponseShape::Object {
+            fields,
+            open: false,
+        } = element.as_ref()
+        else {
+            panic!("expected object element, got {element:?}");
+        };
+
+        assert_eq!(fields["next_age"].kind, Some(Kind::Int));
+        assert_eq!(fields["next_score"].kind, Some(Kind::Float));
+        assert_eq!(fields["excited"].kind, Some(Kind::String));
+    }
+
+    #[test]
+    fn analyze_workspace_reports_binary_expression_type_mismatches() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD name ON person TYPE string;\nSELECT age + name AS bad FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let source_output = &output.sources[&source];
+        let messages: Vec<_> = source_output
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        assert!(messages.iter().any(|(code, message)| {
+            code == "E2005" && message == "operator `+` cannot combine `int` and `string`"
+        }));
     }
 
     #[test]
