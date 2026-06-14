@@ -521,7 +521,7 @@ fn collect_let_variable_facts(
             (let_variable_name_node(node), let_value_node(node))
         {
             let name = param_name(node_text(name_node, parsed.text()));
-            let fact = infer_expression_fact(value_node, parsed, None);
+            let fact = infer_expression_fact_with_let_variables(value_node, parsed, None, facts);
             facts.insert(
                 name,
                 LetVariableFact {
@@ -571,7 +571,68 @@ fn infer_expression_fact_with_let_variables(
             return fact;
         }
     }
+    if node.kind() == "BinaryExpression" {
+        return infer_binary_expression_fact_with_let_variables(
+            node,
+            parsed,
+            row_table,
+            let_variables,
+        );
+    }
     infer_expression_fact(node, parsed, row_table)
+}
+
+fn infer_binary_expression_fact_with_let_variables(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    row_table: Option<&crate::schema::TableDef>,
+    let_variables: &BTreeMap<String, LetVariableFact>,
+) -> ExpressionFact {
+    let Some((left, operator, right)) = binary_expression_parts(node) else {
+        return ExpressionFact::new(
+            node_span(node, parsed.source_id().clone()),
+            ExpressionValueClass::Unknown,
+        )
+        .with_partial(PartialReason::UnsupportedSyntax("BinaryExpression".into()));
+    };
+
+    let left_fact =
+        infer_expression_fact_with_let_variables(left, parsed, row_table, let_variables);
+    let right_fact =
+        infer_expression_fact_with_let_variables(right, parsed, row_table, let_variables);
+    let operator_text = node_text(operator, parsed.text()).trim();
+    let mut fact = ExpressionFact::new(
+        node_span(node, parsed.source_id().clone()),
+        ExpressionValueClass::Unknown,
+    );
+    fact.dependencies
+        .field_paths
+        .extend(left_fact.dependencies.field_paths);
+    fact.dependencies
+        .field_paths
+        .extend(right_fact.dependencies.field_paths);
+    fact.dependencies
+        .variables
+        .extend(left_fact.dependencies.variables);
+    fact.dependencies
+        .variables
+        .extend(right_fact.dependencies.variables);
+    fact.dependencies
+        .params
+        .extend(left_fact.dependencies.params);
+    fact.dependencies
+        .params
+        .extend(right_fact.dependencies.params);
+
+    if let (Some(left_kind), Some(right_kind)) = (&left_fact.kind, &right_fact.kind) {
+        if let Some(kind) = binary_expression_result_kind(operator_text, left_kind, right_kind) {
+            return fact
+                .with_kind(kind.clone())
+                .with_shape(ResponseShape::Value { kind });
+        }
+    }
+
+    fact.with_partial(PartialReason::UnsupportedSyntax("BinaryExpression".into()))
 }
 
 fn select_modifier_analysis_for_node(

@@ -797,6 +797,68 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_infers_let_variables_from_prior_let_variables() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "LET $age = 42;\nLET $next = $age + 1;\nRETURN $next;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let source_output = &output.sources[&source];
+        let return_statement = source_output
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "return")
+            .expect("return statement exists");
+
+        assert!(source_output.inferred_params.is_empty());
+        assert_eq!(
+            return_statement.response_shape,
+            Some(ResponseShape::Value { kind: Kind::Int })
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_uses_dependent_let_variable_kind_for_mutation_assignability() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nLET $age = 42;\nLET $next = $age + 1;\nCREATE person SET age = $next;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let source_output = &output.sources[&source];
+
+        assert!(source_output.inferred_params.is_empty());
+        assert!(source_output
+            .diagnostics
+            .iter()
+            .all(|finding| finding.code().to_string() != "E2001"));
+    }
+
+    #[test]
+    fn analyze_workspace_reports_dependent_let_variable_kind_mismatch() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nLET $name = 'Drew';\nLET $excited = $name + '!';\nCREATE person SET age = $excited;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        assert!(messages.iter().any(|(code, message)| {
+            code == "E2001"
+                && message == "value assigned to `age` has type `string`, expected `int`"
+        }));
+    }
+
+    #[test]
     fn analyze_workspace_infers_param_kinds_from_function_signatures() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
