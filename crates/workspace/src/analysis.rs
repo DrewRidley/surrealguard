@@ -920,6 +920,78 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_infers_if_else_return_shape_union() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "IF true { RETURN 1; } ELSE { RETURN 's'; };".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let source_output = &output.sources[&source];
+        let if_statement = source_output
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "if_else")
+            .expect("if/else statement exists");
+
+        assert_eq!(
+            if_statement.response_shape,
+            Some(ResponseShape::Union {
+                variants: vec![
+                    ResponseShape::Value { kind: Kind::Int },
+                    ResponseShape::Value { kind: Kind::String },
+                ],
+            })
+        );
+        assert_eq!(source_output.response_shape, if_statement.response_shape);
+    }
+
+    #[test]
+    fn analyze_workspace_collapses_matching_if_else_return_shapes() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "IF true { RETURN 1; } ELSE { RETURN 2; };".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let if_statement = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "if_else")
+            .expect("if/else statement exists");
+
+        assert_eq!(
+            if_statement.response_shape,
+            Some(ResponseShape::Value { kind: Kind::Int })
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_uses_prior_let_variables_in_if_else_return_shapes() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "LET $age = 42;\nIF true { RETURN $age; } ELSE { RETURN $age + 1; };".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let source_output = &output.sources[&source];
+        let if_statement = source_output
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "if_else")
+            .expect("if/else statement exists");
+
+        assert!(source_output.inferred_params.is_empty());
+        assert_eq!(
+            if_statement.response_shape,
+            Some(ResponseShape::Value { kind: Kind::Int })
+        );
+    }
+
+    #[test]
     fn analyze_workspace_infers_param_kinds_from_function_signatures() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(

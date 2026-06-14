@@ -238,6 +238,15 @@ fn collect_non_select_response_shapes(
     schema: &SchemaIndex,
     shapes: &mut Vec<(SourceSpan, ResponseShape)>,
 ) {
+    if node.kind() == "IfElseStatement" {
+        let let_variables = let_variable_facts(parsed);
+        shapes.push((
+            node_span(node, parsed.source_id().clone()),
+            response_shape_for_if_else(node, parsed, &let_variables),
+        ));
+        return;
+    }
+
     if node.kind() == "ReturnStatement" {
         let let_variables = let_variable_facts(parsed);
         shapes.push((
@@ -269,6 +278,50 @@ fn collect_non_select_response_shapes(
     }
 }
 
+fn response_shape_for_if_else(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    let_variables: &BTreeMap<String, LetVariableFact>,
+) -> ResponseShape {
+    let mut branch_shapes = Vec::new();
+    collect_if_else_return_shapes(node, parsed, let_variables, &mut branch_shapes);
+    merge_response_shapes(branch_shapes)
+}
+
+fn collect_if_else_return_shapes(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    let_variables: &BTreeMap<String, LetVariableFact>,
+    shapes: &mut Vec<ResponseShape>,
+) {
+    if node.kind() == "ReturnStatement" {
+        shapes.push(response_shape_for_return(node, parsed, let_variables));
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_if_else_return_shapes(child, parsed, let_variables, shapes);
+    }
+}
+
+fn merge_response_shapes(shapes: Vec<ResponseShape>) -> ResponseShape {
+    let mut variants = Vec::new();
+    for shape in shapes {
+        if !variants.contains(&shape) {
+            variants.push(shape);
+        }
+    }
+
+    match variants.len() {
+        0 => ResponseShape::Unknown {
+            reason: PartialReason::Unresolved,
+        },
+        1 => variants.pop().expect("one response-shape variant"),
+        _ => ResponseShape::Union { variants },
+    }
+}
+
 fn response_shape_for_return(
     node: Node<'_>,
     parsed: &ParsedSource,
@@ -291,7 +344,7 @@ fn response_shape_for_return(
         }
     }
 
-    infer_expression_fact(value, parsed, None)
+    infer_expression_fact_with_let_variables(value, parsed, None, let_variables)
         .shape
         .unwrap_or(ResponseShape::Unknown {
             reason: PartialReason::Unresolved,
@@ -556,12 +609,34 @@ fn let_value_node(statement: Node<'_>) -> Option<Node<'_>> {
     found
 }
 
+fn single_named_child<'tree>(node: Node<'tree>) -> Option<Node<'tree>> {
+    let mut cursor = node.walk();
+    let mut children = node.named_children(&mut cursor);
+    let first = children.next()?;
+    if children.next().is_none() {
+        Some(first)
+    } else {
+        None
+    }
+}
+
 fn infer_expression_fact_with_let_variables(
     node: Node<'_>,
     parsed: &ParsedSource,
     row_table: Option<&crate::schema::TableDef>,
     let_variables: &BTreeMap<String, LetVariableFact>,
 ) -> ExpressionFact {
+    if matches!(node.kind(), "Fields" | "Predicate") {
+        if let Some(child) = single_named_child(node) {
+            return infer_expression_fact_with_let_variables(
+                child,
+                parsed,
+                row_table,
+                let_variables,
+            );
+        }
+    }
+
     if node.kind() == "VariableName" {
         let name = param_name(node_text(node, parsed.text()));
         if let Some(variable) = let_variables.get(&name) {

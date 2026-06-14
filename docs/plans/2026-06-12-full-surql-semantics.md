@@ -310,12 +310,13 @@ Current implementation:
 - `RETURN $age` resolves to the LET variable response shape when the variable is statically known
 - mutation assignability can use LET variable kinds, so `LET $age = 42; CREATE person SET age = $age` validates and `LET $age = 'old'; ... age = $age` reports `E2001`
 - dependent LET variables participate in mutation assignability, so `LET $next = $age + 1; CREATE person SET age = $next` validates when prior facts establish `int`
+- IF/ELSE statements infer RETURN branch response shapes, collapse identical branch shapes, and produce `ResponseShape::Union` for mixed branch returns; prior source-level LET facts are available inside branch RETURN expressions
 
 Deferred from this slice:
 
 - lexical/block scopes remain deferred; current LET facts are conservative source-level facts
 - LET dependency support beyond simple prior variable references inside binary expressions
-- IF/ELSE branch shape merging
+- full block-scoped LET/RETURN environment across arbitrary statement sequences
 - FOR loop variable kind inference and block shape
 - branch-local variables do not leak unless verified behavior says they do
 
