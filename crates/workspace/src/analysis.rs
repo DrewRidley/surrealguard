@@ -724,6 +724,39 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_infers_param_kinds_from_function_signatures() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nSELECT string::len($name) AS name_len, array::len($tags) AS tag_count, count() AS total FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let params = &output.sources[&source].inferred_params;
+
+        assert_eq!(params.len(), 2);
+        assert_eq!(params[0].name, "name");
+        assert_eq!(params[0].kind, Some(Kind::String));
+        assert_eq!(params[1].name, "tags");
+        assert_eq!(params[1].kind, Some(Kind::Array(Box::new(Kind::Any), None)));
+    }
+
+    #[test]
+    fn analyze_workspace_skips_function_param_inference_for_unknown_and_wrong_arity_calls() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nSELECT unknown::fn($value), string::len($first, $second), count($bad) FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let params = &output.sources[&source].inferred_params;
+
+        assert_eq!(params.len(), 4);
+        assert!(params.iter().all(|param| param.kind.is_none()));
+    }
+
+    #[test]
     fn analyze_workspace_infers_param_kind_from_select_where_field_comparison() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(

@@ -1706,6 +1706,7 @@ fn infer_param_kinds_for_select_statement(
     collect_graph_local_param_kind_inferences_for_select_statement(
         node, parsed, schema, inferences,
     );
+    collect_function_param_kind_inferences_in_node(node, parsed, inferences);
 
     let Some(table_name) = resolved_select_table_name(&ir, schema) else {
         return;
@@ -1719,6 +1720,59 @@ fn infer_param_kinds_for_select_statement(
         if child.kind() == "WhereClause" {
             collect_param_kind_inferences_from_expression(child, parsed, table, inferences);
         }
+    }
+}
+
+fn collect_function_param_kind_inferences_in_node(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    inferences: &mut Vec<ParamKindInference>,
+) {
+    if node.kind() == "FunctionCall" {
+        collect_function_param_kind_inferences(node, parsed, inferences);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_function_param_kind_inferences_in_node(child, parsed, inferences);
+    }
+}
+
+fn collect_function_param_kind_inferences(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    inferences: &mut Vec<ParamKindInference>,
+) {
+    let Some(name) = function_call_name(node, parsed) else {
+        return;
+    };
+    let Some(signature) = function_signature(&name) else {
+        return;
+    };
+    let args = function_call_args(node);
+    if args.len() != signature.args.len() {
+        return;
+    }
+
+    for (arg, expected) in args.iter().zip(signature.args.iter()) {
+        if arg.kind() != "VariableName" {
+            continue;
+        }
+        let Some(kind) = function_arg_param_kind(expected) else {
+            continue;
+        };
+        inferences.push(ParamKindInference {
+            source: parsed.source_id().clone(),
+            name: param_name(node_text(*arg, parsed.text())),
+            kind,
+        });
+    }
+}
+
+fn function_arg_param_kind(expected: &FunctionArgKind) -> Option<Kind> {
+    match expected {
+        FunctionArgKind::Exact(kind) => Some(kind.clone()),
+        FunctionArgKind::Array => Some(Kind::Array(Box::new(Kind::Any), None)),
     }
 }
 

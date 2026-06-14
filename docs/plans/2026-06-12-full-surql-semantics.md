@@ -273,6 +273,10 @@ Current implementation:
   - `string::len(tags)` runtime argument-kind error behavior
 - parser CST shape is `FunctionCall(FunctionName, ArgumentList(...))`
 - SELECT projection shape inference maps known function calls to `Kind::Int` return fields
+- direct param arguments to known, correct-arity calls infer expected kinds:
+  - `string::len($name)` -> `$name: string`
+  - `array::len($tags)` -> `$tags: array<any>`
+  - unknown functions and wrong-arity calls leave params unresolved to avoid false positives
 - diagnostics now report:
   - `E2002` unknown function
   - `E2003` wrong arity
@@ -286,7 +290,6 @@ Initial signature table:
 
 Deferred from this slice:
 
-- param kind inference from function signatures
 - function calls outside SELECT statement contexts
 - richer signatures for `math::*`, `time::*`, `object::*`, `record::*`, etc.
 - overloads, optional args, and SurrealDB-specific aggregate/group semantics beyond return kind
