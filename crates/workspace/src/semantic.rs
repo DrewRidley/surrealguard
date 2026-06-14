@@ -150,6 +150,26 @@ pub fn validate_mutation_fields(
     diagnostics
 }
 
+pub fn validate_if_conditions(parsed_sources: &[ParsedSource]) -> Vec<Finding> {
+    let mut diagnostics = Vec::new();
+
+    for parsed in parsed_sources {
+        if !parsed.syntax_diagnostics().is_empty() {
+            continue;
+        }
+
+        let let_variables = let_variable_facts(parsed);
+        collect_if_condition_diagnostics(
+            parsed.tree().root_node(),
+            parsed,
+            &let_variables,
+            &mut diagnostics,
+        );
+    }
+
+    diagnostics
+}
+
 pub fn validate_function_calls(
     parsed_sources: &[ParsedSource],
     schema: &SchemaIndex,
@@ -1076,6 +1096,74 @@ fn collect_function_call_diagnostics(
     for child in node.children(&mut cursor) {
         collect_function_call_diagnostics(child, parsed, schema, diagnostics);
     }
+}
+
+fn collect_if_condition_diagnostics(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    let_variables: &BTreeMap<String, LetVariableFact>,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if node.kind() == "IfElseStatement" {
+        for condition in if_condition_nodes(node) {
+            validate_if_condition(condition, parsed, let_variables, diagnostics);
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_if_condition_diagnostics(child, parsed, let_variables, diagnostics);
+    }
+}
+
+fn validate_if_condition(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    let_variables: &BTreeMap<String, LetVariableFact>,
+    diagnostics: &mut Vec<Finding>,
+) {
+    let fact = infer_expression_fact_with_let_variables(node, parsed, None, let_variables);
+    let Some(kind) = fact.kind else {
+        return;
+    };
+    if matches!(kind, Kind::Bool) {
+        return;
+    }
+
+    diagnostics.push(Finding::new(
+        fact.span,
+        FindingCode::type_error(2006),
+        Severity::Error,
+        format!(
+            "IF condition has type `{}`, expected `bool`",
+            kind_name(&kind)
+        ),
+    ));
+}
+
+fn if_condition_nodes<'tree>(node: Node<'tree>) -> Vec<Node<'tree>> {
+    let Some(branch) =
+        direct_child_of_kind(node, "Modern").or_else(|| direct_child_of_kind(node, "Legacy"))
+    else {
+        return Vec::new();
+    };
+
+    let mut conditions = Vec::new();
+    let mut cursor = branch.walk();
+    for child in branch.named_children(&mut cursor) {
+        if !matches!(child.kind(), "Keyword" | "Block" | "SubQuery") {
+            conditions.push(child);
+        }
+    }
+    conditions
+}
+
+fn direct_child_of_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>> {
+    let mut cursor = node.walk();
+    let child = node
+        .children(&mut cursor)
+        .find(|child| child.kind() == kind);
+    child
 }
 
 fn validate_function_calls_in_node(

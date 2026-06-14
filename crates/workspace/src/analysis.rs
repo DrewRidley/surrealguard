@@ -13,8 +13,9 @@ use crate::config::WorkspaceConfig;
 use crate::schema::{extract_schema, SchemaIndex};
 use crate::semantic::{
     analyze_parsed_source, infer_non_select_response_shapes, infer_param_kinds,
-    infer_select_response_shapes, validate_function_calls, validate_mutation_fields,
-    validate_select_graph_references, validate_select_projection_fields, validate_table_references,
+    infer_select_response_shapes, validate_function_calls, validate_if_conditions,
+    validate_mutation_fields, validate_select_graph_references, validate_select_projection_fields,
+    validate_table_references,
 };
 use crate::source_registry::SourceRegistry;
 
@@ -201,6 +202,14 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
         }
     }
     diagnostics.extend(function_call_diagnostics);
+
+    let if_condition_diagnostics = validate_if_conditions(&parsed_sources);
+    for diagnostic in &if_condition_diagnostics {
+        if let Some(source_output) = sources.get_mut(diagnostic.span().source()) {
+            source_output.diagnostics.push(diagnostic.clone());
+        }
+    }
+    diagnostics.extend(if_condition_diagnostics);
 
     let param_kind_inferences = infer_param_kinds(&parsed_sources, &schema_extraction.schema);
     for inference in param_kind_inferences {
@@ -989,6 +998,70 @@ INSERT INTO person { name: 'Ada' };
             if_statement.response_shape,
             Some(ResponseShape::Value { kind: Kind::Int })
         );
+    }
+
+    #[test]
+    fn analyze_workspace_reports_non_bool_if_condition_literals() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "IF 1 { RETURN 1; } ELSE { RETURN 2; };\nIF 'yes' { RETURN 1; } ELSE { RETURN 2; };"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        assert!(messages.iter().any(|(code, message)| {
+            code == "E2006" && message == "IF condition has type `int`, expected `bool`"
+        }));
+        assert!(messages.iter().any(|(code, message)| {
+            code == "E2006" && message == "IF condition has type `string`, expected `bool`"
+        }));
+    }
+
+    #[test]
+    fn analyze_workspace_allows_bool_and_dynamic_if_conditions() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "LET $flag = true;\nIF $flag { RETURN 1; } ELSE { RETURN 2; };\nIF $runtime { RETURN 1; } ELSE { RETURN 2; };".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let source_output = &output.sources[&source];
+
+        assert!(source_output
+            .diagnostics
+            .iter()
+            .all(|finding| finding.code().to_string() != "E2006"));
+        assert_eq!(source_output.inferred_params.len(), 1);
+        assert_eq!(source_output.inferred_params[0].name, "runtime");
+        assert_eq!(source_output.inferred_params[0].kind, None);
+    }
+
+    #[test]
+    fn analyze_workspace_reports_non_bool_if_condition_from_let() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "LET $flag = 1;\nIF $flag { RETURN 1; } ELSE { RETURN 2; };".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        assert!(messages.iter().any(|(code, message)| {
+            code == "E2006" && message == "IF condition has type `int`, expected `bool`"
+        }));
     }
 
     #[test]

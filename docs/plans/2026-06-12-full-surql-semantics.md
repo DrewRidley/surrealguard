@@ -311,6 +311,7 @@ Current implementation:
 - mutation assignability can use LET variable kinds, so `LET $age = 42; CREATE person SET age = $age` validates and `LET $age = 'old'; ... age = $age` reports `E2001`
 - dependent LET variables participate in mutation assignability, so `LET $next = $age + 1; CREATE person SET age = $next` validates when prior facts establish `int`
 - IF/ELSE statements infer RETURN branch response shapes, collapse identical branch shapes, and produce `ResponseShape::Union` for mixed branch returns; prior source-level LET facts are available inside branch RETURN expressions
+- IF/ELSE conditions report `E2006` for statically-known non-bool kinds while allowing bool and unknown/dynamic conditions; SurrealDB 3.0.5 currently accepts truthy non-bool conditions, so this is a strict static type-compatibility diagnostic rather than a parser/runtime compatibility claim
 
 Deferred from this slice:
 
