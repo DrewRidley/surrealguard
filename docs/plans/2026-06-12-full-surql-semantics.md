@@ -301,12 +301,19 @@ Deferred from this slice:
 
 Objective: make block statements analyzable before host adapters.
 
-Tests:
+Current implementation:
 
-- `LET $age = 42; CREATE person SET age = $age;` validates assignment through variable env
-- `RETURN $age;` returns the variable shape
-- `IF cond { RETURN expr } ELSE { RETURN other }` returns union/partial as appropriate
-- `FOR $item IN [1,2] { RETURN $item; }` infers loop variable kind and block shape where verified
+- source-level LET facts collect literal/expression kind and shape for simple top-level declarations
+- LET variables are excluded from query parameter inference, so `$age` from `LET $age = 42` no longer appears as an external required param
+- `RETURN $age` resolves to the LET variable response shape when the variable is statically known
+- mutation assignability can use LET variable kinds, so `LET $age = 42; CREATE person SET age = $age` validates and `LET $age = 'old'; ... age = $age` reports `E2001`
+
+Deferred from this slice:
+
+- lexical scopes/block ordering; current LET facts are conservative source-level facts
+- LET values that depend on earlier LET variables
+- IF/ELSE branch shape merging
+- FOR loop variable kind inference and block shape
 - branch-local variables do not leak unless verified behavior says they do
 
 ### Slice H: graph traversal completeness

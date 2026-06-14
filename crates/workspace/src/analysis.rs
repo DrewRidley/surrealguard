@@ -724,6 +724,79 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_excludes_let_variables_from_query_params() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "LET $age = 42;\nRETURN $age;\nSELECT * FROM person WHERE name = $name;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let params = &output.sources[&source].inferred_params;
+
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "name");
+    }
+
+    #[test]
+    fn analyze_workspace_infers_return_shape_from_let_variable() {
+        let mut workspace = Workspace::default();
+        let source =
+            workspace.add_virtual_source("query".into(), "LET $age = 42;\nRETURN $age;".into());
+
+        let output = analyze_workspace(&workspace);
+        let return_statement = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "return")
+            .expect("return statement exists");
+
+        assert_eq!(
+            return_statement.response_shape,
+            Some(ResponseShape::Value { kind: Kind::Int })
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_uses_let_variable_kind_for_mutation_assignability() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nLET $age = 42;\nCREATE person SET age = $age;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let source_output = &output.sources[&source];
+
+        assert!(source_output.inferred_params.is_empty());
+        assert!(source_output
+            .diagnostics
+            .iter()
+            .all(|finding| finding.code().to_string() != "E2001"));
+    }
+
+    #[test]
+    fn analyze_workspace_reports_let_variable_kind_mismatch_for_mutation_assignability() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nLET $age = 'old';\nCREATE person SET age = $age;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        assert!(messages.iter().any(|(code, message)| {
+            code == "E2001"
+                && message == "value assigned to `age` has type `string`, expected `int`"
+        }));
+    }
+
+    #[test]
     fn analyze_workspace_infers_param_kinds_from_function_signatures() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(

@@ -9,7 +9,7 @@ use surrealdb_types::Kind;
 use tree_sitter::Node;
 
 use crate::analysis::{ParamInference, SelectModifierAnalysis, StatementAnalysis};
-use crate::expression::infer_expression_fact;
+use crate::expression::{infer_expression_fact, ExpressionFact, ExpressionValueClass};
 use crate::response_shape::{FieldShape, PartialReason, ResponseShape};
 use crate::schema::SchemaIndex;
 use crate::select_ir::{
@@ -29,16 +29,24 @@ pub struct ParamKindInference {
     pub kind: Kind,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LetVariableFact {
+    kind: Option<Kind>,
+    shape: Option<ResponseShape>,
+}
+
 pub fn analyze_parsed_source(parsed: &ParsedSource) -> SemanticOutput {
     if !parsed.syntax_diagnostics().is_empty() {
         return SemanticOutput::default();
     }
 
+    let let_variables = let_variable_facts(parsed);
     let mut statements = Vec::new();
     let mut params = BTreeMap::new();
     collect_statement_analysis(
         parsed.tree().root_node(),
         parsed,
+        &let_variables,
         &mut statements,
         &mut params,
     );
@@ -225,6 +233,15 @@ fn collect_non_select_response_shapes(
     schema: &SchemaIndex,
     shapes: &mut Vec<(SourceSpan, ResponseShape)>,
 ) {
+    if node.kind() == "ReturnStatement" {
+        let let_variables = let_variable_facts(parsed);
+        shapes.push((
+            node_span(node, parsed.source_id().clone()),
+            response_shape_for_return(node, parsed, &let_variables),
+        ));
+        return;
+    }
+
     if matches!(
         node.kind(),
         "CreateStatement"
@@ -245,6 +262,43 @@ fn collect_non_select_response_shapes(
     for child in node.children(&mut cursor) {
         collect_non_select_response_shapes(child, parsed, schema, shapes);
     }
+}
+
+fn response_shape_for_return(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    let_variables: &BTreeMap<String, LetVariableFact>,
+) -> ResponseShape {
+    let Some(value) = return_value_node(node) else {
+        return ResponseShape::Unknown {
+            reason: PartialReason::Unresolved,
+        };
+    };
+    if value.kind() == "VariableName" {
+        let name = param_name(node_text(value, parsed.text()));
+        if let Some(variable) = let_variables.get(&name) {
+            if let Some(shape) = variable.shape.clone() {
+                return shape;
+            }
+            if let Some(kind) = variable.kind.clone() {
+                return ResponseShape::Value { kind };
+            }
+        }
+    }
+
+    infer_expression_fact(value, parsed, None)
+        .shape
+        .unwrap_or(ResponseShape::Unknown {
+            reason: PartialReason::Unresolved,
+        })
+}
+
+fn return_value_node(statement: Node<'_>) -> Option<Node<'_>> {
+    let mut cursor = statement.walk();
+    statement
+        .children(&mut cursor)
+        .filter(|child| child.is_named() && child.kind() != "Keyword")
+        .last()
 }
 
 fn response_shape_for_mutation(
@@ -430,6 +484,7 @@ fn collect_select_response_shapes(
 fn collect_statement_analysis(
     node: Node<'_>,
     parsed: &ParsedSource,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     statements: &mut Vec<StatementAnalysis>,
     params: &mut BTreeMap<String, ParamInference>,
 ) {
@@ -440,14 +495,83 @@ fn collect_statement_analysis(
             response_shape: None,
             select_modifiers: select_modifier_analysis_for_node(node, parsed),
         });
-        collect_params(node, parsed, params);
+        collect_params(node, parsed, let_variables, params);
         return;
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_statement_analysis(child, parsed, statements, params);
+        collect_statement_analysis(child, parsed, let_variables, statements, params);
     }
+}
+
+fn let_variable_facts(parsed: &ParsedSource) -> BTreeMap<String, LetVariableFact> {
+    let mut facts = BTreeMap::new();
+    collect_let_variable_facts(parsed.tree().root_node(), parsed, &mut facts);
+    facts
+}
+
+fn collect_let_variable_facts(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    facts: &mut BTreeMap<String, LetVariableFact>,
+) {
+    if node.kind() == "LetStatement" {
+        if let (Some(name_node), Some(value_node)) =
+            (let_variable_name_node(node), let_value_node(node))
+        {
+            let name = param_name(node_text(name_node, parsed.text()));
+            let fact = infer_expression_fact(value_node, parsed, None);
+            facts.insert(
+                name,
+                LetVariableFact {
+                    kind: fact.kind,
+                    shape: fact.shape,
+                },
+            );
+        }
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_let_variable_facts(child, parsed, facts);
+    }
+}
+
+fn let_variable_name_node(statement: Node<'_>) -> Option<Node<'_>> {
+    find_descendant_kind(statement, "VariableName")
+}
+
+fn let_value_node(statement: Node<'_>) -> Option<Node<'_>> {
+    let name = let_variable_name_node(statement)?;
+    let mut cursor = statement.walk();
+    let found = statement
+        .children(&mut cursor)
+        .filter(|child| child.is_named() && child.start_byte() > name.end_byte())
+        .last();
+    found
+}
+
+fn infer_expression_fact_with_let_variables(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    row_table: Option<&crate::schema::TableDef>,
+    let_variables: &BTreeMap<String, LetVariableFact>,
+) -> ExpressionFact {
+    if node.kind() == "VariableName" {
+        let name = param_name(node_text(node, parsed.text()));
+        if let Some(variable) = let_variables.get(&name) {
+            let mut fact = ExpressionFact::new(
+                node_span(node, parsed.source_id().clone()),
+                ExpressionValueClass::Variable,
+            );
+            fact.kind = variable.kind.clone();
+            fact.shape = variable.shape.clone();
+            return fact;
+        }
+    }
+    infer_expression_fact(node, parsed, row_table)
 }
 
 fn select_modifier_analysis_for_node(
@@ -493,10 +617,14 @@ fn row_preserving_modifier(
 fn collect_params(
     node: Node<'_>,
     parsed: &ParsedSource,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     params: &mut BTreeMap<String, ParamInference>,
 ) {
     if node.kind() == "VariableName" {
         let name = param_name(node_text(node, parsed.text()));
+        if let_variables.contains_key(&name) {
+            return;
+        }
         params
             .entry(name.clone())
             .or_insert_with(|| ParamInference {
@@ -511,7 +639,7 @@ fn collect_params(
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_params(child, parsed, params);
+        collect_params(child, parsed, let_variables, params);
     }
 }
 
@@ -1556,7 +1684,8 @@ fn validate_value_kind_for_field(
     let Some(expected) = field.kind.clone() else {
         return;
     };
-    let fact = infer_expression_fact(value, parsed, Some(table));
+    let let_variables = let_variable_facts(parsed);
+    let fact = infer_expression_fact_with_let_variables(value, parsed, Some(table), &let_variables);
     let Some(actual) = fact.kind else {
         return;
     };
