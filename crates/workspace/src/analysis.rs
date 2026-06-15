@@ -1065,6 +1065,80 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_keeps_if_branch_let_variables_local() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "IF true { LET $branch = 1; } ELSE { LET $branch = 2; };\nRETURN $branch;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let source_output = &output.sources[&source];
+        let return_statement = source_output
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "return")
+            .expect("return statement exists");
+
+        assert_eq!(source_output.inferred_params.len(), 1);
+        assert_eq!(source_output.inferred_params[0].name, "branch");
+        assert_eq!(source_output.inferred_params[0].kind, None);
+        assert!(matches!(
+            return_statement.response_shape,
+            Some(ResponseShape::Unknown {
+                reason: PartialReason::Unresolved
+            })
+        ));
+    }
+
+    #[test]
+    fn analyze_workspace_resolves_if_branch_local_let_returns() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "IF true { LET $branch = 1; RETURN $branch; } ELSE { LET $branch = 's'; RETURN $branch; };".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let if_statement = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "if_else")
+            .expect("if statement exists");
+
+        let Some(ResponseShape::Union { variants }) = &if_statement.response_shape else {
+            panic!(
+                "expected IF branch union response shape, got {:?}",
+                if_statement.response_shape
+            );
+        };
+        assert_eq!(variants.len(), 2);
+        assert!(variants.contains(&ResponseShape::Value { kind: Kind::Int }));
+        assert!(variants.contains(&ResponseShape::Value { kind: Kind::String }));
+    }
+
+    #[test]
+    fn analyze_workspace_outer_let_is_visible_inside_if_branch() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "LET $outer = 1;\nIF true { LET $branch = $outer + 1; RETURN $branch; } ELSE { RETURN $outer; };".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let if_statement = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "if_else")
+            .expect("if statement exists");
+
+        assert_eq!(
+            if_statement.response_shape,
+            Some(ResponseShape::Value { kind: Kind::Int })
+        );
+    }
+
+    #[test]
     fn analyze_workspace_infers_param_kinds_from_function_signatures() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(

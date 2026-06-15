@@ -314,6 +314,11 @@ fn collect_if_else_return_shapes(
     let_variables: &BTreeMap<String, LetVariableFact>,
     shapes: &mut Vec<ResponseShape>,
 ) {
+    if node.kind() == "Block" {
+        collect_block_return_shapes(node, parsed, let_variables, shapes);
+        return;
+    }
+
     if node.kind() == "ReturnStatement" {
         shapes.push(response_shape_for_return(node, parsed, let_variables));
         return;
@@ -322,6 +327,27 @@ fn collect_if_else_return_shapes(
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         collect_if_else_return_shapes(child, parsed, let_variables, shapes);
+    }
+}
+
+fn collect_block_return_shapes(
+    block: Node<'_>,
+    parsed: &ParsedSource,
+    outer_variables: &BTreeMap<String, LetVariableFact>,
+    shapes: &mut Vec<ResponseShape>,
+) {
+    let mut local_variables = outer_variables.clone();
+    let mut cursor = block.walk();
+    for child in block.named_children(&mut cursor) {
+        if child.kind() == "LetStatement" {
+            collect_let_variable_fact(child, parsed, &mut local_variables);
+            continue;
+        }
+        if child.kind() == "ReturnStatement" {
+            shapes.push(response_shape_for_return(child, parsed, &local_variables));
+            continue;
+        }
+        collect_if_else_return_shapes(child, parsed, &local_variables, shapes);
     }
 }
 
@@ -593,18 +619,8 @@ fn collect_let_variable_facts(
     facts: &mut BTreeMap<String, LetVariableFact>,
 ) {
     if node.kind() == "LetStatement" {
-        if let (Some(name_node), Some(value_node)) =
-            (let_variable_name_node(node), let_value_node(node))
-        {
-            let name = param_name(node_text(name_node, parsed.text()));
-            let fact = infer_expression_fact_with_let_variables(value_node, parsed, None, facts);
-            facts.insert(
-                name,
-                LetVariableFact {
-                    kind: fact.kind,
-                    shape: fact.shape,
-                },
-            );
+        if !has_ancestor_kind(node, "Block") {
+            collect_let_variable_fact(node, parsed, facts);
         }
         return;
     }
@@ -613,6 +629,37 @@ fn collect_let_variable_facts(
     for child in node.children(&mut cursor) {
         collect_let_variable_facts(child, parsed, facts);
     }
+}
+
+fn collect_let_variable_fact(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    facts: &mut BTreeMap<String, LetVariableFact>,
+) {
+    if let (Some(name_node), Some(value_node)) =
+        (let_variable_name_node(node), let_value_node(node))
+    {
+        let name = param_name(node_text(name_node, parsed.text()));
+        let fact = infer_expression_fact_with_let_variables(value_node, parsed, None, facts);
+        facts.insert(
+            name,
+            LetVariableFact {
+                kind: fact.kind,
+                shape: fact.shape,
+            },
+        );
+    }
+}
+
+fn has_ancestor_kind(node: Node<'_>, kind: &str) -> bool {
+    let mut current = node.parent();
+    while let Some(parent) = current {
+        if parent.kind() == kind {
+            return true;
+        }
+        current = parent.parent();
+    }
+    false
 }
 
 fn let_variable_name_node(statement: Node<'_>) -> Option<Node<'_>> {
@@ -779,6 +826,15 @@ fn collect_params_ordered(
     declared_lets: &mut BTreeSet<String>,
     params: &mut BTreeMap<String, ParamInference>,
 ) {
+    if node.kind() == "Block" {
+        let mut local_declared_lets = declared_lets.clone();
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            collect_params_ordered(child, parsed, &mut local_declared_lets, params);
+        }
+        return;
+    }
+
     if node.kind() == "LetStatement" {
         if let Some(value_node) = let_value_node(node) {
             collect_params_ordered(value_node, parsed, declared_lets, params);

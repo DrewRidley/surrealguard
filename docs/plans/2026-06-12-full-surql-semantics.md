@@ -312,14 +312,15 @@ Current implementation:
 - dependent LET variables participate in mutation assignability, so `LET $next = $age + 1; CREATE person SET age = $next` validates when prior facts establish `int`
 - IF/ELSE statements infer RETURN branch response shapes, collapse identical branch shapes, and produce `ResponseShape::Union` for mixed branch returns; prior source-level LET facts are available inside branch RETURN expressions
 - IF/ELSE conditions report `E2006` for statically-known non-bool kinds while allowing bool and unknown/dynamic conditions; SurrealDB 3.0.5 currently accepts truthy non-bool conditions, so this is a strict static type-compatibility diagnostic rather than a parser/runtime compatibility claim
+- LET variables declared inside IF/ELSE blocks are branch-local for return-shape and parameter analysis: they can type later RETURN expressions in that block, but they do not leak to later top-level statements; verified SurrealDB 3.0.5 returns `null` for `RETURN $x` after `LET $x` only appeared inside an IF block
 
 Deferred from this slice:
 
-- lexical/block scopes remain deferred; current LET facts are conservative source-level facts
+- complete lexical/block scopes remain deferred; current top-level LET facts plus IF block-local facts are conservative, not a general environment stack
 - LET dependency support beyond simple prior variable references inside binary expressions
 - full block-scoped LET/RETURN environment across arbitrary statement sequences
 - FOR loop variable kind inference and block shape
-- branch-local variables do not leak unless verified behavior says they do
+- deeper branch-local nested/block variable behavior beyond the current IF block slice
 
 ### Slice H: graph traversal completeness
 
