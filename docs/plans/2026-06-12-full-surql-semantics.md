@@ -376,6 +376,12 @@ Acceptance:
 
 Only after Slice K do we start host adapters.
 
+## Adapter-readiness punchlist
+
+The remaining core `.surql` work before host adapters is tracked in `docs/plans/2026-06-15-surql-adapter-readiness-punchlist.md`.
+
+Use that punchlist as the active execution order after the current Slice G work: first unify the source-ordered statement environment, then migrate existing LET/RETURN/IF/param/mutation/select/function logic onto env snapshots, then expand expression, SELECT, mutation, graph, control-flow, schema object, JSON contract, and fixture coverage until the final adapter-readiness gate passes.
+
 ## Verification gates per slice
 
 Every implementation slice must do:
