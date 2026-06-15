@@ -51,6 +51,8 @@ Objective: remove the current one-off pass shape and create the shared pipeline 
 
 ### 1.1 Introduce `StatementEnv`
 
+Status: initial scaffolding implemented in `crates/workspace/src/statement_env.rs`.
+
 Add an analyzer-owned environment carrying at least:
 
 - visible LET variables and their `ExpressionFact`/shape/kind;

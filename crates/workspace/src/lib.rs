@@ -6,6 +6,7 @@ pub mod schema;
 pub mod select_ir;
 pub mod semantic;
 pub mod source_registry;
+pub mod statement_env;
 
 pub use analysis::{
     analyze_query, analyze_source, analyze_workspace, AnalysisOutput, ParamInference,
@@ -14,3 +15,4 @@ pub use analysis::{
 pub use expression::{ExpressionFact, ExpressionValueClass};
 pub use response_shape::{FieldShape, PartialReason, ResponseShape};
 pub use schema::{FieldDef, RelationDef, SchemaIndex, TableDef};
+pub use statement_env::StatementEnv;
