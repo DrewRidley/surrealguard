@@ -229,36 +229,27 @@ pub fn infer_non_select_response_shapes(
         if !parsed.syntax_diagnostics().is_empty() {
             continue;
         }
-        collect_non_select_response_shapes(parsed.tree().root_node(), parsed, schema, &mut shapes);
+        let mut env = StatementEnv::default();
+        let output = analyze_statement_sequence(parsed.tree().root_node(), parsed, &mut env);
+        for statement in output.statements {
+            if matches!(statement.kind.as_str(), "if_else" | "return") {
+                if let Some(shape) = statement.response_shape {
+                    shapes.push((statement.span, shape));
+                }
+            }
+        }
+        collect_mutation_response_shapes(parsed.tree().root_node(), parsed, schema, &mut shapes);
     }
 
     shapes
 }
 
-fn collect_non_select_response_shapes(
+fn collect_mutation_response_shapes(
     node: Node<'_>,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
     shapes: &mut Vec<(SourceSpan, ResponseShape)>,
 ) {
-    if node.kind() == "IfElseStatement" {
-        let let_variables = let_variable_facts(parsed);
-        shapes.push((
-            node_span(node, parsed.source_id().clone()),
-            response_shape_for_if_else(node, parsed, &let_variables),
-        ));
-        return;
-    }
-
-    if node.kind() == "ReturnStatement" {
-        let let_variables = let_variable_facts(parsed);
-        shapes.push((
-            node_span(node, parsed.source_id().clone()),
-            response_shape_for_return(node, parsed, &let_variables),
-        ));
-        return;
-    }
-
     if matches!(
         node.kind(),
         "CreateStatement"
@@ -277,60 +268,7 @@ fn collect_non_select_response_shapes(
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_non_select_response_shapes(child, parsed, schema, shapes);
-    }
-}
-
-fn response_shape_for_if_else(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-) -> ResponseShape {
-    let mut branch_shapes = Vec::new();
-    collect_if_else_return_shapes(node, parsed, let_variables, &mut branch_shapes);
-    merge_response_shapes(branch_shapes)
-}
-
-fn collect_if_else_return_shapes(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-    shapes: &mut Vec<ResponseShape>,
-) {
-    if node.kind() == "Block" {
-        collect_block_return_shapes(node, parsed, let_variables, shapes);
-        return;
-    }
-
-    if node.kind() == "ReturnStatement" {
-        shapes.push(response_shape_for_return(node, parsed, let_variables));
-        return;
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_if_else_return_shapes(child, parsed, let_variables, shapes);
-    }
-}
-
-fn collect_block_return_shapes(
-    block: Node<'_>,
-    parsed: &ParsedSource,
-    outer_variables: &BTreeMap<String, LetVariableFact>,
-    shapes: &mut Vec<ResponseShape>,
-) {
-    let mut local_variables = outer_variables.clone();
-    let mut cursor = block.walk();
-    for child in block.named_children(&mut cursor) {
-        if child.kind() == "LetStatement" {
-            collect_let_variable_fact(child, parsed, &mut local_variables);
-            continue;
-        }
-        if child.kind() == "ReturnStatement" {
-            shapes.push(response_shape_for_return(child, parsed, &local_variables));
-            continue;
-        }
-        collect_if_else_return_shapes(child, parsed, &local_variables, shapes);
+        collect_mutation_response_shapes(child, parsed, schema, shapes);
     }
 }
 
@@ -588,13 +526,15 @@ fn analyze_statement_sequence_into(
     output: &mut SemanticOutput,
 ) {
     if let Some(kind) = statement_kind(node, parsed.text()) {
+        let statement_index = output.statements.len();
         output.statements.push(StatementAnalysis {
             span: node_span(node, parsed.source_id().clone()),
             kind,
             response_shape: None,
             select_modifiers: select_modifier_analysis_for_node(node, parsed),
         });
-        analyze_statement_effects(node, parsed, env, output);
+        output.statements[statement_index].response_shape =
+            analyze_statement_effects(node, parsed, env, output);
         return;
     }
 
@@ -626,7 +566,7 @@ fn analyze_statement_effects(
     parsed: &ParsedSource,
     env: &mut StatementEnv,
     output: &mut SemanticOutput,
-) {
+) -> Option<ResponseShape> {
     match node.kind() {
         "LetStatement" => {
             if let Some(value_node) = let_value_node(node) {
@@ -645,9 +585,21 @@ fn analyze_statement_effects(
                 );
                 env.define_let(name, fact);
             }
+            None
         }
-        "IfElseStatement" => analyze_if_else_statement_effects(node, parsed, env, output),
-        _ => collect_expression_params_with_env(node, parsed, env, output),
+        "ReturnStatement" => {
+            let let_variables = let_variable_facts_from_env(env);
+            let shape = response_shape_for_return(node, parsed, &let_variables);
+            if let Some(value_node) = return_value_node(node) {
+                collect_expression_params_with_env(value_node, parsed, env, output);
+            }
+            Some(shape)
+        }
+        "IfElseStatement" => Some(analyze_if_else_statement_effects(node, parsed, env, output)),
+        _ => {
+            collect_expression_params_with_env(node, parsed, env, output);
+            None
+        }
     }
 }
 
@@ -656,21 +608,62 @@ fn analyze_if_else_statement_effects(
     parsed: &ParsedSource,
     env: &mut StatementEnv,
     output: &mut SemanticOutput,
-) {
+) -> ResponseShape {
+    let mut branch_shapes = Vec::new();
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if child.kind() == "Block" {
-            let mut child_env = env.fork_child_scope();
-            let child_output = analyze_statement_sequence(child, parsed, &mut child_env);
-            merge_param_inferences(&mut output.inferred_params, child_output.inferred_params);
-        } else if child.kind() == "IfElseStatement" {
-            let mut child_env = env.fork_child_scope();
-            let child_output = analyze_statement_sequence(child, parsed, &mut child_env);
-            merge_param_inferences(&mut output.inferred_params, child_output.inferred_params);
-        } else {
-            collect_expression_params_with_env(child, parsed, env, output);
-        }
+        analyze_if_else_child(child, parsed, env, output, &mut branch_shapes);
     }
+    merge_response_shapes(branch_shapes)
+}
+
+fn analyze_if_else_child(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    env: &mut StatementEnv,
+    output: &mut SemanticOutput,
+    branch_shapes: &mut Vec<ResponseShape>,
+) {
+    if node.kind() == "Block" {
+        let mut child_env = env.fork_child_scope();
+        let mut child_output = SemanticOutput::default();
+        analyze_statement_children(node, parsed, &mut child_env, &mut child_output);
+        collect_output_response_shapes(&child_output, branch_shapes);
+        merge_param_inferences(&mut output.inferred_params, child_output.inferred_params);
+        return;
+    }
+
+    if node.kind() == "IfElseStatement" {
+        let mut child_env = env.fork_child_scope();
+        let child_output = analyze_statement_sequence(node, parsed, &mut child_env);
+        collect_output_response_shapes(&child_output, branch_shapes);
+        merge_param_inferences(&mut output.inferred_params, child_output.inferred_params);
+        return;
+    }
+
+    if node.kind() == "VariableName" {
+        let name = param_name(node_text(node, parsed.text()));
+        if env.let_fact(&name).is_none() {
+            let span = node_span(node, parsed.source_id().clone());
+            env.record_param_use(name.clone(), span.clone());
+            record_param_output(&mut output.inferred_params, name, span);
+        }
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        analyze_if_else_child(child, parsed, env, output, branch_shapes);
+    }
+}
+
+fn collect_output_response_shapes(output: &SemanticOutput, shapes: &mut Vec<ResponseShape>) {
+    shapes.extend(
+        output
+            .statements
+            .iter()
+            .filter_map(|statement| statement.response_shape.clone()),
+    );
 }
 
 fn collect_expression_params_with_env(
@@ -3406,6 +3399,55 @@ mod tests {
         assert_eq!(
             env.let_fact("age").and_then(|fact| fact.kind.clone()),
             Some(Kind::Int)
+        );
+    }
+
+    #[test]
+    fn analyze_statement_sequence_shapes_if_branches_from_local_env() {
+        let parsed = parse_source(
+            SourceId::new("sequence-test"),
+            "LET $outer = 1; IF true { LET $branch = $outer + 1; RETURN $branch; } ELSE { LET $branch = 's'; RETURN $branch; };",
+        )
+        .expect("valid source parses");
+        let mut env = StatementEnv::default();
+
+        let output = analyze_statement_sequence(parsed.tree().root_node(), &parsed, &mut env);
+        let if_statement = output
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "if_else")
+            .expect("if statement is analyzed");
+
+        assert_eq!(
+            if_statement.response_shape,
+            Some(ResponseShape::Union {
+                variants: vec![
+                    ResponseShape::Value { kind: Kind::Int },
+                    ResponseShape::Value { kind: Kind::String },
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn analyze_statement_sequence_shapes_return_from_prior_env() {
+        let parsed = parse_source(
+            SourceId::new("sequence-test"),
+            "LET $age = 42; RETURN $age;",
+        )
+        .expect("valid source parses");
+        let mut env = StatementEnv::default();
+
+        let output = analyze_statement_sequence(parsed.tree().root_node(), &parsed, &mut env);
+        let return_statement = output
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "return")
+            .expect("return statement is analyzed");
+
+        assert_eq!(
+            return_statement.response_shape,
+            Some(ResponseShape::Value { kind: Kind::Int })
         );
     }
 }
