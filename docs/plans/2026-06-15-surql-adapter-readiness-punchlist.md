@@ -161,6 +161,8 @@ Acceptance:
 
 ### 2.2 Unary, boolean, comparison, and coalesce operators
 
+Status: partially complete. Binary arithmetic/string concatenation, numeric/string/bool comparisons, and boolean `AND`/`OR` expression facts are implemented. Unary operators, coalesce/default, regex/contains, and richer compatibility diagnostics remain open.
+
 Add operator facts for:
 
 - boolean `AND`/`OR`/`!` or grammar equivalents;

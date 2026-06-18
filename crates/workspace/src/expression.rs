@@ -353,7 +353,7 @@ fn binary_expression_parts<'tree>(
 }
 
 fn binary_expression_result_kind(operator: &str, left: &Kind, right: &Kind) -> Option<Kind> {
-    match operator {
+    match operator.to_ascii_uppercase().as_str() {
         "+" if matches!(left, Kind::String) && matches!(right, Kind::String) => Some(Kind::String),
         "+" | "-" | "*" | "/" if is_numeric_kind(left) && is_numeric_kind(right) => {
             if matches!(left, Kind::Float) || matches!(right, Kind::Float) {
@@ -362,8 +362,18 @@ fn binary_expression_result_kind(operator: &str, left: &Kind, right: &Kind) -> O
                 Some(Kind::Int)
             }
         }
+        "=" | "==" | "!=" | "<" | "<=" | ">" | ">=" if comparable_binary_kinds(left, right) => {
+            Some(Kind::Bool)
+        }
+        "AND" | "OR" if matches!(left, Kind::Bool) && matches!(right, Kind::Bool) => {
+            Some(Kind::Bool)
+        }
         _ => None,
     }
+}
+
+fn comparable_binary_kinds(left: &Kind, right: &Kind) -> bool {
+    left == right || (is_numeric_kind(left) && is_numeric_kind(right))
 }
 
 fn is_numeric_kind(kind: &Kind) -> bool {
@@ -577,6 +587,45 @@ mod tests {
         assert_eq!(
             fields["tags"].kind,
             Some(Kind::Array(Box::new(Kind::String), Some(2)))
+        );
+    }
+
+    #[test]
+    fn infer_expression_fact_for_comparison_operators_returns_bool() {
+        let parsed = parse(
+            "DEFINE TABLE person SCHEMAFULL; DEFINE FIELD age ON person TYPE int; SELECT age >= 18 AS adult FROM person;",
+        );
+        let schema = extract_schema(&[parsed]).schema;
+        let parsed = parse("SELECT age >= 18 AS adult FROM person;");
+        let comparison = find_node_by_text(parsed.tree().root_node(), parsed.text(), "age >= 18")
+            .expect("comparison expression should parse");
+        let table = schema.tables.get("person").unwrap();
+
+        let fact = infer_expression_fact(comparison, &parsed, Some(table));
+
+        assert_eq!(fact.kind, Some(Kind::Bool));
+        assert_eq!(fact.shape, Some(ResponseShape::Value { kind: Kind::Bool }));
+        assert_eq!(fact.dependencies.field_paths, vec!["age"]);
+        assert!(
+            fact.partial.is_empty(),
+            "comparison should be fully inferred"
+        );
+    }
+
+    #[test]
+    fn infer_expression_fact_for_boolean_operators_returns_bool() {
+        let parsed = parse("RETURN true AND false;");
+        let boolean_expr =
+            find_node_by_text(parsed.tree().root_node(), parsed.text(), "true AND false")
+                .expect("boolean operator expression should parse");
+
+        let fact = infer_expression_fact(boolean_expr, &parsed, None);
+
+        assert_eq!(fact.kind, Some(Kind::Bool));
+        assert_eq!(fact.shape, Some(ResponseShape::Value { kind: Kind::Bool }));
+        assert!(
+            fact.partial.is_empty(),
+            "boolean operator should be fully inferred"
         );
     }
 
