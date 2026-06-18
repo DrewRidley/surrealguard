@@ -27,6 +27,10 @@ impl StatementEnv {
         self.lets.get(name)
     }
 
+    pub fn let_facts(&self) -> &BTreeMap<String, ExpressionFact> {
+        &self.lets
+    }
+
     pub fn record_param_use(&mut self, name: String, span: SourceSpan) {
         self.params
             .entry(name.clone())
@@ -42,6 +46,10 @@ impl StatementEnv {
 
     pub fn into_params(self) -> Vec<ParamInference> {
         self.params.into_values().collect()
+    }
+
+    pub fn params(&self) -> Vec<ParamInference> {
+        self.params.values().cloned().collect()
     }
 }
 

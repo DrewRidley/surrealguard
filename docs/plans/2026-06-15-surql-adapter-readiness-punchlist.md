@@ -71,6 +71,8 @@ Acceptance:
 
 ### 1.2 Add `analyze_statement_sequence`
 
+Status: initial implementation routes source-level statement facts, ordered param collection, top-level LET effects, and block-local param/LET isolation through `analyze_statement_sequence`. Response-shape and downstream diagnostics migration continues in later Phase 1 slices.
+
 Analyze statement nodes in source order:
 
 - emit statement facts;

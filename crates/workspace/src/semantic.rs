@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use surrealguard_diagnostics::{Finding, FindingCode, Severity};
 use surrealguard_syntax::parse::ParsedSource;
@@ -15,6 +15,7 @@ use crate::schema::SchemaIndex;
 use crate::select_ir::{
     select_ir_from_statement, FieldPath, GraphDirection, SelectIr, SelectModifier, SelectProjection,
 };
+use crate::statement_env::StatementEnv;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SemanticOutput {
@@ -40,26 +41,8 @@ pub fn analyze_parsed_source(parsed: &ParsedSource) -> SemanticOutput {
         return SemanticOutput::default();
     }
 
-    let let_variables = let_variable_facts(parsed);
-    let mut statements = Vec::new();
-    let mut params = BTreeMap::new();
-    collect_statement_analysis(
-        parsed.tree().root_node(),
-        parsed,
-        &let_variables,
-        &mut statements,
-    );
-    collect_params_ordered(
-        parsed.tree().root_node(),
-        parsed,
-        &mut BTreeSet::new(),
-        &mut params,
-    );
-
-    SemanticOutput {
-        statements,
-        inferred_params: params.into_values().collect(),
-    }
+    let mut env = StatementEnv::default();
+    analyze_statement_sequence(parsed.tree().root_node(), parsed, &mut env)
 }
 
 pub fn validate_table_references(
@@ -585,26 +568,199 @@ fn collect_select_response_shapes(
     }
 }
 
-fn collect_statement_analysis(
+pub fn analyze_statement_sequence(
     node: Node<'_>,
     parsed: &ParsedSource,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-    statements: &mut Vec<StatementAnalysis>,
+    env: &mut StatementEnv,
+) -> SemanticOutput {
+    let mut output = SemanticOutput::default();
+    analyze_statement_sequence_into(node, parsed, env, &mut output);
+    output
+        .inferred_params
+        .sort_by(|left, right| left.name.cmp(&right.name));
+    output
+}
+
+fn analyze_statement_sequence_into(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    env: &mut StatementEnv,
+    output: &mut SemanticOutput,
 ) {
     if let Some(kind) = statement_kind(node, parsed.text()) {
-        statements.push(StatementAnalysis {
+        output.statements.push(StatementAnalysis {
             span: node_span(node, parsed.source_id().clone()),
             kind,
             response_shape: None,
             select_modifiers: select_modifier_analysis_for_node(node, parsed),
         });
+        analyze_statement_effects(node, parsed, env, output);
+        return;
+    }
+
+    if node.kind() == "Block" {
+        let mut child_env = env.fork_child_scope();
+        let mut child_output = SemanticOutput::default();
+        analyze_statement_children(node, parsed, &mut child_env, &mut child_output);
+        merge_param_inferences(&mut output.inferred_params, child_output.inferred_params);
+        return;
+    }
+
+    analyze_statement_children(node, parsed, env, output);
+}
+
+fn analyze_statement_children(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    env: &mut StatementEnv,
+    output: &mut SemanticOutput,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        analyze_statement_sequence_into(child, parsed, env, output);
+    }
+}
+
+fn analyze_statement_effects(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    env: &mut StatementEnv,
+    output: &mut SemanticOutput,
+) {
+    match node.kind() {
+        "LetStatement" => {
+            if let Some(value_node) = let_value_node(node) {
+                collect_expression_params_with_env(value_node, parsed, env, output);
+            }
+            if let (Some(name_node), Some(value_node)) =
+                (let_variable_name_node(node), let_value_node(node))
+            {
+                let name = param_name(node_text(name_node, parsed.text()));
+                let let_variables = let_variable_facts_from_env(env);
+                let fact = infer_expression_fact_with_let_variables(
+                    value_node,
+                    parsed,
+                    None,
+                    &let_variables,
+                );
+                env.define_let(name, fact);
+            }
+        }
+        "IfElseStatement" => analyze_if_else_statement_effects(node, parsed, env, output),
+        _ => collect_expression_params_with_env(node, parsed, env, output),
+    }
+}
+
+fn analyze_if_else_statement_effects(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    env: &mut StatementEnv,
+    output: &mut SemanticOutput,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "Block" {
+            let mut child_env = env.fork_child_scope();
+            let child_output = analyze_statement_sequence(child, parsed, &mut child_env);
+            merge_param_inferences(&mut output.inferred_params, child_output.inferred_params);
+        } else if child.kind() == "IfElseStatement" {
+            let mut child_env = env.fork_child_scope();
+            let child_output = analyze_statement_sequence(child, parsed, &mut child_env);
+            merge_param_inferences(&mut output.inferred_params, child_output.inferred_params);
+        } else {
+            collect_expression_params_with_env(child, parsed, env, output);
+        }
+    }
+}
+
+fn collect_expression_params_with_env(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    env: &mut StatementEnv,
+    output: &mut SemanticOutput,
+) {
+    if node.kind() == "LetStatement" {
+        if let Some(value_node) = let_value_node(node) {
+            collect_expression_params_with_env(value_node, parsed, env, output);
+        }
+        if let Some(name_node) = let_variable_name_node(node) {
+            let name = param_name(node_text(name_node, parsed.text()));
+            let fact = infer_expression_fact(value_node_or_unknown(node), parsed, None);
+            env.define_let(name, fact);
+        }
+        return;
+    }
+
+    if node.kind() == "Block" {
+        let mut child_env = env.fork_child_scope();
+        let child_output = analyze_statement_sequence(node, parsed, &mut child_env);
+        merge_param_inferences(&mut output.inferred_params, child_output.inferred_params);
+        return;
+    }
+
+    if node.kind() == "VariableName" {
+        let name = param_name(node_text(node, parsed.text()));
+        if env.let_fact(&name).is_none() {
+            let span = node_span(node, parsed.source_id().clone());
+            env.record_param_use(name.clone(), span.clone());
+            record_param_output(&mut output.inferred_params, name, span);
+        }
         return;
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_statement_analysis(child, parsed, let_variables, statements);
+        collect_expression_params_with_env(child, parsed, env, output);
     }
+}
+
+fn record_param_output(target: &mut Vec<ParamInference>, name: String, span: SourceSpan) {
+    if let Some(existing) = target.iter_mut().find(|existing| existing.name == name) {
+        existing.spans.push(span);
+    } else {
+        target.push(ParamInference {
+            name,
+            kind: None,
+            required: true,
+            spans: vec![span],
+        });
+    }
+}
+
+fn merge_param_inferences(target: &mut Vec<ParamInference>, incoming: Vec<ParamInference>) {
+    for param in incoming {
+        if let Some(existing) = target
+            .iter_mut()
+            .find(|existing| existing.name == param.name)
+        {
+            if existing.kind.is_none() {
+                existing.kind = param.kind.clone();
+            }
+            existing.required |= param.required;
+            existing.spans.extend(param.spans);
+        } else {
+            target.push(param);
+        }
+    }
+}
+
+fn value_node_or_unknown(node: Node<'_>) -> Node<'_> {
+    let_value_node(node).unwrap_or(node)
+}
+
+fn let_variable_facts_from_env(env: &StatementEnv) -> BTreeMap<String, LetVariableFact> {
+    env.let_facts()
+        .iter()
+        .map(|(name, fact)| {
+            (
+                name.clone(),
+                LetVariableFact {
+                    kind: fact.kind.clone(),
+                    shape: fact.shape.clone(),
+                },
+            )
+        })
+        .collect()
 }
 
 fn let_variable_facts(parsed: &ParsedSource) -> BTreeMap<String, LetVariableFact> {
@@ -818,63 +974,6 @@ fn row_preserving_modifier(
         row_preserving: true,
         max_len,
     }
-}
-
-fn collect_params_ordered(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    declared_lets: &mut BTreeSet<String>,
-    params: &mut BTreeMap<String, ParamInference>,
-) {
-    if node.kind() == "Block" {
-        let mut local_declared_lets = declared_lets.clone();
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            collect_params_ordered(child, parsed, &mut local_declared_lets, params);
-        }
-        return;
-    }
-
-    if node.kind() == "LetStatement" {
-        if let Some(value_node) = let_value_node(node) {
-            collect_params_ordered(value_node, parsed, declared_lets, params);
-        }
-        if let Some(name_node) = let_variable_name_node(node) {
-            declared_lets.insert(param_name(node_text(name_node, parsed.text())));
-        }
-        return;
-    }
-
-    if node.kind() == "VariableName" {
-        let name = param_name(node_text(node, parsed.text()));
-        if !declared_lets.contains(&name) {
-            collect_param_variable(name, node, parsed, params);
-        }
-        return;
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_params_ordered(child, parsed, declared_lets, params);
-    }
-}
-
-fn collect_param_variable(
-    name: String,
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    params: &mut BTreeMap<String, ParamInference>,
-) {
-    params
-        .entry(name.clone())
-        .or_insert_with(|| ParamInference {
-            name,
-            kind: None,
-            required: true,
-            spans: Vec::new(),
-        })
-        .spans
-        .push(node_span(node, parsed.source_id().clone()));
 }
 
 fn collect_table_reference_diagnostics(
@@ -3235,4 +3334,78 @@ fn node_span(node: Node<'_>, source: SourceId) -> SourceSpan {
         source,
         ByteRange::new(start, end).expect("tree-sitter node byte ranges are ordered"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use surrealdb_types::Kind;
+    use surrealguard_syntax::parse::parse_source;
+    use surrealguard_syntax::source::SourceId;
+
+    use super::*;
+    use crate::statement_env::StatementEnv;
+
+    #[test]
+    fn analyze_statement_sequence_emits_statements_and_ordered_params() {
+        let parsed = parse_source(
+            SourceId::new("sequence-test"),
+            "LET $known = $input; RETURN $known; RETURN $later;",
+        )
+        .expect("valid source parses");
+        let mut env = StatementEnv::default();
+
+        let output = analyze_statement_sequence(parsed.tree().root_node(), &parsed, &mut env);
+
+        assert_eq!(
+            output
+                .statements
+                .iter()
+                .map(|statement| statement.kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["let", "return", "return"]
+        );
+        assert_eq!(
+            output
+                .inferred_params
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["input", "later"]
+        );
+    }
+
+    #[test]
+    fn analyze_statement_sequence_keeps_block_lets_local_for_params() {
+        let parsed = parse_source(
+            SourceId::new("sequence-test"),
+            "LET $outer = 1; IF true { LET $inner = $outer; RETURN $inner; }; RETURN $inner;",
+        )
+        .expect("valid source parses");
+        let mut env = StatementEnv::default();
+
+        let output = analyze_statement_sequence(parsed.tree().root_node(), &parsed, &mut env);
+
+        assert_eq!(
+            output
+                .inferred_params
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["inner"]
+        );
+    }
+
+    #[test]
+    fn analyze_statement_sequence_records_let_expression_kind_in_env() {
+        let parsed = parse_source(SourceId::new("sequence-test"), "LET $age = 42;")
+            .expect("valid source parses");
+        let mut env = StatementEnv::default();
+
+        let _output = analyze_statement_sequence(parsed.tree().root_node(), &parsed, &mut env);
+
+        assert_eq!(
+            env.let_fact("age").and_then(|fact| fact.kind.clone()),
+            Some(Kind::Int)
+        );
+    }
 }
