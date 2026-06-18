@@ -2006,6 +2006,27 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_reports_function_argument_mismatch_from_branch_local_let() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nIF true { LET $age = 42; SELECT string::len($age) FROM person; };".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        assert!(messages.iter().any(|(code, message)| {
+            code == "E2004"
+                && message == "argument 1 to `string::len` has type `int`, expected `string`"
+        }));
+    }
+
+    #[test]
     fn analyze_workspace_reports_function_arity_and_argument_kind_mismatches() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(

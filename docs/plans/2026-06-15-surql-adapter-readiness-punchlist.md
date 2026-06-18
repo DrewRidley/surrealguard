@@ -119,7 +119,7 @@ Acceptance:
 
 ### 1.4 Make downstream validators consume env snapshots
 
-Status: partially complete. Mutation assignability now consumes env-scoped LET facts, including branch-local LETs inside blocks. Function calls, SELECT expression projections, WHERE param kind inference, graph-local predicates, and mutation RETURN expressions/fields still need migration.
+Status: partially complete. Mutation assignability and SELECT function-call argument diagnostics now consume env-scoped LET facts, including branch-local LETs inside blocks. SELECT expression projections, WHERE param kind inference, graph-local predicates, binary-expression diagnostics outside SELECT, and mutation RETURN expressions/fields still need migration.
 
 Route existing validators through the statement env where expressions are involved:
 

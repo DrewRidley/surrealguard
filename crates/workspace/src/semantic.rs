@@ -166,10 +166,12 @@ pub fn validate_function_calls(
             continue;
         }
 
-        collect_function_call_diagnostics(
+        let mut env = StatementEnv::default();
+        collect_function_call_diagnostics_with_env(
             parsed.tree().root_node(),
             parsed,
             schema,
+            &mut env,
             &mut diagnostics,
         );
     }
@@ -1161,23 +1163,53 @@ fn relate_graph_reference(node: Node<'_>, parsed: &ParsedSource) -> Option<Relat
     })
 }
 
-fn collect_function_call_diagnostics(
+fn collect_function_call_diagnostics_with_env(
     node: Node<'_>,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
+    env: &mut StatementEnv,
     diagnostics: &mut Vec<Finding>,
 ) {
-    if node.kind() == "SelectStatement" {
-        let ir = select_ir_from_statement(node, parsed);
-        let table =
-            resolved_select_table_name(&ir, schema).and_then(|name| schema.tables.get(&name));
-        validate_function_calls_in_node(node, parsed, table, diagnostics);
-        return;
+    match node.kind() {
+        "LetStatement" => {
+            define_let_from_statement(node, parsed, env);
+            return;
+        }
+        "Block" => {
+            let mut child_env = env.fork_child_scope();
+            collect_function_call_children_with_env(
+                node,
+                parsed,
+                schema,
+                &mut child_env,
+                diagnostics,
+            );
+            return;
+        }
+        "SelectStatement" => {
+            let ir = select_ir_from_statement(node, parsed);
+            let table =
+                resolved_select_table_name(&ir, schema).and_then(|name| schema.tables.get(&name));
+            let let_variables = let_variable_facts_from_env(env);
+            validate_function_calls_in_node(node, parsed, table, &let_variables, diagnostics);
+            return;
+        }
+        _ => {}
     }
 
+    collect_function_call_children_with_env(node, parsed, schema, env, diagnostics);
+}
+
+fn collect_function_call_children_with_env(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    env: &mut StatementEnv,
+    diagnostics: &mut Vec<Finding>,
+) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_function_call_diagnostics(child, parsed, schema, diagnostics);
+        collect_function_call_diagnostics_with_env(child, parsed, schema, env, diagnostics);
     }
 }
 
@@ -1307,18 +1339,19 @@ fn validate_function_calls_in_node(
     node: Node<'_>,
     parsed: &ParsedSource,
     row_table: Option<&crate::schema::TableDef>,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     diagnostics: &mut Vec<Finding>,
 ) {
     if node.kind() == "FunctionCall" {
-        validate_function_call(node, parsed, row_table, diagnostics);
+        validate_function_call(node, parsed, row_table, let_variables, diagnostics);
     }
     if node.kind() == "BinaryExpression" {
-        validate_binary_expression(node, parsed, row_table, diagnostics);
+        validate_binary_expression(node, parsed, row_table, let_variables, diagnostics);
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        validate_function_calls_in_node(child, parsed, row_table, diagnostics);
+        validate_function_calls_in_node(child, parsed, row_table, let_variables, diagnostics);
     }
 }
 
@@ -1326,6 +1359,7 @@ fn validate_function_call(
     node: Node<'_>,
     parsed: &ParsedSource,
     row_table: Option<&crate::schema::TableDef>,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     diagnostics: &mut Vec<Finding>,
 ) {
     let Some(name) = function_call_name(node, parsed) else {
@@ -1358,7 +1392,7 @@ fn validate_function_call(
     }
 
     for (index, (arg, expected)) in args.iter().zip(signature.args.iter()).enumerate() {
-        let fact = infer_expression_fact(*arg, parsed, row_table);
+        let fact = infer_expression_fact_with_let_variables(*arg, parsed, row_table, let_variables);
         let Some(actual) = fact.kind else {
             continue;
         };
@@ -1383,13 +1417,16 @@ fn validate_binary_expression(
     node: Node<'_>,
     parsed: &ParsedSource,
     row_table: Option<&crate::schema::TableDef>,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     diagnostics: &mut Vec<Finding>,
 ) {
     let Some((left, operator, right)) = binary_expression_parts(node) else {
         return;
     };
-    let left_fact = infer_expression_fact(left, parsed, row_table);
-    let right_fact = infer_expression_fact(right, parsed, row_table);
+    let left_fact =
+        infer_expression_fact_with_let_variables(left, parsed, row_table, let_variables);
+    let right_fact =
+        infer_expression_fact_with_let_variables(right, parsed, row_table, let_variables);
     let (Some(left_kind), Some(right_kind)) = (&left_fact.kind, &right_fact.kind) else {
         return;
     };
