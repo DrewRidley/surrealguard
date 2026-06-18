@@ -13,7 +13,8 @@ use crate::expression::{infer_expression_fact, ExpressionFact, ExpressionValueCl
 use crate::response_shape::{FieldShape, PartialReason, ResponseShape};
 use crate::schema::SchemaIndex;
 use crate::select_ir::{
-    select_ir_from_statement, FieldPath, GraphDirection, SelectIr, SelectModifier, SelectProjection,
+    select_ir_from_statement, FieldPath, GraphDirection, GraphLookup, SelectIr, SelectModifier,
+    SelectProjection,
 };
 use crate::statement_env::StatementEnv;
 
@@ -1220,59 +1221,63 @@ fn validate_graph_references_for_select_statement(
     if ir.graph_lookups.is_empty() {
         return;
     }
-
-    let [edge_lookup, target_lookup] = ir.graph_lookups.as_slice() else {
+    if ir.graph_lookups.len() % 2 != 0 {
         return;
-    };
-    let Some(source_table) = ir
-        .source
-        .as_ref()
-        .and_then(|source| source.table.as_deref())
-    else {
-        return;
-    };
-
-    let Some(edge_table) = edge_lookup.table.as_deref() else {
-        return;
-    };
-    let edge_relation = schema
-        .tables
-        .get(edge_table)
-        .and_then(|table| table.relation.as_ref());
-    if edge_relation.is_none() {
-        diagnostics.push(Finding::new(
-            edge_lookup.span.clone(),
-            FindingCode::graph(3001),
-            Severity::Error,
-            format!("unknown graph edge table `{edge_table}`"),
-        ));
     }
 
-    let Some(target_table) = target_lookup.table.as_deref() else {
+    let Some(mut current_table) = ir.source.as_ref().and_then(|source| source.table.clone()) else {
         return;
     };
-    let target_exists = schema.tables.contains_key(target_table);
-    if !target_exists {
-        diagnostics.push(Finding::new(
-            target_lookup.span.clone(),
-            FindingCode::graph(3002),
-            Severity::Error,
-            format!("unknown graph target table `{target_table}`"),
-        ));
-    }
 
-    if edge_relation.is_some()
-        && target_exists
-        && resolve_simple_graph_target_table(source_table, &ir, schema).is_none()
-    {
-        diagnostics.push(Finding::new(
-            node_span(node, parsed.source_id().clone()),
-            FindingCode::graph(3003),
-            Severity::Error,
-            format!(
-                "graph traversal `{source_table}->{edge_table}->{target_table}` does not match relation `{edge_table}` endpoints"
-            ),
-        ));
+    for pair in ir.graph_lookups.chunks_exact(2) {
+        let edge_lookup = &pair[0];
+        let target_lookup = &pair[1];
+        let Some(edge_table) = edge_lookup.table.as_deref() else {
+            return;
+        };
+        let edge_relation = schema
+            .tables
+            .get(edge_table)
+            .and_then(|table| table.relation.as_ref());
+        if edge_relation.is_none() {
+            diagnostics.push(Finding::new(
+                edge_lookup.span.clone(),
+                FindingCode::graph(3001),
+                Severity::Error,
+                format!("unknown graph edge table `{edge_table}`"),
+            ));
+        }
+
+        let Some(target_table) = target_lookup.table.as_deref() else {
+            return;
+        };
+        let target_exists = schema.tables.contains_key(target_table);
+        if !target_exists {
+            diagnostics.push(Finding::new(
+                target_lookup.span.clone(),
+                FindingCode::graph(3002),
+                Severity::Error,
+                format!("unknown graph target table `{target_table}`"),
+            ));
+        }
+
+        if edge_relation.is_some() && target_exists {
+            if let Some(next_table) =
+                resolve_graph_step_target_table(&current_table, edge_lookup, target_lookup, schema)
+            {
+                current_table = next_table;
+            } else {
+                diagnostics.push(Finding::new(
+                    node_span(node, parsed.source_id().clone()),
+                    FindingCode::graph(3003),
+                    Severity::Error,
+                    format!(
+                        "graph traversal `{current_table}->{edge_table}->{target_table}` does not match relation `{edge_table}` endpoints"
+                    ),
+                ));
+                return;
+            }
+        }
     }
 }
 
@@ -3387,17 +3392,34 @@ fn resolved_select_table_name(ir: &SelectIr, schema: &SchemaIndex) -> Option<Str
         return Some(source_table.clone());
     }
 
-    resolve_simple_graph_target_table(source_table, ir, schema)
+    resolve_graph_target_table(source_table, &ir.graph_lookups, schema)
 }
 
-fn resolve_simple_graph_target_table(
+fn resolve_graph_target_table(
     source_table: &str,
-    ir: &SelectIr,
+    lookups: &[GraphLookup],
     schema: &SchemaIndex,
 ) -> Option<String> {
-    let [edge_lookup, target_lookup] = ir.graph_lookups.as_slice() else {
+    if lookups.is_empty() || lookups.len() % 2 != 0 {
         return None;
-    };
+    }
+
+    let mut current_table = source_table.to_string();
+    for pair in lookups.chunks_exact(2) {
+        let edge_lookup = &pair[0];
+        let target_lookup = &pair[1];
+        current_table =
+            resolve_graph_step_target_table(&current_table, edge_lookup, target_lookup, schema)?;
+    }
+    Some(current_table)
+}
+
+fn resolve_graph_step_target_table(
+    source_table: &str,
+    edge_lookup: &GraphLookup,
+    target_lookup: &GraphLookup,
+    schema: &SchemaIndex,
+) -> Option<String> {
     let edge_table_name = edge_lookup.table.as_deref()?;
     let target_table_name = target_lookup.table.as_deref()?;
     let relation = schema.tables.get(edge_table_name)?.relation.as_ref()?;

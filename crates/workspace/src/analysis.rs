@@ -2767,6 +2767,34 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_infers_multi_hop_outbound_graph_traversal_shape() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE comment;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nDEFINE TABLE authored TYPE RELATION IN post OUT comment;\nDEFINE FIELD body ON comment TYPE string;\nSELECT body FROM person->likes->post->authored->comment;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let source_output = &output.sources[&source];
+        assert!(source_output
+            .diagnostics
+            .iter()
+            .all(|finding| finding.code() != FindingCode::graph(3003)));
+
+        let shape = source_output
+            .response_shape
+            .as_ref()
+            .expect("shape inferred");
+        let ResponseShape::Array { element, .. } = shape else {
+            panic!("expected array shape, got {shape:?}");
+        };
+        let ResponseShape::Object { fields, .. } = element.as_ref() else {
+            panic!("expected object element, got {element:?}");
+        };
+        assert_eq!(fields["body"].kind, Some(Kind::String));
+    }
+
+    #[test]
     fn analyze_workspace_infers_simple_outbound_graph_traversal_shape() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
@@ -2795,6 +2823,25 @@ INSERT INTO person { name: 'Ada' };
             panic!("expected object element, got {element:?}");
         };
         assert_eq!(fields["title"].kind, Some(Kind::String));
+    }
+
+    #[test]
+    fn analyze_workspace_reports_unknown_later_multi_hop_graph_edge_table() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE comment;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nSELECT * FROM person->likes->post->missing->comment;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::graph(3001))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(messages, vec!["unknown graph edge table `missing`"]);
     }
 
     #[test]

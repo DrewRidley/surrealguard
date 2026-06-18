@@ -344,6 +344,8 @@ Objective: graph traversal is semantically useful, not just syntactically recogn
 
 ### 6.1 Direction and endpoint resolution
 
+Status: partially complete. Static graph resolution now handles source-to-target table resolution across chained edge/target lookup pairs, including multi-hop outbound chains, and diagnostics walk every static hop for unknown edge/target tables plus endpoint mismatches. More fixtures are still needed for inbound/bidirectional multi-hop combinations and parenthesized graph selections.
+
 Cover:
 
 - outbound;
