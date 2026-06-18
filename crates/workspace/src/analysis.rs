@@ -2270,6 +2270,41 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_infers_mutation_return_expression_shape_from_let_env() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nLET $bonus = 1;\nUPDATE person SET age = 42 RETURN $bonus + 1 AS next_bonus;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let update = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "update")
+            .expect("update statement exists");
+
+        let Some(ResponseShape::Array { element, .. }) = &update.response_shape else {
+            panic!(
+                "expected array response shape, got {:?}",
+                update.response_shape
+            );
+        };
+        let ResponseShape::Object {
+            fields,
+            open: false,
+        } = element.as_ref()
+        else {
+            panic!("expected object element, got {element:?}");
+        };
+        assert_eq!(
+            fields.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["next_bonus"]
+        );
+        assert_eq!(fields["next_bonus"].kind, Some(Kind::Int));
+    }
+
+    #[test]
     fn analyze_workspace_infers_mutation_return_diff_patch_shape() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(

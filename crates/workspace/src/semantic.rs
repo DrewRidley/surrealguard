@@ -253,37 +253,67 @@ pub fn infer_non_select_response_shapes(
                 }
             }
         }
-        collect_mutation_response_shapes(parsed.tree().root_node(), parsed, schema, &mut shapes);
+        let mut mutation_env = StatementEnv::default();
+        collect_mutation_response_shapes_with_env(
+            parsed.tree().root_node(),
+            parsed,
+            schema,
+            &mut mutation_env,
+            &mut shapes,
+        );
     }
 
     shapes
 }
 
-fn collect_mutation_response_shapes(
+fn collect_mutation_response_shapes_with_env(
     node: Node<'_>,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
+    env: &mut StatementEnv,
     shapes: &mut Vec<(SourceSpan, ResponseShape)>,
 ) {
-    if matches!(
-        node.kind(),
-        "CreateStatement"
-            | "InsertStatement"
-            | "UpdateStatement"
-            | "UpsertStatement"
-            | "DeleteStatement"
-            | "RelateStatement"
-    ) {
-        shapes.push((
-            node_span(node, parsed.source_id().clone()),
-            response_shape_for_mutation(node, parsed, schema),
-        ));
-        return;
+    match node.kind() {
+        "LetStatement" => {
+            define_let_from_statement(node, parsed, env);
+            return;
+        }
+        "Block" => {
+            let mut child_env = env.fork_child_scope();
+            collect_mutation_response_shape_children_with_env(
+                node,
+                parsed,
+                schema,
+                &mut child_env,
+                shapes,
+            );
+            return;
+        }
+        "CreateStatement" | "InsertStatement" | "UpdateStatement" | "UpsertStatement"
+        | "DeleteStatement" | "RelateStatement" => {
+            let let_variables = let_variable_facts_from_env(env);
+            shapes.push((
+                node_span(node, parsed.source_id().clone()),
+                response_shape_for_mutation(node, parsed, schema, &let_variables),
+            ));
+            return;
+        }
+        _ => {}
     }
 
+    collect_mutation_response_shape_children_with_env(node, parsed, schema, env, shapes);
+}
+
+fn collect_mutation_response_shape_children_with_env(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    env: &mut StatementEnv,
+    shapes: &mut Vec<(SourceSpan, ResponseShape)>,
+) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_mutation_response_shapes(child, parsed, schema, shapes);
+        collect_mutation_response_shapes_with_env(child, parsed, schema, env, shapes);
     }
 }
 
@@ -345,6 +375,7 @@ fn response_shape_for_mutation(
     node: Node<'_>,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
+    let_variables: &BTreeMap<String, LetVariableFact>,
 ) -> ResponseShape {
     let Some(table_name) = mutation_table_name(node, parsed) else {
         return ResponseShape::Unknown {
@@ -365,7 +396,9 @@ fn response_shape_for_mutation(
             max_len: Some(0),
         },
         MutationReturnMode::Diff => mutation_return_diff_shape(node, parsed),
-        MutationReturnMode::Fields => mutation_return_fields_shape(node, parsed, table),
+        MutationReturnMode::Fields => {
+            mutation_return_fields_shape(node, parsed, table, let_variables)
+        }
         MutationReturnMode::Rows => {
             if table.fields.is_empty() {
                 return ResponseShape::Unknown {
@@ -384,6 +417,7 @@ fn mutation_return_fields_shape(
     node: Node<'_>,
     parsed: &ParsedSource,
     table: &crate::schema::TableDef,
+    let_variables: &BTreeMap<String, LetVariableFact>,
 ) -> ResponseShape {
     let Some(return_clause) = find_descendant_kind(node, "ReturnClause") else {
         return ResponseShape::Unknown {
@@ -391,7 +425,7 @@ fn mutation_return_fields_shape(
         };
     };
     let mut fields = BTreeMap::new();
-    collect_return_field_shapes(return_clause, parsed, table, &mut fields);
+    collect_return_field_shapes(return_clause, parsed, table, let_variables, &mut fields);
     if fields.is_empty() {
         return ResponseShape::Unknown {
             reason: PartialReason::Unresolved,
@@ -411,8 +445,16 @@ fn collect_return_field_shapes(
     node: Node<'_>,
     parsed: &ParsedSource,
     table: &crate::schema::TableDef,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     fields: &mut BTreeMap<String, FieldShape>,
 ) {
+    if let Some((alias, field_shape)) =
+        mutation_return_alias_field_shape(node, parsed, table, let_variables)
+    {
+        fields.insert(alias, field_shape);
+        return;
+    }
+
     if is_row_context_field_path_node(node) {
         let path = field_path_from_node(node, parsed);
         if let Some(field_shape) = field_shape_for_path(table, &path) {
@@ -424,9 +466,58 @@ fn collect_return_field_shapes(
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.is_named() && !matches!(child.kind(), "Keyword" | "Literal") {
-            collect_return_field_shapes(child, parsed, table, fields);
+            collect_return_field_shapes(child, parsed, table, let_variables, fields);
         }
     }
+}
+
+fn mutation_return_alias_field_shape(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    let_variables: &BTreeMap<String, LetVariableFact>,
+) -> Option<(String, FieldShape)> {
+    if node.kind() != "Predicate" {
+        return None;
+    }
+
+    let mut cursor = node.walk();
+    let children: Vec<_> = node
+        .children(&mut cursor)
+        .filter(|child| child.is_named())
+        .collect();
+    let as_index = children.iter().position(|child| {
+        child.kind() == "Keyword" && node_text(*child, parsed.text()).eq_ignore_ascii_case("AS")
+    })?;
+    let expression = children[..as_index]
+        .iter()
+        .copied()
+        .find(|child| !matches!(child.kind(), "Keyword" | "Operator"))?;
+    let alias = children[as_index + 1..]
+        .iter()
+        .copied()
+        .find(|child| child.kind() == "Ident")?;
+    let alias_text = node_text(alias, parsed.text()).trim().to_string();
+    let fact =
+        infer_expression_fact_with_let_variables(expression, parsed, Some(table), let_variables);
+    let shape = fact.shape.unwrap_or_else(|| {
+        fact.kind
+            .clone()
+            .map(|kind| ResponseShape::Value { kind })
+            .unwrap_or(ResponseShape::Unknown {
+                reason: PartialReason::Unresolved,
+            })
+    });
+    Some((
+        alias_text,
+        FieldShape {
+            kind: fact.kind,
+            shape,
+            span: node_span(expression, parsed.source_id().clone()),
+            materialized_by_fetch: false,
+            partial: fact.partial,
+        },
+    ))
 }
 
 fn mutation_return_diff_shape(node: Node<'_>, parsed: &ParsedSource) -> ResponseShape {
