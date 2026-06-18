@@ -1952,6 +1952,30 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_reports_binary_expression_mismatch_from_let_env() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "LET $age = 42;\nLET $bad = $age + 'x';\nRETURN $age + 'x';\nIF true { LET $score = 7; RETURN $score + 'x'; };".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        let binary_mismatches = messages
+            .iter()
+            .filter(|(code, message)| {
+                code == "E2005" && message == "operator `+` cannot combine `int` and `string`"
+            })
+            .count();
+        assert_eq!(binary_mismatches, 3);
+    }
+
+    #[test]
     fn analyze_workspace_reports_binary_expression_type_mismatches() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(

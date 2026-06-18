@@ -119,7 +119,7 @@ Acceptance:
 
 ### 1.4 Make downstream validators consume env snapshots
 
-Status: partially complete. Mutation assignability and SELECT function-call argument diagnostics now consume env-scoped LET facts, including branch-local LETs inside blocks. SELECT expression projections, WHERE param kind inference, graph-local predicates, binary-expression diagnostics outside SELECT, and mutation RETURN expressions/fields still need migration.
+Status: partially complete. Mutation assignability, SELECT function-call argument diagnostics, and binary-expression diagnostics in LET/RETURN/block expression contexts now consume env-scoped LET facts, including branch-local LETs inside blocks. SELECT expression projections, WHERE param kind inference, graph-local predicates, function diagnostics outside SELECT/LET/RETURN expression walks, and mutation RETURN expressions/fields still need migration.
 
 Route existing validators through the statement env where expressions are involved:
 
@@ -537,19 +537,69 @@ Only after this passes should we start the host adapter spike.
 
 ---
 
-## Suggested immediate next slices
+## Remaining execution backlog
 
-Start here:
+Keep working through these in strict TDD slices. Do not start Rust, TypeScript, or other host adapters until Phase 10 passes.
 
-1. `feat: introduce statement environment scaffolding`
-   - Create `StatementEnv` and compatibility wrappers with no behavior change.
-2. `feat: analyze statement sequences with env snapshots`
-   - Move top-level LET/RETURN/param behavior into the source-ordered pass.
-3. `feat: analyze if branches through statement sequences`
-   - Replace IF-specific branch RETURN traversal with generic block sequence analysis.
-4. `feat: route mutation assignability through statement env`
-   - Prove downstream diagnostics consume env snapshots.
-5. `feat: route select expressions and function checks through statement env`
-   - Remove SELECT-only function/param inference paths where possible.
+### Immediate spine migration
 
-This sequence creates the spine before expanding feature coverage.
+1. `feat: route select projection expressions through statement env`
+   - SELECT aliases, VALUE projections, nested expression projections, and response shapes consume the env snapshot at the SELECT source position.
+2. `feat: route where and graph predicates through statement env`
+   - WHERE param-kind inference, predicate field refs, graph-local edge predicates, functions, LET vars, and operators share one env-aware expression path.
+3. `feat: route mutation return expressions through statement env`
+   - mutation RETURN fields/expressions/functions use schema row context plus LET/env facts.
+4. `feat: generalize expression diagnostics entrypoint`
+   - replace function-call-named walkers with a single expression diagnostics dispatcher for functions, binary/unary operators, casts, subqueries, blocks, IF/FOR expressions, and partial reasons.
+
+### Expression fact completion
+
+5. Scalar literals: none/null, decimal, datetime, duration, uuid, bytes, record IDs/things.
+6. Operators: boolean, comparison, arithmetic unary, coalesce/default, regex/contains where grammar exposes them.
+7. Casts and `type::*` functions, after SurrealDB smoke tests.
+8. Subqueries and block expressions with child statement sequences and explicit partials for multi-result/data-dependent cases.
+
+### Function completion
+
+9. Expand verified built-in signature groups: math, string, array, object, time, record/type.
+10. Apply function diagnostics in every expression position: LET, RETURN, mutation values, IF/FOR conditions, WHERE, DEFINE defaults/bodies.
+11. Index `DEFINE FUNCTION` signatures and statically check known user-function calls.
+
+### SELECT completion
+
+12. Analyze ORDER BY, LIMIT, START, TIMEOUT, PARALLEL, WITH/EXPLAIN operands where expression-like.
+13. Verify/model GROUP BY, GROUP ALL, aggregates, and non-grouped field behavior.
+14. Smoke-test and model or explicitly partialize SPLIT, EXPLAIN, and every accepted shape-changing modifier.
+
+### Mutation completion
+
+15. Complete mutation WHERE and assignment expression analysis for SET, CONTENT/MERGE/REPLACE, PATCH, WHERE, and tuple INSERT.
+16. Complete mutation RETURN expression/function aliases, unknown-field validation, DIFF conservatism, and schema row-context shape inference.
+
+### Graph completion
+
+17. Complete outbound, inbound, bidirectional, multi-hop, and parenthesized traversal direction/endpoint resolution.
+18. Complete edge-local WHERE/SELECT/projection/params/functions/operators/response shapes with distinct edge vs target row contexts.
+19. Strengthen FETCH and nested record materialization, with dynamic record tables as explicit partials.
+
+### Control-flow completion
+
+20. Verify/model FOR loop variable kinds, body envs, RETURN/THROW/BREAK/CONTINUE effects, result shapes, and loop-local scoping.
+21. Analyze THROW, BREAK, CONTINUE, SLEEP, KILL, USE, OPTION, and transaction statements beyond name-only facts where statically meaningful.
+22. Generalize nested IF/ELSE, ELSE IF, missing-ELSE fallthrough partials, and return-shape unioning.
+
+### Schema object completion
+
+23. Index DEFINE PARAM kinds/defaults and use them for later `$param` references.
+24. Validate DEFINE INDEX/EVENT/ANALYZER static references and expressions.
+25. Record DEFINE ACCESS/USER/SCOPE/TOKEN/permission facts without implying runtime auth guarantees.
+26. Complete REMOVE/ALTER/REBUILD/INFO/SHOW static target validation and partial result shapes.
+
+### Output/readiness completion
+
+27. Stabilize JSON for statement facts, expression facts where useful, response shapes, params, diagnostics, and partial reasons.
+28. Document bypasses and limits: host concatenation, dynamic names, runtime auth, data-dependent cardinality, SurrealDB version drift, partial semantics.
+29. Add adapter-readiness fixtures: all_statements, expressions, selects, mutations, graphs, blocks, schema_objects, dynamic_partials.
+30. Final gate: `cargo fmt`, `cargo fmt --check`, `git diff --check`, `cargo test --workspace -- --nocapture`, `cargo check --workspace`, and `surrealguard check --json fixtures/adapter-readiness/*.surql`.
+
+Only after this passes should we start the host adapter spike.

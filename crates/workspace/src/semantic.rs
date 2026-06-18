@@ -1172,6 +1172,16 @@ fn collect_function_call_diagnostics_with_env(
 ) {
     match node.kind() {
         "LetStatement" => {
+            let let_variables = let_variable_facts_from_env(env);
+            if let Some(value_node) = let_value_node(node) {
+                validate_function_calls_in_node(
+                    value_node,
+                    parsed,
+                    None,
+                    &let_variables,
+                    diagnostics,
+                );
+            }
             define_let_from_statement(node, parsed, env);
             return;
         }
@@ -1192,6 +1202,19 @@ fn collect_function_call_diagnostics_with_env(
                 resolved_select_table_name(&ir, schema).and_then(|name| schema.tables.get(&name));
             let let_variables = let_variable_facts_from_env(env);
             validate_function_calls_in_node(node, parsed, table, &let_variables, diagnostics);
+            return;
+        }
+        "ReturnStatement" => {
+            let let_variables = let_variable_facts_from_env(env);
+            if let Some(value_node) = return_value_node(node) {
+                validate_function_calls_in_node(
+                    value_node,
+                    parsed,
+                    None,
+                    &let_variables,
+                    diagnostics,
+                );
+            }
             return;
         }
         _ => {}
