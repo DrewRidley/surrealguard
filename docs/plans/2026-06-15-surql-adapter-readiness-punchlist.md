@@ -431,6 +431,8 @@ Objective: DEFINE/REMOVE/ALTER statements provide useful static checks and facts
 
 ### 8.1 DEFINE PARAM
 
+Status: implemented for source-ordered `DEFINE PARAM ... VALUE ...` defaults. Static defaults are indexed in `StatementEnv` as parameter defaults distinct from LET bindings; later `$param` references keep parameter identity, receive the default kind when known, and are marked `required: false` when a prior default exists. Default expression validation is still limited to the existing expression-fact coverage.
+
 Index static params:
 
 - declared kind/default;

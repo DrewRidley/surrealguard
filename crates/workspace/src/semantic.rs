@@ -711,6 +711,10 @@ fn analyze_statement_effects(
             define_let_from_statement(node, parsed, env);
             None
         }
+        "DefineStatement" if is_define_param_statement(node, parsed) => {
+            define_param_default_from_statement(node, parsed, env);
+            None
+        }
         "ReturnStatement" => {
             let let_variables = let_variable_facts_from_env(env);
             let shape = response_shape_for_return(node, parsed, &let_variables);
@@ -770,7 +774,7 @@ fn analyze_if_else_child(
         if env.let_fact(&name).is_none() {
             let span = node_span(node, parsed.source_id().clone());
             env.record_param_use(name.clone(), span.clone());
-            record_param_output(&mut output.inferred_params, name, span);
+            record_param_output_from_env(&mut output.inferred_params, env, name, span);
         }
         return;
     }
@@ -808,6 +812,11 @@ fn collect_expression_params_with_env(
         return;
     }
 
+    if node.kind() == "DefineStatement" && is_define_param_statement(node, parsed) {
+        define_param_default_from_statement(node, parsed, env);
+        return;
+    }
+
     if node.kind() == "Block" {
         let mut child_env = env.fork_child_scope();
         let child_output = analyze_statement_sequence(node, parsed, &mut child_env);
@@ -820,7 +829,7 @@ fn collect_expression_params_with_env(
         if env.let_fact(&name).is_none() {
             let span = node_span(node, parsed.source_id().clone());
             env.record_param_use(name.clone(), span.clone());
-            record_param_output(&mut output.inferred_params, name, span);
+            record_param_output_from_env(&mut output.inferred_params, env, name, span);
         }
         return;
     }
@@ -831,14 +840,27 @@ fn collect_expression_params_with_env(
     }
 }
 
-fn record_param_output(target: &mut Vec<ParamInference>, name: String, span: SourceSpan) {
+fn record_param_output_from_env(
+    target: &mut Vec<ParamInference>,
+    env: &StatementEnv,
+    name: String,
+    span: SourceSpan,
+) {
+    let default_kind = env
+        .param_default_fact(&name)
+        .and_then(|fact| fact.kind.clone());
+    let required = default_kind.is_none();
     if let Some(existing) = target.iter_mut().find(|existing| existing.name == name) {
+        if existing.kind.is_none() {
+            existing.kind = default_kind;
+        }
+        existing.required &= required;
         existing.spans.push(span);
     } else {
         target.push(ParamInference {
             name,
-            kind: None,
-            required: true,
+            kind: default_kind,
+            required,
             spans: vec![span],
         });
     }
@@ -878,6 +900,57 @@ fn let_variable_facts_from_env(env: &StatementEnv) -> BTreeMap<String, LetVariab
             )
         })
         .collect()
+}
+
+fn is_define_param_statement(node: Node<'_>, parsed: &ParsedSource) -> bool {
+    if node.kind() != "DefineStatement" {
+        return false;
+    }
+
+    let mut keywords = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "Keyword" {
+            keywords.push(node_text(child, parsed.text()).to_ascii_uppercase());
+        }
+    }
+
+    matches!(keywords.get(0).map(String::as_str), Some("DEFINE"))
+        && matches!(keywords.get(1).map(String::as_str), Some("PARAM"))
+}
+
+fn define_param_default_from_statement(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    env: &mut StatementEnv,
+) {
+    let Some(name_node) = define_param_name_node(node) else {
+        return;
+    };
+    let Some(value_node) = define_param_value_node(node) else {
+        return;
+    };
+
+    let name = param_name(node_text(name_node, parsed.text()));
+    let fact = infer_expression_fact(value_node, parsed, None);
+    env.define_param_default(name, fact);
+}
+
+fn define_param_name_node(statement: Node<'_>) -> Option<Node<'_>> {
+    let mut cursor = statement.walk();
+    let found = statement
+        .children(&mut cursor)
+        .find(|child| child.kind() == "VariableName");
+    found
+}
+
+fn define_param_value_node(statement: Node<'_>) -> Option<Node<'_>> {
+    let name = define_param_name_node(statement)?;
+    let mut cursor = statement.walk();
+    statement
+        .children(&mut cursor)
+        .filter(|child| child.is_named() && child.start_byte() > name.end_byte())
+        .last()
 }
 
 fn let_variable_name_node(statement: Node<'_>) -> Option<Node<'_>> {

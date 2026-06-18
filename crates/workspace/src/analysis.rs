@@ -2122,6 +2122,44 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_indexes_define_param_defaults_for_later_references() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nDEFINE PARAM $age VALUE 42;\nSELECT * FROM person WHERE age = $age;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let params = &output.sources[&source].inferred_params;
+
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "age");
+        assert_eq!(params[0].kind, Some(Kind::Int));
+        assert!(!params[0].required);
+    }
+
+    #[test]
+    fn analyze_workspace_uses_define_param_default_for_function_diagnostics() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE PARAM $name VALUE 'Ada';\nSELECT string::len($name) AS name_len FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        assert!(
+            messages.iter().all(|(code, _)| code != "E2004"),
+            "defined string param should satisfy string::len: {messages:?}"
+        );
+    }
+
+    #[test]
     fn analyze_workspace_infers_params_from_extended_verified_function_signatures() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(

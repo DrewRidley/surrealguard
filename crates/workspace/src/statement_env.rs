@@ -8,6 +8,7 @@ use crate::expression::ExpressionFact;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StatementEnv {
     lets: BTreeMap<String, ExpressionFact>,
+    param_defaults: BTreeMap<String, ExpressionFact>,
     params: BTreeMap<String, ParamInference>,
 }
 
@@ -15,6 +16,7 @@ impl StatementEnv {
     pub fn fork_child_scope(&self) -> Self {
         Self {
             lets: self.lets.clone(),
+            param_defaults: self.param_defaults.clone(),
             params: BTreeMap::new(),
         }
     }
@@ -31,13 +33,25 @@ impl StatementEnv {
         &self.lets
     }
 
+    pub fn define_param_default(&mut self, name: String, fact: ExpressionFact) {
+        self.param_defaults.insert(name, fact);
+    }
+
+    pub fn param_default_fact(&self, name: &str) -> Option<&ExpressionFact> {
+        self.param_defaults.get(name)
+    }
+
     pub fn record_param_use(&mut self, name: String, span: SourceSpan) {
+        let default_kind = self
+            .param_default_fact(&name)
+            .and_then(|fact| fact.kind.clone());
+        let required = default_kind.is_none();
         self.params
             .entry(name.clone())
             .or_insert_with(|| ParamInference {
                 name,
-                kind: None,
-                required: true,
+                kind: default_kind,
+                required,
                 spans: Vec::new(),
             })
             .spans
