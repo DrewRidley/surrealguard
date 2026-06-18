@@ -100,7 +100,7 @@ Expected:
 
 ### 1.3 Move existing LET/RETURN/IF/param logic onto the sequence pass
 
-Status: partially complete. Source-level statement facts, param collection, top-level LET effects, block-local LET isolation, RETURN response shapes, and IF branch RETURN merging now run through `analyze_statement_sequence`. IF condition diagnostics and other downstream validators still need env-snapshot migration.
+Status: partially complete. Source-level statement facts, param collection, top-level LET effects, block-local LET isolation, RETURN response shapes, IF condition diagnostics, and IF branch RETURN merging now run through env-backed source-order walks. Other downstream validators still need env-snapshot migration.
 
 Migrate current behavior without broad feature expansion:
 

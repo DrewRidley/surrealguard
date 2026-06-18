@@ -141,11 +141,11 @@ pub fn validate_if_conditions(parsed_sources: &[ParsedSource]) -> Vec<Finding> {
             continue;
         }
 
-        let let_variables = let_variable_facts(parsed);
-        collect_if_condition_diagnostics(
+        let mut env = StatementEnv::default();
+        collect_if_condition_diagnostics_with_env(
             parsed.tree().root_node(),
             parsed,
-            &let_variables,
+            &mut env,
             &mut diagnostics,
         );
     }
@@ -572,19 +572,7 @@ fn analyze_statement_effects(
             if let Some(value_node) = let_value_node(node) {
                 collect_expression_params_with_env(value_node, parsed, env, output);
             }
-            if let (Some(name_node), Some(value_node)) =
-                (let_variable_name_node(node), let_value_node(node))
-            {
-                let name = param_name(node_text(name_node, parsed.text()));
-                let let_variables = let_variable_facts_from_env(env);
-                let fact = infer_expression_fact_with_let_variables(
-                    value_node,
-                    parsed,
-                    None,
-                    &let_variables,
-                );
-                env.define_let(name, fact);
-            }
+            define_let_from_statement(node, parsed, env);
             None
         }
         "ReturnStatement" => {
@@ -1246,21 +1234,75 @@ fn collect_function_call_diagnostics(
     }
 }
 
-fn collect_if_condition_diagnostics(
+fn collect_if_condition_diagnostics_with_env(
     node: Node<'_>,
     parsed: &ParsedSource,
-    let_variables: &BTreeMap<String, LetVariableFact>,
+    env: &mut StatementEnv,
     diagnostics: &mut Vec<Finding>,
 ) {
-    if node.kind() == "IfElseStatement" {
-        for condition in if_condition_nodes(node) {
-            validate_if_condition(condition, parsed, let_variables, diagnostics);
+    match node.kind() {
+        "LetStatement" => {
+            define_let_from_statement(node, parsed, env);
+            return;
         }
+        "IfElseStatement" => {
+            let let_variables = let_variable_facts_from_env(env);
+            for condition in if_condition_nodes(node) {
+                validate_if_condition(condition, parsed, &let_variables, diagnostics);
+            }
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                collect_if_condition_child_with_env(child, parsed, env, diagnostics);
+            }
+            return;
+        }
+        "Block" => {
+            let mut child_env = env.fork_child_scope();
+            collect_if_condition_statement_children(node, parsed, &mut child_env, diagnostics);
+            return;
+        }
+        _ => {}
     }
 
+    collect_if_condition_statement_children(node, parsed, env, diagnostics);
+}
+
+fn collect_if_condition_statement_children(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    env: &mut StatementEnv,
+    diagnostics: &mut Vec<Finding>,
+) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_if_condition_diagnostics(child, parsed, let_variables, diagnostics);
+        collect_if_condition_diagnostics_with_env(child, parsed, env, diagnostics);
+    }
+}
+
+fn collect_if_condition_child_with_env(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    env: &mut StatementEnv,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if node.kind() == "Block" {
+        let mut child_env = env.fork_child_scope();
+        collect_if_condition_statement_children(node, parsed, &mut child_env, diagnostics);
+        return;
+    }
+
+    collect_if_condition_diagnostics_with_env(node, parsed, env, diagnostics);
+}
+
+fn define_let_from_statement(node: Node<'_>, parsed: &ParsedSource, env: &mut StatementEnv) {
+    if let (Some(name_node), Some(value_node)) =
+        (let_variable_name_node(node), let_value_node(node))
+    {
+        let name = param_name(node_text(name_node, parsed.text()));
+        let let_variables = let_variable_facts_from_env(env);
+        let fact =
+            infer_expression_fact_with_let_variables(value_node, parsed, None, &let_variables);
+        env.define_let(name, fact);
     }
 }
 
