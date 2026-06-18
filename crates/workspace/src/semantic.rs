@@ -122,10 +122,12 @@ pub fn validate_mutation_fields(
             continue;
         }
 
-        collect_mutation_field_diagnostics(
+        let mut env = StatementEnv::default();
+        collect_mutation_field_diagnostics_with_env(
             parsed.tree().root_node(),
             parsed,
             schema,
+            &mut env,
             &mut diagnostics,
         );
     }
@@ -742,61 +744,6 @@ fn let_variable_facts_from_env(env: &StatementEnv) -> BTreeMap<String, LetVariab
             )
         })
         .collect()
-}
-
-fn let_variable_facts(parsed: &ParsedSource) -> BTreeMap<String, LetVariableFact> {
-    let mut facts = BTreeMap::new();
-    collect_let_variable_facts(parsed.tree().root_node(), parsed, &mut facts);
-    facts
-}
-
-fn collect_let_variable_facts(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    facts: &mut BTreeMap<String, LetVariableFact>,
-) {
-    if node.kind() == "LetStatement" {
-        if !has_ancestor_kind(node, "Block") {
-            collect_let_variable_fact(node, parsed, facts);
-        }
-        return;
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_let_variable_facts(child, parsed, facts);
-    }
-}
-
-fn collect_let_variable_fact(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    facts: &mut BTreeMap<String, LetVariableFact>,
-) {
-    if let (Some(name_node), Some(value_node)) =
-        (let_variable_name_node(node), let_value_node(node))
-    {
-        let name = param_name(node_text(name_node, parsed.text()));
-        let fact = infer_expression_fact_with_let_variables(value_node, parsed, None, facts);
-        facts.insert(
-            name,
-            LetVariableFact {
-                kind: fact.kind,
-                shape: fact.shape,
-            },
-        );
-    }
-}
-
-fn has_ancestor_kind(node: Node<'_>, kind: &str) -> bool {
-    let mut current = node.parent();
-    while let Some(parent) = current {
-        if parent.kind() == kind {
-            return true;
-        }
-        current = parent.parent();
-    }
-    false
 }
 
 fn let_variable_name_node(statement: Node<'_>) -> Option<Node<'_>> {
@@ -1670,17 +1617,47 @@ fn row_context_field_paths_from_clause(clause: Node<'_>, parsed: &ParsedSource) 
     paths
 }
 
-fn collect_mutation_field_diagnostics(
+fn collect_mutation_field_diagnostics_with_env(
     node: Node<'_>,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
+    env: &mut StatementEnv,
     diagnostics: &mut Vec<Finding>,
 ) {
-    validate_mutation_fields_for_statement(node, parsed, schema, diagnostics);
+    match node.kind() {
+        "LetStatement" => {
+            define_let_from_statement(node, parsed, env);
+            return;
+        }
+        "Block" => {
+            let mut child_env = env.fork_child_scope();
+            collect_mutation_field_children_with_env(
+                node,
+                parsed,
+                schema,
+                &mut child_env,
+                diagnostics,
+            );
+            return;
+        }
+        _ => {}
+    }
 
+    let let_variables = let_variable_facts_from_env(env);
+    validate_mutation_fields_for_statement(node, parsed, schema, &let_variables, diagnostics);
+    collect_mutation_field_children_with_env(node, parsed, schema, env, diagnostics);
+}
+
+fn collect_mutation_field_children_with_env(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    env: &mut StatementEnv,
+    diagnostics: &mut Vec<Finding>,
+) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_mutation_field_diagnostics(child, parsed, schema, diagnostics);
+        collect_mutation_field_diagnostics_with_env(child, parsed, schema, env, diagnostics);
     }
 }
 
@@ -1688,6 +1665,7 @@ fn validate_mutation_fields_for_statement(
     node: Node<'_>,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     diagnostics: &mut Vec<Finding>,
 ) {
     let table_name = mutation_table_name(node, parsed);
@@ -1705,7 +1683,7 @@ fn validate_mutation_fields_for_statement(
     validate_object_fields_on_table(node, parsed, table, diagnostics);
     validate_insert_column_fields_on_table(node, parsed, table, diagnostics);
     validate_where_descendants_on_table(node, parsed, table, diagnostics);
-    validate_mutation_value_assignability(node, parsed, table, diagnostics);
+    validate_mutation_value_assignability(node, parsed, table, let_variables, diagnostics);
 }
 
 fn mutation_table_name(node: Node<'_>, parsed: &ParsedSource) -> Option<String> {
@@ -1893,17 +1871,19 @@ fn validate_mutation_value_assignability(
     node: Node<'_>,
     parsed: &ParsedSource,
     table: &crate::schema::TableDef,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     diagnostics: &mut Vec<Finding>,
 ) {
-    validate_assignment_value_assignability(node, parsed, table, diagnostics);
-    validate_object_value_assignability(node, parsed, table, diagnostics);
-    validate_insert_tuple_value_assignability(node, parsed, table, diagnostics);
+    validate_assignment_value_assignability(node, parsed, table, let_variables, diagnostics);
+    validate_object_value_assignability(node, parsed, table, let_variables, diagnostics);
+    validate_insert_tuple_value_assignability(node, parsed, table, let_variables, diagnostics);
 }
 
 fn validate_assignment_value_assignability(
     node: Node<'_>,
     parsed: &ParsedSource,
     table: &crate::schema::TableDef,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     diagnostics: &mut Vec<Finding>,
 ) {
     if node.kind() == "FieldAssignment" {
@@ -1911,14 +1891,14 @@ fn validate_assignment_value_assignability(
             assignment_field_path(node, parsed),
             assignment_value_node(node),
         ) {
-            validate_value_kind_for_field(path, value, parsed, table, diagnostics);
+            validate_value_kind_for_field(path, value, parsed, table, let_variables, diagnostics);
         }
         return;
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        validate_assignment_value_assignability(child, parsed, table, diagnostics);
+        validate_assignment_value_assignability(child, parsed, table, let_variables, diagnostics);
     }
 }
 
@@ -1934,18 +1914,25 @@ fn validate_object_value_assignability(
     node: Node<'_>,
     parsed: &ParsedSource,
     table: &crate::schema::TableDef,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     diagnostics: &mut Vec<Finding>,
 ) {
     match node.kind() {
         "ContentClause" | "MergeClause" | "ReplaceClause" | "BulkInsert" => {
-            validate_object_value_descendants(node, parsed, table, diagnostics);
+            validate_object_value_descendants(node, parsed, table, let_variables, diagnostics);
             return;
         }
         "InsertStatement" => {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
                 if child.kind() == "Object" || child.kind() == "BulkInsert" {
-                    validate_object_value_descendants(child, parsed, table, diagnostics);
+                    validate_object_value_descendants(
+                        child,
+                        parsed,
+                        table,
+                        let_variables,
+                        diagnostics,
+                    );
                 }
             }
         }
@@ -1954,7 +1941,7 @@ fn validate_object_value_assignability(
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        validate_object_value_assignability(child, parsed, table, diagnostics);
+        validate_object_value_assignability(child, parsed, table, let_variables, diagnostics);
     }
 }
 
@@ -1962,16 +1949,24 @@ fn validate_object_value_descendants(
     node: Node<'_>,
     parsed: &ParsedSource,
     table: &crate::schema::TableDef,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     diagnostics: &mut Vec<Finding>,
 ) {
     if node.kind() == "Object" {
-        validate_object_property_values_on_table(node, parsed, table, Vec::new(), diagnostics);
+        validate_object_property_values_on_table(
+            node,
+            parsed,
+            table,
+            let_variables,
+            Vec::new(),
+            diagnostics,
+        );
         return;
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        validate_object_value_descendants(child, parsed, table, diagnostics);
+        validate_object_value_descendants(child, parsed, table, let_variables, diagnostics);
     }
 }
 
@@ -1979,6 +1974,7 @@ fn validate_object_property_values_on_table(
     object: Node<'_>,
     parsed: &ParsedSource,
     table: &crate::schema::TableDef,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     prefix: Vec<String>,
     diagnostics: &mut Vec<Finding>,
 ) {
@@ -2002,11 +1998,12 @@ fn validate_object_property_values_on_table(
                 value_object,
                 parsed,
                 table,
+                let_variables,
                 segments,
                 diagnostics,
             );
         } else if let Some(value) = object_property_value_node(object) {
-            validate_value_kind_for_field(path, value, parsed, table, diagnostics);
+            validate_value_kind_for_field(path, value, parsed, table, let_variables, diagnostics);
         }
         return;
     }
@@ -2018,6 +2015,7 @@ fn validate_object_property_values_on_table(
                 child,
                 parsed,
                 table,
+                let_variables,
                 prefix.clone(),
                 diagnostics,
             );
@@ -2037,6 +2035,7 @@ fn validate_insert_tuple_value_assignability(
     node: Node<'_>,
     parsed: &ParsedSource,
     table: &crate::schema::TableDef,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     diagnostics: &mut Vec<Finding>,
 ) {
     if node.kind() != "InsertStatement" {
@@ -2094,7 +2093,7 @@ fn validate_insert_tuple_value_assignability(
 
     for (index, value) in values.into_iter().enumerate() {
         if let Some(path) = columns.get(index % columns.len()).cloned() {
-            validate_value_kind_for_field(path, value, parsed, table, diagnostics);
+            validate_value_kind_for_field(path, value, parsed, table, let_variables, diagnostics);
         }
     }
 }
@@ -2112,6 +2111,7 @@ fn validate_value_kind_for_field(
     value: Node<'_>,
     parsed: &ParsedSource,
     table: &crate::schema::TableDef,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     diagnostics: &mut Vec<Finding>,
 ) {
     let Some(field) = exact_field_def_for_path(table, &path) else {
@@ -2120,8 +2120,7 @@ fn validate_value_kind_for_field(
     let Some(expected) = field.kind.clone() else {
         return;
     };
-    let let_variables = let_variable_facts(parsed);
-    let fact = infer_expression_fact_with_let_variables(value, parsed, Some(table), &let_variables);
+    let fact = infer_expression_fact_with_let_variables(value, parsed, Some(table), let_variables);
     let Some(actual) = fact.kind else {
         return;
     };

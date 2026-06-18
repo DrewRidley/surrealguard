@@ -806,6 +806,27 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_reports_branch_local_let_mismatch_for_mutation_assignability() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nIF true { LET $age = 'old'; CREATE person SET age = $age; } ELSE { RETURN 0; };".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        assert!(messages.iter().any(|(code, message)| {
+            code == "E2001"
+                && message == "value assigned to `age` has type `string`, expected `int`"
+        }));
+    }
+
+    #[test]
     fn analyze_workspace_infers_let_variables_from_prior_let_variables() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
