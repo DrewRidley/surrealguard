@@ -190,16 +190,20 @@ pub fn infer_param_kinds(
             continue;
         }
 
-        collect_select_param_kind_inferences(
+        let mut select_env = StatementEnv::default();
+        collect_select_param_kind_inferences_with_env(
             parsed.tree().root_node(),
             parsed,
             schema,
+            &mut select_env,
             &mut inferences,
         );
-        collect_mutation_param_kind_inferences(
+        let mut mutation_env = StatementEnv::default();
+        collect_mutation_param_kind_inferences_with_env(
             parsed.tree().root_node(),
             parsed,
             schema,
+            &mut mutation_env,
             &mut inferences,
         );
     }
@@ -2434,19 +2438,55 @@ fn field_path_from_node(node: Node<'_>, parsed: &ParsedSource) -> FieldPath {
     }
 }
 
-fn collect_select_param_kind_inferences(
+fn collect_select_param_kind_inferences_with_env(
     node: Node<'_>,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
+    env: &mut StatementEnv,
     inferences: &mut Vec<ParamKindInference>,
 ) {
-    if node.kind() == "SelectStatement" {
-        infer_param_kinds_for_select_statement(node, parsed, schema, inferences);
+    match node.kind() {
+        "LetStatement" => {
+            define_let_from_statement(node, parsed, env);
+            return;
+        }
+        "Block" => {
+            let mut child_env = env.fork_child_scope();
+            collect_select_param_kind_inference_children_with_env(
+                node,
+                parsed,
+                schema,
+                &mut child_env,
+                inferences,
+            );
+            return;
+        }
+        "SelectStatement" => {
+            let let_variables = let_variable_facts_from_env(env);
+            infer_param_kinds_for_select_statement(
+                node,
+                parsed,
+                schema,
+                &let_variables,
+                inferences,
+            );
+        }
+        _ => {}
     }
 
+    collect_select_param_kind_inference_children_with_env(node, parsed, schema, env, inferences);
+}
+
+fn collect_select_param_kind_inference_children_with_env(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    env: &mut StatementEnv,
+    inferences: &mut Vec<ParamKindInference>,
+) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_select_param_kind_inferences(child, parsed, schema, inferences);
+        collect_select_param_kind_inferences_with_env(child, parsed, schema, env, inferences);
     }
 }
 
@@ -2454,11 +2494,16 @@ fn infer_param_kinds_for_select_statement(
     node: Node<'_>,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     inferences: &mut Vec<ParamKindInference>,
 ) {
     let ir = select_ir_from_statement(node, parsed);
     collect_graph_local_param_kind_inferences_for_select_statement(
-        node, parsed, schema, inferences,
+        node,
+        parsed,
+        schema,
+        let_variables,
+        inferences,
     );
     collect_function_param_kind_inferences_in_node(node, parsed, inferences);
 
@@ -2472,7 +2517,13 @@ fn infer_param_kinds_for_select_statement(
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.kind() == "WhereClause" {
-            collect_param_kind_inferences_from_expression(child, parsed, table, inferences);
+            collect_param_kind_inferences_from_expression(
+                child,
+                parsed,
+                table,
+                let_variables,
+                inferences,
+            );
         }
     }
 }
@@ -2530,22 +2581,55 @@ fn function_arg_param_kind(expected: &FunctionArgKind) -> Option<Kind> {
     }
 }
 
-fn collect_mutation_param_kind_inferences(
+fn collect_mutation_param_kind_inferences_with_env(
     node: Node<'_>,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
+    env: &mut StatementEnv,
     inferences: &mut Vec<ParamKindInference>,
 ) {
-    if matches!(
-        node.kind(),
-        "UpdateStatement" | "UpsertStatement" | "DeleteStatement"
-    ) {
-        infer_param_kinds_for_mutation_statement(node, parsed, schema, inferences);
+    match node.kind() {
+        "LetStatement" => {
+            define_let_from_statement(node, parsed, env);
+            return;
+        }
+        "Block" => {
+            let mut child_env = env.fork_child_scope();
+            collect_mutation_param_kind_inference_children_with_env(
+                node,
+                parsed,
+                schema,
+                &mut child_env,
+                inferences,
+            );
+            return;
+        }
+        "UpdateStatement" | "UpsertStatement" | "DeleteStatement" => {
+            let let_variables = let_variable_facts_from_env(env);
+            infer_param_kinds_for_mutation_statement(
+                node,
+                parsed,
+                schema,
+                &let_variables,
+                inferences,
+            );
+        }
+        _ => {}
     }
 
+    collect_mutation_param_kind_inference_children_with_env(node, parsed, schema, env, inferences);
+}
+
+fn collect_mutation_param_kind_inference_children_with_env(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    env: &mut StatementEnv,
+    inferences: &mut Vec<ParamKindInference>,
+) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_mutation_param_kind_inferences(child, parsed, schema, inferences);
+        collect_mutation_param_kind_inferences_with_env(child, parsed, schema, env, inferences);
     }
 }
 
@@ -2553,6 +2637,7 @@ fn infer_param_kinds_for_mutation_statement(
     node: Node<'_>,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     inferences: &mut Vec<ParamKindInference>,
 ) {
     let Some(table_name) = mutation_table_name(node, parsed) else {
@@ -2565,7 +2650,13 @@ fn infer_param_kinds_for_mutation_statement(
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.kind() == "WhereClause" {
-            collect_param_kind_inferences_from_expression(child, parsed, table, inferences);
+            collect_param_kind_inferences_from_expression(
+                child,
+                parsed,
+                table,
+                let_variables,
+                inferences,
+            );
         }
     }
 }
@@ -2574,11 +2665,18 @@ fn collect_graph_local_param_kind_inferences_for_select_statement(
     node: Node<'_>,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     inferences: &mut Vec<ParamKindInference>,
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_graph_local_param_kind_inferences_in_node(child, parsed, schema, inferences);
+        collect_graph_local_param_kind_inferences_in_node(
+            child,
+            parsed,
+            schema,
+            let_variables,
+            inferences,
+        );
     }
 }
 
@@ -2586,16 +2684,29 @@ fn collect_graph_local_param_kind_inferences_in_node(
     node: Node<'_>,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     inferences: &mut Vec<ParamKindInference>,
 ) {
     if node.kind() == "Path" {
-        collect_graph_local_param_kind_inferences_in_path(node, parsed, schema, inferences);
+        collect_graph_local_param_kind_inferences_in_path(
+            node,
+            parsed,
+            schema,
+            let_variables,
+            inferences,
+        );
         return;
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_graph_local_param_kind_inferences_in_node(child, parsed, schema, inferences);
+        collect_graph_local_param_kind_inferences_in_node(
+            child,
+            parsed,
+            schema,
+            let_variables,
+            inferences,
+        );
     }
 }
 
@@ -2603,6 +2714,7 @@ fn collect_graph_local_param_kind_inferences_in_path(
     path: Node<'_>,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     inferences: &mut Vec<ParamKindInference>,
 ) {
     let mut cursor = path.walk();
@@ -2619,11 +2731,21 @@ fn collect_graph_local_param_kind_inferences_in_path(
             continue;
         };
 
-        collect_param_kind_inferences_from_where_descendants(child, parsed, edge_table, inferences);
+        collect_param_kind_inferences_from_where_descendants(
+            child,
+            parsed,
+            edge_table,
+            let_variables,
+            inferences,
+        );
         if let Some(next) = children.get(index + 1).copied() {
             if next.kind() == "Filter" {
                 collect_param_kind_inferences_from_where_descendants(
-                    next, parsed, edge_table, inferences,
+                    next,
+                    parsed,
+                    edge_table,
+                    let_variables,
+                    inferences,
                 );
             }
         }
@@ -2634,16 +2756,29 @@ fn collect_param_kind_inferences_from_where_descendants(
     node: Node<'_>,
     parsed: &ParsedSource,
     table: &crate::schema::TableDef,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     inferences: &mut Vec<ParamKindInference>,
 ) {
     if node.kind() == "WhereClause" {
-        collect_param_kind_inferences_from_expression(node, parsed, table, inferences);
+        collect_param_kind_inferences_from_expression(
+            node,
+            parsed,
+            table,
+            let_variables,
+            inferences,
+        );
         return;
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_param_kind_inferences_from_where_descendants(child, parsed, table, inferences);
+        collect_param_kind_inferences_from_where_descendants(
+            child,
+            parsed,
+            table,
+            let_variables,
+            inferences,
+        );
     }
 }
 
@@ -2651,9 +2786,19 @@ fn collect_param_kind_inferences_from_expression(
     node: Node<'_>,
     parsed: &ParsedSource,
     table: &crate::schema::TableDef,
+    let_variables: &BTreeMap<String, LetVariableFact>,
     inferences: &mut Vec<ParamKindInference>,
 ) {
     if node.kind() == "BinaryExpression" {
+        if let Some((param_name, kind)) =
+            direct_kind_param_comparison(node, parsed, table, let_variables)
+        {
+            inferences.push(ParamKindInference {
+                source: parsed.source_id().clone(),
+                name: param_name,
+                kind,
+            });
+        }
         if let Some((field, param_name)) = direct_field_param_comparison(node, parsed) {
             if let Some(field_def) = exact_field_def_for_path(table, &field) {
                 if let Some(kind) = field_def.kind.clone() {
@@ -2669,8 +2814,107 @@ fn collect_param_kind_inferences_from_expression(
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_param_kind_inferences_from_expression(child, parsed, table, inferences);
+        collect_param_kind_inferences_from_expression(
+            child,
+            parsed,
+            table,
+            let_variables,
+            inferences,
+        );
     }
+}
+
+fn direct_kind_param_comparison(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    let_variables: &BTreeMap<String, LetVariableFact>,
+) -> Option<(String, Kind)> {
+    let mut cursor = node.walk();
+    let children: Vec<_> = node
+        .children(&mut cursor)
+        .filter(|child| child.is_named())
+        .collect();
+
+    for (operator_index, child) in children.iter().copied().enumerate() {
+        if child.kind() != "Operator"
+            || !is_kind_inference_operator(node_text(child, parsed.text()).trim())
+        {
+            continue;
+        }
+
+        let left =
+            nearest_kind_inference_operand_node(&children[..operator_index], OperandSide::Left)?;
+        let right = nearest_kind_inference_operand_node(
+            &children[operator_index + 1..],
+            OperandSide::Right,
+        )?;
+        let left = kind_or_param_operand(left, parsed, table, let_variables);
+        let right = kind_or_param_operand(right, parsed, table, let_variables);
+        match (left, right) {
+            (Some(KindOrParamOperand::KnownKind(kind)), Some(KindOrParamOperand::Param(param)))
+            | (Some(KindOrParamOperand::Param(param)), Some(KindOrParamOperand::KnownKind(kind))) =>
+            {
+                return Some((param, kind));
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+#[derive(Clone, Debug)]
+enum KindOrParamOperand {
+    KnownKind(Kind),
+    Param(String),
+}
+
+fn nearest_kind_inference_operand_node<'tree>(
+    nodes: &[Node<'tree>],
+    side: OperandSide,
+) -> Option<Node<'tree>> {
+    let ordered_nodes: Box<dyn Iterator<Item = Node<'_>> + '_> = match side {
+        OperandSide::Left => Box::new(nodes.iter().rev().copied()),
+        OperandSide::Right => Box::new(nodes.iter().copied()),
+    };
+
+    for node in ordered_nodes {
+        if matches!(node.kind(), "Keyword" | "Operator") {
+            continue;
+        }
+        return Some(node);
+    }
+    None
+}
+
+fn kind_or_param_operand(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    let_variables: &BTreeMap<String, LetVariableFact>,
+) -> Option<KindOrParamOperand> {
+    if node.kind() == "VariableName" {
+        let name = param_name(node_text(node, parsed.text()));
+        if let Some(kind) = let_variables
+            .get(&name)
+            .and_then(|variable| variable.kind.clone())
+        {
+            return Some(KindOrParamOperand::KnownKind(kind));
+        }
+        return Some(KindOrParamOperand::Param(name));
+    }
+
+    if is_row_context_field_path_node(node) {
+        let field = field_path_from_node(node, parsed);
+        return exact_field_def_for_path(table, &field)
+            .and_then(|field| field.kind.clone())
+            .map(KindOrParamOperand::KnownKind);
+    }
+
+    infer_expression_fact_with_let_variables(node, parsed, Some(table), let_variables)
+        .kind
+        .map(KindOrParamOperand::KnownKind)
 }
 
 fn direct_field_param_comparison(

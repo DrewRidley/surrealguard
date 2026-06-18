@@ -1254,6 +1254,30 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_infers_param_kinds_from_let_env_predicates() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nDEFINE FIELD strength ON likes TYPE float;\nLET $min_age = 21;\nLET $edge_strength = 0.5;\nSELECT * FROM person WHERE $min_age <= $age_param;\nSELECT * FROM person->(likes WHERE $edge_strength >= $min_strength)->post;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let params = &output.sources[&source].inferred_params;
+        let param_kinds: Vec<_> = params
+            .iter()
+            .map(|param| (param.name.as_str(), param.kind.clone()))
+            .collect();
+
+        assert_eq!(
+            param_kinds,
+            vec![
+                ("age_param", Some(Kind::Int)),
+                ("min_strength", Some(Kind::Float)),
+            ]
+        );
+    }
+
+    #[test]
     fn analyze_workspace_infers_param_kinds_from_graph_local_predicates() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
