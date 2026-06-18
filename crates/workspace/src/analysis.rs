@@ -2349,6 +2349,54 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_reports_unknown_mutation_return_fields() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nUPDATE person RETURN nickname, profile.phone;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let unknown_fields: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            unknown_fields,
+            vec![
+                "unknown field `nickname` on table `person`".to_string(),
+                "unknown field `profile.phone` on table `person`".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_validates_mutation_return_alias_expressions_without_alias_field_false_positive(
+    ) {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nUPDATE person RETURN name AS label, missing AS projected_missing;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let unknown_fields: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            unknown_fields,
+            vec!["unknown field `missing` on table `person`".to_string()]
+        );
+    }
+
+    #[test]
     fn analyze_workspace_infers_mutation_return_field_projection_shape() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(

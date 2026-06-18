@@ -321,6 +321,8 @@ Acceptance:
 
 ### 5.2 Mutation RETURN expressions
 
+Status: complete for env-backed field/expression/function alias shapes and static field validation. Mutation RETURN shape logic uses expression facts and schema row context; unknown RETURN fields now emit stable schema diagnostics; `RETURN NONE` is modeled as an empty array; and `RETURN DIFF` remains conservative as a patch-array shape.
+
 Go beyond direct field projections:
 
 - `RETURN <field>` already exists;

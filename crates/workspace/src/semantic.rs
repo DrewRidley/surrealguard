@@ -1990,6 +1990,7 @@ fn validate_mutation_fields_for_statement(
     validate_object_fields_on_table(node, parsed, table, diagnostics);
     validate_insert_column_fields_on_table(node, parsed, table, diagnostics);
     validate_where_descendants_on_table(node, parsed, table, diagnostics);
+    validate_mutation_return_fields_on_table(node, parsed, table, diagnostics);
     validate_mutation_value_assignability(node, parsed, table, let_variables, diagnostics);
 }
 
@@ -2012,6 +2013,73 @@ fn mutation_table_name(node: Node<'_>, parsed: &ParsedSource) -> Option<String> 
             .map(|reference| reference.name.to_string()),
         "RelateStatement" => relate_edge_table_name(node, parsed),
         _ => None,
+    }
+}
+
+fn validate_mutation_return_fields_on_table(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if !matches!(
+        mutation_return_mode(node, parsed),
+        MutationReturnMode::Fields
+    ) {
+        return;
+    }
+    let Some(return_clause) = find_descendant_kind(node, "ReturnClause") else {
+        return;
+    };
+    validate_mutation_return_field_nodes(return_clause, parsed, table, diagnostics);
+}
+
+fn validate_mutation_return_field_nodes(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    diagnostics: &mut Vec<Finding>,
+) {
+    if node.kind() == "Predicate" {
+        validate_mutation_return_predicate_fields(node, parsed, table, diagnostics);
+        return;
+    }
+
+    if is_row_context_field_path_node(node) {
+        validate_field_path_on_table(field_path_from_node(node, parsed), table, diagnostics);
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.is_named() && child.kind() != "Keyword" {
+            validate_mutation_return_field_nodes(child, parsed, table, diagnostics);
+        }
+    }
+}
+
+fn validate_mutation_return_predicate_fields(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    diagnostics: &mut Vec<Finding>,
+) {
+    let mut cursor = node.walk();
+    let children: Vec<_> = node
+        .children(&mut cursor)
+        .filter(|child| child.is_named())
+        .collect();
+    let end = children
+        .iter()
+        .position(|child| {
+            child.kind() == "Keyword" && node_text(*child, parsed.text()).eq_ignore_ascii_case("AS")
+        })
+        .unwrap_or(children.len());
+
+    for child in &children[..end] {
+        if child.kind() != "Keyword" {
+            validate_mutation_return_field_nodes(*child, parsed, table, diagnostics);
+        }
     }
 }
 
