@@ -77,23 +77,25 @@ pub fn infer_expression_fact(
 ) -> ExpressionFact {
     match node.kind() {
         "Predicate" | "Fields" => infer_single_child_expression_fact(node, parsed, row_table),
-        "String" => ExpressionFact::new(
-            node_span(node, parsed.source_id().clone()),
-            ExpressionValueClass::Literal,
-        )
-        .with_kind(Kind::String)
-        .with_shape(ResponseShape::Value { kind: Kind::String }),
+        "String" => infer_string_expression_fact(node, parsed),
         "Bool" => ExpressionFact::new(
             node_span(node, parsed.source_id().clone()),
             ExpressionValueClass::Literal,
         )
         .with_kind(Kind::Bool)
         .with_shape(ResponseShape::Value { kind: Kind::Bool }),
+        "Duration" => scalar_literal_expression_fact(node, parsed, Kind::Duration),
         "Number" => infer_number_expression_fact(node, parsed),
+        "None" => infer_none_expression_fact(node, parsed),
         "VariableName" => infer_variable_expression_fact(node, parsed),
         "Object" => infer_object_expression_fact(node, parsed, row_table),
         "Array" => infer_array_expression_fact(node, parsed, row_table),
         "BinaryExpression" => infer_binary_expression_fact(node, parsed, row_table),
+        "PrefixExpression" => infer_prefix_expression_fact(node, parsed, row_table),
+        "SubQuery" => {
+            explicit_partial_expression_fact(node, parsed, ExpressionValueClass::Subquery)
+        }
+        "Block" => explicit_partial_expression_fact(node, parsed, ExpressionValueClass::Block),
         _ if is_identifier_like(node) => infer_field_path_expression_fact(node, parsed, row_table),
         _ => ExpressionFact::new(
             node_span(node, parsed.source_id().clone()),
@@ -119,11 +121,59 @@ fn infer_single_child_expression_fact(
     .with_partial(PartialReason::Unresolved)
 }
 
+fn explicit_partial_expression_fact(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    value_class: ExpressionValueClass,
+) -> ExpressionFact {
+    ExpressionFact::new(node_span(node, parsed.source_id().clone()), value_class)
+        .with_partial(PartialReason::UnsupportedSyntax(node.kind().into()))
+}
+
+fn infer_string_expression_fact(node: Node<'_>, parsed: &ParsedSource) -> ExpressionFact {
+    let text = node_text(node, parsed.text()).trim_start();
+    let kind = match text
+        .as_bytes()
+        .first()
+        .map(|byte| byte.to_ascii_lowercase())
+    {
+        Some(b'd') if prefixed_string_literal(text) => Kind::Datetime,
+        Some(b'u') if prefixed_string_literal(text) => Kind::Uuid,
+        Some(b'r') if prefixed_string_literal(text) => Kind::Regex,
+        _ => Kind::String,
+    };
+    scalar_literal_expression_fact(node, parsed, kind)
+}
+
 fn infer_number_expression_fact(node: Node<'_>, parsed: &ParsedSource) -> ExpressionFact {
-    let kind = if node_has_child_kind(node, "Float") {
+    let kind = if node_has_child_kind(node, "Decimal") {
+        Kind::Decimal
+    } else if node_has_child_kind(node, "Float") {
         Kind::Float
     } else {
         Kind::Int
+    };
+    scalar_literal_expression_fact(node, parsed, kind)
+}
+
+fn scalar_literal_expression_fact(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    kind: Kind,
+) -> ExpressionFact {
+    ExpressionFact::new(
+        node_span(node, parsed.source_id().clone()),
+        ExpressionValueClass::Literal,
+    )
+    .with_kind(kind.clone())
+    .with_shape(ResponseShape::Value { kind })
+}
+
+fn infer_none_expression_fact(node: Node<'_>, parsed: &ParsedSource) -> ExpressionFact {
+    let kind = if node_text(node, parsed.text()).eq_ignore_ascii_case("null") {
+        Kind::Null
+    } else {
+        Kind::None
     };
     ExpressionFact::new(
         node_span(node, parsed.source_id().clone()),
@@ -279,6 +329,63 @@ fn infer_array_expression_fact(
     fact
 }
 
+fn infer_prefix_expression_fact(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    row_table: Option<&TableDef>,
+) -> ExpressionFact {
+    let mut cursor = node.walk();
+    let children: Vec<_> = node
+        .children(&mut cursor)
+        .filter(|child| child.is_named())
+        .collect();
+    let operator = children
+        .iter()
+        .copied()
+        .find(|child| child.kind() == "Operator");
+    let operand = children
+        .iter()
+        .copied()
+        .find(|child| child.kind() != "Operator");
+    let Some((operator, operand)) = operator.zip(operand) else {
+        return ExpressionFact::new(
+            node_span(node, parsed.source_id().clone()),
+            ExpressionValueClass::Unknown,
+        )
+        .with_partial(PartialReason::UnsupportedSyntax("PrefixExpression".into()));
+    };
+
+    let operand_fact = infer_expression_fact(operand, parsed, row_table);
+    let operator_text = node_text(operator, parsed.text())
+        .trim()
+        .to_ascii_uppercase();
+    let mut fact = ExpressionFact::new(
+        node_span(node, parsed.source_id().clone()),
+        ExpressionValueClass::Unknown,
+    );
+    fact.dependencies = operand_fact.dependencies;
+    fact.partial = operand_fact.partial;
+
+    if operator_text == "!" && matches!(operand_fact.kind, Some(Kind::Bool)) {
+        fact.kind = Some(Kind::Bool);
+        fact.shape = Some(ResponseShape::Value { kind: Kind::Bool });
+        fact.partial.clear();
+        return fact;
+    }
+    if matches!(operator_text.as_str(), "+" | "-") {
+        if let Some(kind) = operand_fact.kind.filter(is_numeric_kind) {
+            fact.kind = Some(kind.clone());
+            fact.shape = Some(ResponseShape::Value { kind });
+            fact.partial.clear();
+            return fact;
+        }
+    }
+
+    fact.partial
+        .push(PartialReason::UnsupportedSyntax("PrefixExpression".into()));
+    fact
+}
+
 fn infer_binary_expression_fact(
     node: Node<'_>,
     parsed: &ParsedSource,
@@ -356,7 +463,9 @@ fn binary_expression_result_kind(operator: &str, left: &Kind, right: &Kind) -> O
     match operator.to_ascii_uppercase().as_str() {
         "+" if matches!(left, Kind::String) && matches!(right, Kind::String) => Some(Kind::String),
         "+" | "-" | "*" | "/" if is_numeric_kind(left) && is_numeric_kind(right) => {
-            if matches!(left, Kind::Float) || matches!(right, Kind::Float) {
+            if matches!(left, Kind::Decimal) || matches!(right, Kind::Decimal) {
+                Some(Kind::Decimal)
+            } else if matches!(left, Kind::Float) || matches!(right, Kind::Float) {
                 Some(Kind::Float)
             } else {
                 Some(Kind::Int)
@@ -368,6 +477,9 @@ fn binary_expression_result_kind(operator: &str, left: &Kind, right: &Kind) -> O
         "AND" | "OR" if matches!(left, Kind::Bool) && matches!(right, Kind::Bool) => {
             Some(Kind::Bool)
         }
+        "??" if matches!(left, Kind::None | Kind::Null) => Some(right.clone()),
+        "??" if matches!(right, Kind::None | Kind::Null) => Some(left.clone()),
+        "??" if left == right => Some(left.clone()),
         _ => None,
     }
 }
@@ -377,7 +489,7 @@ fn comparable_binary_kinds(left: &Kind, right: &Kind) -> bool {
 }
 
 fn is_numeric_kind(kind: &Kind) -> bool {
-    matches!(kind, Kind::Int | Kind::Float | Kind::Number)
+    matches!(kind, Kind::Int | Kind::Float | Kind::Decimal | Kind::Number)
 }
 
 fn array_element_nodes(array: Node<'_>) -> Vec<Node<'_>> {
@@ -447,6 +559,10 @@ fn node_has_child_kind(node: Node<'_>, kind: &str) -> bool {
 
 fn is_identifier_like(node: Node<'_>) -> bool {
     matches!(node.kind(), "Ident" | "RecordId" | "Thing" | "Identifier")
+}
+
+fn prefixed_string_literal(text: &str) -> bool {
+    text.len() > 2 && matches!(text.as_bytes().get(1), Some(b'\'') | Some(b'\"'))
 }
 
 fn param_name(text: &str) -> &str {
@@ -539,6 +655,95 @@ mod tests {
     }
 
     #[test]
+    fn infer_expression_facts_for_decimal_and_duration_literals() {
+        let parsed = parse("RETURN [1dec, 1h];");
+        let decimal_node = find_node_by_text(parsed.tree().root_node(), parsed.text(), "1dec")
+            .expect("decimal literal should parse");
+        let duration_node = find_node_by_text(parsed.tree().root_node(), parsed.text(), "1h")
+            .expect("duration literal should parse");
+
+        let decimal_fact = infer_expression_fact(decimal_node, &parsed, None);
+        let duration_fact = infer_expression_fact(duration_node, &parsed, None);
+
+        assert_eq!(decimal_fact.kind, Some(Kind::Decimal));
+        assert_eq!(
+            decimal_fact.shape,
+            Some(ResponseShape::Value {
+                kind: Kind::Decimal
+            })
+        );
+        assert_eq!(decimal_fact.value_class, ExpressionValueClass::Literal);
+        assert_eq!(duration_fact.kind, Some(Kind::Duration));
+        assert_eq!(
+            duration_fact.shape,
+            Some(ResponseShape::Value {
+                kind: Kind::Duration
+            })
+        );
+        assert_eq!(duration_fact.value_class, ExpressionValueClass::Literal);
+    }
+
+    #[test]
+    fn infer_expression_facts_for_null_and_none_literals() {
+        let parsed = parse("RETURN [null, NONE];");
+
+        let null_node = find_node_by_text(parsed.tree().root_node(), parsed.text(), "null")
+            .expect("null literal should parse");
+        let none_node = find_node_by_text(parsed.tree().root_node(), parsed.text(), "NONE")
+            .expect("NONE literal should parse");
+
+        let null_fact = infer_expression_fact(null_node, &parsed, None);
+        let none_fact = infer_expression_fact(none_node, &parsed, None);
+
+        assert_eq!(null_fact.kind, Some(Kind::Null));
+        assert_eq!(
+            null_fact.shape,
+            Some(ResponseShape::Value { kind: Kind::Null })
+        );
+        assert_eq!(null_fact.value_class, ExpressionValueClass::Literal);
+        assert_eq!(none_fact.kind, Some(Kind::None));
+        assert_eq!(
+            none_fact.shape,
+            Some(ResponseShape::Value { kind: Kind::None })
+        );
+        assert_eq!(none_fact.value_class, ExpressionValueClass::Literal);
+    }
+
+    #[test]
+    fn infer_expression_facts_for_prefixed_string_literals() {
+        let parsed = parse(
+            "RETURN [d'2024-01-01T00:00:00Z', u'01890f2e-7cc0-7d78-9c3b-49f9f6e0f012', r'abc'];",
+        );
+        let datetime_node = find_node_by_text(
+            parsed.tree().root_node(),
+            parsed.text(),
+            "d'2024-01-01T00:00:00Z'",
+        )
+        .expect("datetime literal should parse");
+        let uuid_node = find_node_by_text(
+            parsed.tree().root_node(),
+            parsed.text(),
+            "u'01890f2e-7cc0-7d78-9c3b-49f9f6e0f012'",
+        )
+        .expect("uuid literal should parse");
+        let regex_node = find_node_by_text(parsed.tree().root_node(), parsed.text(), "r'abc'")
+            .expect("regex literal should parse");
+
+        assert_eq!(
+            infer_expression_fact(datetime_node, &parsed, None).kind,
+            Some(Kind::Datetime)
+        );
+        assert_eq!(
+            infer_expression_fact(uuid_node, &parsed, None).kind,
+            Some(Kind::Uuid)
+        );
+        assert_eq!(
+            infer_expression_fact(regex_node, &parsed, None).kind,
+            Some(Kind::Regex)
+        );
+    }
+
+    #[test]
     fn infer_expression_fact_for_schema_backed_row_field_path() {
         let parsed = parse(
             "DEFINE TABLE person SCHEMAFULL; DEFINE FIELD name ON person TYPE string; SELECT name FROM person;",
@@ -626,6 +831,68 @@ mod tests {
         assert!(
             fact.partial.is_empty(),
             "boolean operator should be fully inferred"
+        );
+    }
+
+    #[test]
+    fn infer_expression_fact_for_prefix_not_returns_bool() {
+        let parsed = parse("RETURN !true;");
+        let prefix = find_node_by_text(parsed.tree().root_node(), parsed.text(), "!true")
+            .expect("prefix expression should parse");
+
+        let fact = infer_expression_fact(prefix, &parsed, None);
+
+        assert_eq!(fact.kind, Some(Kind::Bool));
+        assert_eq!(fact.shape, Some(ResponseShape::Value { kind: Kind::Bool }));
+        assert!(
+            fact.partial.is_empty(),
+            "known prefix expression should be fully inferred"
+        );
+    }
+
+    #[test]
+    fn infer_expression_fact_for_coalesce_returns_known_operand_kind() {
+        let parsed = parse("RETURN NONE ?? 'fallback';");
+        let coalesce = find_node_by_text(
+            parsed.tree().root_node(),
+            parsed.text(),
+            "NONE ?? 'fallback'",
+        )
+        .expect("coalesce expression should parse");
+
+        let fact = infer_expression_fact(coalesce, &parsed, None);
+
+        assert_eq!(fact.kind, Some(Kind::String));
+        assert_eq!(
+            fact.shape,
+            Some(ResponseShape::Value { kind: Kind::String })
+        );
+        assert!(
+            fact.partial.is_empty(),
+            "known coalesce expression should be fully inferred"
+        );
+    }
+
+    #[test]
+    fn infer_expression_facts_for_subqueries_and_blocks_are_explicit_partials() {
+        let parsed = parse("RETURN [(SELECT * FROM person), { LET $x = 1; RETURN $x; }];");
+        let subquery = find_first_node(parsed.tree().root_node(), "SubQuery")
+            .expect("subquery expression should parse");
+        let block = find_first_node(parsed.tree().root_node(), "Block")
+            .expect("block expression should parse");
+
+        let subquery_fact = infer_expression_fact(subquery, &parsed, None);
+        let block_fact = infer_expression_fact(block, &parsed, None);
+
+        assert_eq!(subquery_fact.value_class, ExpressionValueClass::Subquery);
+        assert_eq!(
+            subquery_fact.partial,
+            vec![PartialReason::UnsupportedSyntax("SubQuery".into())]
+        );
+        assert_eq!(block_fact.value_class, ExpressionValueClass::Block);
+        assert_eq!(
+            block_fact.partial,
+            vec![PartialReason::UnsupportedSyntax("Block".into())]
         );
     }
 

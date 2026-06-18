@@ -161,7 +161,7 @@ Acceptance:
 
 ### 2.2 Unary, boolean, comparison, and coalesce operators
 
-Status: partially complete. Binary arithmetic/string concatenation, numeric/string/bool comparisons, and boolean `AND`/`OR` expression facts are implemented. Unary operators, coalesce/default, regex/contains, and richer compatibility diagnostics remain open.
+Status: partially complete. Binary arithmetic/string concatenation, numeric/string/bool comparisons, boolean `AND`/`OR`, prefix `!`/numeric sign, coalesce/default `??`, and scalar literal facts for null/none/decimal/duration/datetime/uuid/regex are implemented. Subquery and block expressions are explicitly classified partials. Regex/contains binary operators and richer compatibility diagnostics remain open.
 
 Add operator facts for:
 
