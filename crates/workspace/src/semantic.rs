@@ -217,7 +217,14 @@ pub fn infer_select_response_shapes(
         if !parsed.syntax_diagnostics().is_empty() {
             continue;
         }
-        collect_select_response_shapes(parsed.tree().root_node(), parsed, schema, &mut shapes);
+        let mut env = StatementEnv::default();
+        collect_select_response_shapes_with_env(
+            parsed.tree().root_node(),
+            parsed,
+            schema,
+            &mut env,
+            &mut shapes,
+        );
     }
 
     shapes
@@ -489,24 +496,54 @@ fn find_descendant_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tr
     None
 }
 
-fn collect_select_response_shapes(
+fn collect_select_response_shapes_with_env(
     node: Node<'_>,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
+    env: &mut StatementEnv,
     shapes: &mut Vec<(SourceSpan, ResponseShape)>,
 ) {
-    if node.kind() == "SelectStatement" {
-        let ir = select_ir_from_statement(node, parsed);
-        shapes.push((
-            node_span(node, parsed.source_id().clone()),
-            response_shape_for_select(&ir, parsed, schema),
-        ));
-        return;
+    match node.kind() {
+        "LetStatement" => {
+            define_let_from_statement(node, parsed, env);
+            return;
+        }
+        "Block" => {
+            let mut child_env = env.fork_child_scope();
+            collect_select_response_shape_children_with_env(
+                node,
+                parsed,
+                schema,
+                &mut child_env,
+                shapes,
+            );
+            return;
+        }
+        "SelectStatement" => {
+            let ir = select_ir_from_statement(node, parsed);
+            let let_variables = let_variable_facts_from_env(env);
+            shapes.push((
+                node_span(node, parsed.source_id().clone()),
+                response_shape_for_select(&ir, parsed, schema, &let_variables),
+            ));
+            return;
+        }
+        _ => {}
     }
 
+    collect_select_response_shape_children_with_env(node, parsed, schema, env, shapes);
+}
+
+fn collect_select_response_shape_children_with_env(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    schema: &SchemaIndex,
+    env: &mut StatementEnv,
+    shapes: &mut Vec<(SourceSpan, ResponseShape)>,
+) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_select_response_shapes(child, parsed, schema, shapes);
+        collect_select_response_shapes_with_env(child, parsed, schema, env, shapes);
     }
 }
 
@@ -2763,6 +2800,7 @@ fn response_shape_for_select(
     ir: &SelectIr,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
+    let_variables: &BTreeMap<String, LetVariableFact>,
 ) -> ResponseShape {
     if let Some(reason) = advanced_select_partial_reason(ir) {
         return ResponseShape::Unknown { reason };
@@ -2800,10 +2838,10 @@ fn response_shape_for_select(
         .any(|projection| matches!(projection, SelectProjection::Wildcard { .. }))
     {
         object_shape_for_all_fields(table)
-    } else if let Some(value_shape) = value_projection_shape(ir, table) {
+    } else if let Some(value_shape) = value_projection_shape(ir, parsed, table, let_variables) {
         value_shape
     } else {
-        object_shape_for_projected_fields(ir, parsed, table)
+        object_shape_for_projected_fields(ir, parsed, table, let_variables)
     };
     let row_shape = apply_omit_to_shape(row_shape, &ir.omit);
     let row_shape = apply_fetch_materialization(row_shape, &ir.fetch);
@@ -2983,6 +3021,7 @@ fn object_shape_for_projected_fields(
     ir: &SelectIr,
     parsed: &ParsedSource,
     table: &crate::schema::TableDef,
+    let_variables: &BTreeMap<String, LetVariableFact>,
 ) -> ResponseShape {
     let mut fields = BTreeMap::new();
 
@@ -3027,6 +3066,7 @@ fn object_shape_for_projected_fields(
                         expression_text,
                         parsed,
                         table,
+                        let_variables,
                     ),
                 );
             }
@@ -3046,13 +3086,21 @@ fn field_shape_for_dynamic_select_expression(
     expression_text: &str,
     parsed: &ParsedSource,
     table: &crate::schema::TableDef,
+    let_variables: &BTreeMap<String, LetVariableFact>,
 ) -> FieldShape {
-    let expression_fact = exact_node_for_span(parsed.tree().root_node(), &span)
-        .map(|node| infer_expression_fact(node, parsed, Some(table)));
+    let expression_fact = exact_node_for_span(parsed.tree().root_node(), &span).map(|node| {
+        infer_expression_fact_with_let_variables(node, parsed, Some(table), let_variables)
+    });
     let kind = match expression_kind {
         Some("BinaryExpression") => expression_fact.as_ref().and_then(|fact| fact.kind.clone()),
-        Some("FunctionCall") => function_name_from_expression_text(expression_text)
-            .and_then(|name| function_signature(name).map(|signature| signature.return_kind)),
+        Some("FunctionCall") => expression_fact
+            .as_ref()
+            .and_then(|fact| fact.kind.clone())
+            .or_else(|| {
+                function_name_from_expression_text(expression_text).and_then(|name| {
+                    function_signature(name).map(|signature| signature.return_kind)
+                })
+            }),
         Some("Number") => {
             if expression_text.contains('.') {
                 Some(Kind::Float)
@@ -3193,7 +3241,12 @@ fn insert_field_shape_at_path(
     insert_field_shape_at_path(child_fields, rest, field_shape);
 }
 
-fn value_projection_shape(ir: &SelectIr, table: &crate::schema::TableDef) -> Option<ResponseShape> {
+fn value_projection_shape(
+    ir: &SelectIr,
+    _parsed: &ParsedSource,
+    table: &crate::schema::TableDef,
+    _let_variables: &BTreeMap<String, LetVariableFact>,
+) -> Option<ResponseShape> {
     let [SelectProjection::Field {
         path, value: true, ..
     }] = ir.projections.as_slice()

@@ -1918,6 +1918,38 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_infers_select_projection_shape_from_let_env() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nLET $age = 42;\nSELECT $age + 1 AS next_age FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
+            panic!(
+                "expected array response shape, got {:?}",
+                select.response_shape
+            );
+        };
+        let ResponseShape::Object {
+            fields,
+            open: false,
+        } = element.as_ref()
+        else {
+            panic!("expected object element, got {element:?}");
+        };
+
+        assert_eq!(fields["next_age"].kind, Some(Kind::Int));
+    }
+
+    #[test]
     fn analyze_workspace_infers_binary_expression_projection_shapes() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
