@@ -167,7 +167,7 @@ pub fn validate_function_calls(
         }
 
         let mut env = StatementEnv::default();
-        collect_function_call_diagnostics_with_env(
+        collect_expression_diagnostics_with_env(
             parsed.tree().root_node(),
             parsed,
             schema,
@@ -1295,7 +1295,7 @@ fn relate_graph_reference(node: Node<'_>, parsed: &ParsedSource) -> Option<Relat
     })
 }
 
-fn collect_function_call_diagnostics_with_env(
+fn collect_expression_diagnostics_with_env(
     node: Node<'_>,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
@@ -1306,7 +1306,7 @@ fn collect_function_call_diagnostics_with_env(
         "LetStatement" => {
             let let_variables = let_variable_facts_from_env(env);
             if let Some(value_node) = let_value_node(node) {
-                validate_function_calls_in_node(
+                validate_expression_diagnostics_in_node(
                     value_node,
                     parsed,
                     None,
@@ -1319,7 +1319,7 @@ fn collect_function_call_diagnostics_with_env(
         }
         "Block" => {
             let mut child_env = env.fork_child_scope();
-            collect_function_call_children_with_env(
+            collect_expression_diagnostic_children_with_env(
                 node,
                 parsed,
                 schema,
@@ -1333,13 +1333,32 @@ fn collect_function_call_diagnostics_with_env(
             let table =
                 resolved_select_table_name(&ir, schema).and_then(|name| schema.tables.get(&name));
             let let_variables = let_variable_facts_from_env(env);
-            validate_function_calls_in_node(node, parsed, table, &let_variables, diagnostics);
+            validate_expression_diagnostics_in_node(
+                node,
+                parsed,
+                table,
+                &let_variables,
+                diagnostics,
+            );
+            return;
+        }
+        "CreateStatement" | "InsertStatement" | "UpdateStatement" | "UpsertStatement"
+        | "DeleteStatement" | "RelateStatement" => {
+            let table = mutation_table_name(node, parsed).and_then(|name| schema.tables.get(&name));
+            let let_variables = let_variable_facts_from_env(env);
+            validate_expression_diagnostics_in_node(
+                node,
+                parsed,
+                table,
+                &let_variables,
+                diagnostics,
+            );
             return;
         }
         "ReturnStatement" => {
             let let_variables = let_variable_facts_from_env(env);
             if let Some(value_node) = return_value_node(node) {
-                validate_function_calls_in_node(
+                validate_expression_diagnostics_in_node(
                     value_node,
                     parsed,
                     None,
@@ -1352,10 +1371,10 @@ fn collect_function_call_diagnostics_with_env(
         _ => {}
     }
 
-    collect_function_call_children_with_env(node, parsed, schema, env, diagnostics);
+    collect_expression_diagnostic_children_with_env(node, parsed, schema, env, diagnostics);
 }
 
-fn collect_function_call_children_with_env(
+fn collect_expression_diagnostic_children_with_env(
     node: Node<'_>,
     parsed: &ParsedSource,
     schema: &SchemaIndex,
@@ -1364,7 +1383,7 @@ fn collect_function_call_children_with_env(
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_function_call_diagnostics_with_env(child, parsed, schema, env, diagnostics);
+        collect_expression_diagnostics_with_env(child, parsed, schema, env, diagnostics);
     }
 }
 
@@ -1490,7 +1509,7 @@ fn direct_child_of_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tr
     child
 }
 
-fn validate_function_calls_in_node(
+fn validate_expression_diagnostics_in_node(
     node: Node<'_>,
     parsed: &ParsedSource,
     row_table: Option<&crate::schema::TableDef>,
@@ -1506,7 +1525,13 @@ fn validate_function_calls_in_node(
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        validate_function_calls_in_node(child, parsed, row_table, let_variables, diagnostics);
+        validate_expression_diagnostics_in_node(
+            child,
+            parsed,
+            row_table,
+            let_variables,
+            diagnostics,
+        );
     }
 }
 
