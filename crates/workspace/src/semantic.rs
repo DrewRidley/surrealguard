@@ -1686,9 +1686,26 @@ fn function_signature(name: &str) -> Option<FunctionSignature> {
             args: vec![FunctionArgKind::Exact(Kind::String)],
             return_kind: Kind::Int,
         }),
+        "string::lowercase" | "string::uppercase" => Some(FunctionSignature {
+            args: vec![FunctionArgKind::Exact(Kind::String)],
+            return_kind: Kind::String,
+        }),
+        "string::contains" | "string::starts_with" | "string::ends_with" => {
+            Some(FunctionSignature {
+                args: vec![
+                    FunctionArgKind::Exact(Kind::String),
+                    FunctionArgKind::Exact(Kind::String),
+                ],
+                return_kind: Kind::Bool,
+            })
+        }
         "array::len" => Some(FunctionSignature {
             args: vec![FunctionArgKind::Array],
             return_kind: Kind::Int,
+        }),
+        "array::is_empty" => Some(FunctionSignature {
+            args: vec![FunctionArgKind::Array],
+            return_kind: Kind::Bool,
         }),
         "count" => Some(FunctionSignature {
             args: Vec::new(),

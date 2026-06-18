@@ -205,6 +205,8 @@ Objective: function analysis is useful enough for real queries and not SELECT-on
 
 ### 3.1 Expand built-in signature table by verified families
 
+Status: partially complete. Verified against SurrealDB 3.0.5 and implemented signatures now include `string::len`, `string::lowercase`, `string::uppercase`, `string::contains`, `string::starts_with`, `string::ends_with`, `array::len`, `array::is_empty`, and `count`. More math/object/time/record/type families remain open.
+
 Add signatures in small verified groups:
 
 - `math::*` numeric functions;

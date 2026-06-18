@@ -2086,6 +2086,68 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_infers_extended_verified_function_projection_shapes_and_params() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD title ON person TYPE string;\nDEFINE FIELD tags ON person TYPE array;\nSELECT string::lowercase(name) AS lower, string::uppercase(name) AS upper, string::contains(name, 'a') AS has_needle, string::starts_with(name, 'a') AS starts, string::ends_with(name, 'z') AS ends, array::is_empty(tags) AS no_items FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
+            panic!(
+                "expected array response shape, got {:?}",
+                select.response_shape
+            );
+        };
+        let ResponseShape::Object {
+            fields,
+            open: false,
+        } = element.as_ref()
+        else {
+            panic!("expected object element, got {element:?}");
+        };
+        assert_eq!(fields["lower"].kind, Some(Kind::String));
+        assert_eq!(fields["upper"].kind, Some(Kind::String));
+        assert_eq!(fields["has_needle"].kind, Some(Kind::Bool));
+        assert_eq!(fields["starts"].kind, Some(Kind::Bool));
+        assert_eq!(fields["ends"].kind, Some(Kind::Bool));
+        assert_eq!(fields["no_items"].kind, Some(Kind::Bool));
+    }
+
+    #[test]
+    fn analyze_workspace_infers_params_from_extended_verified_function_signatures() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nSELECT string::lowercase($upper), string::contains($haystack, $needle), array::is_empty($items) FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let param_kinds: Vec<_> = output.sources[&source]
+            .inferred_params
+            .iter()
+            .map(|param| (param.name.as_str(), param.kind.clone()))
+            .collect();
+
+        assert_eq!(
+            param_kinds,
+            vec![
+                ("haystack", Some(Kind::String)),
+                ("items", Some(Kind::Array(Box::new(Kind::Any), None))),
+                ("needle", Some(Kind::String)),
+                ("upper", Some(Kind::String)),
+            ]
+        );
+    }
+
+    #[test]
     fn analyze_workspace_reports_function_argument_mismatch_from_branch_local_let() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
