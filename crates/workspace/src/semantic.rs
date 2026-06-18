@@ -1907,12 +1907,19 @@ fn validate_select_projection_fields_for_statement(
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if child.kind() == "WhereClause" {
+        if is_select_row_context_modifier_clause(child) {
             for path in row_context_field_paths_from_clause(child, parsed) {
                 validate_field_path_on_table(path, table, diagnostics);
             }
         }
     }
+}
+
+fn is_select_row_context_modifier_clause(node: Node<'_>) -> bool {
+    matches!(
+        node.kind(),
+        "WhereClause" | "OrderClause" | "GroupClause" | "SplitClause"
+    )
 }
 
 fn row_context_field_paths_from_clause(clause: Node<'_>, parsed: &ParsedSource) -> Vec<FieldPath> {

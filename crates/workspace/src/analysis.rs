@@ -1364,6 +1364,53 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_reports_unknown_select_order_fields() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nSELECT * FROM person ORDER BY missing;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let unknown_fields: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            unknown_fields,
+            vec!["unknown field `missing` on table `person`".to_string()]
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_reports_unknown_select_group_and_split_fields() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nSELECT name FROM person GROUP BY missing_group SPLIT missing_split;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let unknown_fields: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            unknown_fields,
+            vec![
+                "unknown field `missing_group` on table `person`".to_string(),
+                "unknown field `missing_split` on table `person`".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn analyze_workspace_reports_unknown_select_where_fields() {
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(

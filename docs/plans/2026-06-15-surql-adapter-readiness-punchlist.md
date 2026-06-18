@@ -258,6 +258,8 @@ Objective: SELECT is adapter-grade for common production queries.
 
 ### 4.1 Predicate and modifier expressions
 
+Status: partially complete. WHERE already uses env-aware expression analysis. ORDER BY, GROUP BY, and SPLIT row-context operands now validate static field references against the SELECT source table, so unknown modifier fields emit stable schema diagnostics. LIMIT literals already feed max_len metadata; fuller type checking for dynamic LIMIT/START/TIMEOUT operands remains open.
+
 Analyze expressions in:
 
 - WHERE;
