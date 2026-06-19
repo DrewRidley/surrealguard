@@ -44,6 +44,22 @@ pub struct FieldDef {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct IndexDef {
+    name: String,
+    table: String,
+    fields: Vec<IndexFieldDef>,
+    name_span: SourceSpan,
+    table_span: SourceSpan,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct IndexFieldDef {
+    path: Vec<String>,
+    text: String,
+    span: SourceSpan,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaExtraction {
     pub schema: SchemaIndex,
     pub diagnostics: Vec<Finding>,
@@ -89,10 +105,18 @@ pub fn extract_schema(parsed_sources: &[ParsedSource]) -> SchemaExtraction {
     let mut schema = SchemaIndex::default();
     let mut diagnostics = Vec::new();
     let mut fields = Vec::new();
+    let mut indexes = Vec::new();
 
     for parsed in parsed_sources {
         let root = parsed.tree().root_node();
-        collect_definitions(root, parsed, &mut schema, &mut fields, &mut diagnostics);
+        collect_definitions(
+            root,
+            parsed,
+            &mut schema,
+            &mut fields,
+            &mut indexes,
+            &mut diagnostics,
+        );
     }
 
     for field in fields {
@@ -103,6 +127,7 @@ pub fn extract_schema(parsed_sources: &[ParsedSource]) -> SchemaExtraction {
             diagnostics.push(diagnostic);
         }
     }
+    validate_indexes(&schema, indexes, &mut diagnostics);
 
     SchemaExtraction {
         schema,
@@ -115,6 +140,7 @@ fn collect_definitions(
     parsed: &ParsedSource,
     schema: &mut SchemaIndex,
     fields: &mut Vec<FieldDef>,
+    indexes: &mut Vec<IndexDef>,
     diagnostics: &mut Vec<Finding>,
 ) {
     if node.kind() == "DefineStatement" {
@@ -126,11 +152,14 @@ fn collect_definitions(
         if let Some(field) = extract_field_def(node, parsed) {
             fields.push(field);
         }
+        if let Some(index) = extract_index_def(node, parsed) {
+            indexes.push(index);
+        }
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_definitions(child, parsed, schema, fields, diagnostics);
+        collect_definitions(child, parsed, schema, fields, indexes, diagnostics);
     }
 }
 
@@ -280,6 +309,114 @@ fn extract_field_def(node: Node<'_>, parsed: &ParsedSource) -> Option<FieldDef> 
         table_span: node_span(table_node, parsed.source_id().clone()),
         type_span,
     })
+}
+
+fn validate_indexes(schema: &SchemaIndex, indexes: Vec<IndexDef>, diagnostics: &mut Vec<Finding>) {
+    for index in indexes {
+        let Some(table) = schema.tables.get(&index.table) else {
+            diagnostics.push(Finding::new(
+                index.table_span,
+                FindingCode::schema(1002),
+                Severity::Error,
+                format!(
+                    "index `{}` targets unknown table `{}`",
+                    index.name, index.table
+                ),
+            ));
+            continue;
+        };
+
+        for field in index.fields {
+            if !index_field_path_exists_on_table(table, &field.path) {
+                diagnostics.push(Finding::new(
+                    field.span,
+                    FindingCode::schema(1004),
+                    Severity::Error,
+                    format!(
+                        "index `{}` references unknown field `{}` on table `{}`",
+                        index.name, field.text, index.table
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+fn index_field_path_exists_on_table(table: &TableDef, path: &[String]) -> bool {
+    let key = path.join(".");
+    table.fields.contains_key(&key)
+        || table
+            .fields
+            .values()
+            .any(|field| field.path.len() > path.len() && field.path.starts_with(path))
+}
+
+fn extract_index_def(node: Node<'_>, parsed: &ParsedSource) -> Option<IndexDef> {
+    let mut saw_define = false;
+    let mut saw_index = false;
+    let mut index_node = None;
+    let mut table_node = None;
+    let mut fields = Vec::new();
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        let text = node_text(child, parsed.text());
+        let lower = text.to_ascii_lowercase();
+
+        if child.kind() == "Keyword" {
+            if !saw_define && lower == "define" {
+                saw_define = true;
+                continue;
+            }
+            if saw_define && !saw_index && lower == "index" {
+                saw_index = true;
+                continue;
+            }
+        }
+
+        if saw_define && saw_index && index_node.is_none() && is_identifier_like(child) {
+            index_node = Some(child);
+            continue;
+        }
+
+        if saw_define && saw_index && table_node.is_none() && child.kind() == "OnTableClause" {
+            table_node = first_identifier_descendant(child, parsed.text());
+            continue;
+        }
+
+        if saw_define && saw_index && child.kind() == "FieldsColumnsClause" {
+            fields.extend(index_fields_from_clause(child, parsed));
+        }
+    }
+
+    let index_node = index_node?;
+    let table_node = table_node?;
+    let index_name = node_text(index_node, parsed.text()).trim().to_string();
+    let table_name = node_text(table_node, parsed.text()).trim().to_string();
+
+    Some(IndexDef {
+        name: index_name,
+        table: table_name,
+        fields,
+        name_span: node_span(index_node, parsed.source_id().clone()),
+        table_span: node_span(table_node, parsed.source_id().clone()),
+    })
+}
+
+fn index_fields_from_clause(node: Node<'_>, parsed: &ParsedSource) -> Vec<IndexFieldDef> {
+    let mut fields = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "Idiom" {
+            let text = node_text(child, parsed.text()).trim().to_string();
+            fields.push(IndexFieldDef {
+                path: text.split('.').map(str::to_string).collect(),
+                text,
+                span: node_span(child, parsed.source_id().clone()),
+            });
+        }
+    }
+    fields
 }
 
 fn unsupported_type_diagnostic(field: &FieldDef) -> Option<Finding> {

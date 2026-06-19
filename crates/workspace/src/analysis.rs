@@ -526,6 +526,51 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_validates_define_index_table_and_fields() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD profile.email ON person TYPE string;\nDEFINE INDEX by_name ON TABLE person FIELDS name, profile.email;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert!(output
+            .diagnostics
+            .iter()
+            .all(|finding| finding.code() != FindingCode::schema(1002)));
+        assert!(output
+            .diagnostics
+            .iter()
+            .all(|finding| finding.code() != FindingCode::schema(1004)));
+    }
+
+    #[test]
+    fn analyze_workspace_reports_define_index_unknown_table_and_fields() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE INDEX by_email ON TABLE person FIELDS email;\nDEFINE INDEX missing_table_idx ON TABLE ghost FIELDS name;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1004)))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            messages,
+            vec![
+                "index `by_email` references unknown field `email` on table `person`",
+                "index `missing_table_idx` targets unknown table `ghost`",
+            ]
+        );
+    }
+
+    #[test]
     fn analyze_workspace_reports_fields_on_unknown_tables() {
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(
