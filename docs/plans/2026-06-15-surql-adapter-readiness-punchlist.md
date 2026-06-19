@@ -475,7 +475,7 @@ Acceptance:
 
 ### 8.4 REMOVE / ALTER / REBUILD / INFO / SHOW
 
-Status: partially complete. `REBUILD INDEX ... ON TABLE ...` and `REMOVE INDEX ... ON TABLE ...` now validate the static table target and named index against schema-indexed `DEFINE INDEX` facts. Other REMOVE/ALTER/INFO/SHOW variants remain pending.
+Status: partially complete. `REBUILD INDEX ... ON TABLE ...` and `REMOVE INDEX ... ON TABLE ...` now validate the static table target and named index against schema-indexed `DEFINE INDEX` facts. `REMOVE TABLE` and `REMOVE FIELD ... ON [TABLE] ...` validate static table/field targets. Other REMOVE/ALTER/INFO/SHOW variants remain pending.
 
 Acceptance:
 

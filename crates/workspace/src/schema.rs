@@ -85,6 +85,21 @@ struct IndexTargetRef {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+enum RemoveTargetRef {
+    Table {
+        table: String,
+        span: SourceSpan,
+    },
+    Field {
+        field: String,
+        path: Vec<String>,
+        table: String,
+        field_span: SourceSpan,
+        table_span: SourceSpan,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaExtraction {
     pub schema: SchemaIndex,
     pub diagnostics: Vec<Finding>,
@@ -133,6 +148,7 @@ pub fn extract_schema(parsed_sources: &[ParsedSource]) -> SchemaExtraction {
     let mut indexes = Vec::new();
     let mut events = Vec::new();
     let mut index_targets = Vec::new();
+    let mut remove_targets = Vec::new();
 
     for parsed in parsed_sources {
         let root = parsed.tree().root_node();
@@ -144,6 +160,7 @@ pub fn extract_schema(parsed_sources: &[ParsedSource]) -> SchemaExtraction {
             &mut indexes,
             &mut events,
             &mut index_targets,
+            &mut remove_targets,
             &mut diagnostics,
         );
     }
@@ -159,6 +176,7 @@ pub fn extract_schema(parsed_sources: &[ParsedSource]) -> SchemaExtraction {
     validate_indexes(&mut schema, indexes, &mut diagnostics);
     validate_events(&schema, events, &mut diagnostics);
     validate_index_targets(&schema, index_targets, &mut diagnostics);
+    validate_remove_targets(&schema, remove_targets, &mut diagnostics);
 
     SchemaExtraction {
         schema,
@@ -174,6 +192,7 @@ fn collect_definitions(
     indexes: &mut Vec<IndexDef>,
     events: &mut Vec<EventDef>,
     index_targets: &mut Vec<IndexTargetRef>,
+    remove_targets: &mut Vec<RemoveTargetRef>,
     diagnostics: &mut Vec<Finding>,
 ) {
     if node.kind() == "DefineStatement" {
@@ -197,6 +216,10 @@ fn collect_definitions(
         index_targets.push(target);
     }
 
+    if let Some(target) = extract_remove_target_ref(node, parsed) {
+        remove_targets.push(target);
+    }
+
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         collect_definitions(
@@ -207,6 +230,7 @@ fn collect_definitions(
             indexes,
             events,
             index_targets,
+            remove_targets,
             diagnostics,
         );
     }
@@ -554,6 +578,117 @@ fn extract_index_target_ref(node: Node<'_>, parsed: &ParsedSource) -> Option<Ind
         index_span: node_span(index_node, parsed.source_id().clone()),
         table_span: node_span(table_node, parsed.source_id().clone()),
     })
+}
+
+fn validate_remove_targets(
+    schema: &SchemaIndex,
+    targets: Vec<RemoveTargetRef>,
+    diagnostics: &mut Vec<Finding>,
+) {
+    for target in targets {
+        match target {
+            RemoveTargetRef::Table { table, span } => {
+                if !schema.tables.contains_key(&table) {
+                    diagnostics.push(Finding::new(
+                        span,
+                        FindingCode::schema(1002),
+                        Severity::Error,
+                        format!("REMOVE TABLE targets unknown table `{table}`"),
+                    ));
+                }
+            }
+            RemoveTargetRef::Field {
+                field,
+                path,
+                table,
+                field_span,
+                table_span,
+            } => {
+                let Some(table_def) = schema.tables.get(&table) else {
+                    diagnostics.push(Finding::new(
+                        table_span,
+                        FindingCode::schema(1002),
+                        Severity::Error,
+                        format!("REMOVE FIELD `{field}` targets unknown table `{table}`"),
+                    ));
+                    continue;
+                };
+
+                if !index_field_path_exists_on_table(table_def, &path) {
+                    diagnostics.push(Finding::new(
+                        field_span,
+                        FindingCode::schema(1004),
+                        Severity::Error,
+                        format!("REMOVE FIELD targets unknown field `{field}` on table `{table}`"),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+fn extract_remove_target_ref(node: Node<'_>, parsed: &ParsedSource) -> Option<RemoveTargetRef> {
+    if node.kind() != "RemoveStatement" {
+        return None;
+    }
+
+    let mut saw_remove = false;
+    let mut target_kind: Option<&str> = None;
+    let mut object_node = None;
+    let mut table_node = None;
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        let text = node_text(child, parsed.text());
+        let upper = text.to_ascii_uppercase();
+
+        if child.kind() == "Keyword" {
+            if !saw_remove && upper == "REMOVE" {
+                saw_remove = true;
+                continue;
+            }
+            if saw_remove && target_kind.is_none() && matches!(upper.as_str(), "TABLE" | "FIELD") {
+                target_kind = Some(if upper == "TABLE" { "TABLE" } else { "FIELD" });
+                continue;
+            }
+        }
+
+        if saw_remove
+            && target_kind.is_some()
+            && object_node.is_none()
+            && (is_identifier_like(child) || child.kind() == "Path")
+        {
+            object_node = Some(child);
+            continue;
+        }
+
+        if saw_remove && target_kind == Some("FIELD") && child.kind() == "OnTableClause" {
+            table_node = first_identifier_descendant(child, parsed.text());
+        }
+    }
+
+    match target_kind? {
+        "TABLE" => {
+            let object_node = object_node?;
+            Some(RemoveTargetRef::Table {
+                table: node_text(object_node, parsed.text()).trim().to_string(),
+                span: node_span(object_node, parsed.source_id().clone()),
+            })
+        }
+        "FIELD" => {
+            let field_node = object_node?;
+            let table_node = table_node?;
+            let field = node_text(field_node, parsed.text()).trim().to_string();
+            Some(RemoveTargetRef::Field {
+                path: field.split('.').map(str::to_string).collect(),
+                field,
+                table: node_text(table_node, parsed.text()).trim().to_string(),
+                field_span: node_span(field_node, parsed.source_id().clone()),
+                table_span: node_span(table_node, parsed.source_id().clone()),
+            })
+        }
+        _ => None,
+    }
 }
 
 fn validate_events(schema: &SchemaIndex, events: Vec<EventDef>, diagnostics: &mut Vec<Finding>) {

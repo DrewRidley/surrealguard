@@ -641,6 +641,32 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_validates_remove_table_and_field_targets() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD profile.email ON person TYPE string;\nREMOVE TABLE person;\nREMOVE FIELD name ON TABLE person;\nREMOVE FIELD profile.email ON person;\nREMOVE TABLE ghost;\nREMOVE FIELD missing ON TABLE person;\nREMOVE FIELD name ON TABLE ghost;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1004)))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            messages,
+            vec![
+                "REMOVE TABLE targets unknown table `ghost`",
+                "REMOVE FIELD targets unknown field `missing` on table `person`",
+                "REMOVE FIELD `name` targets unknown table `ghost`",
+            ]
+        );
+    }
+
+    #[test]
     fn analyze_workspace_reports_fields_on_unknown_tables() {
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(
