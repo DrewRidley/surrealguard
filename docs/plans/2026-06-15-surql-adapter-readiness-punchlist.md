@@ -453,10 +453,10 @@ Acceptance:
 
 Validate static references:
 
-Status: partially complete. `DEFINE INDEX ... ON TABLE ... FIELDS ...` now validates static target tables and field paths after schema field extraction. EVENT and ANALYZER static references remain pending.
+Status: partially complete. `DEFINE INDEX ... ON TABLE ... FIELDS ...` now validates static target tables and field paths after schema field extraction. `DEFINE EVENT ... ON TABLE ... WHEN/THEN ...` now validates the static event table and `$event.<field>` references. ANALYZER static references remain pending.
 
 - index table and fields: implemented for static `FIELDS` clauses;
-- event table and WHEN/THEN field refs/expressions;
+- event table and WHEN/THEN `$event.<field>` refs: implemented for static references;
 - analyzer/tokenizer/filter object names where grammar exposes them.
 
 Acceptance:

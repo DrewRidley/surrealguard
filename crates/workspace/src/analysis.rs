@@ -571,6 +571,51 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_validates_define_event_table_and_when_fields() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nDEFINE EVENT adult ON TABLE person WHEN $event.age >= 18 THEN { UPDATE person SET age = $event.age; };".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert!(output
+            .diagnostics
+            .iter()
+            .all(|finding| finding.code() != FindingCode::schema(1002)));
+        assert!(output
+            .diagnostics
+            .iter()
+            .all(|finding| finding.code() != FindingCode::schema(1004)));
+    }
+
+    #[test]
+    fn analyze_workspace_reports_define_event_unknown_table_and_when_fields() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nDEFINE EVENT bad_field ON TABLE person WHEN $event.missing >= 18 THEN { RETURN true; };\nDEFINE EVENT bad_table ON TABLE ghost WHEN $event.age > 18 THEN { RETURN true; };".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1004)))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            messages,
+            vec![
+                "event `bad_field` references unknown field `missing` on table `person`",
+                "event `bad_table` targets unknown table `ghost`",
+            ]
+        );
+    }
+
+    #[test]
     fn analyze_workspace_reports_fields_on_unknown_tables() {
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(

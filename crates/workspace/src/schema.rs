@@ -60,6 +60,21 @@ struct IndexFieldDef {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct EventDef {
+    name: String,
+    table: String,
+    field_refs: Vec<EventFieldRef>,
+    table_span: SourceSpan,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct EventFieldRef {
+    path: Vec<String>,
+    text: String,
+    span: SourceSpan,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaExtraction {
     pub schema: SchemaIndex,
     pub diagnostics: Vec<Finding>,
@@ -106,6 +121,7 @@ pub fn extract_schema(parsed_sources: &[ParsedSource]) -> SchemaExtraction {
     let mut diagnostics = Vec::new();
     let mut fields = Vec::new();
     let mut indexes = Vec::new();
+    let mut events = Vec::new();
 
     for parsed in parsed_sources {
         let root = parsed.tree().root_node();
@@ -115,6 +131,7 @@ pub fn extract_schema(parsed_sources: &[ParsedSource]) -> SchemaExtraction {
             &mut schema,
             &mut fields,
             &mut indexes,
+            &mut events,
             &mut diagnostics,
         );
     }
@@ -128,6 +145,7 @@ pub fn extract_schema(parsed_sources: &[ParsedSource]) -> SchemaExtraction {
         }
     }
     validate_indexes(&schema, indexes, &mut diagnostics);
+    validate_events(&schema, events, &mut diagnostics);
 
     SchemaExtraction {
         schema,
@@ -141,6 +159,7 @@ fn collect_definitions(
     schema: &mut SchemaIndex,
     fields: &mut Vec<FieldDef>,
     indexes: &mut Vec<IndexDef>,
+    events: &mut Vec<EventDef>,
     diagnostics: &mut Vec<Finding>,
 ) {
     if node.kind() == "DefineStatement" {
@@ -155,11 +174,14 @@ fn collect_definitions(
         if let Some(index) = extract_index_def(node, parsed) {
             indexes.push(index);
         }
+        if let Some(event) = extract_event_def(node, parsed) {
+            events.push(event);
+        }
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_definitions(child, parsed, schema, fields, indexes, diagnostics);
+        collect_definitions(child, parsed, schema, fields, indexes, events, diagnostics);
     }
 }
 
@@ -417,6 +439,108 @@ fn index_fields_from_clause(node: Node<'_>, parsed: &ParsedSource) -> Vec<IndexF
         }
     }
     fields
+}
+
+fn validate_events(schema: &SchemaIndex, events: Vec<EventDef>, diagnostics: &mut Vec<Finding>) {
+    for event in events {
+        let Some(table) = schema.tables.get(&event.table) else {
+            diagnostics.push(Finding::new(
+                event.table_span,
+                FindingCode::schema(1002),
+                Severity::Error,
+                format!(
+                    "event `{}` targets unknown table `{}`",
+                    event.name, event.table
+                ),
+            ));
+            continue;
+        };
+
+        for field_ref in event.field_refs {
+            if !index_field_path_exists_on_table(table, &field_ref.path) {
+                diagnostics.push(Finding::new(
+                    field_ref.span,
+                    FindingCode::schema(1004),
+                    Severity::Error,
+                    format!(
+                        "event `{}` references unknown field `{}` on table `{}`",
+                        event.name, field_ref.text, event.table
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+fn extract_event_def(node: Node<'_>, parsed: &ParsedSource) -> Option<EventDef> {
+    let mut saw_define = false;
+    let mut saw_event = false;
+    let mut event_node = None;
+    let mut table_node = None;
+    let mut field_refs = Vec::new();
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        let text = node_text(child, parsed.text());
+        let lower = text.to_ascii_lowercase();
+
+        if child.kind() == "Keyword" {
+            if !saw_define && lower == "define" {
+                saw_define = true;
+                continue;
+            }
+            if saw_define && !saw_event && lower == "event" {
+                saw_event = true;
+                continue;
+            }
+        }
+
+        if saw_define && saw_event && event_node.is_none() && is_identifier_like(child) {
+            event_node = Some(child);
+            continue;
+        }
+
+        if saw_define && saw_event && table_node.is_none() && child.kind() == "OnTableClause" {
+            table_node = first_identifier_descendant(child, parsed.text());
+            continue;
+        }
+
+        if saw_define && saw_event && matches!(child.kind(), "WhenClause" | "ThenClause") {
+            collect_event_field_refs(child, parsed, &mut field_refs);
+        }
+    }
+
+    let event_node = event_node?;
+    let table_node = table_node?;
+    Some(EventDef {
+        name: node_text(event_node, parsed.text()).trim().to_string(),
+        table: node_text(table_node, parsed.text()).trim().to_string(),
+        field_refs,
+        table_span: node_span(table_node, parsed.source_id().clone()),
+    })
+}
+
+fn collect_event_field_refs(
+    node: Node<'_>,
+    parsed: &ParsedSource,
+    field_refs: &mut Vec<EventFieldRef>,
+) {
+    if node.kind() == "Path" {
+        let text = node_text(node, parsed.text()).trim();
+        if let Some(field_text) = text.strip_prefix("$event.") {
+            field_refs.push(EventFieldRef {
+                path: field_text.split('.').map(str::to_string).collect(),
+                text: field_text.to_string(),
+                span: node_span(node, parsed.source_id().clone()),
+            });
+            return;
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_event_field_refs(child, parsed, field_refs);
+    }
 }
 
 fn unsupported_type_diagnostic(field: &FieldDef) -> Option<Finding> {
