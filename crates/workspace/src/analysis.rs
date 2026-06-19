@@ -616,6 +616,31 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_validates_rebuild_and_remove_index_targets() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE INDEX by_name ON TABLE person FIELDS name;\nREBUILD INDEX by_name ON TABLE person;\nREMOVE INDEX by_name ON TABLE person;\nREBUILD INDEX missing ON TABLE person;\nREMOVE INDEX by_name ON TABLE ghost;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1005)))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            messages,
+            vec![
+                "unknown index `missing` on table `person` in REBUILD statement",
+                "index `by_name` targets unknown table `ghost` in REMOVE statement",
+            ]
+        );
+    }
+
+    #[test]
     fn analyze_workspace_reports_fields_on_unknown_tables() {
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(

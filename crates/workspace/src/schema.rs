@@ -21,6 +21,7 @@ pub struct TableDef {
     pub source: SourceId,
     pub name_span: SourceSpan,
     pub fields: BTreeMap<String, FieldDef>,
+    pub indexes: BTreeMap<String, IndexDef>,
     pub relation: Option<RelationDef>,
 }
 
@@ -43,16 +44,16 @@ pub struct FieldDef {
     pub type_span: Option<SourceSpan>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct IndexDef {
-    name: String,
-    table: String,
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexDef {
+    pub name: String,
+    pub table: String,
     fields: Vec<IndexFieldDef>,
-    name_span: SourceSpan,
-    table_span: SourceSpan,
+    pub name_span: SourceSpan,
+    pub table_span: SourceSpan,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct IndexFieldDef {
     path: Vec<String>,
     text: String,
@@ -72,6 +73,15 @@ struct EventFieldRef {
     path: Vec<String>,
     text: String,
     span: SourceSpan,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct IndexTargetRef {
+    statement: String,
+    index: String,
+    table: String,
+    index_span: SourceSpan,
+    table_span: SourceSpan,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,6 +132,7 @@ pub fn extract_schema(parsed_sources: &[ParsedSource]) -> SchemaExtraction {
     let mut fields = Vec::new();
     let mut indexes = Vec::new();
     let mut events = Vec::new();
+    let mut index_targets = Vec::new();
 
     for parsed in parsed_sources {
         let root = parsed.tree().root_node();
@@ -132,6 +143,7 @@ pub fn extract_schema(parsed_sources: &[ParsedSource]) -> SchemaExtraction {
             &mut fields,
             &mut indexes,
             &mut events,
+            &mut index_targets,
             &mut diagnostics,
         );
     }
@@ -144,8 +156,9 @@ pub fn extract_schema(parsed_sources: &[ParsedSource]) -> SchemaExtraction {
             diagnostics.push(diagnostic);
         }
     }
-    validate_indexes(&schema, indexes, &mut diagnostics);
+    validate_indexes(&mut schema, indexes, &mut diagnostics);
     validate_events(&schema, events, &mut diagnostics);
+    validate_index_targets(&schema, index_targets, &mut diagnostics);
 
     SchemaExtraction {
         schema,
@@ -160,6 +173,7 @@ fn collect_definitions(
     fields: &mut Vec<FieldDef>,
     indexes: &mut Vec<IndexDef>,
     events: &mut Vec<EventDef>,
+    index_targets: &mut Vec<IndexTargetRef>,
     diagnostics: &mut Vec<Finding>,
 ) {
     if node.kind() == "DefineStatement" {
@@ -179,9 +193,22 @@ fn collect_definitions(
         }
     }
 
+    if let Some(target) = extract_index_target_ref(node, parsed) {
+        index_targets.push(target);
+    }
+
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_definitions(child, parsed, schema, fields, indexes, events, diagnostics);
+        collect_definitions(
+            child,
+            parsed,
+            schema,
+            fields,
+            indexes,
+            events,
+            index_targets,
+            diagnostics,
+        );
     }
 }
 
@@ -211,6 +238,7 @@ fn extract_table_def(node: Node<'_>, parsed: &ParsedSource) -> Option<TableDef> 
                 source: parsed.source_id().clone(),
                 name_span: node_span(child, parsed.source_id().clone()),
                 fields: BTreeMap::new(),
+                indexes: BTreeMap::new(),
                 relation: relation_def_from_define_table(node, parsed),
             });
         }
@@ -333,11 +361,15 @@ fn extract_field_def(node: Node<'_>, parsed: &ParsedSource) -> Option<FieldDef> 
     })
 }
 
-fn validate_indexes(schema: &SchemaIndex, indexes: Vec<IndexDef>, diagnostics: &mut Vec<Finding>) {
+fn validate_indexes(
+    schema: &mut SchemaIndex,
+    indexes: Vec<IndexDef>,
+    diagnostics: &mut Vec<Finding>,
+) {
     for index in indexes {
-        let Some(table) = schema.tables.get(&index.table) else {
+        let Some(table) = schema.tables.get_mut(&index.table) else {
             diagnostics.push(Finding::new(
-                index.table_span,
+                index.table_span.clone(),
                 FindingCode::schema(1002),
                 Severity::Error,
                 format!(
@@ -348,10 +380,10 @@ fn validate_indexes(schema: &SchemaIndex, indexes: Vec<IndexDef>, diagnostics: &
             continue;
         };
 
-        for field in index.fields {
+        for field in &index.fields {
             if !index_field_path_exists_on_table(table, &field.path) {
                 diagnostics.push(Finding::new(
-                    field.span,
+                    field.span.clone(),
                     FindingCode::schema(1004),
                     Severity::Error,
                     format!(
@@ -361,6 +393,7 @@ fn validate_indexes(schema: &SchemaIndex, indexes: Vec<IndexDef>, diagnostics: &
                 ));
             }
         }
+        table.indexes.insert(index.name.clone(), index);
     }
 }
 
@@ -439,6 +472,88 @@ fn index_fields_from_clause(node: Node<'_>, parsed: &ParsedSource) -> Vec<IndexF
         }
     }
     fields
+}
+
+fn validate_index_targets(
+    schema: &SchemaIndex,
+    targets: Vec<IndexTargetRef>,
+    diagnostics: &mut Vec<Finding>,
+) {
+    for target in targets {
+        let Some(table) = schema.tables.get(&target.table) else {
+            diagnostics.push(Finding::new(
+                target.table_span,
+                FindingCode::schema(1002),
+                Severity::Error,
+                format!(
+                    "index `{}` targets unknown table `{}` in {} statement",
+                    target.index, target.table, target.statement
+                ),
+            ));
+            continue;
+        };
+
+        if !table.indexes.contains_key(&target.index) {
+            diagnostics.push(Finding::new(
+                target.index_span,
+                FindingCode::schema(1005),
+                Severity::Error,
+                format!(
+                    "unknown index `{}` on table `{}` in {} statement",
+                    target.index, target.table, target.statement
+                ),
+            ));
+        }
+    }
+}
+
+fn extract_index_target_ref(node: Node<'_>, parsed: &ParsedSource) -> Option<IndexTargetRef> {
+    let statement = match node.kind() {
+        "RebuildStatement" => "REBUILD",
+        "RemoveStatement" => "REMOVE",
+        _ => return None,
+    };
+
+    let mut saw_statement = false;
+    let mut saw_index = false;
+    let mut index_node = None;
+    let mut table_node = None;
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        let text = node_text(child, parsed.text());
+        let upper = text.to_ascii_uppercase();
+
+        if child.kind() == "Keyword" {
+            if !saw_statement && upper == statement {
+                saw_statement = true;
+                continue;
+            }
+            if saw_statement && !saw_index && upper == "INDEX" {
+                saw_index = true;
+                continue;
+            }
+        }
+
+        if saw_statement && saw_index && index_node.is_none() && is_identifier_like(child) {
+            index_node = Some(child);
+            continue;
+        }
+
+        if saw_statement && saw_index && table_node.is_none() && child.kind() == "OnTableClause" {
+            table_node = first_identifier_descendant(child, parsed.text());
+        }
+    }
+
+    let index_node = index_node?;
+    let table_node = table_node?;
+    Some(IndexTargetRef {
+        statement: statement.to_string(),
+        index: node_text(index_node, parsed.text()).trim().to_string(),
+        table: node_text(table_node, parsed.text()).trim().to_string(),
+        index_span: node_span(index_node, parsed.source_id().clone()),
+        table_span: node_span(table_node, parsed.source_id().clone()),
+    })
 }
 
 fn validate_events(schema: &SchemaIndex, events: Vec<EventDef>, diagnostics: &mut Vec<Finding>) {

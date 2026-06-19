@@ -475,7 +475,7 @@ Acceptance:
 
 ### 8.4 REMOVE / ALTER / REBUILD / INFO / SHOW
 
-Complete static target validation for all grammar variants.
+Status: partially complete. `REBUILD INDEX ... ON TABLE ...` and `REMOVE INDEX ... ON TABLE ...` now validate the static table target and named index against schema-indexed `DEFINE INDEX` facts. Other REMOVE/ALTER/INFO/SHOW variants remain pending.
 
 Acceptance:
 
