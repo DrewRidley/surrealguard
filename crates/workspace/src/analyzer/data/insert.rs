@@ -14,22 +14,61 @@ pub fn analyze_insert(ctx: &mut AnalysisContext<'_>, stmt: &ast::InsertStmt) -> 
 }
 
 pub(crate) fn insert_response_kind(stmt: &ast::InsertStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
+    let row_table = mutation::source_table_name(stmt.target.as_ref())
+        .and_then(|name| ctx.schema().tables.get(&name));
     match &stmt.data {
         ast::InsertData::Values(values) => {
             for value in values {
                 crate::analyzer::expression::infer::infer_expression_fact(value, ctx);
+                if let Some(table) = row_table {
+                    match &value.node {
+                        // `INSERT INTO t [{...}, {...}]` — each element is a row.
+                        ast::Expr::Array(rows) => {
+                            for row in rows {
+                                mutation::check_payload_object_keys(ctx, table, row);
+                            }
+                        }
+                        _ => mutation::check_payload_object_keys(ctx, table, value),
+                    }
+                }
             }
         }
         ast::InsertData::Rows(rows) => {
             for row in rows {
-                for (_, value) in row {
+                for (column, value) in row {
                     crate::analyzer::expression::infer::infer_expression_fact(value, ctx);
+                    if let Some(table) = row_table {
+                        if let Some(segments) =
+                            crate::analyzer::expression::infer::plain_field_segments(&column.node)
+                        {
+                            crate::analyzer::data::check_field_path(
+                                ctx,
+                                table,
+                                &segments,
+                                column.span,
+                                1011,
+                            );
+                        }
+                    }
                 }
             }
         }
         ast::InsertData::Assignments(assignments) => {
-            for (_, value) in assignments {
+            for (target, value) in assignments {
                 crate::analyzer::expression::infer::infer_expression_fact(value, ctx);
+                if let Some(table) = row_table {
+                    if let Some(segments) =
+                        crate::analyzer::expression::infer::plain_field_segments(&target.node)
+                    {
+                        crate::analyzer::data::check_field_path(
+                            ctx,
+                            table,
+                            &segments,
+                            target.span,
+                            1004,
+                        );
+                    }
+                }
             }
         }
         ast::InsertData::Partial(_) => {}
@@ -38,6 +77,9 @@ pub(crate) fn insert_response_kind(stmt: &ast::InsertStmt, ctx: &mut AnalysisCon
         return Kind::Any;
     };
     let Some(table) = ctx.schema().tables.get(&table_name) else {
+        if let Some(target) = stmt.target.as_ref() {
+            crate::analyzer::data::check_table_reference(ctx, &table_name, target.span);
+        }
         return Kind::Any;
     };
 

@@ -77,7 +77,9 @@ pub fn lower_statement(node: Node<'_>, text: &str) -> Spanned<Statement> {
             table: table_after_keyword(node, text, "from"),
         }),
         "InfoForStatement" => Statement::Info(InfoStmt {
-            table: table_after_keyword(node, text, "table"),
+            // `INFO FOR TABLE x` and its `TB` short form.
+            table: table_after_keyword(node, text, "table")
+                .or_else(|| table_after_keyword(node, text, "tb")),
         }),
         "ShowStatement" => Statement::Show(ShowStmt {
             table: table_after_keyword(node, text, "table"),

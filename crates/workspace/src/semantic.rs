@@ -21,7 +21,7 @@ use crate::analysis::{ParamInference, SelectModifierAnalysis, StatementAnalysis}
 use crate::expression::PartialReason;
 use crate::expression::{infer_expression_fact, ExpressionFact, ExpressionValueClass};
 use crate::schema::{apply_schema_statement_effects, SchemaIndex};
-use crate::select_ir::{select_ir_from_statement, FieldPath, SelectModifier, SelectProjection};
+use crate::select_ir::{select_ir_from_statement, FieldPath, SelectModifier};
 use crate::statement_env::StatementEnv;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -102,12 +102,6 @@ pub fn analyze_sources_in_source_order(
                 analyzer_env = ctx.into_env();
             }
 
-            collect_table_reference_diagnostics(
-                statement,
-                parsed,
-                &output.schema,
-                &mut output.diagnostics,
-            );
             collect_select_graph_reference_diagnostics(
                 statement,
                 parsed,
@@ -194,28 +188,6 @@ fn collect_statement_nodes<'tree>(node: Node<'tree>, statements: &mut Vec<Node<'
     for child in node.children(&mut cursor) {
         collect_statement_nodes(child, statements);
     }
-}
-
-pub fn validate_table_references(
-    parsed_sources: &[ParsedSource],
-    schema: &SchemaIndex,
-) -> Vec<Finding> {
-    let mut diagnostics = Vec::new();
-
-    for parsed in parsed_sources {
-        if !parsed.syntax_diagnostics().is_empty() {
-            continue;
-        }
-
-        collect_table_reference_diagnostics(
-            parsed.tree().root_node(),
-            parsed,
-            schema,
-            &mut diagnostics,
-        );
-    }
-
-    diagnostics
 }
 
 pub fn validate_select_graph_references(
@@ -1064,85 +1036,6 @@ fn non_row_preserving_modifier(kind: &str, span: SourceSpan) -> SelectModifierAn
     }
 }
 
-fn collect_table_reference_diagnostics(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    schema: &SchemaIndex,
-    diagnostics: &mut Vec<Finding>,
-) {
-    if node.kind() == "SelectStatement" {
-        let ir = select_ir_from_statement(node, parsed.source_id(), parsed.text());
-        if let Some(source) = ir.source {
-            if let Some(table_name) = source.table {
-                if !schema.tables.contains_key(&table_name) {
-                    diagnostics.push(Finding::new(
-                        source.span,
-                        FindingCode::schema(1003),
-                        Severity::Error,
-                        format!("unknown table `{table_name}` in SELECT statement"),
-                    ));
-                }
-            }
-        }
-    } else {
-        let references = match node.kind() {
-            "CreateStatement" => leading_table_references(node, parsed.text(), "CREATE"),
-            "UpdateStatement" => leading_table_references(node, parsed.text(), "UPDATE"),
-            "DeleteStatement" => leading_table_references(node, parsed.text(), "DELETE"),
-            "UpsertStatement" => leading_table_references(node, parsed.text(), "UPSERT"),
-            "InsertStatement" => {
-                table_references_after_keyword(node, parsed.text(), "INTO", "INSERT")
-            }
-            "LiveSelectStatement" => {
-                table_references_after_keyword(node, parsed.text(), "FROM", "LIVE SELECT")
-            }
-            "AlterStatement" => {
-                table_references_after_keyword(node, parsed.text(), "TABLE", "ALTER")
-            }
-            // REMOVE mutates schema context and is validated by schema extraction
-            // at the statement position. Do not re-check it against the final
-            // schema snapshot here, or a valid remove would look unknown after
-            // it deletes the table.
-            "RemoveStatement" => Vec::new(),
-            "RebuildStatement" => {
-                table_references_after_keyword(node, parsed.text(), "TABLE", "REBUILD")
-            }
-            "ShowStatement" => table_references_after_keyword(node, parsed.text(), "TABLE", "SHOW"),
-            "InfoForStatement" => {
-                let mut references =
-                    table_references_after_keyword(node, parsed.text(), "TABLE", "INFO FOR");
-                references.extend(table_references_after_keyword(
-                    node,
-                    parsed.text(),
-                    "TB",
-                    "INFO FOR",
-                ));
-                references
-            }
-            _ => Vec::new(),
-        };
-
-        for table_ref in references {
-            if !schema.tables.contains_key(table_ref.name) {
-                diagnostics.push(Finding::new(
-                    node_span(table_ref.node, parsed.source_id().clone()),
-                    FindingCode::schema(1003),
-                    Severity::Error,
-                    format!(
-                        "unknown table `{}` in {} statement",
-                        table_ref.name, table_ref.statement
-                    ),
-                ));
-            }
-        }
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_table_reference_diagnostics(child, parsed, schema, diagnostics);
-    }
-}
-
 fn collect_select_graph_reference_diagnostics(
     node: Node<'_>,
     parsed: &ParsedSource,
@@ -1755,71 +1648,16 @@ fn collect_select_projection_field_diagnostics(
     schema: &SchemaIndex,
     diagnostics: &mut Vec<Finding>,
 ) {
+    // Field references now emit from the SELECT analyzer; the graph-local
+    // WHERE check remains here until the graph family lands.
     if node.kind() == "SelectStatement" {
-        validate_select_projection_fields_for_statement(node, parsed, schema, diagnostics);
+        validate_graph_local_where_fields_for_select_statement(node, parsed, schema, diagnostics);
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         collect_select_projection_field_diagnostics(child, parsed, schema, diagnostics);
     }
-}
-
-fn validate_select_projection_fields_for_statement(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    schema: &SchemaIndex,
-    diagnostics: &mut Vec<Finding>,
-) {
-    let ir = select_ir_from_statement(node, parsed.source_id(), parsed.text());
-    validate_graph_local_where_fields_for_select_statement(node, parsed, schema, diagnostics);
-
-    let Some(source) = ir.source else {
-        return;
-    };
-    let Some(table_name) = source.table else {
-        return;
-    };
-    let Some(table) = schema.tables.get(&table_name) else {
-        return;
-    };
-    if table.fields.is_empty() {
-        return;
-    }
-
-    for projection in ir.projections {
-        let SelectProjection::Field { path, .. } = projection else {
-            continue;
-        };
-        if crate::analyzer::data::select::is_graph_projection_path(&path) {
-            continue;
-        }
-        validate_field_path_on_table(path, table, diagnostics);
-    }
-
-    for path in ir.omit {
-        validate_field_path_on_table(path, table, diagnostics);
-    }
-
-    for path in ir.fetch {
-        validate_field_path_on_table(path, table, diagnostics);
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if is_select_row_context_modifier_clause(child) {
-            for path in row_context_field_paths_from_clause(child, parsed) {
-                validate_field_path_on_table(path, table, diagnostics);
-            }
-        }
-    }
-}
-
-fn is_select_row_context_modifier_clause(node: Node<'_>) -> bool {
-    matches!(
-        node.kind(),
-        "WhereClause" | "OrderClause" | "GroupClause" | "SplitClause"
-    )
 }
 
 fn row_context_field_paths_from_clause(clause: Node<'_>, parsed: &ParsedSource) -> Vec<FieldPath> {
@@ -1893,110 +1731,9 @@ fn validate_mutation_fields_for_statement(
         return;
     }
 
-    validate_assignment_fields_on_table(node, parsed, table, diagnostics);
-    validate_object_fields_on_table(node, parsed, table, diagnostics);
-    validate_insert_column_fields_on_table(node, parsed, table, diagnostics);
-    validate_where_descendants_on_table(node, parsed, table, diagnostics);
-    validate_mutation_return_fields_on_table(node, parsed, table, diagnostics);
+    // Field-reference checks now emit from the mutation analyzers; value
+    // assignability remains here until its 2xxx codes land.
     validate_mutation_value_assignability(node, parsed, table, let_variables, diagnostics);
-}
-
-fn validate_mutation_return_fields_on_table(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    diagnostics: &mut Vec<Finding>,
-) {
-    // Only field-list returns have projections to validate; the mode comes
-    // from the structural lowering (never substring classification).
-    let lowered = surrealguard_syntax::lower::lower_statement(node, parsed.text());
-    let ret = match &lowered.node {
-        surrealguard_syntax::ast::Statement::Create(s) => s.ret.clone(),
-        surrealguard_syntax::ast::Statement::Update(s) => s.ret.clone(),
-        surrealguard_syntax::ast::Statement::Upsert(s) => s.ret.clone(),
-        surrealguard_syntax::ast::Statement::Delete(s) => s.ret.clone(),
-        surrealguard_syntax::ast::Statement::Insert(s) => s.ret.clone(),
-        surrealguard_syntax::ast::Statement::Relate(s) => s.ret.clone(),
-        _ => None,
-    };
-    if !matches!(
-        ret.map(|r| r.node),
-        Some(surrealguard_syntax::ast::ReturnMode::Fields(_))
-    ) {
-        return;
-    }
-    let Some(return_clause) = find_descendant_kind(node, "ReturnClause") else {
-        return;
-    };
-    validate_mutation_return_field_nodes(return_clause, parsed, table, diagnostics);
-}
-
-fn validate_mutation_return_field_nodes(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    diagnostics: &mut Vec<Finding>,
-) {
-    if node.kind() == "Predicate" {
-        validate_mutation_return_predicate_fields(node, parsed, table, diagnostics);
-        return;
-    }
-
-    if is_row_context_field_path_node(node) {
-        validate_field_path_on_table(field_path_from_node(node, parsed), table, diagnostics);
-        return;
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.is_named() && child.kind() != "Keyword" {
-            validate_mutation_return_field_nodes(child, parsed, table, diagnostics);
-        }
-    }
-}
-
-fn validate_mutation_return_predicate_fields(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    diagnostics: &mut Vec<Finding>,
-) {
-    let mut cursor = node.walk();
-    let children: Vec<_> = node
-        .children(&mut cursor)
-        .filter(|child| child.is_named())
-        .collect();
-    let end = children
-        .iter()
-        .position(|child| {
-            child.kind() == "Keyword" && node_text(*child, parsed.text()).eq_ignore_ascii_case("AS")
-        })
-        .unwrap_or(children.len());
-
-    for child in &children[..end] {
-        if child.kind() != "Keyword" {
-            validate_mutation_return_field_nodes(*child, parsed, table, diagnostics);
-        }
-    }
-}
-
-fn validate_assignment_fields_on_table(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    diagnostics: &mut Vec<Finding>,
-) {
-    if node.kind() == "FieldAssignment" {
-        if let Some(path) = assignment_field_path(node, parsed) {
-            validate_field_path_on_table(path, table, diagnostics);
-        }
-        return;
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        validate_assignment_fields_on_table(child, parsed, table, diagnostics);
-    }
 }
 
 fn assignment_field_path(assignment: Node<'_>, parsed: &ParsedSource) -> Option<FieldPath> {
@@ -2006,88 +1743,6 @@ fn assignment_field_path(assignment: Node<'_>, parsed: &ParsedSource) -> Option<
         .find(|child| is_row_context_field_path_node(*child))
         .map(|child| field_path_from_node(child, parsed));
     path
-}
-
-fn validate_object_fields_on_table(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    diagnostics: &mut Vec<Finding>,
-) {
-    match node.kind() {
-        "ContentClause" | "MergeClause" | "ReplaceClause" | "BulkInsert" => {
-            validate_object_descendants_on_table(node, parsed, table, diagnostics);
-            return;
-        }
-        "InsertStatement" => {
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                if child.kind() == "Object" || child.kind() == "BulkInsert" {
-                    validate_object_descendants_on_table(child, parsed, table, diagnostics);
-                }
-            }
-        }
-        _ => {}
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        validate_object_fields_on_table(child, parsed, table, diagnostics);
-    }
-}
-
-fn validate_object_descendants_on_table(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    diagnostics: &mut Vec<Finding>,
-) {
-    if node.kind() == "Object" {
-        validate_object_properties_on_table(node, parsed, table, Vec::new(), diagnostics);
-        return;
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        validate_object_descendants_on_table(child, parsed, table, diagnostics);
-    }
-}
-
-fn validate_object_properties_on_table(
-    object: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    prefix: Vec<String>,
-    diagnostics: &mut Vec<Finding>,
-) {
-    if object.kind() == "ObjectProperty" {
-        let Some(key) = object_property_key(object, parsed) else {
-            return;
-        };
-        let segments: Vec<_> = prefix
-            .iter()
-            .cloned()
-            .chain(std::iter::once(key.name.clone()))
-            .collect();
-        let path = FieldPath {
-            text: segments.join("."),
-            segments: segments.clone(),
-            span: key.span,
-        };
-        validate_field_path_on_table(path, table, diagnostics);
-
-        if let Some(value_object) = object_property_value_object(object) {
-            validate_object_properties_on_table(value_object, parsed, table, segments, diagnostics);
-        }
-        return;
-    }
-
-    let mut cursor = object.walk();
-    for child in object.children(&mut cursor) {
-        if child.kind() != "Object" {
-            validate_object_properties_on_table(child, parsed, table, prefix.clone(), diagnostics);
-        }
-    }
 }
 
 struct ObjectKey {
@@ -2112,31 +1767,6 @@ fn object_property_value_object(property: Node<'_>) -> Option<Node<'_>> {
         .children(&mut cursor)
         .find(|child| child.kind() == "Object");
     object
-}
-
-fn validate_insert_column_fields_on_table(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    diagnostics: &mut Vec<Finding>,
-) {
-    if node.kind() != "InsertStatement" {
-        return;
-    }
-    let Some(table_reference) =
-        table_references_after_keyword(node, parsed.text(), "INTO", "INSERT")
-            .into_iter()
-            .next()
-    else {
-        return;
-    };
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "Ident" && child.start_byte() > table_reference.node.end_byte() {
-            validate_field_path_on_table(field_path_from_node(child, parsed), table, diagnostics);
-        }
-    }
 }
 
 fn validate_mutation_value_assignability(
@@ -2313,10 +1943,9 @@ fn validate_insert_tuple_value_assignability(
     if node.kind() != "InsertStatement" {
         return;
     }
-    let Some(table_reference) =
-        table_references_after_keyword(node, parsed.text(), "INTO", "INSERT")
-            .into_iter()
-            .next()
+    let Some(table_reference) = table_references_after_keyword(node, parsed.text(), "INTO")
+        .into_iter()
+        .next()
     else {
         return;
     };
@@ -2555,6 +2184,8 @@ fn validate_graph_local_where_fields_in_path(
     }
 }
 
+// Used by the graph-local WHERE check below; retires with the graph
+// family (3xxx).
 fn validate_where_descendants_on_table(
     node: Node<'_>,
     parsed: &ParsedSource,
@@ -3230,7 +2861,6 @@ fn field_path_exists_on_table(table: &crate::schema::TableDef, path: &FieldPath)
 pub(crate) struct TableReference<'tree> {
     pub(crate) name: &'tree str,
     node: Node<'tree>,
-    statement: &'static str,
 }
 
 pub(crate) fn leading_table_references<'tree>(
@@ -3260,7 +2890,6 @@ pub(crate) fn leading_table_references<'tree>(
             references.push(TableReference {
                 name: table_name_from_node_text(text),
                 node: child,
-                statement,
             });
             continue;
         }
@@ -3277,13 +2906,11 @@ pub(crate) fn table_references_after_keyword<'tree>(
     node: Node<'tree>,
     source: &'tree str,
     keyword: &str,
-    statement: &'static str,
 ) -> Vec<TableReference<'tree>> {
     fn visit<'tree>(
         node: Node<'tree>,
         source: &'tree str,
         keyword: &str,
-        statement: &'static str,
         saw_keyword: &mut bool,
         references: &mut Vec<TableReference<'tree>>,
     ) {
@@ -3294,7 +2921,6 @@ pub(crate) fn table_references_after_keyword<'tree>(
             references.push(TableReference {
                 name: table_name_from_node_text(text),
                 node,
-                statement,
             });
             *saw_keyword = false;
         } else if *saw_keyword && (!node.is_named() || is_data_or_modifier_clause(node)) {
@@ -3303,20 +2929,13 @@ pub(crate) fn table_references_after_keyword<'tree>(
 
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            visit(child, source, keyword, statement, saw_keyword, references);
+            visit(child, source, keyword, saw_keyword, references);
         }
     }
 
     let mut saw_keyword = false;
     let mut references = Vec::new();
-    visit(
-        node,
-        source,
-        keyword,
-        statement,
-        &mut saw_keyword,
-        &mut references,
-    );
+    visit(node, source, keyword, &mut saw_keyword, &mut references);
     references
 }
 

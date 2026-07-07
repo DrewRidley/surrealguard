@@ -35,25 +35,91 @@ pub(crate) fn analyze_expression_positions(
     ctx.with_row_table(row_table, |ctx| {
         if let Some(cond) = where_clause {
             infer_expression_fact(cond, ctx);
+            if let Some(table) = row_table {
+                crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1003);
+            }
         }
         match data {
             Some(ast::DataClause::Set(assignments)) => {
                 for assignment in assignments {
                     infer_expression_fact(&assignment.value, ctx);
+                    if let Some(table) = row_table {
+                        check_assignment_target(ctx, table, &assignment.target);
+                    }
+                }
+            }
+            Some(ast::DataClause::Unset(idioms)) => {
+                if let Some(table) = row_table {
+                    for idiom in idioms {
+                        if let Some(segments) = plain_field_segments(&idiom.node) {
+                            crate::analyzer::data::check_field_path(
+                                ctx, table, &segments, idiom.span, 1004,
+                            );
+                        }
+                    }
                 }
             }
             Some(
                 ast::DataClause::Content(expr)
                 | ast::DataClause::Merge(expr)
-                | ast::DataClause::Patch(expr)
-                | ast::DataClause::Replace(expr)
-                | ast::DataClause::Single(expr),
+                | ast::DataClause::Replace(expr),
             ) => {
                 infer_expression_fact(expr, ctx);
+                if let Some(table) = row_table {
+                    check_payload_object_keys(ctx, table, expr);
+                }
             }
-            Some(ast::DataClause::Unset(_) | ast::DataClause::Partial(_)) | None => {}
+            Some(ast::DataClause::Patch(expr) | ast::DataClause::Single(expr)) => {
+                infer_expression_fact(expr, ctx);
+            }
+            Some(ast::DataClause::Partial(_)) | None => {}
         }
     });
+}
+
+/// `SET target = ...`: the target must be a declared field path (1004).
+fn check_assignment_target(
+    ctx: &mut AnalysisContext<'_>,
+    table: &TableDef,
+    target: &ast::Spanned<ast::Idiom>,
+) {
+    if let Some(segments) = plain_field_segments(&target.node) {
+        crate::analyzer::data::check_field_path(ctx, table, &segments, target.span, 1004);
+    }
+}
+
+/// `CONTENT`/`MERGE`/`REPLACE` object literals (and INSERT object
+/// payloads): each key path must be a declared field (1005). Nested
+/// objects check their dotted paths.
+pub(crate) fn check_payload_object_keys(
+    ctx: &mut AnalysisContext<'_>,
+    table: &TableDef,
+    expr: &ast::Spanned<ast::Expr>,
+) {
+    fn walk(
+        ctx: &mut AnalysisContext<'_>,
+        table: &TableDef,
+        expr: &ast::Spanned<ast::Expr>,
+        prefix: &[String],
+    ) {
+        let ast::Expr::Object(fields) = &expr.node else {
+            return;
+        };
+        for (key, value) in fields {
+            if key.node == "id" {
+                continue;
+            }
+            let mut segments = prefix.to_vec();
+            segments.push(key.node.clone());
+            if crate::analyzer::data::select::kind_for_path(table, &segments).is_some() {
+                // The path resolves; descend for nested keys under it.
+                walk(ctx, table, value, &segments);
+            } else {
+                crate::analyzer::data::check_field_path(ctx, table, &segments, key.span, 1005);
+            }
+        }
+    }
+    walk(ctx, table, expr, &[]);
 }
 
 /// Builds the response type for a mutation once its target `table` is
@@ -144,6 +210,9 @@ fn fields_row_kind(
                                 ),
                             },
                             None => {
+                                crate::analyzer::data::check_field_path(
+                                    ctx, table, &segments, expr.span, 1006,
+                                );
                                 fields.insert(
                                     alias_name.unwrap_or_else(|| segments.join(".")),
                                     Kind::Any,
@@ -204,11 +273,9 @@ pub(crate) fn mutation_table_name(node: Node<'_>, text: &str) -> Option<String> 
         "UpsertStatement" => crate::semantic::leading_table_references(node, text, "UPSERT")
             .first()
             .map(|reference| reference.name.to_string()),
-        "InsertStatement" => {
-            crate::semantic::table_references_after_keyword(node, text, "INTO", "INSERT")
-                .first()
-                .map(|reference| reference.name.to_string())
-        }
+        "InsertStatement" => crate::semantic::table_references_after_keyword(node, text, "INTO")
+            .first()
+            .map(|reference| reference.name.to_string()),
         "RelateStatement" => relate_edge_table_name(node, text),
         _ => None,
     }

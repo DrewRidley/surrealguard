@@ -731,13 +731,10 @@ INSERT INTO person { name: 'Ada' };
         let unknown_tables: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1003))
+            .filter(|finding| finding.code() == FindingCode::schema(1001))
             .collect();
         assert_eq!(unknown_tables.len(), 1);
-        assert_eq!(
-            unknown_tables[0].message(),
-            "unknown table `company` in SELECT statement"
-        );
+        assert_eq!(unknown_tables[0].message(), "unknown table `company`");
         assert_eq!(unknown_tables[0].span().source(), &query);
         assert_eq!(unknown_tables[0].span().range().start(), 35);
         assert_eq!(unknown_tables[0].span().range().end(), 42);
@@ -772,11 +769,11 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1003))
+            .filter(|finding| finding.code() == FindingCode::schema(1001))
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(messages, vec!["unknown table `person` in UPDATE statement"]);
+        assert_eq!(messages, vec!["unknown table `person`"]);
         assert!(output.schema.table("person").is_none());
     }
 
@@ -792,14 +789,11 @@ INSERT INTO person { name: 'Ada' };
         let unknown_tables: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1003))
+            .filter(|finding| finding.code() == FindingCode::schema(1001))
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(
-            unknown_tables,
-            vec!["unknown table `person` in UPDATE statement"]
-        );
+        assert_eq!(unknown_tables, vec!["unknown table `person`"]);
         assert!(output.schema.table("person").is_some());
     }
 
@@ -872,15 +866,15 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1003))
+            .filter(|finding| finding.code() == FindingCode::schema(1001))
             .map(|finding| finding.message().to_string())
             .collect();
         assert_eq!(
             messages,
             vec![
-                "unknown table `ghost` in CREATE statement",
-                "unknown table `phantom` in UPDATE statement",
-                "unknown table `missing` in DELETE statement",
+                "unknown table `ghost`",
+                "unknown table `phantom`",
+                "unknown table `missing`",
             ]
         );
     }
@@ -897,21 +891,21 @@ INSERT INTO person { name: 'Ada' };
         let unknown_tables: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|diagnostic| diagnostic.code() == FindingCode::schema(1003))
+            .filter(|diagnostic| diagnostic.code() == FindingCode::schema(1001))
             .map(|diagnostic| diagnostic.message().to_string())
             .collect();
 
         assert_eq!(
             unknown_tables,
             vec![
-                "unknown table `ghost` in UPSERT statement",
-                "unknown table `phantom` in INSERT statement",
-                "unknown table `missing` in LIVE SELECT statement",
-                "unknown table `shadow` in ALTER statement",
-                "unknown table `absent` in REBUILD statement",
-                "unknown table `vanished` in SHOW statement",
-                "unknown table `hidden` in INFO FOR statement",
-                "unknown table `obscured` in INFO FOR statement",
+                "unknown table `ghost`",
+                "unknown table `phantom`",
+                "unknown table `missing`",
+                "unknown table `shadow`",
+                "unknown table `absent`",
+                "unknown table `vanished`",
+                "unknown table `hidden`",
+                "unknown table `obscured`",
             ]
         );
     }
@@ -1575,7 +1569,7 @@ INSERT INTO person { name: 'Ada' };
         let unknown_fields: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .filter(|finding| finding.code() == FindingCode::schema(1002))
             .collect();
 
         assert_eq!(unknown_fields.len(), 2);
@@ -1607,7 +1601,7 @@ INSERT INTO person { name: 'Ada' };
         let unknown_fields: Vec<_> = output.sources[&source]
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .filter(|finding| finding.code() == FindingCode::schema(1010))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -1629,9 +1623,11 @@ INSERT INTO person { name: 'Ada' };
         let unknown_fields: Vec<_> = output.sources[&source]
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1009) || code == FindingCode::schema(1010)))
             .map(|finding| finding.message().to_string())
             .collect();
+        let mut unknown_fields = unknown_fields;
+        unknown_fields.sort();
 
         assert_eq!(
             unknown_fields,
@@ -1654,7 +1650,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .filter(|finding| finding.code() == FindingCode::schema(1003))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -1699,7 +1695,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .filter(|finding| matches!(finding.code().number(), 1002..=1011))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -1846,7 +1842,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .filter(|finding| finding.code() == FindingCode::schema(1003))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -1899,7 +1895,7 @@ INSERT INTO person { name: 'Ada' };
         let unknown_fields: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .filter(|finding| finding.code() == FindingCode::schema(1002))
             .collect();
 
         assert_eq!(unknown_fields.len(), 1);
@@ -2345,7 +2341,7 @@ INSERT INTO person { name: 'Ada' };
         let unknown_fields: Vec<_> = output.sources[&source]
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .filter(|finding| finding.code() == FindingCode::schema(1006))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -2371,7 +2367,7 @@ INSERT INTO person { name: 'Ada' };
         let unknown_fields: Vec<_> = output.sources[&source]
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .filter(|finding| finding.code() == FindingCode::schema(1006))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -2421,7 +2417,7 @@ INSERT INTO person { name: 'Ada' };
         let unknown_fields: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1007) || code == FindingCode::schema(1008)))
             .map(|finding| finding.message().to_string())
             .collect();
 

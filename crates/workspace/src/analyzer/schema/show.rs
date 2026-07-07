@@ -7,6 +7,8 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 
 pub fn analyze_show(ctx: &mut AnalysisContext<'_>, stmt: &ast::ShowStmt) -> Kind {
-    let _ = (ctx, stmt);
+    if let Some(table) = &stmt.table {
+        crate::analyzer::data::check_table_reference(ctx, &table.node, table.span);
+    }
     Kind::Array(Box::new(Kind::Object), None)
 }

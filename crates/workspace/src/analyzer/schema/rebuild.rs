@@ -6,6 +6,8 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 
 pub fn analyze_rebuild(ctx: &mut AnalysisContext<'_>, stmt: &ast::RebuildStmt) -> Kind {
-    let _ = (ctx, stmt);
+    if let Some(table) = &stmt.table {
+        crate::analyzer::data::check_table_reference(ctx, &table.node, table.span);
+    }
     Kind::None
 }

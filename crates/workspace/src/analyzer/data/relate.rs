@@ -15,12 +15,15 @@ pub fn analyze_relate(ctx: &mut AnalysisContext<'_>, stmt: &ast::RelateStmt) -> 
 }
 
 pub(crate) fn relate_response_kind(stmt: &ast::RelateStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
-    let table_hint = mutation::source_table_name(None);
+    let table_hint = mutation::source_table_name(stmt.edge.as_ref());
     mutation::analyze_expression_positions(ctx, stmt.data.as_ref(), None, table_hint.as_deref());
     let Some(table_name) = mutation::source_table_name(stmt.edge.as_ref()) else {
         return Kind::Any;
     };
     let Some(table) = ctx.schema().tables.get(&table_name) else {
+        if let Some(edge) = &stmt.edge {
+            crate::analyzer::data::check_table_reference(ctx, &table_name, edge.span);
+        }
         return Kind::Any;
     };
 

@@ -19,7 +19,7 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::expression::infer::{infer_expression_fact, plain_field_segments};
 use crate::schema::{SchemaIndex, TableDef};
-use crate::select_ir::{FieldPath, GraphDirection, GraphLookup, SelectIr};
+use crate::select_ir::{GraphDirection, GraphLookup, SelectIr};
 
 pub fn analyze_select(ctx: &mut AnalysisContext<'_>, stmt: &ast::SelectStmt) -> Kind {
     select_response_kind(stmt, ctx)
@@ -70,6 +70,7 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
         _ => return walk_projections_for_findings(stmt, ctx),
     };
     let Some(table) = ctx.schema().tables.get(&table_name) else {
+        crate::analyzer::data::check_table_reference(ctx, &table_name, from.span);
         return walk_projections_for_findings(stmt, ctx);
     };
     if table.fields.is_empty() && !stmt.projections.iter().any(is_graph_projection) {
@@ -80,6 +81,47 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
         // The WHERE kind is irrelevant to the response; the walk emits
         // findings inside the condition, with row fields resolvable.
         ctx.with_row_table(Some(table), |ctx| infer_expression_fact(cond, ctx));
+        crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1003);
+    }
+
+    // Row-context clauses reference fields by name; each position has its
+    // own code so hosts can configure them independently.
+    for idiom in &stmt.omit {
+        if let Some(segments) = plain_field_segments(&idiom.node) {
+            crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1007);
+        }
+    }
+    for idiom in &stmt.fetch {
+        // FETCH also accepts projection aliases; only bare field names are
+        // checkable here.
+        let named_alias = stmt.projections.iter().any(|projection| {
+            matches!(projection, ast::Projection::Expr { alias: Some(alias), .. }
+                if idiom.node.parts.len() == 1
+                    && matches!(&idiom.node.parts[0].node, ast::IdiomPart::Field(name) if *name == alias.node))
+        });
+        if named_alias {
+            continue;
+        }
+        if let Some(segments) = plain_field_segments(&idiom.node) {
+            crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1008);
+        }
+    }
+    for idiom in &stmt.split {
+        if let Some(segments) = plain_field_segments(&idiom.node) {
+            crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1009);
+        }
+    }
+    if let Some(group) = &stmt.group {
+        for idiom in &group.keys {
+            if let Some(segments) = plain_field_segments(&idiom.node) {
+                crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1010);
+            }
+        }
+    }
+    if let Some(order) = &stmt.order {
+        for key in &order.keys {
+            crate::analyzer::data::check_expression_field_paths(ctx, table, &key.expr, 1010);
+        }
     }
 
     let row_kind = if stmt
@@ -360,7 +402,8 @@ fn project_expr(
                 }
                 return;
             }
-            // Known-plain path that doesn't resolve: poison entry.
+            // Known-plain path that doesn't resolve: poison entry + finding.
+            crate::analyzer::data::check_field_path(ctx, table, &segments, expr.span, 1002);
             fields.insert(alias_name.unwrap_or_else(|| segments.join(".")), Kind::Any);
             return;
         }
@@ -395,6 +438,10 @@ fn computed_kind(
 // ---------------------------------------------------------------------------
 // Graph projections
 // ---------------------------------------------------------------------------
+
+pub(crate) fn is_graph_projection_idiom(idiom: &ast::Idiom) -> bool {
+    starts_with_graph(idiom)
+}
 
 fn starts_with_graph(idiom: &ast::Idiom) -> bool {
     matches!(
@@ -850,10 +897,6 @@ pub(crate) fn resolve_graph_step_target_table(
         GraphDirection::Both => ast::GraphDir::Both,
     };
     relation_step_target(source_table, dir, edge, target, schema)
-}
-
-pub(crate) fn is_graph_projection_path(path: &FieldPath) -> bool {
-    path.text.starts_with("->") || path.text.starts_with("<-") || path.text.starts_with("<->")
 }
 
 #[cfg(test)]

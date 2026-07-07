@@ -25,6 +25,9 @@ pub(crate) fn upsert_response_kind(stmt: &ast::UpsertStmt, ctx: &mut AnalysisCon
         return Kind::Any;
     };
     let Some(table) = ctx.schema().tables.get(&table_name) else {
+        if let Some(target) = stmt.targets.first() {
+            crate::analyzer::data::check_table_reference(ctx, &table_name, target.span);
+        }
         return Kind::Any;
     };
 
