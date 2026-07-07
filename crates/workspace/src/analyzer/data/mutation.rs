@@ -35,6 +35,7 @@ pub(crate) fn analyze_expression_positions(
     ctx.with_row_table(row_table, |ctx| {
         if let Some(cond) = where_clause {
             infer_expression_fact(cond, ctx);
+            crate::analyzer::expression::check::check_value_expression(ctx, cond);
             if let Some(table) = row_table {
                 crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1003);
             }
@@ -43,8 +44,13 @@ pub(crate) fn analyze_expression_positions(
             Some(ast::DataClause::Set(assignments)) => {
                 for assignment in assignments {
                     infer_expression_fact(&assignment.value, ctx);
+                    crate::analyzer::expression::check::check_value_expression(
+                        ctx,
+                        &assignment.value,
+                    );
                     if let Some(table) = row_table {
                         check_assignment_target(ctx, table, &assignment.target);
+                        check_assignment_value(ctx, table, assignment);
                     }
                 }
             }
@@ -75,6 +81,49 @@ pub(crate) fn analyze_expression_positions(
             Some(ast::DataClause::Partial(_)) | None => {}
         }
     });
+}
+
+/// `SET target = value`: a plainly-assigned value must be assignable to
+/// the field's declared kind — 2001, or 2016 when the value is NONE and
+/// the field isn't optional. Compound operators (`+=`) have their own
+/// operator-aware rules (2029) and are not checked here.
+fn check_assignment_value(
+    ctx: &mut AnalysisContext<'_>,
+    table: &TableDef,
+    assignment: &ast::Assignment,
+) {
+    if !matches!(assignment.op.node, ast::AssignOp::Assign) {
+        return;
+    }
+    let Some(segments) = plain_field_segments(&assignment.target.node) else {
+        return;
+    };
+    let Some(field_kind) = crate::analyzer::data::select::kind_for_path(table, &segments) else {
+        return;
+    };
+    let Some(value_kind) = infer_expression_fact(&assignment.value, ctx).kind else {
+        return;
+    };
+    if value_kind == Kind::Any || crate::semantic::kind_is_assignable_to(&value_kind, &field_kind) {
+        return;
+    }
+    let span =
+        surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), assignment.value.span);
+    let field = segments.join(".");
+    let finding = if matches!(value_kind, Kind::None | Kind::Null) {
+        surrealguard_diagnostics::catalog::finding(
+            span,
+            2016,
+            format!("cannot assign NONE to non-optional field `{field}` (`{field_kind}`)"),
+        )
+    } else {
+        surrealguard_diagnostics::catalog::finding(
+            span,
+            2001,
+            format!("field `{field}` expects `{field_kind}`, found `{value_kind}`"),
+        )
+    };
+    ctx.emit(finding);
 }
 
 /// `SET target = ...`: the target must be a declared field path (1004).
@@ -111,11 +160,32 @@ pub(crate) fn check_payload_object_keys(
             }
             let mut segments = prefix.to_vec();
             segments.push(key.node.clone());
-            if crate::analyzer::data::select::kind_for_path(table, &segments).is_some() {
+            let Some(field_kind) = crate::analyzer::data::select::kind_for_path(table, &segments)
+            else {
+                crate::analyzer::data::check_field_path(ctx, table, &segments, key.span, 1005);
+                continue;
+            };
+            if matches!(value.node, surrealguard_syntax::ast::Expr::Object(_)) {
                 // The path resolves; descend for nested keys under it.
                 walk(ctx, table, value, &segments);
-            } else {
-                crate::analyzer::data::check_field_path(ctx, table, &segments, key.span, 1005);
+                continue;
+            }
+            let Some(value_kind) = infer_expression_fact(value, ctx).kind else {
+                continue;
+            };
+            if value_kind != Kind::Any
+                && !crate::semantic::kind_is_assignable_to(&value_kind, &field_kind)
+            {
+                let span =
+                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), value.span);
+                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                    span,
+                    2002,
+                    format!(
+                        "field `{}` expects `{field_kind}`, found `{value_kind}`",
+                        segments.join(".")
+                    ),
+                ));
             }
         }
     }

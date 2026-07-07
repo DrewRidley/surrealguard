@@ -487,15 +487,17 @@ fn lower_insert(node: Node<'_>, text: &str) -> InsertStmt {
     } else if saw_values && !columns.is_empty() {
         // The grammar flattens `(a, b) VALUES (1, 2), (3, 4)` — rows are
         // rebuilt by chunking on the column count, pairing each value with
-        // its column so misalignment is impossible.
+        // its column so misalignment is impossible. A total that doesn't
+        // divide evenly is recorded for the arity finding; the partial
+        // trailing chunk is dropped.
+        let misaligned = (!values.len().is_multiple_of(columns.len()))
+            .then(|| Spanned::new((values.len(), columns.len()), node_range(node)));
         let rows = values
             .chunks(columns.len())
             .filter(|chunk| chunk.len() == columns.len())
             .map(|chunk| columns.iter().cloned().zip(chunk.iter().cloned()).collect())
             .collect();
-        // Incomplete trailing chunks (a short VALUES row) are dropped; the
-        // mismatch is a validation concern, not a type one.
-        InsertData::Rows(rows)
+        InsertData::Rows { rows, misaligned }
     } else {
         InsertData::Values(values)
     };
@@ -1494,7 +1496,7 @@ mod tests {
             stmt.target.as_ref().map(|t| &t.node),
             Some(Expr::Table(t)) if t.node == "person"
         ));
-        let InsertData::Rows(rows) = &stmt.data else {
+        let InsertData::Rows { rows, .. } = &stmt.data else {
             panic!("expected rows, got {:?}", stmt.data);
         };
         assert_eq!(rows.len(), 2);

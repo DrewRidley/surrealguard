@@ -72,8 +72,6 @@ pub fn analyze_sources_in_source_order(
         let mut statements = Vec::new();
         collect_statement_nodes(parsed.tree().root_node(), &mut statements);
 
-        let mut mutation_env = StatementEnv::default();
-        let mut expression_env = StatementEnv::default();
         let mut select_param_env = StatementEnv::default();
         let mut mutation_param_env = StatementEnv::default();
         let mut select_shape_env = StatementEnv::default();
@@ -112,20 +110,6 @@ pub fn analyze_sources_in_source_order(
                 statement,
                 parsed,
                 &output.schema,
-                &mut output.diagnostics,
-            );
-            collect_mutation_field_diagnostics_with_env(
-                statement,
-                parsed,
-                &output.schema,
-                &mut mutation_env,
-                &mut output.diagnostics,
-            );
-            collect_expression_diagnostics_with_env(
-                statement,
-                parsed,
-                &output.schema,
-                &mut expression_env,
                 &mut output.diagnostics,
             );
             collect_select_param_kind_inferences_with_env(
@@ -227,50 +211,6 @@ pub fn validate_select_projection_fields(
             parsed.tree().root_node(),
             parsed,
             schema,
-            &mut diagnostics,
-        );
-    }
-
-    diagnostics
-}
-
-pub fn validate_mutation_fields(
-    parsed_sources: &[ParsedSource],
-    schema: &SchemaIndex,
-) -> Vec<Finding> {
-    let mut diagnostics = Vec::new();
-
-    for parsed in parsed_sources {
-        if !parsed.syntax_diagnostics().is_empty() {
-            continue;
-        }
-
-        let mut env = StatementEnv::default();
-        collect_mutation_field_diagnostics_with_env(
-            parsed.tree().root_node(),
-            parsed,
-            schema,
-            &mut env,
-            &mut diagnostics,
-        );
-    }
-
-    diagnostics
-}
-
-pub fn validate_if_conditions(parsed_sources: &[ParsedSource]) -> Vec<Finding> {
-    let mut diagnostics = Vec::new();
-
-    for parsed in parsed_sources {
-        if !parsed.syntax_diagnostics().is_empty() {
-            continue;
-        }
-
-        let mut env = StatementEnv::default();
-        collect_if_condition_diagnostics_with_env(
-            parsed.tree().root_node(),
-            parsed,
-            &mut env,
             &mut diagnostics,
         );
     }
@@ -1223,159 +1163,6 @@ fn relate_graph_reference(node: Node<'_>, parsed: &ParsedSource) -> Option<Relat
     })
 }
 
-fn collect_expression_diagnostics_with_env(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    schema: &SchemaIndex,
-    env: &mut StatementEnv,
-    diagnostics: &mut Vec<Finding>,
-) {
-    match node.kind() {
-        "LetStatement" => {
-            let let_variables = let_variable_facts_from_env(env);
-            if let Some(value_node) = let_value_node(node) {
-                validate_expression_diagnostics_in_node(
-                    value_node,
-                    parsed,
-                    None,
-                    &let_variables,
-                    diagnostics,
-                );
-            }
-            define_let_from_statement(node, parsed, env);
-            return;
-        }
-        "Block" => {
-            let mut child_env = env.fork_child_scope();
-            collect_expression_diagnostic_children_with_env(
-                node,
-                parsed,
-                schema,
-                &mut child_env,
-                diagnostics,
-            );
-            return;
-        }
-        "SelectStatement" => {
-            let ir = select_ir_from_statement(node, parsed.source_id(), parsed.text());
-            let table = crate::analyzer::data::select::resolved_select_table_name(&ir, schema)
-                .and_then(|name| schema.tables.get(&name));
-            let let_variables = let_variable_facts_from_env(env);
-            validate_expression_diagnostics_in_node(
-                node,
-                parsed,
-                table,
-                &let_variables,
-                diagnostics,
-            );
-            return;
-        }
-        "CreateStatement" | "InsertStatement" | "UpdateStatement" | "UpsertStatement"
-        | "DeleteStatement" | "RelateStatement" => {
-            let table = crate::analyzer::data::mutation::mutation_table_name(node, parsed.text())
-                .and_then(|name| schema.tables.get(&name));
-            let let_variables = let_variable_facts_from_env(env);
-            validate_expression_diagnostics_in_node(
-                node,
-                parsed,
-                table,
-                &let_variables,
-                diagnostics,
-            );
-            return;
-        }
-        "ReturnStatement" => {
-            let let_variables = let_variable_facts_from_env(env);
-            if let Some(value_node) = return_value_node(node) {
-                validate_expression_diagnostics_in_node(
-                    value_node,
-                    parsed,
-                    None,
-                    &let_variables,
-                    diagnostics,
-                );
-            }
-            return;
-        }
-        _ => {}
-    }
-
-    collect_expression_diagnostic_children_with_env(node, parsed, schema, env, diagnostics);
-}
-
-fn collect_expression_diagnostic_children_with_env(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    schema: &SchemaIndex,
-    env: &mut StatementEnv,
-    diagnostics: &mut Vec<Finding>,
-) {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_expression_diagnostics_with_env(child, parsed, schema, env, diagnostics);
-    }
-}
-
-fn collect_if_condition_diagnostics_with_env(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    env: &mut StatementEnv,
-    diagnostics: &mut Vec<Finding>,
-) {
-    match node.kind() {
-        "LetStatement" => {
-            define_let_from_statement(node, parsed, env);
-            return;
-        }
-        "IfElseStatement" => {
-            let let_variables = let_variable_facts_from_env(env);
-            for condition in if_condition_nodes(node) {
-                validate_if_condition(condition, parsed, &let_variables, diagnostics);
-            }
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                collect_if_condition_child_with_env(child, parsed, env, diagnostics);
-            }
-            return;
-        }
-        "Block" => {
-            let mut child_env = env.fork_child_scope();
-            collect_if_condition_statement_children(node, parsed, &mut child_env, diagnostics);
-            return;
-        }
-        _ => {}
-    }
-
-    collect_if_condition_statement_children(node, parsed, env, diagnostics);
-}
-
-fn collect_if_condition_statement_children(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    env: &mut StatementEnv,
-    diagnostics: &mut Vec<Finding>,
-) {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_if_condition_diagnostics_with_env(child, parsed, env, diagnostics);
-    }
-}
-
-fn collect_if_condition_child_with_env(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    env: &mut StatementEnv,
-    diagnostics: &mut Vec<Finding>,
-) {
-    if node.kind() == "Block" {
-        let mut child_env = env.fork_child_scope();
-        collect_if_condition_statement_children(node, parsed, &mut child_env, diagnostics);
-        return;
-    }
-
-    collect_if_condition_diagnostics_with_env(node, parsed, env, diagnostics);
-}
-
 fn define_let_from_statement(node: Node<'_>, parsed: &ParsedSource, env: &mut StatementEnv) {
     if let (Some(name_node), Some(value_node)) =
         (let_variable_name_node(node), let_value_node(node))
@@ -1386,113 +1173,6 @@ fn define_let_from_statement(node: Node<'_>, parsed: &ParsedSource, env: &mut St
             infer_expression_fact_with_let_variables(value_node, parsed, None, &let_variables);
         env.define_let(name, fact);
     }
-}
-
-fn validate_if_condition(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-    diagnostics: &mut Vec<Finding>,
-) {
-    let fact = infer_expression_fact_with_let_variables(node, parsed, None, let_variables);
-    let Some(kind) = fact.kind else {
-        return;
-    };
-    if matches!(kind, Kind::Bool) {
-        return;
-    }
-
-    diagnostics.push(Finding::new(
-        fact.span,
-        FindingCode::type_error(2006),
-        Severity::Error,
-        format!(
-            "IF condition has type `{}`, expected `bool`",
-            kind_name(&kind)
-        ),
-    ));
-}
-
-fn if_condition_nodes<'tree>(node: Node<'tree>) -> Vec<Node<'tree>> {
-    let Some(branch) =
-        direct_child_of_kind(node, "Modern").or_else(|| direct_child_of_kind(node, "Legacy"))
-    else {
-        return Vec::new();
-    };
-
-    let mut conditions = Vec::new();
-    let mut cursor = branch.walk();
-    for child in branch.named_children(&mut cursor) {
-        if !matches!(child.kind(), "Keyword" | "Block" | "SubQuery") {
-            conditions.push(child);
-        }
-    }
-    conditions
-}
-
-fn direct_child_of_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>> {
-    let mut cursor = node.walk();
-    let child = node
-        .children(&mut cursor)
-        .find(|child| child.kind() == kind);
-    child
-}
-
-fn validate_expression_diagnostics_in_node(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    row_table: Option<&crate::schema::TableDef>,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-    diagnostics: &mut Vec<Finding>,
-) {
-    if node.kind() == "BinaryExpression" {
-        validate_binary_expression(node, parsed, row_table, let_variables, diagnostics);
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        validate_expression_diagnostics_in_node(
-            child,
-            parsed,
-            row_table,
-            let_variables,
-            diagnostics,
-        );
-    }
-}
-
-fn validate_binary_expression(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    row_table: Option<&crate::schema::TableDef>,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-    diagnostics: &mut Vec<Finding>,
-) {
-    let Some((left, operator, right)) = binary_expression_parts(node) else {
-        return;
-    };
-    let left_fact =
-        infer_expression_fact_with_let_variables(left, parsed, row_table, let_variables);
-    let right_fact =
-        infer_expression_fact_with_let_variables(right, parsed, row_table, let_variables);
-    let (Some(left_kind), Some(right_kind)) = (&left_fact.kind, &right_fact.kind) else {
-        return;
-    };
-    let operator_text = node_text(operator, parsed.text()).trim();
-    if binary_operands_compatible(operator_text, left_kind, right_kind) {
-        return;
-    }
-
-    diagnostics.push(Finding::new(
-        node_span(node, parsed.source_id().clone()),
-        FindingCode::type_error(2005),
-        Severity::Error,
-        format!(
-            "operator `{operator_text}` cannot combine `{}` and `{}`",
-            kind_name(left_kind),
-            kind_name(right_kind)
-        ),
-    ));
 }
 
 fn binary_expression_parts<'tree>(
@@ -1551,19 +1231,6 @@ fn binary_expression_result_kind(operator: &str, left: &Kind, right: &Kind) -> O
 /// detection predicate behind the `E2005` mismatch finding. Deliberately
 /// stricter than inference: `name > 18` still *infers* bool while being
 /// flagged here.
-fn binary_operands_compatible(operator: &str, left: &Kind, right: &Kind) -> bool {
-    match operator.to_ascii_uppercase().as_str() {
-        "+" if matches!(left, Kind::String) && matches!(right, Kind::String) => true,
-        "+" | "-" | "*" | "/" => is_numeric_kind(left) && is_numeric_kind(right),
-        "=" | "==" | "!=" | "<" | "<=" | ">" | ">=" => {
-            left == right || (is_numeric_kind(left) && is_numeric_kind(right))
-        }
-        "AND" | "OR" => matches!(left, Kind::Bool) && matches!(right, Kind::Bool),
-        "??" => true,
-        _ => false,
-    }
-}
-
 fn is_numeric_kind(kind: &Kind) -> bool {
     matches!(kind, Kind::Int | Kind::Float | Kind::Decimal | Kind::Number)
 }
@@ -1669,382 +1336,21 @@ fn row_context_field_paths_from_clause(clause: Node<'_>, parsed: &ParsedSource) 
     paths
 }
 
-fn collect_mutation_field_diagnostics_with_env(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    schema: &SchemaIndex,
-    env: &mut StatementEnv,
-    diagnostics: &mut Vec<Finding>,
-) {
-    match node.kind() {
-        "LetStatement" => {
-            define_let_from_statement(node, parsed, env);
-            return;
-        }
-        "Block" => {
-            let mut child_env = env.fork_child_scope();
-            collect_mutation_field_children_with_env(
-                node,
-                parsed,
-                schema,
-                &mut child_env,
-                diagnostics,
-            );
-            return;
-        }
-        _ => {}
-    }
-
-    let let_variables = let_variable_facts_from_env(env);
-    validate_mutation_fields_for_statement(node, parsed, schema, &let_variables, diagnostics);
-    collect_mutation_field_children_with_env(node, parsed, schema, env, diagnostics);
-}
-
-fn collect_mutation_field_children_with_env(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    schema: &SchemaIndex,
-    env: &mut StatementEnv,
-    diagnostics: &mut Vec<Finding>,
-) {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_mutation_field_diagnostics_with_env(child, parsed, schema, env, diagnostics);
-    }
-}
-
-fn validate_mutation_fields_for_statement(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    schema: &SchemaIndex,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-    diagnostics: &mut Vec<Finding>,
-) {
-    let table_name = crate::analyzer::data::mutation::mutation_table_name(node, parsed.text());
-    let Some(table_name) = table_name else {
-        return;
-    };
-    let Some(table) = schema.tables.get(&table_name) else {
-        return;
-    };
-    if table.fields.is_empty() {
-        return;
-    }
-
-    // Field-reference checks now emit from the mutation analyzers; value
-    // assignability remains here until its 2xxx codes land.
-    validate_mutation_value_assignability(node, parsed, table, let_variables, diagnostics);
-}
-
-fn assignment_field_path(assignment: Node<'_>, parsed: &ParsedSource) -> Option<FieldPath> {
-    let mut cursor = assignment.walk();
-    let path = assignment
-        .children(&mut cursor)
-        .find(|child| is_row_context_field_path_node(*child))
-        .map(|child| field_path_from_node(child, parsed));
-    path
-}
-
-struct ObjectKey {
-    name: String,
-    span: SourceSpan,
-}
-
-fn object_property_key(property: Node<'_>, parsed: &ParsedSource) -> Option<ObjectKey> {
-    let mut cursor = property.walk();
-    let key = property
-        .children(&mut cursor)
-        .find(|child| child.kind() == "ObjectKey")?;
-    Some(ObjectKey {
-        name: normalize_object_key(node_text(key, parsed.text())),
-        span: node_span(key, parsed.source_id().clone()),
-    })
-}
-
-fn object_property_value_object(property: Node<'_>) -> Option<Node<'_>> {
-    let mut cursor = property.walk();
-    let object = property
-        .children(&mut cursor)
-        .find(|child| child.kind() == "Object");
-    object
-}
-
-fn validate_mutation_value_assignability(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-    diagnostics: &mut Vec<Finding>,
-) {
-    validate_assignment_value_assignability(node, parsed, table, let_variables, diagnostics);
-    validate_object_value_assignability(node, parsed, table, let_variables, diagnostics);
-    validate_insert_tuple_value_assignability(node, parsed, table, let_variables, diagnostics);
-}
-
-fn validate_assignment_value_assignability(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-    diagnostics: &mut Vec<Finding>,
-) {
-    if node.kind() == "FieldAssignment" {
-        if let (Some(path), Some(value)) = (
-            assignment_field_path(node, parsed),
-            assignment_value_node(node),
-        ) {
-            validate_value_kind_for_field(path, value, parsed, table, let_variables, diagnostics);
-        }
-        return;
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        validate_assignment_value_assignability(child, parsed, table, let_variables, diagnostics);
-    }
-}
-
-fn assignment_value_node(assignment: Node<'_>) -> Option<Node<'_>> {
-    let mut cursor = assignment.walk();
-    assignment
-        .children(&mut cursor)
-        .filter(|child| child.is_named() && !is_row_context_field_path_node(*child))
-        .last()
-}
-
-fn validate_object_value_assignability(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-    diagnostics: &mut Vec<Finding>,
-) {
-    match node.kind() {
-        "ContentClause" | "MergeClause" | "ReplaceClause" | "BulkInsert" => {
-            validate_object_value_descendants(node, parsed, table, let_variables, diagnostics);
-            return;
-        }
-        "InsertStatement" => {
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                if child.kind() == "Object" || child.kind() == "BulkInsert" {
-                    validate_object_value_descendants(
-                        child,
-                        parsed,
-                        table,
-                        let_variables,
-                        diagnostics,
-                    );
-                }
-            }
-        }
-        _ => {}
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        validate_object_value_assignability(child, parsed, table, let_variables, diagnostics);
-    }
-}
-
-fn validate_object_value_descendants(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-    diagnostics: &mut Vec<Finding>,
-) {
-    if node.kind() == "Object" {
-        validate_object_property_values_on_table(
-            node,
-            parsed,
-            table,
-            let_variables,
-            Vec::new(),
-            diagnostics,
-        );
-        return;
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        validate_object_value_descendants(child, parsed, table, let_variables, diagnostics);
-    }
-}
-
-fn validate_object_property_values_on_table(
-    object: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-    prefix: Vec<String>,
-    diagnostics: &mut Vec<Finding>,
-) {
-    if object.kind() == "ObjectProperty" {
-        let Some(key) = object_property_key(object, parsed) else {
-            return;
-        };
-        let segments: Vec<_> = prefix
-            .iter()
-            .cloned()
-            .chain(std::iter::once(key.name.clone()))
-            .collect();
-        let path = FieldPath {
-            text: segments.join("."),
-            segments: segments.clone(),
-            span: key.span,
-        };
-
-        if let Some(value_object) = object_property_value_object(object) {
-            validate_object_property_values_on_table(
-                value_object,
-                parsed,
-                table,
-                let_variables,
-                segments,
-                diagnostics,
-            );
-        } else if let Some(value) = object_property_value_node(object) {
-            validate_value_kind_for_field(path, value, parsed, table, let_variables, diagnostics);
-        }
-        return;
-    }
-
-    let mut cursor = object.walk();
-    for child in object.children(&mut cursor) {
-        if child.kind() != "Object" {
-            validate_object_property_values_on_table(
-                child,
-                parsed,
-                table,
-                let_variables,
-                prefix.clone(),
-                diagnostics,
-            );
-        }
-    }
-}
-
-fn object_property_value_node(property: Node<'_>) -> Option<Node<'_>> {
-    let mut cursor = property.walk();
-    property
-        .children(&mut cursor)
-        .filter(|child| child.is_named() && child.kind() != "ObjectKey")
-        .last()
-}
-
-fn validate_insert_tuple_value_assignability(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-    diagnostics: &mut Vec<Finding>,
-) {
-    if node.kind() != "InsertStatement" {
-        return;
-    }
-    let Some(table_reference) = table_references_after_keyword(node, parsed.text(), "INTO")
-        .into_iter()
-        .next()
-    else {
-        return;
-    };
-
-    let mut cursor = node.walk();
-    let children: Vec<_> = node.children(&mut cursor).collect();
-    let Some(values_keyword_index) = children.iter().position(|child| {
-        child.kind() == "Keyword" && node_text(*child, parsed.text()).eq_ignore_ascii_case("VALUES")
-    }) else {
-        return;
-    };
-
-    let columns: Vec<_> = children
-        .iter()
-        .take(values_keyword_index)
-        .filter(|child| {
-            child.kind() == "Ident" && child.start_byte() > table_reference.node.end_byte()
-        })
-        .map(|child| field_path_from_node(*child, parsed))
-        .collect();
-    let values: Vec<_> = children
-        .iter()
-        .skip(values_keyword_index + 1)
-        .filter(|child| child.is_named())
-        .copied()
-        .collect();
-
-    if columns.is_empty() {
-        return;
-    }
-
-    if values.len() % columns.len() != 0 {
-        diagnostics.push(Finding::new(
-            node_span(node, parsed.source_id().clone()),
-            FindingCode::type_error(2002),
-            Severity::Error,
-            format!(
-                "INSERT tuple has {} {} for {} {}",
-                values.len(),
-                pluralize(values.len(), "value", "values"),
-                columns.len(),
-                pluralize(columns.len(), "field", "fields")
-            ),
-        ));
-    }
-
-    for (index, value) in values.into_iter().enumerate() {
-        if let Some(path) = columns.get(index % columns.len()).cloned() {
-            validate_value_kind_for_field(path, value, parsed, table, let_variables, diagnostics);
-        }
-    }
-}
-
-fn pluralize(count: usize, singular: &'static str, plural: &'static str) -> &'static str {
-    if count == 1 {
-        singular
-    } else {
-        plural
-    }
-}
-
-fn validate_value_kind_for_field(
-    path: FieldPath,
-    value: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-    diagnostics: &mut Vec<Finding>,
-) {
-    let Some(field) = exact_field_def_for_path(table, &path) else {
-        return;
-    };
-    let Some(expected) = field.kind.clone() else {
-        return;
-    };
-    let fact = infer_expression_fact_with_let_variables(value, parsed, Some(table), let_variables);
-    let Some(actual) = fact.kind else {
-        return;
-    };
-    if kind_is_assignable_to(&actual, &expected) {
-        return;
-    }
-
-    diagnostics.push(Finding::new(
-        fact.span,
-        FindingCode::type_error(2001),
-        Severity::Error,
-        format!(
-            "value assigned to `{}` has type `{}`, expected `{}`",
-            path.text,
-            kind_name(&actual),
-            kind_name(&expected)
-        ),
-    ));
-}
-
 pub(crate) fn kind_is_assignable_to(actual: &Kind, expected: &Kind) -> bool {
     if matches!(expected, Kind::Any) || actual == expected {
         return true;
+    }
+    // A union accepts anything one of its variants accepts (`option<t>` is
+    // `none | t`); a union value fits only where every variant fits.
+    if let Kind::Either(variants) = expected {
+        return variants
+            .iter()
+            .any(|variant| kind_is_assignable_to(actual, variant));
+    }
+    if let Kind::Either(variants) = actual {
+        return variants
+            .iter()
+            .all(|variant| kind_is_assignable_to(variant, expected));
     }
     // A literal kind is assignable wherever its base kind is: `'active'` is
     // a string, `{ a: int }` is an object.
@@ -2081,46 +1387,6 @@ pub(crate) fn literal_base_kind(kind: &Kind) -> Option<Kind> {
         KindLiteral::Object(_) => Kind::Object,
     };
     Some(base)
-}
-
-fn kind_name(kind: &Kind) -> &'static str {
-    match kind {
-        Kind::Any => "any",
-        Kind::None => "none",
-        Kind::Null => "null",
-        Kind::Bool => "bool",
-        Kind::Bytes => "bytes",
-        Kind::Datetime => "datetime",
-        Kind::Decimal => "decimal",
-        Kind::Duration => "duration",
-        Kind::Float => "float",
-        Kind::Int => "int",
-        Kind::Number => "number",
-        Kind::Object => "object",
-        Kind::String => "string",
-        Kind::Uuid => "uuid",
-        Kind::Regex => "regex",
-        Kind::Table(_) => "table",
-        Kind::Record(_) => "record",
-        Kind::Geometry(_) => "geometry",
-        Kind::Either(_) => "either",
-        Kind::Set(_, _) => "set",
-        Kind::Array(_, _) => "array",
-        Kind::Function(_, _) => "function",
-        Kind::Range => "range",
-        Kind::Literal(_) => "literal",
-        Kind::File(_) => "file",
-    }
-}
-
-fn normalize_object_key(text: &str) -> String {
-    text.trim()
-        .trim_matches('`')
-        .trim_matches('⟨')
-        .trim_matches('⟩')
-        .trim_matches('"')
-        .trim_matches('\'')
-        .to_string()
 }
 
 fn validate_graph_local_where_fields_for_select_statement(
@@ -2860,7 +2126,6 @@ fn field_path_exists_on_table(table: &crate::schema::TableDef, path: &FieldPath)
 #[derive(Clone, Copy)]
 pub(crate) struct TableReference<'tree> {
     pub(crate) name: &'tree str,
-    node: Node<'tree>,
 }
 
 pub(crate) fn leading_table_references<'tree>(
@@ -2889,7 +2154,6 @@ pub(crate) fn leading_table_references<'tree>(
         if is_identifier_like(child) {
             references.push(TableReference {
                 name: table_name_from_node_text(text),
-                node: child,
             });
             continue;
         }
@@ -2920,7 +2184,6 @@ pub(crate) fn table_references_after_keyword<'tree>(
         } else if *saw_keyword && is_identifier_like(node) {
             references.push(TableReference {
                 name: table_name_from_node_text(text),
-                node,
             });
             *saw_keyword = false;
         } else if *saw_keyword && (!node.is_named() || is_data_or_modifier_clause(node)) {

@@ -80,7 +80,10 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     if let Some(cond) = &stmt.where_clause {
         // The WHERE kind is irrelevant to the response; the walk emits
         // findings inside the condition, with row fields resolvable.
-        ctx.with_row_table(Some(table), |ctx| infer_expression_fact(cond, ctx));
+        ctx.with_row_table(Some(table), |ctx| {
+            infer_expression_fact(cond, ctx);
+            crate::analyzer::expression::check::check_value_expression(ctx, cond);
+        });
         crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1003);
     }
 
@@ -153,10 +156,12 @@ fn walk_projections_for_findings(stmt: &ast::SelectStmt, ctx: &mut AnalysisConte
     for projection in &stmt.projections {
         if let ast::Projection::Expr { expr, .. } = projection {
             infer_expression_fact(expr, ctx);
+            crate::analyzer::expression::check::check_value_expression(ctx, expr);
         }
     }
     if let Some(cond) = &stmt.where_clause {
         infer_expression_fact(cond, ctx);
+        crate::analyzer::expression::check::check_value_expression(ctx, cond);
     }
     Kind::Any
 }
@@ -431,6 +436,7 @@ fn computed_kind(
     // context's lifetime rather than the caller's.
     let table = ctx.schema().tables.get(&table.name);
     ctx.with_row_table(table, |ctx| {
+        crate::analyzer::expression::check::check_value_expression(ctx, expr);
         infer_expression_fact(expr, ctx).kind.unwrap_or(Kind::Any)
     })
 }

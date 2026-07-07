@@ -550,18 +550,50 @@ fn cast_kind(ty: &ast::TypeExpr) -> Option<Kind> {
     Some(kind)
 }
 
-fn binary_result_kind(op: &ast::BinaryOp, lhs: &Kind, rhs: &Kind) -> Option<Kind> {
+/// Mirrors SurrealDB's `TryAdd`/`TrySub`/`TryMul` on `Value`: numeric
+/// arithmetic, string/collection concatenation, and temporal arithmetic
+/// (`datetime ± duration`, `datetime - datetime`, `duration ± duration`,
+/// `duration * int`).
+pub(crate) fn binary_result_kind(op: &ast::BinaryOp, lhs: &Kind, rhs: &Kind) -> Option<Kind> {
     use ast::BinaryOp as Op;
     match op {
         Op::Add if matches!(lhs, Kind::String) && matches!(rhs, Kind::String) => Some(Kind::String),
+        Op::Add | Op::Sub if matches!(lhs, Kind::Duration) && matches!(rhs, Kind::Duration) => {
+            Some(Kind::Duration)
+        }
+        Op::Add | Op::Sub
+            if matches!(
+                (lhs, rhs),
+                (Kind::Datetime, Kind::Duration) | (Kind::Duration, Kind::Datetime)
+            ) =>
+        {
+            Some(Kind::Datetime)
+        }
+        Op::Sub if matches!(lhs, Kind::Datetime) && matches!(rhs, Kind::Datetime) => {
+            Some(Kind::Duration)
+        }
+        Op::Mul if matches!(lhs, Kind::Duration) && matches!(rhs, Kind::Int) => {
+            Some(Kind::Duration)
+        }
+        // Collection concatenation and difference.
+        Op::Add | Op::Sub
+            if matches!(lhs, Kind::Array(_, _) | Kind::Set(_, _))
+                && matches!(rhs, Kind::Array(_, _) | Kind::Set(_, _)) =>
+        {
+            let (Kind::Array(a, _) | Kind::Set(a, _)) = lhs else {
+                return None;
+            };
+            let (Kind::Array(b, _) | Kind::Set(b, _)) = rhs else {
+                return None;
+            };
+            let element = Box::new(merged_element(a, b));
+            Some(match lhs {
+                Kind::Set(_, _) => Kind::Set(element, None),
+                _ => Kind::Array(element, None),
+            })
+        }
         Op::Add | Op::Sub | Op::Mul | Op::Div if is_numeric(lhs) && is_numeric(rhs) => {
-            if matches!(lhs, Kind::Decimal) || matches!(rhs, Kind::Decimal) {
-                Some(Kind::Decimal)
-            } else if matches!(lhs, Kind::Float) || matches!(rhs, Kind::Float) {
-                Some(Kind::Float)
-            } else {
-                Some(Kind::Int)
-            }
+            Some(numeric_result(lhs, rhs))
         }
         // A comparison produces a bool no matter what it compares; mismatched
         // operands violate an invariant, not the result type.
@@ -577,7 +609,27 @@ fn binary_result_kind(op: &ast::BinaryOp, lhs: &Kind, rhs: &Kind) -> Option<Kind
     }
 }
 
-fn is_numeric(kind: &Kind) -> bool {
+fn numeric_result(lhs: &Kind, rhs: &Kind) -> Kind {
+    if matches!(lhs, Kind::Decimal) || matches!(rhs, Kind::Decimal) {
+        Kind::Decimal
+    } else if matches!(lhs, Kind::Float) || matches!(rhs, Kind::Float) {
+        Kind::Float
+    } else {
+        Kind::Int
+    }
+}
+
+/// The element kind of a concatenated collection: the shared kind, or the
+/// union when they differ.
+fn merged_element(a: &Kind, b: &Kind) -> Kind {
+    if a == b {
+        a.clone()
+    } else {
+        Kind::either(vec![a.clone(), b.clone()])
+    }
+}
+
+pub(crate) fn is_numeric(kind: &Kind) -> bool {
     matches!(kind, Kind::Int | Kind::Float | Kind::Decimal | Kind::Number)
 }
 

@@ -156,7 +156,15 @@ pub enum InsertData {
     Values(Vec<Spanned<Expr>>),
     /// `INSERT INTO t (a, b) VALUES (...), (...)` — each row is lowered to
     /// `(column, value)` pairs so columns and values cannot misalign.
-    Rows(Vec<Vec<(Spanned<Idiom>, Spanned<Expr>)>>),
+    ///
+    /// The grammar flattens all rows' values into one sequence, so when the
+    /// total doesn't divide evenly by the column count the leftover cannot
+    /// be paired: `misaligned` carries the raw `(values, columns)` counts
+    /// with the statement's span for the arity finding.
+    Rows {
+        rows: Vec<Vec<(Spanned<Idiom>, Spanned<Expr>)>>,
+        misaligned: Option<Spanned<(usize, usize)>>,
+    },
     /// `INSERT ... SET`-style field assignments.
     Assignments(Vec<(Spanned<Idiom>, Spanned<Expr>)>),
     Partial(PartialNode),

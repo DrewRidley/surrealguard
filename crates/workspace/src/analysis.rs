@@ -15,9 +15,7 @@ use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
 use crate::config::WorkspaceConfig;
 use crate::schema::SchemaIndex;
-use crate::semantic::{
-    analyze_parsed_source, analyze_sources_in_source_order, validate_if_conditions,
-};
+use crate::semantic::{analyze_parsed_source, analyze_sources_in_source_order};
 use crate::source_registry::SourceRegistry;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -158,14 +156,6 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
         }
     }
     diagnostics.extend(source_ordered.diagnostics.iter().cloned());
-
-    let if_condition_diagnostics = validate_if_conditions(&parsed_sources);
-    for diagnostic in &if_condition_diagnostics {
-        if let Some(source_output) = sources.get_mut(diagnostic.span().source()) {
-            source_output.diagnostics.push(diagnostic.clone());
-        }
-    }
-    diagnostics.extend(if_condition_diagnostics);
 
     for inference in source_ordered.param_kind_inferences {
         if let Some(source_output) = sources.get_mut(&inference.source) {
@@ -815,7 +805,7 @@ INSERT INTO person { name: 'Ada' };
 
         assert_eq!(
             type_mismatches,
-            vec!["value assigned to `name` has type `string`, expected `int`".to_string()]
+            vec!["field `name` expects `int`, found `string`".to_string()]
         );
         assert!(output
             .schema
@@ -1027,8 +1017,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2001"
-                && message == "value assigned to `age` has type `string`, expected `int`"
+            code == "E2001" && message == "field `age` expects `int`, found `string`"
         }));
     }
 
@@ -1048,8 +1037,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2001"
-                && message == "value assigned to `age` has type `string`, expected `int`"
+            code == "E2001" && message == "field `age` expects `int`, found `string`"
         }));
     }
 
@@ -1107,8 +1095,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2001"
-                && message == "value assigned to `age` has type `string`, expected `int`"
+            code == "E2001" && message == "field `age` expects `int`, found `string`"
         }));
     }
 
@@ -1245,10 +1232,10 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2006" && message == "IF condition has type `int`, expected `bool`"
+            code == "E2005" && message == "IF condition has type `int`, expected `bool`"
         }));
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2006" && message == "IF condition has type `string`, expected `bool`"
+            code == "E2005" && message == "IF condition has type `string`, expected `bool`"
         }));
     }
 
@@ -1266,7 +1253,7 @@ INSERT INTO person { name: 'Ada' };
         assert!(source_output
             .diagnostics
             .iter()
-            .all(|finding| finding.code().to_string() != "E2006"));
+            .all(|finding| finding.code().to_string() != "E2005"));
         assert_eq!(source_output.inferred_params.len(), 1);
         assert_eq!(source_output.inferred_params[0].name, "runtime");
         assert_eq!(source_output.inferred_params[0].kind, None);
@@ -1288,7 +1275,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2006" && message == "IF condition has type `int`, expected `bool`"
+            code == "E2005" && message == "IF condition has type `int`, expected `bool`"
         }));
     }
 
@@ -1308,7 +1295,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2006" && message == "IF condition has type `int`, expected `bool`"
+            code == "E2005" && message == "IF condition has type `int`, expected `bool`"
         }));
     }
 
@@ -1725,17 +1712,17 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::type_error(2001))
+            .filter(|finding| matches!(finding.code().number(), 2001..=2003))
             .map(|finding| finding.message().to_string())
             .collect();
 
         assert_eq!(
             messages,
             vec![
-                "value assigned to `age` has type `string`, expected `int`",
-                "value assigned to `age` has type `string`, expected `int`",
-                "value assigned to `age` has type `string`, expected `int`",
-                "value assigned to `age` has type `string`, expected `int`",
+                "field `age` expects `int`, found `string`",
+                "field `age` expects `int`, found `string`",
+                "field `age` expects `int`, found `string`",
+                "column `age` expects `int`, found `string`",
             ]
         );
     }
@@ -1770,15 +1757,15 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::type_error(2001))
+            .filter(|finding| finding.code() == FindingCode::type_error(2002))
             .map(|finding| finding.message().to_string())
             .collect();
 
         assert_eq!(
             messages,
             vec![
-                "value assigned to `profile.email` has type `int`, expected `string`",
-                "value assigned to `created_at` has type `string`, expected `datetime`",
+                "field `profile.email` expects `string`, found `int`",
+                "field `created_at` expects `datetime`, found `string`",
             ]
         );
     }
@@ -1795,15 +1782,15 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::type_error(2002))
+            .filter(|finding| finding.code() == FindingCode::statement(4004))
             .map(|finding| finding.message().to_string())
             .collect();
 
         assert_eq!(
             messages,
             vec![
-                "INSERT tuple has 1 value for 2 fields",
-                "INSERT tuple has 3 values for 2 fields",
+                "INSERT VALUES has 1 value for 2 columns",
+                "INSERT VALUES has 3 values for 2 columns",
             ]
         );
     }
@@ -1820,14 +1807,11 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::type_error(2001))
+            .filter(|finding| finding.code() == FindingCode::type_error(2003))
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(
-            messages,
-            vec!["value assigned to `age` has type `string`, expected `int`"]
-        );
+        assert_eq!(messages, vec!["column `age` expects `int`, found `string`"]);
     }
 
     #[test]
@@ -2048,10 +2032,55 @@ INSERT INTO person { name: 'Ada' };
         let binary_mismatches = messages
             .iter()
             .filter(|(code, message)| {
-                code == "E2005" && message == "operator `+` cannot combine `int` and `string`"
+                code == "E2004" && message == "incompatible operands for `+`: `int` and `string`"
             })
             .count();
         assert_eq!(binary_mismatches, 3);
+    }
+
+    #[test]
+    fn analyze_workspace_accepts_temporal_and_collection_arithmetic() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE event;\nDEFINE FIELD at ON event TYPE datetime;\nDEFINE FIELD took ON event TYPE duration;\nDEFINE FIELD tags ON event TYPE array<string>;\nSELECT at + 1w AS soon, at - at AS gap, took * 2 AS twice, tags + ['x'] AS more FROM event WHERE at - took < time::now();".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let operand_findings: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::type_error(2004))
+            .collect();
+
+        // Valid SurrealQL temporal/collection arithmetic must not be flagged.
+        assert_eq!(operand_findings, Vec::<&Finding>::new());
+    }
+
+    #[test]
+    fn analyze_workspace_reports_none_assignment_and_bad_negation() {
+        // (2014 negation coverage waits on the grammar: prefix `-` only
+        // parses on numeric literals today.)
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD retired_at ON person TYPE option<datetime>;\nUPDATE person SET age = NONE, retired_at = NONE;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        // NONE into non-optional int is 2016; into option<datetime> is fine.
+        assert!(messages.iter().any(|(code, message)| {
+            code == "E2016" && message == "cannot assign NONE to non-optional field `age` (`int`)"
+        }));
+        assert!(!messages
+            .iter()
+            .any(|(_, message)| message.contains("retired_at")));
     }
 
     #[test]
@@ -2071,7 +2100,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2005" && message == "operator `+` cannot combine `int` and `string`"
+            code == "E2004" && message == "incompatible operands for `+`: `int` and `string`"
         }));
     }
 

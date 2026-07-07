@@ -33,22 +33,62 @@ pub(crate) fn insert_response_kind(stmt: &ast::InsertStmt, ctx: &mut AnalysisCon
                 }
             }
         }
-        ast::InsertData::Rows(rows) => {
+        ast::InsertData::Rows { rows, misaligned } => {
+            if let Some(counts) = misaligned {
+                let (values, columns) = counts.node;
+                let span =
+                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), counts.span);
+                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                    span,
+                    4004,
+                    format!(
+                        "INSERT VALUES has {values} {} for {columns} columns",
+                        if values == 1 { "value" } else { "values" }
+                    ),
+                ));
+            }
             for row in rows {
                 for (column, value) in row {
-                    crate::analyzer::expression::infer::infer_expression_fact(value, ctx);
-                    if let Some(table) = row_table {
-                        if let Some(segments) =
-                            crate::analyzer::expression::infer::plain_field_segments(&column.node)
-                        {
-                            crate::analyzer::data::check_field_path(
-                                ctx,
-                                table,
-                                &segments,
-                                column.span,
-                                1011,
-                            );
-                        }
+                    let value_kind =
+                        crate::analyzer::expression::infer::infer_expression_fact(value, ctx).kind;
+                    let Some(table) = row_table else {
+                        continue;
+                    };
+                    let Some(segments) =
+                        crate::analyzer::expression::infer::plain_field_segments(&column.node)
+                    else {
+                        continue;
+                    };
+                    let Some(column_kind) =
+                        crate::analyzer::data::select::kind_for_path(table, &segments)
+                    else {
+                        crate::analyzer::data::check_field_path(
+                            ctx,
+                            table,
+                            &segments,
+                            column.span,
+                            1011,
+                        );
+                        continue;
+                    };
+                    let Some(value_kind) = value_kind else {
+                        continue;
+                    };
+                    if value_kind != Kind::Any
+                        && !crate::semantic::kind_is_assignable_to(&value_kind, &column_kind)
+                    {
+                        let span = surrealguard_syntax::span::SourceSpan::new(
+                            ctx.source().clone(),
+                            value.span,
+                        );
+                        ctx.emit(surrealguard_diagnostics::catalog::finding(
+                            span,
+                            2003,
+                            format!(
+                                "column `{}` expects `{column_kind}`, found `{value_kind}`",
+                                segments.join(".")
+                            ),
+                        ));
                     }
                 }
             }

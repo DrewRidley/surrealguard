@@ -6,6 +6,7 @@
 //! through `analyzer::function`, and recording external parameter uses.
 //!
 
+pub(crate) mod check;
 pub(crate) mod infer;
 
 use surrealdb_types::Kind;
@@ -40,6 +41,7 @@ pub fn expr_fact(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) 
     }
 
     let fact = infer::infer_expression_fact(expr, ctx);
+    check::check_value_expression(ctx, expr);
     for param in &fact.dependencies.params {
         ctx.record_param_use(param.clone(), fact.span.clone());
     }
