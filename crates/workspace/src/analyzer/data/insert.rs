@@ -14,6 +14,26 @@ pub fn analyze_insert(ctx: &mut AnalysisContext<'_>, stmt: &ast::InsertStmt) -> 
 }
 
 pub(crate) fn insert_response_kind(stmt: &ast::InsertStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
+    match &stmt.data {
+        ast::InsertData::Values(values) => {
+            for value in values {
+                crate::analyzer::expression::infer::infer_expression_fact(value, ctx);
+            }
+        }
+        ast::InsertData::Rows(rows) => {
+            for row in rows {
+                for (_, value) in row {
+                    crate::analyzer::expression::infer::infer_expression_fact(value, ctx);
+                }
+            }
+        }
+        ast::InsertData::Assignments(assignments) => {
+            for (_, value) in assignments {
+                crate::analyzer::expression::infer::infer_expression_fact(value, ctx);
+            }
+        }
+        ast::InsertData::Partial(_) => {}
+    }
     let Some(table_name) = mutation::source_table_name(stmt.target.as_ref()) else {
         return Kind::Any;
     };

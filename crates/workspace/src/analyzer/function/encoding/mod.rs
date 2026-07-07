@@ -29,6 +29,6 @@ pub fn analyze_encoding_function(
         "encoding::cbor::encode" => cbor_encode::analyze_encoding_cbor_encode(ctx, call, args),
         "encoding::json::decode" => json_decode::analyze_encoding_json_decode(ctx, call, args),
         "encoding::json::encode" => json_encode::analyze_encoding_json_encode(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

@@ -67,13 +67,19 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
             };
         }
         // Dynamic sources (params) and anything else stay undetermined.
-        _ => return Kind::Any,
+        _ => return walk_projections_for_findings(stmt, ctx),
     };
     let Some(table) = ctx.schema().tables.get(&table_name) else {
-        return Kind::Any;
+        return walk_projections_for_findings(stmt, ctx);
     };
     if table.fields.is_empty() && !stmt.projections.iter().any(is_graph_projection) {
-        return Kind::Any;
+        return walk_projections_for_findings(stmt, ctx);
+    }
+
+    if let Some(cond) = &stmt.where_clause {
+        // The WHERE kind is irrelevant to the response; the walk emits
+        // findings inside the condition, with row fields resolvable.
+        ctx.with_row_table(Some(table), |ctx| infer_expression_fact(cond, ctx));
     }
 
     let row_kind = if stmt
@@ -96,6 +102,21 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     } else {
         Kind::Array(Box::new(row_kind), literal_limit(stmt))
     }
+}
+
+/// Walks projection expressions for their findings when the row type
+/// cannot be resolved (unknown/schemaless/dynamic sources) — misuse inside
+/// a projection is real regardless of the table.
+fn walk_projections_for_findings(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
+    for projection in &stmt.projections {
+        if let ast::Projection::Expr { expr, .. } = projection {
+            infer_expression_fact(expr, ctx);
+        }
+    }
+    if let Some(cond) = &stmt.where_clause {
+        infer_expression_fact(cond, ctx);
+    }
+    Kind::Any
 }
 
 fn object_literal(fields: BTreeMap<String, Kind>) -> Kind {

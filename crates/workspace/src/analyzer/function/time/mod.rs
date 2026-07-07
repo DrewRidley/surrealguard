@@ -87,6 +87,6 @@ pub fn analyze_time_function(
         "time::week" => week::analyze_time_week(ctx, call, args),
         "time::yday" => yday::analyze_time_yday(ctx, call, args),
         "time::year" => year::analyze_time_year(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

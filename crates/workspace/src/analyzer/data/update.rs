@@ -14,6 +14,13 @@ pub fn analyze_update(ctx: &mut AnalysisContext<'_>, stmt: &ast::UpdateStmt) -> 
 }
 
 pub(crate) fn update_response_kind(stmt: &ast::UpdateStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
+    let table_hint = mutation::source_table_name(stmt.targets.first());
+    mutation::analyze_expression_positions(
+        ctx,
+        stmt.data.as_ref(),
+        stmt.where_clause.as_ref(),
+        table_hint.as_deref(),
+    );
     let Some(table_name) = mutation::source_table_name(stmt.targets.first()) else {
         return Kind::Any;
     };

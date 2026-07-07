@@ -61,6 +61,6 @@ pub fn analyze_set_function(
         "set::remove" => remove::analyze_set_remove(ctx, call, args),
         "set::slice" => slice::analyze_set_slice(ctx, call, args),
         "set::union" => union::analyze_set_union(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

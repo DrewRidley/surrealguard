@@ -35,6 +35,6 @@ pub fn analyze_vector_function(
         "vector::project" => project::analyze_vector_project(ctx, call, args),
         "vector::scale" => scale::analyze_vector_scale(ctx, call, args),
         "vector::subtract" => subtract::analyze_vector_subtract(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

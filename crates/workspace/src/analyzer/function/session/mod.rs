@@ -29,6 +29,6 @@ pub fn analyze_session_function(
         "session::origin" => origin::analyze_session_origin(ctx, call, args),
         "session::rd" => rd::analyze_session_rd(ctx, call, args),
         "session::token" => token::analyze_session_token(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

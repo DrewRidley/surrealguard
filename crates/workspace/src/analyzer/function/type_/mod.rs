@@ -103,6 +103,6 @@ pub fn analyze_type_function(
         "type::table" => table::analyze_type_table(ctx, call, args),
         "type::thing" => thing::analyze_type_thing(ctx, call, args),
         "type::uuid" => uuid::analyze_type_uuid(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

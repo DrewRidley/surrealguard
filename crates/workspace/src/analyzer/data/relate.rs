@@ -15,6 +15,8 @@ pub fn analyze_relate(ctx: &mut AnalysisContext<'_>, stmt: &ast::RelateStmt) -> 
 }
 
 pub(crate) fn relate_response_kind(stmt: &ast::RelateStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
+    let table_hint = mutation::source_table_name(None);
+    mutation::analyze_expression_positions(ctx, stmt.data.as_ref(), None, table_hint.as_deref());
     let Some(table_name) = mutation::source_table_name(stmt.edge.as_ref()) else {
         return Kind::Any;
     };

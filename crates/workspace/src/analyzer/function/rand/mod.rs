@@ -33,6 +33,6 @@ pub fn analyze_rand_function(
         "rand::time" => time::analyze_rand_time(ctx, call, args),
         "rand::ulid" => ulid::analyze_rand_ulid(ctx, call, args),
         "rand::uuid" => uuid::analyze_rand_uuid(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

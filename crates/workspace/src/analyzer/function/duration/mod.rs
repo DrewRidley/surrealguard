@@ -47,6 +47,6 @@ pub fn analyze_duration_function(
         "duration::secs" => secs::analyze_duration_secs(ctx, call, args),
         "duration::weeks" => weeks::analyze_duration_weeks(ctx, call, args),
         "duration::years" => years::analyze_duration_years(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

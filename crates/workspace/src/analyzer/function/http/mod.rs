@@ -25,6 +25,6 @@ pub fn analyze_http_function(
         "http::patch" => patch::analyze_http_patch(ctx, call, args),
         "http::post" => post::analyze_http_post(ctx, call, args),
         "http::put" => put::analyze_http_put(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

@@ -15,6 +15,13 @@ pub fn analyze_delete(ctx: &mut AnalysisContext<'_>, stmt: &ast::DeleteStmt) -> 
 }
 
 pub(crate) fn delete_response_kind(stmt: &ast::DeleteStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
+    let table_hint = mutation::source_table_name(stmt.targets.first());
+    mutation::analyze_expression_positions(
+        ctx,
+        None,
+        stmt.where_clause.as_ref(),
+        table_hint.as_deref(),
+    );
     let Some(table_name) = mutation::source_table_name(stmt.targets.first()) else {
         return Kind::Any;
     };

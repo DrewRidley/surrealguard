@@ -23,6 +23,6 @@ pub fn analyze_geo_function(
         "geo::centroid" => centroid::analyze_geo_centroid(ctx, call, args),
         "geo::distance" => distance::analyze_geo_distance(ctx, call, args),
         "geo::is_valid" => is_valid::analyze_geo_is_valid(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

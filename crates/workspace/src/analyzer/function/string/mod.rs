@@ -85,6 +85,6 @@ pub fn analyze_string_function(
         "string::trim" => trim::analyze_string_trim(ctx, call, args),
         "string::uppercase" => uppercase::analyze_string_uppercase(ctx, call, args),
         "string::words" => words::analyze_string_words(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

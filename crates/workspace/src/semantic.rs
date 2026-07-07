@@ -79,8 +79,29 @@ pub fn analyze_sources_in_source_order(
         let mut select_shape_env = StatementEnv::default();
         let mut mutation_shape_env = StatementEnv::default();
         let mut statement_shape_env = StatementEnv::default();
+        let mut analyzer_env = StatementEnv::default();
 
         for statement in statements {
+            // The analyzer tree is the emission spine: each statement is
+            // lowered and dispatched against the schema built from the
+            // statements before it, with findings landing directly in the
+            // output. The node-based collectors below cover only what has
+            // not yet been formalized there; each disappears as its codes
+            // land.
+            {
+                let lowered = surrealguard_syntax::lower::lower_statement(statement, parsed.text());
+                let mut ctx = crate::analyzer::context::AnalysisContext::scoped(
+                    &output.schema,
+                    parsed.source_id().clone(),
+                    parsed.text(),
+                    &mut output.diagnostics,
+                    analyzer_env,
+                    None,
+                );
+                crate::analyzer::statement::analyze_lowered_statement(&mut ctx, &lowered);
+                analyzer_env = ctx.into_env();
+            }
+
             collect_table_reference_diagnostics(
                 statement,
                 parsed,
@@ -277,30 +298,6 @@ pub fn validate_if_conditions(parsed_sources: &[ParsedSource]) -> Vec<Finding> {
         collect_if_condition_diagnostics_with_env(
             parsed.tree().root_node(),
             parsed,
-            &mut env,
-            &mut diagnostics,
-        );
-    }
-
-    diagnostics
-}
-
-pub fn validate_function_calls(
-    parsed_sources: &[ParsedSource],
-    schema: &SchemaIndex,
-) -> Vec<Finding> {
-    let mut diagnostics = Vec::new();
-
-    for parsed in parsed_sources {
-        if !parsed.syntax_diagnostics().is_empty() {
-            continue;
-        }
-
-        let mut env = StatementEnv::default();
-        collect_expression_diagnostics_with_env(
-            parsed.tree().root_node(),
-            parsed,
-            schema,
             &mut env,
             &mut diagnostics,
         );
@@ -1555,9 +1552,6 @@ fn validate_expression_diagnostics_in_node(
     let_variables: &BTreeMap<String, LetVariableFact>,
     diagnostics: &mut Vec<Finding>,
 ) {
-    if node.kind() == "FunctionCall" {
-        validate_function_call(node, parsed, row_table, let_variables, diagnostics);
-    }
     if node.kind() == "BinaryExpression" {
         validate_binary_expression(node, parsed, row_table, let_variables, diagnostics);
     }
@@ -1571,64 +1565,6 @@ fn validate_expression_diagnostics_in_node(
             let_variables,
             diagnostics,
         );
-    }
-}
-
-fn validate_function_call(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    row_table: Option<&crate::schema::TableDef>,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-    diagnostics: &mut Vec<Finding>,
-) {
-    let Some(name) = function_call_name(node, parsed) else {
-        return;
-    };
-    let args = function_call_args(node);
-    let Some(signature) = function_signature(&name) else {
-        diagnostics.push(Finding::new(
-            node_span(node, parsed.source_id().clone()),
-            FindingCode::type_error(2002),
-            Severity::Error,
-            format!("unknown function `{name}`"),
-        ));
-        return;
-    };
-
-    if args.len() != signature.args.len() {
-        diagnostics.push(Finding::new(
-            node_span(node, parsed.source_id().clone()),
-            FindingCode::type_error(2003),
-            Severity::Error,
-            format!(
-                "function `{name}` expects {} {}, got {}",
-                signature.args.len(),
-                pluralize_word("argument", signature.args.len()),
-                args.len()
-            ),
-        ));
-        return;
-    }
-
-    for (index, (arg, expected)) in args.iter().zip(signature.args.iter()).enumerate() {
-        let fact = infer_expression_fact_with_let_variables(*arg, parsed, row_table, let_variables);
-        let Some(actual) = fact.kind else {
-            continue;
-        };
-        if function_arg_kind_matches(&actual, expected) {
-            continue;
-        }
-        diagnostics.push(Finding::new(
-            fact.span,
-            FindingCode::type_error(2004),
-            Severity::Error,
-            format!(
-                "argument {} to `{name}` has type `{}`, expected `{}`",
-                index + 1,
-                kind_name(&actual),
-                function_arg_kind_name(expected)
-            ),
-        ));
     }
 }
 
@@ -1786,28 +1722,6 @@ pub(crate) fn function_signature(name: &str) -> Option<FunctionSignature> {
             return_kind: Kind::Int,
         }),
         _ => None,
-    }
-}
-
-fn function_arg_kind_matches(actual: &Kind, expected: &FunctionArgKind) -> bool {
-    match expected {
-        FunctionArgKind::Exact(expected) => kind_is_assignable_to(actual, expected),
-        FunctionArgKind::Array => matches!(actual, Kind::Array(_, _) | Kind::Set(_, _)),
-    }
-}
-
-fn function_arg_kind_name(expected: &FunctionArgKind) -> &'static str {
-    match expected {
-        FunctionArgKind::Exact(kind) => kind_name(kind),
-        FunctionArgKind::Array => "array",
-    }
-}
-
-fn pluralize_word(word: &str, count: usize) -> String {
-    if count == 1 {
-        word.to_string()
-    } else {
-        format!("{word}s")
     }
 }
 

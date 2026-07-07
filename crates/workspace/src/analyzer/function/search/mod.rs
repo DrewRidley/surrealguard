@@ -25,6 +25,6 @@ pub fn analyze_search_function(
         "search::offsets" => offsets::analyze_search_offsets(ctx, call, args),
         "search::rrf" => rrf::analyze_search_rrf(ctx, call, args),
         "search::score" => score::analyze_search_score(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

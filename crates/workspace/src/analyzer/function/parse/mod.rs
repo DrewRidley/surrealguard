@@ -31,6 +31,6 @@ pub fn analyze_parse_function(
         "parse::url::port" => url_port::analyze_parse_url_port(ctx, call, args),
         "parse::url::query" => url_query::analyze_parse_url_query(ctx, call, args),
         "parse::url::scheme" => url_scheme::analyze_parse_url_scheme(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

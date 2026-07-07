@@ -19,6 +19,6 @@ pub fn analyze_not_function(
 ) -> Kind {
     match path {
         "not::not" => not::analyze_not_not(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

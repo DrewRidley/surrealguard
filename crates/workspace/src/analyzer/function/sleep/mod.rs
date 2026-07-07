@@ -19,6 +19,6 @@ pub fn analyze_sleep_function(
 ) -> Kind {
     match path {
         "sleep::sleep" => sleep::analyze_sleep_sleep(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

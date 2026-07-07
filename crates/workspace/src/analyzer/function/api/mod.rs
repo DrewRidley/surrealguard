@@ -17,6 +17,6 @@ pub fn analyze_api_function(
     match path {
         "api::invoke" => invoke::analyze_api_invoke(ctx, call, args),
         "api::timeout" => timeout::analyze_api_timeout(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

@@ -4,15 +4,16 @@ use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
-use crate::analyzer::function::signature::{evaluate, ReturnKind, Signature};
+use crate::analyzer::function::signature::{apply, ReturnKind, Signature};
 
 pub fn analyze_session_token(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     args: &[Kind],
 ) -> Kind {
-    let _ = (ctx, call);
-    evaluate(
+    apply(
+        ctx,
+        call,
         &Signature {
             min_args: 0,
             max_args: Some(0),

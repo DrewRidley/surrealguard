@@ -25,6 +25,6 @@ pub fn analyze_record_function(
         "record::refs" => refs::analyze_record_refs(ctx, call, args),
         "record::table" => table::analyze_record_table(ctx, call, args),
         "record::tb" => tb::analyze_record_tb(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

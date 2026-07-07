@@ -127,6 +127,6 @@ pub fn analyze_array_function(
         "array::transpose" => transpose::analyze_array_transpose(ctx, call, args),
         "array::union" => union::analyze_array_union(ctx, call, args),
         "array::windows" => windows::analyze_array_windows(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

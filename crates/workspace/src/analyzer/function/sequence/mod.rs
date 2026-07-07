@@ -17,6 +17,6 @@ pub fn analyze_sequence_function(
     match path {
         "sequence::next" => next::analyze_sequence_next(ctx, call, args),
         "sequence::nextval" => nextval::analyze_sequence_nextval(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

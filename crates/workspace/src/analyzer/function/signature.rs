@@ -20,6 +20,10 @@
 //! table-driven.
 
 use surrealdb_types::Kind;
+use surrealguard_syntax::ast;
+use surrealguard_syntax::span::SourceSpan;
+
+use crate::analyzer::context::AnalysisContext;
 
 /// A function's arity and per-argument kind expectations, plus how its
 /// return kind is derived from the arguments.
@@ -32,26 +36,16 @@ use surrealdb_types::Kind;
 /// variants while working by accident for simple ones like `Kind::String`.
 /// `vec![...]` sidesteps the whole class of lifetime issues.
 pub(crate) struct Signature {
-    // Arity and argument expectations are declarative invariant data:
-    // inference never checks them; the mismatch findings that will are not
-    // built yet.
-    #[allow(dead_code)]
     pub(crate) min_args: usize,
     /// `None` means unbounded (variadic past `arg_kinds.last()`).
-    #[allow(dead_code)]
     pub(crate) max_args: Option<usize>,
     /// Positional expectations. When `args.len() > arg_kinds.len()`,
     /// trailing arguments repeat `arg_kinds.last()` (the common variadic
     /// shape).
-    #[allow(dead_code)]
     pub(crate) arg_kinds: Vec<ParamKind>,
     pub(crate) return_kind: ReturnKind,
 }
 
-// The argument expectations are declarative invariant data: nothing reads
-// them during inference (which never checks), and the mismatch findings
-// that will read them are not built yet.
-#[allow(dead_code)]
 pub(crate) enum ParamKind {
     /// Must be assignable to this exact kind (numeric widening allowed,
     /// same rule mutation field assignability already uses).
@@ -79,6 +73,128 @@ pub(crate) enum ReturnKind {
     ArrayElement(usize),
 }
 
+/// Checks the call against `signature` (emitting findings 5002/5003 for
+/// arity and argument-kind violations) and returns the inferred kind.
+/// Checking never affects the returned kind — that is [`evaluate`]'s,
+/// which runs regardless.
+///
+/// Synthetic calls (method-call sugar dispatching by name, carrying no
+/// argument expressions or spans) are inference-only: nothing to anchor a
+/// finding to, and the receiver-kind probe intentionally tries families.
+pub(crate) fn apply(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    signature: &Signature,
+    args: &[Kind],
+) -> Kind {
+    if !is_synthetic(call) {
+        check_arity(ctx, call, signature, args.len());
+        check_argument_kinds(ctx, call, signature, args);
+    }
+    evaluate(signature, args)
+}
+
+fn is_synthetic(call: &ast::Call) -> bool {
+    call.path.span.start() == call.path.span.end()
+}
+
+fn check_arity(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    signature: &Signature,
+    found: usize,
+) {
+    let expected = match (signature.min_args, signature.max_args) {
+        (min, Some(max)) if found >= min && found <= max => return,
+        (min, None) if found >= min => return,
+        (min, Some(max)) if min == max => format!("{min} {}", plural("argument", min)),
+        (min, Some(max)) => format!("{min} to {max} arguments"),
+        (min, None) => format!("at least {min} {}", plural("argument", min)),
+    };
+    let span = SourceSpan::new(ctx.source().clone(), call.path.span);
+    ctx.emit(surrealguard_diagnostics::catalog::finding(
+        span,
+        5002,
+        format!("`{}` expects {expected}, found {found}", call.path.node),
+    ));
+}
+
+fn check_argument_kinds(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    signature: &Signature,
+    args: &[Kind],
+) {
+    for (index, kind) in args.iter().enumerate() {
+        // Unknown argument kinds are not mismatches.
+        if *kind == Kind::Any {
+            continue;
+        }
+        // Trailing variadic arguments repeat the last expectation.
+        let expected = match signature.arg_kinds.get(index) {
+            Some(expected) => expected,
+            None if signature.max_args.is_none() => match signature.arg_kinds.last() {
+                Some(expected) => expected,
+                None => continue,
+            },
+            // Excess arguments were already reported by arity.
+            None => continue,
+        };
+        if param_matches(expected, kind) {
+            continue;
+        }
+        // Anchor on the argument expression itself when the call carries
+        // one; excess-argument positions without expressions are skipped.
+        let Some(arg_expr) = call.args.get(index) else {
+            continue;
+        };
+        let span = SourceSpan::new(ctx.source().clone(), arg_expr.span);
+        ctx.emit(surrealguard_diagnostics::catalog::finding(
+            span,
+            5003,
+            format!(
+                "`{}` argument {} expects {}, found `{kind}`",
+                call.path.node,
+                index + 1,
+                param_label(expected),
+            ),
+        ));
+    }
+}
+
+/// Whether an argument of `kind` satisfies the expectation. Checking-side
+/// twin of nothing in inference: [`evaluate`] never consults it.
+fn param_matches(expected: &ParamKind, kind: &Kind) -> bool {
+    let base = crate::semantic::literal_base_kind(kind).unwrap_or_else(|| kind.clone());
+    match expected {
+        ParamKind::Exact(target) => crate::semantic::kind_is_assignable_to(kind, target),
+        ParamKind::Numeric => {
+            matches!(base, Kind::Int | Kind::Float | Kind::Decimal | Kind::Number)
+        }
+        ParamKind::Array => matches!(base, Kind::Array(_, _) | Kind::Set(_, _)),
+        ParamKind::Object => matches!(base, Kind::Object),
+        ParamKind::Any => true,
+    }
+}
+
+fn param_label(expected: &ParamKind) -> String {
+    match expected {
+        ParamKind::Exact(kind) => format!("`{kind}`"),
+        ParamKind::Numeric => "a number".to_string(),
+        ParamKind::Array => "an array".to_string(),
+        ParamKind::Object => "an object".to_string(),
+        ParamKind::Any => "any value".to_string(),
+    }
+}
+
+fn plural(word: &str, count: usize) -> String {
+    if count == 1 {
+        word.to_string()
+    } else {
+        format!("{word}s")
+    }
+}
+
 /// Infers the call's return kind from `signature` and the argument kinds.
 ///
 /// Never rejects: argument mistakes are invariant violations, not type
@@ -98,6 +214,7 @@ pub(crate) fn evaluate(signature: &Signature, args: &[Kind]) -> Kind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analyzer::function::signature::evaluate;
 
     fn fixed_int() -> Signature {
         Signature {

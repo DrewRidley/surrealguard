@@ -60,6 +60,12 @@ impl<'a> AnalysisContext<'a> {
         }
     }
 
+    /// Consumes the context, returning its environment — for callers that
+    /// construct one context per statement but thread bindings across them.
+    pub(crate) fn into_env(self) -> StatementEnv {
+        self.env
+    }
+
     pub fn schema(&self) -> &'a SchemaIndex {
         self.schema
     }
@@ -76,7 +82,13 @@ impl<'a> AnalysisContext<'a> {
         self.diagnostics
     }
 
+    /// Records a finding, dropping exact duplicates: re-inference of the
+    /// same expression (const-value resolution, closure re-inference at a
+    /// call site) may re-detect the same violation at the same span.
     pub fn emit(&mut self, finding: Finding) {
+        if self.diagnostics.contains(&finding) {
+            return;
+        }
         self.diagnostics.push(finding);
     }
 

@@ -2188,8 +2188,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2004"
-                && message == "argument 1 to `string::len` has type `int`, expected `string`"
+            code == "E5003" && message == "`string::len` argument 1 expects `string`, found `int`"
         }));
     }
 
@@ -2209,9 +2208,57 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2004"
-                && message == "argument 1 to `string::len` has type `int`, expected `string`"
+            code == "E5003" && message == "`string::len` argument 1 expects `string`, found `int`"
         }));
+    }
+
+    #[test]
+    fn analyze_workspace_reports_function_misuse_in_where_and_set_positions() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nSELECT * FROM person WHERE string::len(age) > 0;\nUPDATE person SET age = math::abs('x');".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        // WHERE conditions and SET values are walked like any other
+        // expression position.
+        assert!(messages.iter().any(|(code, message)| {
+            code == "E5003" && message == "`string::len` argument 1 expects `string`, found `int`"
+        }));
+        assert!(messages.iter().any(|(code, message)| {
+            code == "E5003" && message == "`math::abs` argument 1 expects a number, found `string`"
+        }));
+    }
+
+    #[test]
+    fn analyze_workspace_reports_unknown_custom_functions() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE FUNCTION fn::greet($name: string) -> string { RETURN 'hi'; };\nRETURN fn::greet('a');\nRETURN fn::gret('a');".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        assert!(messages.iter().any(|(code, message)| {
+            code == "E1015" && message == "unknown function `fn::gret`"
+        }));
+        // The defined function produces no finding.
+        assert!(!messages
+            .iter()
+            .any(|(_, message)| message.contains("fn::greet")));
     }
 
     #[test]
@@ -2231,18 +2278,16 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2003" && message == "function `string::len` expects 1 argument, got 0"
+            code == "E5002" && message == "`string::len` expects 1 argument, found 0"
         }));
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2004"
-                && message == "argument 1 to `string::len` has type `int`, expected `string`"
+            code == "E5003" && message == "`string::len` argument 1 expects `string`, found `int`"
         }));
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2004"
-                && message == "argument 1 to `array::len` has type `int`, expected `array`"
+            code == "E5003" && message == "`array::len` argument 1 expects an array, found `int`"
         }));
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2002" && message == "unknown function `unknown::fn`"
+            code == "E5001" && message == "unknown function `unknown::fn`"
         }));
     }
 

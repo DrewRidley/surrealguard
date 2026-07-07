@@ -97,6 +97,6 @@ pub fn analyze_math_function(
         "math::top" => top::analyze_math_top(ctx, call, args),
         "math::trimean" => trimean::analyze_math_trimean(ctx, call, args),
         "math::variance" => variance::analyze_math_variance(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

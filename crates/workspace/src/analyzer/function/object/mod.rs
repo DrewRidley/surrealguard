@@ -29,6 +29,6 @@ pub fn analyze_object_function(
         "object::len" => len::analyze_object_len(ctx, call, args),
         "object::remove" => remove::analyze_object_remove(ctx, call, args),
         "object::values" => values::analyze_object_values(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

@@ -45,6 +45,6 @@ pub fn analyze_file_function(
         "file::rename_if_not_exists" => {
             rename_if_not_exists::analyze_file_rename_if_not_exists(ctx, call, args)
         }
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

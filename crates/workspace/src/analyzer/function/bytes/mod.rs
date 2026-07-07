@@ -15,6 +15,6 @@ pub fn analyze_bytes_function(
 ) -> Kind {
     match path {
         "bytes::len" => len::analyze_bytes_len(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

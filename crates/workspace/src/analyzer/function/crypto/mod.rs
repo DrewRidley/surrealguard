@@ -49,6 +49,6 @@ pub fn analyze_crypto_function(
         "crypto::sha1" => sha1::analyze_crypto_sha1(ctx, call, args),
         "crypto::sha256" => sha256::analyze_crypto_sha256(ctx, call, args),
         "crypto::sha512" => sha512::analyze_crypto_sha512(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

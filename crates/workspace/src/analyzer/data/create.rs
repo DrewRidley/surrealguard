@@ -15,6 +15,8 @@ pub fn analyze_create(ctx: &mut AnalysisContext<'_>, stmt: &ast::CreateStmt) -> 
 }
 
 pub(crate) fn create_response_kind(stmt: &ast::CreateStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
+    let table_hint = mutation::source_table_name(stmt.targets.first());
+    mutation::analyze_expression_positions(ctx, stmt.data.as_ref(), None, table_hint.as_deref());
     let Some(table_name) = mutation::source_table_name(stmt.targets.first()) else {
         return Kind::Any;
     };

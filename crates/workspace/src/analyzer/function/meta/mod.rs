@@ -19,6 +19,6 @@ pub fn analyze_meta_function(
         "meta::id" => id::analyze_meta_id(ctx, call, args),
         "meta::table" => table::analyze_meta_table(ctx, call, args),
         "meta::tb" => tb::analyze_meta_tb(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

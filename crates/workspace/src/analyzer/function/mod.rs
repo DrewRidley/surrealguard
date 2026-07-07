@@ -6,6 +6,7 @@
 
 use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
+use surrealguard_syntax::span::SourceSpan;
 
 use crate::analyzer::context::AnalysisContext;
 
@@ -76,15 +77,42 @@ pub fn analyze_builtin_function(
         "value" => value::analyze_value_function(ctx, call, path, args),
         "vector" => vector::analyze_vector_function(ctx, call, path, args),
         // User-defined functions carry their declared return type on the
-        // schema; without a declaration the return is unknowable.
-        "fn" => ctx
-            .schema()
-            .functions
-            .get(path)
-            .and_then(|function| function.return_kind.clone())
-            .unwrap_or(Kind::Any),
-        _ => Kind::Any,
+        // schema; an undefined one is a schema-reference finding (1015).
+        "fn" => match ctx.schema().functions.get(path) {
+            Some(function) => function.return_kind.clone().unwrap_or(Kind::Any),
+            None => {
+                if !is_synthetic(call) {
+                    let span = SourceSpan::new(ctx.source().clone(), call.path.span);
+                    ctx.emit(surrealguard_diagnostics::catalog::finding(
+                        span,
+                        1015,
+                        format!("unknown function `{path}`"),
+                    ));
+                }
+                Kind::Any
+            }
+        },
+        _ => unknown_function(ctx, call),
     }
+}
+
+/// Fallthrough for a call that resolved to no builtin: emits 5001 unless
+/// the call is synthetic (the receiver-kind method probe intentionally
+/// tries names that may not exist).
+pub(crate) fn unknown_function(ctx: &mut AnalysisContext<'_>, call: &ast::Call) -> Kind {
+    if !is_synthetic(call) {
+        let span = SourceSpan::new(ctx.source().clone(), call.path.span);
+        ctx.emit(surrealguard_diagnostics::catalog::finding(
+            span,
+            5001,
+            format!("unknown function `{}`", call.path.node),
+        ));
+    }
+    Kind::Any
+}
+
+fn is_synthetic(call: &ast::Call) -> bool {
+    call.path.span.start() == call.path.span.end()
 }
 
 /// The type of a decoded JSON value: SurrealDB parses JSON bodies with

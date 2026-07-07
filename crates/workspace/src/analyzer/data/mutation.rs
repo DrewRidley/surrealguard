@@ -21,6 +21,41 @@ use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::expression::infer::{infer_expression_fact, plain_field_segments};
 use crate::schema::TableDef;
 
+/// Walks the expression positions a statement carries beyond its response
+/// shape — WHERE conditions and data-clause payloads. The kinds are
+/// discarded; the walk exists so findings inside those expressions are
+/// emitted (function misuse in a `WHERE` is as real as in a projection).
+pub(crate) fn analyze_expression_positions(
+    ctx: &mut AnalysisContext<'_>,
+    data: Option<&ast::DataClause>,
+    where_clause: Option<&ast::Spanned<ast::Expr>>,
+    table: Option<&str>,
+) {
+    let row_table = table.and_then(|name| ctx.schema().tables.get(name));
+    ctx.with_row_table(row_table, |ctx| {
+        if let Some(cond) = where_clause {
+            infer_expression_fact(cond, ctx);
+        }
+        match data {
+            Some(ast::DataClause::Set(assignments)) => {
+                for assignment in assignments {
+                    infer_expression_fact(&assignment.value, ctx);
+                }
+            }
+            Some(
+                ast::DataClause::Content(expr)
+                | ast::DataClause::Merge(expr)
+                | ast::DataClause::Patch(expr)
+                | ast::DataClause::Replace(expr)
+                | ast::DataClause::Single(expr),
+            ) => {
+                infer_expression_fact(expr, ctx);
+            }
+            Some(ast::DataClause::Unset(_) | ast::DataClause::Partial(_)) | None => {}
+        }
+    });
+}
+
 /// Builds the response type for a mutation once its target `table` is
 /// resolved: `RETURN` mode decides the row type, `ONLY` decides whether the
 /// row is wrapped in an array.

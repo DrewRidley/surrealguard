@@ -19,6 +19,6 @@ pub fn analyze_value_function(
         "value::diff" => diff::analyze_value_diff(ctx, call, args),
         "value::expect" => expect::analyze_value_expect(ctx, call, args),
         "value::patch" => patch::analyze_value_patch(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

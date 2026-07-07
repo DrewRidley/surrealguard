@@ -19,6 +19,6 @@ pub fn analyze_count_function(
 ) -> Kind {
     match path {
         "count::count" => count::analyze_count_count(ctx, call, args),
-        _ => Kind::Any,
+        _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }
