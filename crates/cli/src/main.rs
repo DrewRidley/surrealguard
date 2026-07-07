@@ -5,7 +5,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use surrealguard_diagnostics::{PolicyConfig, Severity};
+use surrealguard_diagnostics::{render_code, PolicyConfig, Severity};
 use surrealguard_workspace::config::WorkspaceConfig;
 use surrealguard_workspace::{analyze_workspace, Workspace};
 use walkdir::{DirEntry, WalkDir};
@@ -158,7 +158,7 @@ fn run_check(start_dir: &Path) -> Result<CheckSummary, CheckFailed> {
         .map(|(finding, severity)| {
             let range = finding.span().range();
             CheckDiagnostic {
-                code: finding.code().to_string(),
+                code: render_code(finding.code(), *severity),
                 severity: severity_name(*severity),
                 source: finding.span().source().to_string(),
                 range: CheckRange {

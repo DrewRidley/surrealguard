@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod code;
 pub mod finding;
 pub mod policy;
@@ -10,3 +11,18 @@ pub use suppression::{
     parse_optional_suppression_directive, parse_suppression_directive, Suppression,
     SuppressionParseError, SuppressionTarget,
 };
+
+/// Renders a code for display: the severity's letter plus the number
+/// (`E1004`, `W4003`, `I7002`) — syntax keeps its `S` prefix. Severity is
+/// the *resolved* one, so policy promotion shows as `E`.
+pub fn render_code(code: FindingCode, severity: Severity) -> String {
+    if code.category() == FindingCategory::Syntax {
+        return format!("S{:04}", code.number());
+    }
+    let letter = match severity {
+        Severity::Error => 'E',
+        Severity::Warning => 'W',
+        Severity::Hint => 'I',
+    };
+    format!("{letter}{:04}", code.number())
+}

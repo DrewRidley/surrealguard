@@ -16,11 +16,12 @@ pub fn workspace_finding_to_lsp_diagnostic(
     finding: &Finding,
     policy: &PolicyConfig,
 ) -> Option<Diagnostic> {
-    let severity = policy.resolve_severity(finding.code(), finding.severity())?;
+    let resolved = policy.resolve_severity(finding.code(), finding.severity())?;
     let range = finding.span().range();
     let range = byte_range_to_lsp(source, range.start() as usize, range.end() as usize);
 
-    let severity = match severity {
+    let code = surrealguard_diagnostics::render_code(finding.code(), resolved);
+    let severity = match resolved {
         WorkspaceSeverity::Error => DiagnosticSeverity::ERROR,
         WorkspaceSeverity::Warning => DiagnosticSeverity::WARNING,
         WorkspaceSeverity::Hint => DiagnosticSeverity::HINT,
@@ -29,7 +30,7 @@ pub fn workspace_finding_to_lsp_diagnostic(
     Some(Diagnostic {
         range,
         severity: Some(severity),
-        code: Some(NumberOrString::String(finding.code().to_string())),
+        code: Some(NumberOrString::String(code)),
         source: Some("surrealguard".to_string()),
         message: finding.message().to_string(),
         related_information: None,

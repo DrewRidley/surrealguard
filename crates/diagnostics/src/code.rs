@@ -4,14 +4,28 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FindingCategory {
+    /// 0xxx — parse-level breakage.
     Syntax,
+    /// 1xxx — references to schema objects that don't exist.
     Schema,
+    /// 2xxx — kind mismatches and nullability.
     Type,
-    Param,
+    /// 3xxx — relation and traversal misuse.
     Graph,
-    Permission,
-    Dynamic,
+    /// 4xxx — clause and statement misuse.
+    Statement,
+    /// 5xxx — function and closure misuse.
+    Function,
+    /// 6xxx — parameter constraints and conflicts.
+    Param,
+    /// 7xxx — style and suspicious-but-valid constructs.
     Lint,
+    /// 8xxx — SurrealDB version compatibility.
+    Compat,
+    /// Legacy family used only by the frozen validators; dies with them.
+    Permission,
+    /// Legacy family used only by the frozen validators; dies with them.
+    Dynamic,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -53,6 +67,34 @@ impl FindingCode {
         Self::new(FindingCategory::Lint, number)
     }
 
+    pub fn statement(number: u16) -> Self {
+        Self::new(FindingCategory::Statement, number)
+    }
+
+    pub fn function(number: u16) -> Self {
+        Self::new(FindingCategory::Function, number)
+    }
+
+    pub fn compat(number: u16) -> Self {
+        Self::new(FindingCategory::Compat, number)
+    }
+
+    /// The catalog family a code number belongs to, by its thousand block.
+    pub fn from_number(number: u16) -> Self {
+        let category = match number / 1000 {
+            0 => FindingCategory::Syntax,
+            1 => FindingCategory::Schema,
+            2 => FindingCategory::Type,
+            3 => FindingCategory::Graph,
+            4 => FindingCategory::Statement,
+            5 => FindingCategory::Function,
+            6 => FindingCategory::Param,
+            7 => FindingCategory::Lint,
+            _ => FindingCategory::Compat,
+        };
+        Self::new(category, number)
+    }
+
     pub fn category(self) -> FindingCategory {
         self.category
     }
@@ -61,13 +103,19 @@ impl FindingCode {
         self.number
     }
 
+    /// Rendering prefix. Syntax keeps its `S`; every other family renders
+    /// with the *severity's* letter — see [`crate::render_code`]. This
+    /// category-only fallback exists for contexts without a severity.
     pub fn prefix(self) -> char {
         match self.category {
             FindingCategory::Syntax => 'S',
             FindingCategory::Schema
             | FindingCategory::Type
             | FindingCategory::Param
-            | FindingCategory::Graph => 'E',
+            | FindingCategory::Graph
+            | FindingCategory::Statement
+            | FindingCategory::Function
+            | FindingCategory::Compat => 'E',
             FindingCategory::Permission | FindingCategory::Dynamic => 'W',
             FindingCategory::Lint => 'L',
         }
