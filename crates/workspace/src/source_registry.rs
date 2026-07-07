@@ -1,3 +1,5 @@
+//! Maps workspace files and virtual sources to parsed, identified sources.
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 

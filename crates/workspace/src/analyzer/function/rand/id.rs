@@ -1,0 +1,22 @@
+//! `rand::id` function analysis: `rand::id() -> string`.
+//!
+//! Generates a random record-id string; modelled as `String`.
+
+use surrealdb_types::Kind;
+use surrealguard_syntax::ast;
+
+use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::function::signature::{evaluate, ReturnKind, Signature};
+
+pub fn analyze_rand_id(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
+    let _ = (ctx, call);
+    evaluate(
+        &Signature {
+            min_args: 0,
+            max_args: Some(0),
+            arg_kinds: vec![],
+            return_kind: ReturnKind::Fixed(Kind::String),
+        },
+        args,
+    )
+}

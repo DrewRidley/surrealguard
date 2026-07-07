@@ -1,3 +1,12 @@
+//! The pre-AST validation engine: diagnostic validators (table references,
+//! projection/function/assignability/graph checks) and param inference,
+//! walking tree-sitter nodes directly.
+//!
+//! Frozen: no new behavior lands here. Each validator is deleted outright
+//! when its statement's invariants are formalized in the analyzer tree
+//! with their own finding codes and messages — nothing here is preserved.
+//! Type inference has no remaining paths through this module.
+
 use std::collections::BTreeMap;
 
 use surrealguard_diagnostics::{Finding, FindingCode, Severity};
@@ -9,13 +18,10 @@ use surrealdb_types::Kind;
 use tree_sitter::Node;
 
 use crate::analysis::{ParamInference, SelectModifierAnalysis, StatementAnalysis};
+use crate::expression::PartialReason;
 use crate::expression::{infer_expression_fact, ExpressionFact, ExpressionValueClass};
-use crate::response_shape::{FieldShape, PartialReason, ResponseShape};
-use crate::schema::SchemaIndex;
-use crate::select_ir::{
-    select_ir_from_statement, FieldPath, GraphDirection, GraphLookup, SelectIr, SelectModifier,
-    SelectProjection,
-};
+use crate::schema::{apply_schema_statement_effects, SchemaIndex};
+use crate::select_ir::{select_ir_from_statement, FieldPath, SelectModifier, SelectProjection};
 use crate::statement_env::StatementEnv;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -31,10 +37,17 @@ pub struct ParamKindInference {
     pub kind: Kind,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SourceOrderedSemanticOutput {
+    pub schema: SchemaIndex,
+    pub diagnostics: Vec<Finding>,
+    pub param_kind_inferences: Vec<ParamKindInference>,
+    pub response_kinds: Vec<(SourceSpan, Kind)>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LetVariableFact {
     kind: Option<Kind>,
-    shape: Option<ResponseShape>,
 }
 
 pub fn analyze_parsed_source(parsed: &ParsedSource) -> SemanticOutput {
@@ -44,6 +57,122 @@ pub fn analyze_parsed_source(parsed: &ParsedSource) -> SemanticOutput {
 
     let mut env = StatementEnv::default();
     analyze_statement_sequence(parsed.tree().root_node(), parsed, &mut env)
+}
+
+pub fn analyze_sources_in_source_order(
+    parsed_sources: &[ParsedSource],
+) -> SourceOrderedSemanticOutput {
+    let mut output = SourceOrderedSemanticOutput::default();
+
+    for parsed in parsed_sources {
+        if !parsed.syntax_diagnostics().is_empty() {
+            continue;
+        }
+
+        let mut statements = Vec::new();
+        collect_statement_nodes(parsed.tree().root_node(), &mut statements);
+
+        let mut mutation_env = StatementEnv::default();
+        let mut expression_env = StatementEnv::default();
+        let mut select_param_env = StatementEnv::default();
+        let mut mutation_param_env = StatementEnv::default();
+        let mut select_shape_env = StatementEnv::default();
+        let mut mutation_shape_env = StatementEnv::default();
+        let mut statement_shape_env = StatementEnv::default();
+
+        for statement in statements {
+            collect_table_reference_diagnostics(
+                statement,
+                parsed,
+                &output.schema,
+                &mut output.diagnostics,
+            );
+            collect_select_graph_reference_diagnostics(
+                statement,
+                parsed,
+                &output.schema,
+                &mut output.diagnostics,
+            );
+            collect_select_projection_field_diagnostics(
+                statement,
+                parsed,
+                &output.schema,
+                &mut output.diagnostics,
+            );
+            collect_mutation_field_diagnostics_with_env(
+                statement,
+                parsed,
+                &output.schema,
+                &mut mutation_env,
+                &mut output.diagnostics,
+            );
+            collect_expression_diagnostics_with_env(
+                statement,
+                parsed,
+                &output.schema,
+                &mut expression_env,
+                &mut output.diagnostics,
+            );
+            collect_select_param_kind_inferences_with_env(
+                statement,
+                parsed,
+                &output.schema,
+                &mut select_param_env,
+                &mut output.param_kind_inferences,
+            );
+            collect_mutation_param_kind_inferences_with_env(
+                statement,
+                parsed,
+                &output.schema,
+                &mut mutation_param_env,
+                &mut output.param_kind_inferences,
+            );
+            collect_select_response_shapes_with_env(
+                statement,
+                parsed,
+                &output.schema,
+                &mut select_shape_env,
+                &mut output.response_kinds,
+            );
+            collect_mutation_response_shapes_with_env(
+                statement,
+                parsed,
+                &output.schema,
+                &mut mutation_shape_env,
+                &mut output.response_kinds,
+            );
+
+            let statement_output =
+                analyze_statement_sequence(statement, parsed, &mut statement_shape_env);
+            for analyzed_statement in statement_output.statements {
+                if matches!(analyzed_statement.kind.as_str(), "if_else" | "return") {
+                    if let Some(kind) = analyzed_statement.response_kind {
+                        output.response_kinds.push((analyzed_statement.span, kind));
+                    }
+                }
+            }
+
+            output.diagnostics.extend(apply_schema_statement_effects(
+                statement,
+                parsed,
+                &mut output.schema,
+            ));
+        }
+    }
+
+    output
+}
+
+fn collect_statement_nodes<'tree>(node: Node<'tree>, statements: &mut Vec<Node<'tree>>) {
+    if node.kind().ends_with("Statement") {
+        statements.push(node);
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_statement_nodes(child, statements);
+    }
 }
 
 pub fn validate_table_references(
@@ -215,7 +344,7 @@ pub fn infer_param_kinds(
 pub fn infer_select_response_shapes(
     parsed_sources: &[ParsedSource],
     schema: &SchemaIndex,
-) -> Vec<(SourceSpan, ResponseShape)> {
+) -> Vec<(SourceSpan, Kind)> {
     let mut shapes = Vec::new();
 
     for parsed in parsed_sources {
@@ -238,7 +367,7 @@ pub fn infer_select_response_shapes(
 pub fn infer_non_select_response_shapes(
     parsed_sources: &[ParsedSource],
     schema: &SchemaIndex,
-) -> Vec<(SourceSpan, ResponseShape)> {
+) -> Vec<(SourceSpan, Kind)> {
     let mut shapes = Vec::new();
 
     for parsed in parsed_sources {
@@ -249,7 +378,7 @@ pub fn infer_non_select_response_shapes(
         let output = analyze_statement_sequence(parsed.tree().root_node(), parsed, &mut env);
         for statement in output.statements {
             if matches!(statement.kind.as_str(), "if_else" | "return") {
-                if let Some(shape) = statement.response_shape {
+                if let Some(shape) = statement.response_kind {
                     shapes.push((statement.span, shape));
                 }
             }
@@ -272,7 +401,7 @@ fn collect_mutation_response_shapes_with_env(
     parsed: &ParsedSource,
     schema: &SchemaIndex,
     env: &mut StatementEnv,
-    shapes: &mut Vec<(SourceSpan, ResponseShape)>,
+    shapes: &mut Vec<(SourceSpan, Kind)>,
 ) {
     match node.kind() {
         "LetStatement" => {
@@ -292,11 +421,42 @@ fn collect_mutation_response_shapes_with_env(
         }
         "CreateStatement" | "InsertStatement" | "UpdateStatement" | "UpsertStatement"
         | "DeleteStatement" | "RelateStatement" => {
-            let let_variables = let_variable_facts_from_env(env);
-            shapes.push((
-                node_span(node, parsed.source_id().clone()),
-                response_shape_for_mutation(node, parsed, schema, &let_variables),
-            ));
+            let lowered = surrealguard_syntax::lower::lower_statement(node, parsed.text());
+            let (source, text) = (parsed.source_id(), parsed.text());
+            let kind = match &lowered.node {
+                surrealguard_syntax::ast::Statement::Create(s) => {
+                    crate::analyzer::data::create::create_response_kind(
+                        s, source, text, schema, env,
+                    )
+                }
+                surrealguard_syntax::ast::Statement::Update(s) => {
+                    crate::analyzer::data::update::update_response_kind(
+                        s, source, text, schema, env,
+                    )
+                }
+                surrealguard_syntax::ast::Statement::Upsert(s) => {
+                    crate::analyzer::data::upsert::upsert_response_kind(
+                        s, source, text, schema, env,
+                    )
+                }
+                surrealguard_syntax::ast::Statement::Delete(s) => {
+                    crate::analyzer::data::delete::delete_response_kind(
+                        s, source, text, schema, env,
+                    )
+                }
+                surrealguard_syntax::ast::Statement::Insert(s) => {
+                    crate::analyzer::data::insert::insert_response_kind(
+                        s, source, text, schema, env,
+                    )
+                }
+                surrealguard_syntax::ast::Statement::Relate(s) => {
+                    crate::analyzer::data::relate::relate_response_kind(
+                        s, source, text, schema, env,
+                    )
+                }
+                _ => Kind::Any,
+            };
+            shapes.push((node_span(node, parsed.source_id().clone()), kind));
             return;
         }
         _ => {}
@@ -310,7 +470,7 @@ fn collect_mutation_response_shape_children_with_env(
     parsed: &ParsedSource,
     schema: &SchemaIndex,
     env: &mut StatementEnv,
-    shapes: &mut Vec<(SourceSpan, ResponseShape)>,
+    shapes: &mut Vec<(SourceSpan, Kind)>,
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -318,50 +478,35 @@ fn collect_mutation_response_shape_children_with_env(
     }
 }
 
-fn merge_response_shapes(shapes: Vec<ResponseShape>) -> ResponseShape {
-    let mut variants = Vec::new();
-    for shape in shapes {
-        if !variants.contains(&shape) {
-            variants.push(shape);
-        }
+/// Branch result types merge through upstream `Kind::either`, which
+/// flattens nested Eithers and dedups. No branches at all is a poison.
+fn merge_response_kinds(kinds: Vec<Kind>) -> Kind {
+    if kinds.is_empty() {
+        return Kind::Any;
     }
-
-    match variants.len() {
-        0 => ResponseShape::Unknown {
-            reason: PartialReason::Unresolved,
-        },
-        1 => variants.pop().expect("one response-shape variant"),
-        _ => ResponseShape::Union { variants },
-    }
+    Kind::either(kinds)
 }
 
-fn response_shape_for_return(
+fn return_response_kind(
     node: Node<'_>,
     parsed: &ParsedSource,
     let_variables: &BTreeMap<String, LetVariableFact>,
-) -> ResponseShape {
+) -> Kind {
     let Some(value) = return_value_node(node) else {
-        return ResponseShape::Unknown {
-            reason: PartialReason::Unresolved,
-        };
+        return Kind::Any;
     };
     if value.kind() == "VariableName" {
         let name = param_name(node_text(value, parsed.text()));
         if let Some(variable) = let_variables.get(&name) {
-            if let Some(shape) = variable.shape.clone() {
-                return shape;
-            }
             if let Some(kind) = variable.kind.clone() {
-                return ResponseShape::Value { kind };
+                return kind;
             }
         }
     }
 
     infer_expression_fact_with_let_variables(value, parsed, None, let_variables)
-        .shape
-        .unwrap_or(ResponseShape::Unknown {
-            reason: PartialReason::Unresolved,
-        })
+        .kind
+        .unwrap_or(Kind::Any)
 }
 
 fn return_value_node(statement: Node<'_>) -> Option<Node<'_>> {
@@ -372,214 +517,7 @@ fn return_value_node(statement: Node<'_>) -> Option<Node<'_>> {
         .last()
 }
 
-fn response_shape_for_mutation(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    schema: &SchemaIndex,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-) -> ResponseShape {
-    let Some(table_name) = mutation_table_name(node, parsed) else {
-        return ResponseShape::Unknown {
-            reason: PartialReason::Unresolved,
-        };
-    };
-    let Some(table) = schema.tables.get(&table_name) else {
-        return ResponseShape::Unknown {
-            reason: PartialReason::Unresolved,
-        };
-    };
-
-    match mutation_return_mode(node, parsed) {
-        MutationReturnMode::None => ResponseShape::Array {
-            element: Box::new(ResponseShape::Unknown {
-                reason: PartialReason::UnsupportedSyntax("RETURN NONE".into()),
-            }),
-            max_len: Some(0),
-        },
-        MutationReturnMode::Diff => mutation_return_diff_shape(node, parsed),
-        MutationReturnMode::Fields => {
-            mutation_return_fields_shape(node, parsed, table, let_variables)
-        }
-        MutationReturnMode::Rows => {
-            if table.fields.is_empty() {
-                return ResponseShape::Unknown {
-                    reason: PartialReason::Unresolved,
-                };
-            }
-            ResponseShape::Array {
-                element: Box::new(object_shape_for_all_fields(table)),
-                max_len: None,
-            }
-        }
-    }
-}
-
-fn mutation_return_fields_shape(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-) -> ResponseShape {
-    let Some(return_clause) = find_descendant_kind(node, "ReturnClause") else {
-        return ResponseShape::Unknown {
-            reason: PartialReason::Unresolved,
-        };
-    };
-    let mut fields = BTreeMap::new();
-    collect_return_field_shapes(return_clause, parsed, table, let_variables, &mut fields);
-    if fields.is_empty() {
-        return ResponseShape::Unknown {
-            reason: PartialReason::Unresolved,
-        };
-    }
-
-    ResponseShape::Array {
-        element: Box::new(ResponseShape::Object {
-            fields,
-            open: false,
-        }),
-        max_len: None,
-    }
-}
-
-fn collect_return_field_shapes(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-    fields: &mut BTreeMap<String, FieldShape>,
-) {
-    if let Some((alias, field_shape)) =
-        mutation_return_alias_field_shape(node, parsed, table, let_variables)
-    {
-        fields.insert(alias, field_shape);
-        return;
-    }
-
-    if is_row_context_field_path_node(node) {
-        let path = field_path_from_node(node, parsed);
-        if let Some(field_shape) = field_shape_for_path(table, &path) {
-            insert_field_shape_at_path(fields, &path.segments, field_shape);
-        }
-        return;
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.is_named() && !matches!(child.kind(), "Keyword" | "Literal") {
-            collect_return_field_shapes(child, parsed, table, let_variables, fields);
-        }
-    }
-}
-
-fn mutation_return_alias_field_shape(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-) -> Option<(String, FieldShape)> {
-    if node.kind() != "Predicate" {
-        return None;
-    }
-
-    let mut cursor = node.walk();
-    let children: Vec<_> = node
-        .children(&mut cursor)
-        .filter(|child| child.is_named())
-        .collect();
-    let as_index = children.iter().position(|child| {
-        child.kind() == "Keyword" && node_text(*child, parsed.text()).eq_ignore_ascii_case("AS")
-    })?;
-    let expression = children[..as_index]
-        .iter()
-        .copied()
-        .find(|child| !matches!(child.kind(), "Keyword" | "Operator"))?;
-    let alias = children[as_index + 1..]
-        .iter()
-        .copied()
-        .find(|child| child.kind() == "Ident")?;
-    let alias_text = node_text(alias, parsed.text()).trim().to_string();
-    let fact =
-        infer_expression_fact_with_let_variables(expression, parsed, Some(table), let_variables);
-    let shape = fact.shape.unwrap_or_else(|| {
-        fact.kind
-            .clone()
-            .map(|kind| ResponseShape::Value { kind })
-            .unwrap_or(ResponseShape::Unknown {
-                reason: PartialReason::Unresolved,
-            })
-    });
-    Some((
-        alias_text,
-        FieldShape {
-            kind: fact.kind,
-            shape,
-            span: node_span(expression, parsed.source_id().clone()),
-            materialized_by_fetch: false,
-            partial: fact.partial,
-        },
-    ))
-}
-
-fn mutation_return_diff_shape(node: Node<'_>, parsed: &ParsedSource) -> ResponseShape {
-    let span = find_descendant_kind(node, "ReturnClause")
-        .map(|clause| node_span(clause, parsed.source_id().clone()))
-        .unwrap_or_else(|| node_span(node, parsed.source_id().clone()));
-    let mut fields = BTreeMap::new();
-    for (name, kind) in [
-        ("op", Kind::String),
-        ("path", Kind::String),
-        ("value", Kind::Any),
-    ] {
-        fields.insert(
-            name.to_string(),
-            FieldShape {
-                shape: ResponseShape::Value { kind: kind.clone() },
-                kind: Some(kind),
-                span: span.clone(),
-                materialized_by_fetch: false,
-                partial: Vec::new(),
-            },
-        );
-    }
-
-    ResponseShape::Array {
-        element: Box::new(ResponseShape::Array {
-            element: Box::new(ResponseShape::Object {
-                fields,
-                open: false,
-            }),
-            max_len: None,
-        }),
-        max_len: None,
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MutationReturnMode {
-    Rows,
-    None,
-    Diff,
-    Fields,
-}
-
-fn mutation_return_mode(node: Node<'_>, parsed: &ParsedSource) -> MutationReturnMode {
-    let Some(return_clause) = find_descendant_kind(node, "ReturnClause") else {
-        return MutationReturnMode::Rows;
-    };
-    let text = node_text(return_clause, parsed.text()).to_ascii_uppercase();
-    if text.contains("NONE") {
-        MutationReturnMode::None
-    } else if text.contains("DIFF") {
-        MutationReturnMode::Diff
-    } else if text.contains("BEFORE") || text.contains("AFTER") {
-        MutationReturnMode::Rows
-    } else {
-        MutationReturnMode::Fields
-    }
-}
-
-fn find_descendant_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>> {
+pub(crate) fn find_descendant_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>> {
     if node.kind() == kind {
         return Some(node);
     }
@@ -597,7 +535,7 @@ fn collect_select_response_shapes_with_env(
     parsed: &ParsedSource,
     schema: &SchemaIndex,
     env: &mut StatementEnv,
-    shapes: &mut Vec<(SourceSpan, ResponseShape)>,
+    shapes: &mut Vec<(SourceSpan, Kind)>,
 ) {
     match node.kind() {
         "LetStatement" => {
@@ -616,12 +554,20 @@ fn collect_select_response_shapes_with_env(
             return;
         }
         "SelectStatement" => {
-            let ir = select_ir_from_statement(node, parsed);
-            let let_variables = let_variable_facts_from_env(env);
-            shapes.push((
-                node_span(node, parsed.source_id().clone()),
-                response_shape_for_select(&ir, parsed, schema, &let_variables),
-            ));
+            let lowered = surrealguard_syntax::lower::lower_statement(node, parsed.text());
+            let kind = match &lowered.node {
+                surrealguard_syntax::ast::Statement::Select(stmt) => {
+                    crate::analyzer::data::select::select_response_kind(
+                        stmt,
+                        parsed.source_id(),
+                        parsed.text(),
+                        schema,
+                        env,
+                    )
+                }
+                _ => Kind::Any,
+            };
+            shapes.push((node_span(node, parsed.source_id().clone()), kind));
             return;
         }
         _ => {}
@@ -635,7 +581,7 @@ fn collect_select_response_shape_children_with_env(
     parsed: &ParsedSource,
     schema: &SchemaIndex,
     env: &mut StatementEnv,
-    shapes: &mut Vec<(SourceSpan, ResponseShape)>,
+    shapes: &mut Vec<(SourceSpan, Kind)>,
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -667,10 +613,10 @@ fn analyze_statement_sequence_into(
         output.statements.push(StatementAnalysis {
             span: node_span(node, parsed.source_id().clone()),
             kind,
-            response_shape: None,
+            response_kind: None,
             select_modifiers: select_modifier_analysis_for_node(node, parsed),
         });
-        output.statements[statement_index].response_shape =
+        output.statements[statement_index].response_kind =
             analyze_statement_effects(node, parsed, env, output);
         return;
     }
@@ -703,7 +649,7 @@ fn analyze_statement_effects(
     parsed: &ParsedSource,
     env: &mut StatementEnv,
     output: &mut SemanticOutput,
-) -> Option<ResponseShape> {
+) -> Option<Kind> {
     match node.kind() {
         "LetStatement" => {
             if let Some(value_node) = let_value_node(node) {
@@ -718,11 +664,11 @@ fn analyze_statement_effects(
         }
         "ReturnStatement" => {
             let let_variables = let_variable_facts_from_env(env);
-            let shape = response_shape_for_return(node, parsed, &let_variables);
+            let kind = return_response_kind(node, parsed, &let_variables);
             if let Some(value_node) = return_value_node(node) {
                 collect_expression_params_with_env(value_node, parsed, env, output);
             }
-            Some(shape)
+            Some(kind)
         }
         "IfElseStatement" => Some(analyze_if_else_statement_effects(node, parsed, env, output)),
         _ => {
@@ -737,13 +683,13 @@ fn analyze_if_else_statement_effects(
     parsed: &ParsedSource,
     env: &mut StatementEnv,
     output: &mut SemanticOutput,
-) -> ResponseShape {
-    let mut branch_shapes = Vec::new();
+) -> Kind {
+    let mut branch_kinds = Vec::new();
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        analyze_if_else_child(child, parsed, env, output, &mut branch_shapes);
+        analyze_if_else_child(child, parsed, env, output, &mut branch_kinds);
     }
-    merge_response_shapes(branch_shapes)
+    merge_response_kinds(branch_kinds)
 }
 
 fn analyze_if_else_child(
@@ -751,13 +697,13 @@ fn analyze_if_else_child(
     parsed: &ParsedSource,
     env: &mut StatementEnv,
     output: &mut SemanticOutput,
-    branch_shapes: &mut Vec<ResponseShape>,
+    branch_kinds: &mut Vec<Kind>,
 ) {
     if node.kind() == "Block" {
         let mut child_env = env.fork_child_scope();
         let mut child_output = SemanticOutput::default();
         analyze_statement_children(node, parsed, &mut child_env, &mut child_output);
-        collect_output_response_shapes(&child_output, branch_shapes);
+        collect_output_response_kinds(&child_output, branch_kinds);
         merge_param_inferences(&mut output.inferred_params, child_output.inferred_params);
         return;
     }
@@ -765,7 +711,7 @@ fn analyze_if_else_child(
     if node.kind() == "IfElseStatement" {
         let mut child_env = env.fork_child_scope();
         let child_output = analyze_statement_sequence(node, parsed, &mut child_env);
-        collect_output_response_shapes(&child_output, branch_shapes);
+        collect_output_response_kinds(&child_output, branch_kinds);
         merge_param_inferences(&mut output.inferred_params, child_output.inferred_params);
         return;
     }
@@ -782,16 +728,16 @@ fn analyze_if_else_child(
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        analyze_if_else_child(child, parsed, env, output, branch_shapes);
+        analyze_if_else_child(child, parsed, env, output, branch_kinds);
     }
 }
 
-fn collect_output_response_shapes(output: &SemanticOutput, shapes: &mut Vec<ResponseShape>) {
-    shapes.extend(
+fn collect_output_response_kinds(output: &SemanticOutput, kinds: &mut Vec<Kind>) {
+    kinds.extend(
         output
             .statements
             .iter()
-            .filter_map(|statement| statement.response_shape.clone()),
+            .filter_map(|statement| statement.response_kind.clone()),
     );
 }
 
@@ -807,7 +753,12 @@ fn collect_expression_params_with_env(
         }
         if let Some(name_node) = let_variable_name_node(node) {
             let name = param_name(node_text(name_node, parsed.text()));
-            let fact = infer_expression_fact(value_node_or_unknown(node), parsed, None);
+            let fact = infer_expression_fact(
+                value_node_or_unknown(node),
+                parsed.source_id(),
+                parsed.text(),
+                None,
+            );
             env.define_let(name, fact);
         }
         return;
@@ -896,7 +847,6 @@ fn let_variable_facts_from_env(env: &StatementEnv) -> BTreeMap<String, LetVariab
                 name.clone(),
                 LetVariableFact {
                     kind: fact.kind.clone(),
-                    shape: fact.shape.clone(),
                 },
             )
         })
@@ -916,7 +866,7 @@ fn is_define_param_statement(node: Node<'_>, parsed: &ParsedSource) -> bool {
         }
     }
 
-    matches!(keywords.get(0).map(String::as_str), Some("DEFINE"))
+    matches!(keywords.first().map(String::as_str), Some("DEFINE"))
         && matches!(keywords.get(1).map(String::as_str), Some("PARAM"))
 }
 
@@ -933,7 +883,7 @@ fn define_param_default_from_statement(
     };
 
     let name = param_name(node_text(name_node, parsed.text()));
-    let fact = infer_expression_fact(value_node, parsed, None);
+    let fact = infer_expression_fact(value_node, parsed.source_id(), parsed.text(), None);
     env.define_param_default(name, fact);
 }
 
@@ -1004,7 +954,6 @@ fn infer_expression_fact_with_let_variables(
                 ExpressionValueClass::Variable,
             );
             fact.kind = variable.kind.clone();
-            fact.shape = variable.shape.clone();
             return fact;
         }
     }
@@ -1016,7 +965,7 @@ fn infer_expression_fact_with_let_variables(
             let_variables,
         );
     }
-    infer_expression_fact(node, parsed, row_table)
+    infer_expression_fact(node, parsed.source_id(), parsed.text(), row_table)
 }
 
 fn infer_binary_expression_fact_with_let_variables(
@@ -1063,9 +1012,7 @@ fn infer_binary_expression_fact_with_let_variables(
 
     if let (Some(left_kind), Some(right_kind)) = (&left_fact.kind, &right_fact.kind) {
         if let Some(kind) = binary_expression_result_kind(operator_text, left_kind, right_kind) {
-            return fact
-                .with_kind(kind.clone())
-                .with_shape(ResponseShape::Value { kind });
+            return fact.with_kind(kind);
         }
     }
 
@@ -1080,21 +1027,21 @@ fn select_modifier_analysis_for_node(
         return Vec::new();
     }
 
-    select_ir_from_statement(node, parsed)
+    select_ir_from_statement(node, parsed.source_id(), parsed.text())
         .modifiers
         .into_iter()
-        .filter_map(|modifier| match modifier {
-            SelectModifier::Where(span) => Some(row_preserving_modifier("where", span, None)),
-            SelectModifier::Order(span) => Some(row_preserving_modifier("order", span, None)),
+        .map(|modifier| match modifier {
+            SelectModifier::Where(span) => row_preserving_modifier("where", span, None),
+            SelectModifier::Order(span) => row_preserving_modifier("order", span, None),
             SelectModifier::Limit { span, max_len } => {
-                Some(row_preserving_modifier("limit", span, max_len))
+                row_preserving_modifier("limit", span, max_len)
             }
-            SelectModifier::Start(span) => Some(row_preserving_modifier("start", span, None)),
-            SelectModifier::Timeout(span) => Some(row_preserving_modifier("timeout", span, None)),
-            SelectModifier::Parallel(span) => Some(row_preserving_modifier("parallel", span, None)),
-            SelectModifier::Group(_) | SelectModifier::Split(_) | SelectModifier::Explain(_) => {
-                None
-            }
+            SelectModifier::Start(span) => row_preserving_modifier("start", span, None),
+            SelectModifier::Timeout(span) => row_preserving_modifier("timeout", span, None),
+            SelectModifier::Parallel(span) => row_preserving_modifier("parallel", span, None),
+            SelectModifier::Group(span) => non_row_preserving_modifier("group", span),
+            SelectModifier::Split(span) => non_row_preserving_modifier("split", span),
+            SelectModifier::Explain(span) => non_row_preserving_modifier("explain", span),
         })
         .collect()
 }
@@ -1112,6 +1059,15 @@ fn row_preserving_modifier(
     }
 }
 
+fn non_row_preserving_modifier(kind: &str, span: SourceSpan) -> SelectModifierAnalysis {
+    SelectModifierAnalysis {
+        kind: kind.to_string(),
+        span,
+        row_preserving: false,
+        max_len: None,
+    }
+}
+
 fn collect_table_reference_diagnostics(
     node: Node<'_>,
     parsed: &ParsedSource,
@@ -1119,7 +1075,7 @@ fn collect_table_reference_diagnostics(
     diagnostics: &mut Vec<Finding>,
 ) {
     if node.kind() == "SelectStatement" {
-        let ir = select_ir_from_statement(node, parsed);
+        let ir = select_ir_from_statement(node, parsed.source_id(), parsed.text());
         if let Some(source) = ir.source {
             if let Some(table_name) = source.table {
                 if !schema.tables.contains_key(&table_name) {
@@ -1147,9 +1103,11 @@ fn collect_table_reference_diagnostics(
             "AlterStatement" => {
                 table_references_after_keyword(node, parsed.text(), "TABLE", "ALTER")
             }
-            "RemoveStatement" => {
-                table_references_after_keyword(node, parsed.text(), "TABLE", "REMOVE")
-            }
+            // REMOVE mutates schema context and is validated by schema extraction
+            // at the statement position. Do not re-check it against the final
+            // schema snapshot here, or a valid remove would look unknown after
+            // it deletes the table.
+            "RemoveStatement" => Vec::new(),
             "RebuildStatement" => {
                 table_references_after_keyword(node, parsed.text(), "TABLE", "REBUILD")
             }
@@ -1217,11 +1175,11 @@ fn validate_graph_references_for_select_statement(
     schema: &SchemaIndex,
     diagnostics: &mut Vec<Finding>,
 ) {
-    let ir = select_ir_from_statement(node, parsed);
+    let ir = select_ir_from_statement(node, parsed.source_id(), parsed.text());
     if ir.graph_lookups.is_empty() {
         return;
     }
-    if ir.graph_lookups.len() % 2 != 0 {
+    if !ir.graph_lookups.len().is_multiple_of(2) {
         return;
     }
 
@@ -1262,9 +1220,12 @@ fn validate_graph_references_for_select_statement(
         }
 
         if edge_relation.is_some() && target_exists {
-            if let Some(next_table) =
-                resolve_graph_step_target_table(&current_table, edge_lookup, target_lookup, schema)
-            {
+            if let Some(next_table) = crate::analyzer::data::select::resolve_graph_step_target_table(
+                &current_table,
+                edge_lookup,
+                target_lookup,
+                schema,
+            ) {
                 current_table = next_table;
             } else {
                 diagnostics.push(Finding::new(
@@ -1407,9 +1368,9 @@ fn collect_expression_diagnostics_with_env(
             return;
         }
         "SelectStatement" => {
-            let ir = select_ir_from_statement(node, parsed);
-            let table =
-                resolved_select_table_name(&ir, schema).and_then(|name| schema.tables.get(&name));
+            let ir = select_ir_from_statement(node, parsed.source_id(), parsed.text());
+            let table = crate::analyzer::data::select::resolved_select_table_name(&ir, schema)
+                .and_then(|name| schema.tables.get(&name));
             let let_variables = let_variable_facts_from_env(env);
             validate_expression_diagnostics_in_node(
                 node,
@@ -1422,7 +1383,8 @@ fn collect_expression_diagnostics_with_env(
         }
         "CreateStatement" | "InsertStatement" | "UpdateStatement" | "UpsertStatement"
         | "DeleteStatement" | "RelateStatement" => {
-            let table = mutation_table_name(node, parsed).and_then(|name| schema.tables.get(&name));
+            let table = crate::analyzer::data::mutation::mutation_table_name(node, parsed.text())
+                .and_then(|name| schema.tables.get(&name));
             let let_variables = let_variable_facts_from_env(env);
             validate_expression_diagnostics_in_node(
                 node,
@@ -1689,7 +1651,7 @@ fn validate_binary_expression(
         return;
     };
     let operator_text = node_text(operator, parsed.text()).trim();
-    if binary_expression_result_kind(operator_text, left_kind, right_kind).is_some() {
+    if binary_operands_compatible(operator_text, left_kind, right_kind) {
         return;
     }
 
@@ -1728,28 +1690,63 @@ fn binary_expression_parts<'tree>(
     Some((left, children[operator_index], right))
 }
 
+/// Inference only: the result kind of a binary expression, independent of
+/// whether the operands satisfy the operator's invariants (see
+/// [`binary_operands_compatible`] for that).
 fn binary_expression_result_kind(operator: &str, left: &Kind, right: &Kind) -> Option<Kind> {
-    match operator {
+    match operator.to_ascii_uppercase().as_str() {
         "+" if matches!(left, Kind::String) && matches!(right, Kind::String) => Some(Kind::String),
         "+" | "-" | "*" | "/" if is_numeric_kind(left) && is_numeric_kind(right) => {
-            if matches!(left, Kind::Float) || matches!(right, Kind::Float) {
+            if matches!(left, Kind::Decimal) || matches!(right, Kind::Decimal) {
+                Some(Kind::Decimal)
+            } else if matches!(left, Kind::Float) || matches!(right, Kind::Float) {
                 Some(Kind::Float)
             } else {
                 Some(Kind::Int)
             }
         }
+        // A comparison produces a bool no matter what it compares; mismatched
+        // operands violate an invariant, not the result type.
+        "=" | "==" | "!=" | "<" | "<=" | ">" | ">=" => Some(Kind::Bool),
+        "AND" | "OR" if matches!(left, Kind::Bool) && matches!(right, Kind::Bool) => {
+            Some(Kind::Bool)
+        }
+        "??" if matches!(left, Kind::None | Kind::Null) => Some(right.clone()),
+        "??" if matches!(right, Kind::None | Kind::Null) => Some(left.clone()),
+        // Coalescing two known kinds yields one of them.
+        "??" => Some(Kind::either(vec![left.clone(), right.clone()])),
         _ => None,
     }
 }
 
+/// Whether the operand kinds satisfy the operator's invariants — the
+/// detection predicate behind the `E2005` mismatch finding. Deliberately
+/// stricter than inference: `name > 18` still *infers* bool while being
+/// flagged here.
+fn binary_operands_compatible(operator: &str, left: &Kind, right: &Kind) -> bool {
+    match operator.to_ascii_uppercase().as_str() {
+        "+" if matches!(left, Kind::String) && matches!(right, Kind::String) => true,
+        "+" | "-" | "*" | "/" => is_numeric_kind(left) && is_numeric_kind(right),
+        "=" | "==" | "!=" | "<" | "<=" | ">" | ">=" => {
+            left == right || (is_numeric_kind(left) && is_numeric_kind(right))
+        }
+        "AND" | "OR" => matches!(left, Kind::Bool) && matches!(right, Kind::Bool),
+        "??" => true,
+        _ => false,
+    }
+}
+
 fn is_numeric_kind(kind: &Kind) -> bool {
-    matches!(kind, Kind::Int | Kind::Float | Kind::Number)
+    matches!(kind, Kind::Int | Kind::Float | Kind::Decimal | Kind::Number)
 }
 
 #[derive(Clone, Debug)]
-struct FunctionSignature {
+pub(crate) struct FunctionSignature {
     args: Vec<FunctionArgKind>,
-    return_kind: Kind,
+    // The remaining consumers of this table (the function-call validator and
+    // param inference) only read the argument expectations.
+    #[allow(dead_code)]
+    pub(crate) return_kind: Kind,
 }
 
 #[derive(Clone, Debug)]
@@ -1758,7 +1755,7 @@ enum FunctionArgKind {
     Array,
 }
 
-fn function_signature(name: &str) -> Option<FunctionSignature> {
+pub(crate) fn function_signature(name: &str) -> Option<FunctionSignature> {
     match name {
         "string::len" => Some(FunctionSignature {
             args: vec![FunctionArgKind::Exact(Kind::String)],
@@ -1820,7 +1817,7 @@ fn function_call_name(node: Node<'_>, parsed: &ParsedSource) -> Option<String> {
     Some(node_text(name, parsed.text()).trim().to_string())
 }
 
-fn function_call_args(node: Node<'_>) -> Vec<Node<'_>> {
+pub(crate) fn function_call_args(node: Node<'_>) -> Vec<Node<'_>> {
     let Some(arguments) = first_child_kind(node, "ArgumentList") else {
         return Vec::new();
     };
@@ -1837,24 +1834,6 @@ fn first_child_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>>
         .children(&mut cursor)
         .find(|child| child.kind() == kind);
     found
-}
-
-fn exact_node_for_span<'tree>(node: Node<'tree>, span: &SourceSpan) -> Option<Node<'tree>> {
-    let start = span.range().start() as usize;
-    let end = span.range().end() as usize;
-    if node.start_byte() == start && node.end_byte() == end {
-        return Some(node);
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.start_byte() <= start && child.end_byte() >= end {
-            if let Some(found) = exact_node_for_span(child, span) {
-                return Some(found);
-            }
-        }
-    }
-    None
 }
 
 fn collect_select_projection_field_diagnostics(
@@ -1879,7 +1858,7 @@ fn validate_select_projection_fields_for_statement(
     schema: &SchemaIndex,
     diagnostics: &mut Vec<Finding>,
 ) {
-    let ir = select_ir_from_statement(node, parsed);
+    let ir = select_ir_from_statement(node, parsed.source_id(), parsed.text());
     validate_graph_local_where_fields_for_select_statement(node, parsed, schema, diagnostics);
 
     let Some(source) = ir.source else {
@@ -1899,6 +1878,9 @@ fn validate_select_projection_fields_for_statement(
         let SelectProjection::Field { path, .. } = projection else {
             continue;
         };
+        if crate::analyzer::data::select::is_graph_projection_path(&path) {
+            continue;
+        }
         validate_field_path_on_table(path, table, diagnostics);
     }
 
@@ -1987,7 +1969,7 @@ fn validate_mutation_fields_for_statement(
     let_variables: &BTreeMap<String, LetVariableFact>,
     diagnostics: &mut Vec<Finding>,
 ) {
-    let table_name = mutation_table_name(node, parsed);
+    let table_name = crate::analyzer::data::mutation::mutation_table_name(node, parsed.text());
     let Some(table_name) = table_name else {
         return;
     };
@@ -2006,37 +1988,27 @@ fn validate_mutation_fields_for_statement(
     validate_mutation_value_assignability(node, parsed, table, let_variables, diagnostics);
 }
 
-fn mutation_table_name(node: Node<'_>, parsed: &ParsedSource) -> Option<String> {
-    match node.kind() {
-        "CreateStatement" => leading_table_references(node, parsed.text(), "CREATE")
-            .first()
-            .map(|reference| reference.name.to_string()),
-        "UpdateStatement" => leading_table_references(node, parsed.text(), "UPDATE")
-            .first()
-            .map(|reference| reference.name.to_string()),
-        "DeleteStatement" => leading_table_references(node, parsed.text(), "DELETE")
-            .first()
-            .map(|reference| reference.name.to_string()),
-        "UpsertStatement" => leading_table_references(node, parsed.text(), "UPSERT")
-            .first()
-            .map(|reference| reference.name.to_string()),
-        "InsertStatement" => table_references_after_keyword(node, parsed.text(), "INTO", "INSERT")
-            .first()
-            .map(|reference| reference.name.to_string()),
-        "RelateStatement" => relate_edge_table_name(node, parsed),
-        _ => None,
-    }
-}
-
 fn validate_mutation_return_fields_on_table(
     node: Node<'_>,
     parsed: &ParsedSource,
     table: &crate::schema::TableDef,
     diagnostics: &mut Vec<Finding>,
 ) {
+    // Only field-list returns have projections to validate; the mode comes
+    // from the structural lowering (never substring classification).
+    let lowered = surrealguard_syntax::lower::lower_statement(node, parsed.text());
+    let ret = match &lowered.node {
+        surrealguard_syntax::ast::Statement::Create(s) => s.ret.clone(),
+        surrealguard_syntax::ast::Statement::Update(s) => s.ret.clone(),
+        surrealguard_syntax::ast::Statement::Upsert(s) => s.ret.clone(),
+        surrealguard_syntax::ast::Statement::Delete(s) => s.ret.clone(),
+        surrealguard_syntax::ast::Statement::Insert(s) => s.ret.clone(),
+        surrealguard_syntax::ast::Statement::Relate(s) => s.ret.clone(),
+        _ => None,
+    };
     if !matches!(
-        mutation_return_mode(node, parsed),
-        MutationReturnMode::Fields
+        ret.map(|r| r.node),
+        Some(surrealguard_syntax::ast::ReturnMode::Fields(_))
     ) {
         return;
     }
@@ -2528,9 +2500,14 @@ fn validate_value_kind_for_field(
     ));
 }
 
-fn kind_is_assignable_to(actual: &Kind, expected: &Kind) -> bool {
+pub(crate) fn kind_is_assignable_to(actual: &Kind, expected: &Kind) -> bool {
     if matches!(expected, Kind::Any) || actual == expected {
         return true;
+    }
+    // A literal kind is assignable wherever its base kind is: `'active'` is
+    // a string, `{ a: int }` is an object.
+    if let Some(base) = literal_base_kind(actual) {
+        return kind_is_assignable_to(&base, expected);
     }
     matches!(
         (actual, expected),
@@ -2540,6 +2517,28 @@ fn kind_is_assignable_to(actual: &Kind, expected: &Kind) -> bool {
         ) | (Kind::Int, Kind::Float)
             | (Kind::Int, Kind::Decimal)
     )
+}
+
+/// The base kind a `Kind::Literal` value inhabits, if `kind` is one.
+pub(crate) fn literal_base_kind(kind: &Kind) -> Option<Kind> {
+    use surrealdb_types::KindLiteral;
+    let Kind::Literal(literal) = kind else {
+        return None;
+    };
+    let base = match literal {
+        KindLiteral::String(_) => Kind::String,
+        KindLiteral::Integer(_) => Kind::Int,
+        KindLiteral::Float(_) => Kind::Float,
+        KindLiteral::Decimal(_) => Kind::Decimal,
+        KindLiteral::Duration(_) => Kind::Duration,
+        KindLiteral::Bool(_) => Kind::Bool,
+        KindLiteral::Array(kinds) => Kind::Array(
+            Box::new(Kind::either(kinds.clone())),
+            Some(kinds.len() as u64),
+        ),
+        KindLiteral::Object(_) => Kind::Object,
+    };
+    Some(base)
 }
 
 fn kind_name(kind: &Kind) -> &'static str {
@@ -2570,21 +2569,6 @@ fn kind_name(kind: &Kind) -> &'static str {
         Kind::Literal(_) => "literal",
         Kind::File(_) => "file",
     }
-}
-
-fn relate_edge_table_name(node: Node<'_>, parsed: &ParsedSource) -> Option<String> {
-    let mut saw_first_lookup = false;
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if matches!(child.kind(), "LookupRight" | "LookupLeft") {
-            saw_first_lookup = true;
-            continue;
-        }
-        if saw_first_lookup && is_identifier_like(child) {
-            return Some(table_name_from_node_text(node_text(child, parsed.text())).to_string());
-        }
-    }
-    None
 }
 
 fn normalize_object_key(text: &str) -> String {
@@ -2711,11 +2695,11 @@ fn collect_row_context_field_paths(
     }
 }
 
-fn is_row_context_field_path_node(node: Node<'_>) -> bool {
+pub(crate) fn is_row_context_field_path_node(node: Node<'_>) -> bool {
     matches!(node.kind(), "Ident" | "Path" | "Idiom")
 }
 
-fn field_path_from_node(node: Node<'_>, parsed: &ParsedSource) -> FieldPath {
+pub(crate) fn field_path_from_node(node: Node<'_>, parsed: &ParsedSource) -> FieldPath {
     let text = node_text(node, parsed.text()).trim().to_string();
     FieldPath {
         segments: text.split('.').map(str::to_string).collect(),
@@ -2783,7 +2767,7 @@ fn infer_param_kinds_for_select_statement(
     let_variables: &BTreeMap<String, LetVariableFact>,
     inferences: &mut Vec<ParamKindInference>,
 ) {
-    let ir = select_ir_from_statement(node, parsed);
+    let ir = select_ir_from_statement(node, parsed.source_id(), parsed.text());
     collect_graph_local_param_kind_inferences_for_select_statement(
         node,
         parsed,
@@ -2793,7 +2777,8 @@ fn infer_param_kinds_for_select_statement(
     );
     collect_function_param_kind_inferences_in_node(node, parsed, inferences);
 
-    let Some(table_name) = resolved_select_table_name(&ir, schema) else {
+    let Some(table_name) = crate::analyzer::data::select::resolved_select_table_name(&ir, schema)
+    else {
         return;
     };
     let Some(table) = schema.tables.get(table_name.as_str()) else {
@@ -2926,7 +2911,9 @@ fn infer_param_kinds_for_mutation_statement(
     let_variables: &BTreeMap<String, LetVariableFact>,
     inferences: &mut Vec<ParamKindInference>,
 ) {
-    let Some(table_name) = mutation_table_name(node, parsed) else {
+    let Some(table_name) =
+        crate::analyzer::data::mutation::mutation_table_name(node, parsed.text())
+    else {
         return;
     };
     let Some(table) = schema.tables.get(&table_name) else {
@@ -3326,522 +3313,14 @@ fn field_path_exists_on_table(table: &crate::schema::TableDef, path: &FieldPath)
         })
 }
 
-fn response_shape_for_select(
-    ir: &SelectIr,
-    parsed: &ParsedSource,
-    schema: &SchemaIndex,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-) -> ResponseShape {
-    if let Some(reason) = advanced_select_partial_reason(ir) {
-        return ResponseShape::Unknown { reason };
-    }
-
-    let Some(source) = &ir.source else {
-        return ResponseShape::Unknown {
-            reason: PartialReason::Unresolved,
-        };
-    };
-    if source.dynamic {
-        return ResponseShape::Unknown {
-            reason: PartialReason::DynamicExpression,
-        };
-    }
-    let Some(table_name) = resolved_select_table_name(ir, schema) else {
-        return ResponseShape::Unknown {
-            reason: PartialReason::Unresolved,
-        };
-    };
-    let Some(table) = schema.tables.get(table_name.as_str()) else {
-        return ResponseShape::Unknown {
-            reason: PartialReason::Unresolved,
-        };
-    };
-    if table.fields.is_empty() {
-        return ResponseShape::Unknown {
-            reason: PartialReason::Unresolved,
-        };
-    }
-
-    let row_shape = if ir
-        .projections
-        .iter()
-        .any(|projection| matches!(projection, SelectProjection::Wildcard { .. }))
-    {
-        object_shape_for_all_fields(table)
-    } else if let Some(value_shape) = value_projection_shape(ir, parsed, table, let_variables) {
-        value_shape
-    } else {
-        object_shape_for_projected_fields(ir, parsed, table, let_variables)
-    };
-    let row_shape = apply_omit_to_shape(row_shape, &ir.omit);
-    let row_shape = apply_fetch_materialization(row_shape, &ir.fetch);
-
-    if ir.only {
-        row_shape
-    } else {
-        ResponseShape::Array {
-            element: Box::new(row_shape),
-            max_len: literal_limit_max_len(ir),
-        }
-    }
-}
-
-fn resolved_select_table_name(ir: &SelectIr, schema: &SchemaIndex) -> Option<String> {
-    let source_table = ir.source.as_ref()?.table.as_ref()?;
-    if ir.graph_lookups.is_empty() {
-        return Some(source_table.clone());
-    }
-
-    resolve_graph_target_table(source_table, &ir.graph_lookups, schema)
-}
-
-fn resolve_graph_target_table(
-    source_table: &str,
-    lookups: &[GraphLookup],
-    schema: &SchemaIndex,
-) -> Option<String> {
-    if lookups.is_empty() || lookups.len() % 2 != 0 {
-        return None;
-    }
-
-    let mut current_table = source_table.to_string();
-    for pair in lookups.chunks_exact(2) {
-        let edge_lookup = &pair[0];
-        let target_lookup = &pair[1];
-        current_table =
-            resolve_graph_step_target_table(&current_table, edge_lookup, target_lookup, schema)?;
-    }
-    Some(current_table)
-}
-
-fn resolve_graph_step_target_table(
-    source_table: &str,
-    edge_lookup: &GraphLookup,
-    target_lookup: &GraphLookup,
-    schema: &SchemaIndex,
-) -> Option<String> {
-    let edge_table_name = edge_lookup.table.as_deref()?;
-    let target_table_name = target_lookup.table.as_deref()?;
-    let relation = schema.tables.get(edge_table_name)?.relation.as_ref()?;
-
-    match edge_lookup.direction {
-        GraphDirection::Out => {
-            relation.in_tables.iter().any(|table| table == source_table)
-                && relation
-                    .out_tables
-                    .iter()
-                    .any(|table| table == target_table_name)
-        }
-        GraphDirection::In => {
-            relation
-                .out_tables
-                .iter()
-                .any(|table| table == source_table)
-                && relation
-                    .in_tables
-                    .iter()
-                    .any(|table| table == target_table_name)
-        }
-        GraphDirection::Both => {
-            let source_is_in = relation.in_tables.iter().any(|table| table == source_table);
-            let source_is_out = relation
-                .out_tables
-                .iter()
-                .any(|table| table == source_table);
-            let target_is_in = relation
-                .in_tables
-                .iter()
-                .any(|table| table == target_table_name);
-            let target_is_out = relation
-                .out_tables
-                .iter()
-                .any(|table| table == target_table_name);
-            (source_is_in && target_is_out) || (source_is_out && target_is_in)
-        }
-    }
-    .then(|| target_table_name.to_string())
-}
-
-fn advanced_select_partial_reason(ir: &SelectIr) -> Option<PartialReason> {
-    if ir.return_clause.is_some() {
-        return Some(PartialReason::UnsupportedSyntax("RETURN".into()));
-    }
-
-    ir.modifiers.iter().find_map(|modifier| match modifier {
-        SelectModifier::Group(_) => Some(PartialReason::UnsupportedSyntax("GROUP".into())),
-        SelectModifier::Split(_) => Some(PartialReason::UnsupportedSyntax("SPLIT".into())),
-        SelectModifier::Explain(_) => Some(PartialReason::UnsupportedSyntax("EXPLAIN".into())),
-        SelectModifier::Where(_)
-        | SelectModifier::Order(_)
-        | SelectModifier::Limit { .. }
-        | SelectModifier::Start(_)
-        | SelectModifier::Timeout(_)
-        | SelectModifier::Parallel(_) => None,
-    })
-}
-
-fn literal_limit_max_len(ir: &SelectIr) -> Option<u64> {
-    ir.modifiers.iter().find_map(|modifier| match modifier {
-        SelectModifier::Limit { max_len, .. } => *max_len,
-        _ => None,
-    })
-}
-
-fn apply_omit_to_shape(shape: ResponseShape, omit: &[FieldPath]) -> ResponseShape {
-    let ResponseShape::Object { mut fields, open } = shape else {
-        return shape;
-    };
-
-    for omitted in omit {
-        remove_field_path_from_object_fields(&mut fields, &omitted.segments);
-    }
-
-    ResponseShape::Object { fields, open }
-}
-
-fn remove_field_path_from_object_fields(
-    fields: &mut BTreeMap<String, FieldShape>,
-    segments: &[String],
-) {
-    let Some((first, rest)) = segments.split_first() else {
-        return;
-    };
-
-    if rest.is_empty() {
-        fields.remove(first);
-        return;
-    }
-
-    let Some(field) = fields.get_mut(first) else {
-        return;
-    };
-    let ResponseShape::Object {
-        fields: child_fields,
-        ..
-    } = &mut field.shape
-    else {
-        return;
-    };
-    remove_field_path_from_object_fields(child_fields, rest);
-}
-
-fn apply_fetch_materialization(shape: ResponseShape, fetch: &[FieldPath]) -> ResponseShape {
-    let ResponseShape::Object { mut fields, open } = shape else {
-        return shape;
-    };
-
-    for fetched in fetch {
-        mark_field_path_fetched(&mut fields, &fetched.segments);
-    }
-
-    ResponseShape::Object { fields, open }
-}
-
-fn mark_field_path_fetched(fields: &mut BTreeMap<String, FieldShape>, segments: &[String]) {
-    let Some((first, rest)) = segments.split_first() else {
-        return;
-    };
-
-    let Some(field) = fields.get_mut(first) else {
-        return;
-    };
-    if rest.is_empty() {
-        field.materialized_by_fetch = true;
-        return;
-    }
-
-    let ResponseShape::Object {
-        fields: child_fields,
-        ..
-    } = &mut field.shape
-    else {
-        return;
-    };
-    mark_field_path_fetched(child_fields, rest);
-}
-
-fn object_shape_for_all_fields(table: &crate::schema::TableDef) -> ResponseShape {
-    object_shape_for_field_prefix(table, &[])
-}
-
-fn object_shape_for_projected_fields(
-    ir: &SelectIr,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-) -> ResponseShape {
-    let mut fields = BTreeMap::new();
-
-    for projection in &ir.projections {
-        match projection {
-            SelectProjection::Field { path, alias, .. } => {
-                let Some(field_shape) = field_shape_for_path(table, path) else {
-                    fields.insert(
-                        alias.clone().unwrap_or_else(|| path.text.clone()),
-                        FieldShape {
-                            shape: ResponseShape::Unknown {
-                                reason: PartialReason::Unresolved,
-                            },
-                            kind: None,
-                            span: path.span.clone(),
-                            materialized_by_fetch: false,
-                            partial: vec![PartialReason::Unresolved],
-                        },
-                    );
-                    continue;
-                };
-
-                if let Some(alias) = alias {
-                    fields.insert(alias.clone(), field_shape);
-                } else {
-                    insert_field_shape_at_path(&mut fields, &path.segments, field_shape);
-                }
-            }
-            SelectProjection::Dynamic {
-                span,
-                alias,
-                expression_kind,
-                expression_text,
-                ..
-            } => {
-                let key = alias.clone().unwrap_or_else(|| expression_text.clone());
-                fields.insert(
-                    key,
-                    field_shape_for_dynamic_select_expression(
-                        span.clone(),
-                        expression_kind.as_deref(),
-                        expression_text,
-                        parsed,
-                        table,
-                        let_variables,
-                    ),
-                );
-            }
-            SelectProjection::Wildcard { .. } => {}
-        }
-    }
-
-    ResponseShape::Object {
-        fields,
-        open: false,
-    }
-}
-
-fn field_shape_for_dynamic_select_expression(
-    span: SourceSpan,
-    expression_kind: Option<&str>,
-    expression_text: &str,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    let_variables: &BTreeMap<String, LetVariableFact>,
-) -> FieldShape {
-    let expression_fact = exact_node_for_span(parsed.tree().root_node(), &span).map(|node| {
-        infer_expression_fact_with_let_variables(node, parsed, Some(table), let_variables)
-    });
-    let kind = match expression_kind {
-        Some("BinaryExpression") => expression_fact.as_ref().and_then(|fact| fact.kind.clone()),
-        Some("FunctionCall") => expression_fact
-            .as_ref()
-            .and_then(|fact| fact.kind.clone())
-            .or_else(|| {
-                function_name_from_expression_text(expression_text).and_then(|name| {
-                    function_signature(name).map(|signature| signature.return_kind)
-                })
-            }),
-        Some("Number") => {
-            if expression_text.contains('.') {
-                Some(Kind::Float)
-            } else {
-                Some(Kind::Int)
-            }
-        }
-        Some("String") => Some(Kind::String),
-        Some("Bool") => Some(Kind::Bool),
-        _ => None,
-    };
-    let partial = if kind.is_none() {
-        vec![PartialReason::UnsupportedSyntax(
-            expression_kind.unwrap_or("expression").to_string(),
-        )]
-    } else {
-        Vec::new()
-    };
-    let shape = match kind.clone() {
-        Some(kind) => ResponseShape::Value { kind },
-        None => ResponseShape::Unknown {
-            reason: partial
-                .first()
-                .cloned()
-                .unwrap_or(PartialReason::Unresolved),
-        },
-    };
-
-    FieldShape {
-        shape,
-        kind,
-        span,
-        materialized_by_fetch: false,
-        partial,
-    }
-}
-
-fn function_name_from_expression_text(expression_text: &str) -> Option<&str> {
-    expression_text.split_once('(').map(|(name, _)| name.trim())
-}
-
-fn field_shape_for_path(table: &crate::schema::TableDef, path: &FieldPath) -> Option<FieldShape> {
-    let has_descendants = table.fields.values().any(|field| {
-        field.path.len() > path.segments.len() && field.path.starts_with(&path.segments)
-    });
-
-    if has_descendants {
-        return Some(FieldShape {
-            shape: object_shape_for_field_prefix(table, &path.segments),
-            kind: exact_field_def_for_path(table, path).and_then(|field| field.kind.clone()),
-            span: path.span.clone(),
-            materialized_by_fetch: false,
-            partial: Vec::new(),
-        });
-    }
-
-    exact_field_def_for_path(table, path)
-        .map(|field| field_shape_from_schema_field(field, path.span.clone()))
-}
-
-fn object_shape_for_field_prefix(
-    table: &crate::schema::TableDef,
-    prefix: &[String],
-) -> ResponseShape {
-    let mut fields = BTreeMap::new();
-
-    for field in table.fields.values() {
-        if field.path.len() <= prefix.len() || !field.path.starts_with(prefix) {
-            continue;
-        }
-
-        let segment = field.path[prefix.len()].clone();
-        if fields.contains_key(&segment) {
-            continue;
-        }
-
-        let child_prefix: Vec<_> = prefix
-            .iter()
-            .cloned()
-            .chain(std::iter::once(segment.clone()))
-            .collect();
-        let has_descendants = table.fields.values().any(|candidate| {
-            candidate.path.len() > child_prefix.len() && candidate.path.starts_with(&child_prefix)
-        });
-
-        let field_shape = if has_descendants {
-            FieldShape {
-                shape: object_shape_for_field_prefix(table, &child_prefix),
-                kind: None,
-                span: field.name_span.clone(),
-                materialized_by_fetch: false,
-                partial: Vec::new(),
-            }
-        } else {
-            field_shape_from_schema_field(field, field.name_span.clone())
-        };
-        fields.insert(segment, field_shape);
-    }
-
-    ResponseShape::Object {
-        fields,
-        open: false,
-    }
-}
-
-fn insert_field_shape_at_path(
-    fields: &mut BTreeMap<String, FieldShape>,
-    segments: &[String],
-    field_shape: FieldShape,
-) {
-    let Some((first, rest)) = segments.split_first() else {
-        return;
-    };
-
-    if rest.is_empty() {
-        fields.insert(first.clone(), field_shape);
-        return;
-    }
-
-    let parent = fields.entry(first.clone()).or_insert_with(|| FieldShape {
-        shape: ResponseShape::Object {
-            fields: BTreeMap::new(),
-            open: false,
-        },
-        kind: None,
-        span: field_shape.span.clone(),
-        materialized_by_fetch: false,
-        partial: Vec::new(),
-    });
-
-    let ResponseShape::Object {
-        fields: child_fields,
-        ..
-    } = &mut parent.shape
-    else {
-        return;
-    };
-    insert_field_shape_at_path(child_fields, rest, field_shape);
-}
-
-fn value_projection_shape(
-    ir: &SelectIr,
-    _parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    _let_variables: &BTreeMap<String, LetVariableFact>,
-) -> Option<ResponseShape> {
-    let [SelectProjection::Field {
-        path, value: true, ..
-    }] = ir.projections.as_slice()
-    else {
-        return None;
-    };
-    let field = exact_field_def_for_path(table, path)?;
-    Some(match field.kind.clone() {
-        Some(kind) => ResponseShape::Value { kind },
-        None => ResponseShape::Unknown {
-            reason: field
-                .partial
-                .first()
-                .cloned()
-                .unwrap_or(PartialReason::Unresolved),
-        },
-    })
-}
-
-fn field_shape_from_schema_field(field: &crate::schema::FieldDef, span: SourceSpan) -> FieldShape {
-    let shape = match field.kind.clone() {
-        Some(kind) => ResponseShape::Value { kind },
-        None => ResponseShape::Unknown {
-            reason: field
-                .partial
-                .first()
-                .cloned()
-                .unwrap_or(PartialReason::Unresolved),
-        },
-    };
-
-    FieldShape {
-        shape,
-        kind: field.kind.clone(),
-        span,
-        materialized_by_fetch: false,
-        partial: field.partial.clone(),
-    }
-}
-
 #[derive(Clone, Copy)]
-struct TableReference<'tree> {
-    name: &'tree str,
+pub(crate) struct TableReference<'tree> {
+    pub(crate) name: &'tree str,
     node: Node<'tree>,
     statement: &'static str,
 }
 
-fn leading_table_references<'tree>(
+pub(crate) fn leading_table_references<'tree>(
     node: Node<'tree>,
     source: &'tree str,
     statement: &'static str,
@@ -3881,7 +3360,7 @@ fn leading_table_references<'tree>(
     references
 }
 
-fn table_references_after_keyword<'tree>(
+pub(crate) fn table_references_after_keyword<'tree>(
     node: Node<'tree>,
     source: &'tree str,
     keyword: &str,
@@ -4120,13 +3599,8 @@ mod tests {
             .expect("if statement is analyzed");
 
         assert_eq!(
-            if_statement.response_shape,
-            Some(ResponseShape::Union {
-                variants: vec![
-                    ResponseShape::Value { kind: Kind::Int },
-                    ResponseShape::Value { kind: Kind::String },
-                ],
-            })
+            if_statement.response_kind,
+            Some(Kind::Either(vec![Kind::Int, Kind::String]))
         );
     }
 
@@ -4146,9 +3620,6 @@ mod tests {
             .find(|statement| statement.kind == "return")
             .expect("return statement is analyzed");
 
-        assert_eq!(
-            return_statement.response_shape,
-            Some(ResponseShape::Value { kind: Kind::Int })
-        );
+        assert_eq!(return_statement.response_kind, Some(Kind::Int));
     }
 }

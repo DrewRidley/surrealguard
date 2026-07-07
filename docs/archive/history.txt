@@ -1,0 +1,23 @@
+#V2
+DEFINE TABLE person SCHEMAFULL;
+DEFINE FIELD name ON person TYPE string;
+DEFINE FIELD age ON person TYPE int;
+DEFINE FIELD tags ON person TYPE array<string>;
+CREATE person:one SET name='Ada', age=30, tags=['a','b'];
+CREATE person:two SET name='Bob', age=40, tags=['b','c'];
+SELECT name, count() AS total FROM person GROUP BY name;
+SELECT * FROM person SPLIT tags;
+SELECT * FROM person EXPLAIN;
+SELECT * FROM person EXPLAIN FULL;
+SELECT * FROM person GROUP BY name;
+SELECT tags FROM person SPLIT tags;
+SELECT VALUE tags FROM person SPLIT tags;
+SELECT * FROM ONLY person:one;
+SELECT * FROM person LIMIT 1;
+SELECT * FROM person START 1 LIMIT 1;
+INFO FOR DB;
+DEFINE TABLE person; DEFINE TABLE person; INFO FOR DB;
+DEFINE TABLE company; DEFINE TABLE OVERWRITE company SCHEMAFULL; INFO FOR DB;
+DEFINE TABLE gone; REMOVE TABLE gone; INFO FOR DB; SELECT * FROM gone;
+INFO FOR DB;
+DEFINE TABLE person; DEFINE FIELD name ON person TYPE string; DEFINE TABLE OVERWRITE person SCHEMAFULL; INFO FOR TABLE person; INFO FOR DB;

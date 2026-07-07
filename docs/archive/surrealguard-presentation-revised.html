@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SurrealGuard — Static Safety for SurrealQL</title>
+  <style>
+    :root{
+      --bg:#05030a; --ink:#f6f1ff; --soft:#c9bdd8; --muted:#8f82a3;
+      --violet:#a77cff; --cyan:#58e6ff; --rose:#ff5c9d; --green:#78ffc0; --amber:#ffd36a;
+      --panel:rgba(20,13,35,.74); --panel2:rgba(10,8,18,.88); --line:rgba(167,124,255,.28);
+      --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+      --mono: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+    }
+    *{box-sizing:border-box} html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--sans)}
+    body:before{content:"";position:fixed;inset:-15%;z-index:-4;background:
+      radial-gradient(circle at 20% 18%,rgba(167,124,255,.24),transparent 27%),
+      radial-gradient(circle at 80% 20%,rgba(88,230,255,.15),transparent 26%),
+      radial-gradient(circle at 70% 82%,rgba(255,92,157,.14),transparent 26%),#05030a;filter:blur(6px);animation:drift 18s ease-in-out infinite alternate}
+    body:after{content:"";position:fixed;inset:0;z-index:-3;background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px);background-size:46px 46px;mask-image:radial-gradient(circle at 50% 50%,#000,transparent 78%)}
+    @keyframes drift{from{transform:scale(1) rotate(-2deg)}to{transform:scale(1.07) rotate(3deg)}} @keyframes pulse{50%{opacity:1;transform:scale(1.04)}} @keyframes float{50%{transform:translateY(-18px)}} @keyframes draw{to{stroke-dashoffset:0}} @keyframes scan{to{transform:translateX(130%)}}
+    #deck{position:fixed;inset:0;overflow:hidden}.stage{width:1920px;height:1080px;position:absolute;left:50%;top:50%;transform-origin:center center}
+    .slide{position:absolute;inset:0;padding:92px 146px 104px;display:flex;flex-direction:column;justify-content:center;opacity:0;transform:translateX(24px) scale(.99);pointer-events:none;transition:opacity .35s ease,transform .35s ease;overflow:hidden}
+    .slide.active{opacity:1;transform:none;pointer-events:auto}.slide:before{content:"";position:absolute;inset:48px;border:1px solid rgba(167,124,255,.24);border-radius:34px;background:linear-gradient(135deg,rgba(255,255,255,.045),transparent 48%,rgba(88,230,255,.035));box-shadow:inset 0 0 90px rgba(167,124,255,.08),0 0 120px rgba(0,0,0,.55);z-index:-1}.slide:after{content:"";position:absolute;left:86px;right:86px;bottom:68px;height:1px;background:linear-gradient(90deg,transparent,rgba(88,230,255,.34),rgba(167,124,255,.46),transparent)}
+    .kicker{font:600 20px/1.1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--cyan);margin-bottom:22px}.eyebrow{font:600 17px var(--mono);letter-spacing:.12em;color:var(--muted);text-transform:uppercase}.tag{display:inline-flex;align-items:center;gap:10px;width:max-content;border:1px solid rgba(88,230,255,.35);border-radius:999px;padding:10px 16px;background:rgba(88,230,255,.06);color:var(--cyan);font:600 17px var(--mono)}.dot{width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 22px var(--green);animation:pulse 2s infinite}
+    h1,h2,h3,p{margin:0} h1{font-size:132px;line-height:.9;letter-spacing:-.065em} h2{font-size:72px;line-height:.98;letter-spacing:-.045em;max-width:1220px} h3{font-size:30px;letter-spacing:-.025em}.lede{font-size:30px;line-height:1.36;color:var(--soft);max-width:920px;margin-top:28px}.short{font-size:34px;line-height:1.22;color:var(--soft);max-width:860px}.gradient{background:linear-gradient(90deg,#fff,var(--cyan),var(--violet),var(--rose));-webkit-background-clip:text;background-clip:text;color:transparent}.muted{color:var(--muted)}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:36px;align-items:center}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:26px}.card{position:relative;border:1px solid var(--line);background:var(--panel);border-radius:28px;padding:30px;box-shadow:0 24px 80px rgba(0,0,0,.35);overflow:hidden}.card:before{content:"";position:absolute;inset:0 auto 0 -60%;width:55%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.06),transparent);animation:scan 7s ease-in-out infinite}.card p{font-size:23px;line-height:1.34;color:var(--soft);margin-top:12px}.mini{font:18px/1.35 var(--mono);color:var(--muted)}
+    .orb{position:absolute;border-radius:50%;background:radial-gradient(circle at 30% 24%,#fff,rgba(167,124,255,.5) 23%,rgba(88,230,255,.12) 58%,transparent 62%);border:1px solid rgba(255,255,255,.12);box-shadow:inset -32px -42px 80px rgba(0,0,0,.5),0 0 100px rgba(167,124,255,.3);animation:float 8s ease-in-out infinite}.orb.one{width:500px;height:500px;right:150px;top:180px}.orb.two{width:210px;height:210px;right:650px;bottom:145px;animation-delay:-2s}.caption{position:absolute;left:150px;bottom:132px;font:20px var(--mono);color:rgba(246,241,255,.65)}
+    .split-slide{justify-content:flex-start}.split-head{margin-top:38px}.split-visual{height:610px;position:relative;margin-top:42px}.island{position:absolute;width:650px;height:360px;border-radius:32px;border:1px solid rgba(255,255,255,.13);background:rgba(8,7,16,.86);padding:34px;box-shadow:0 28px 90px rgba(0,0,0,.42)}.island.left{left:84px;top:88px;border-color:rgba(88,230,255,.35)}.island.right{right:84px;top:88px;border-color:rgba(255,92,157,.35)}.island h3{font-size:32px}.island pre{font:24px/1.55 var(--mono);color:var(--soft);white-space:pre-wrap}.broken{position:absolute;left:50%;top:52px;width:76px;height:430px;transform:translateX(-50%)}.bolt{fill:none;stroke:var(--rose);stroke-width:8;filter:drop-shadow(0 0 18px rgba(255,92,157,.55));stroke-linejoin:round}.label-big{font:700 30px var(--mono);fill:var(--ink)}.label-small{font:18px var(--mono);fill:var(--muted)}
+    .pipeline{position:relative;height:610px;margin-top:24px}.node{position:absolute;width:270px;min-height:128px;padding:22px;border-radius:26px;border:1px solid rgba(167,124,255,.45);background:rgba(13,9,25,.88);box-shadow:0 0 50px rgba(167,124,255,.12)}.node h3{font-size:27px}.node p{font:17px/1.32 var(--mono);color:var(--muted);margin-top:8px}.node.a{left:20px;top:220px;border-color:rgba(88,230,255,.6)}.node.b{left:345px;top:80px}.node.c{left:670px;top:220px;border-color:rgba(120,255,192,.52)}.node.d{left:995px;top:80px;border-color:rgba(255,211,106,.52)}.node.e{left:1320px;top:220px;border-color:rgba(255,92,157,.55)}.svgline{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.svgline path{fill:none;stroke:rgba(88,230,255,.62);stroke-width:4;stroke-dasharray:12 12;stroke-dashoffset:900;animation:draw 3s ease forwards;filter:drop-shadow(0 0 8px rgba(88,230,255,.38))}
+    .diagram{height:590px;position:relative}.layer{position:absolute;border:1px solid rgba(255,255,255,.13);border-radius:34px;background:rgba(255,255,255,.035);padding:24px}.layer.schema{left:60px;top:95px;width:430px;height:390px}.layer.query{left:555px;top:95px;width:430px;height:390px}.layer.core{left:1050px;top:60px;width:560px;height:460px;border-color:rgba(120,255,192,.36);background:rgba(120,255,192,.055)}.chip{display:inline-block;margin:10px 8px 0 0;padding:12px 15px;border-radius:14px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);font:18px var(--mono);color:var(--soft)}.core-orbit{position:absolute;right:62px;top:116px;width:310px;height:310px;border-radius:50%;border:1px dashed rgba(120,255,192,.46);animation:float 7s ease-in-out infinite}.core-dot{position:absolute;width:76px;height:76px;border-radius:24px;background:rgba(120,255,192,.12);border:1px solid rgba(120,255,192,.45);display:grid;place-items:center;font:700 18px var(--mono);color:var(--green)}.cd1{left:42px;top:-6px}.cd2{right:-6px;top:112px}.cd3{left:92px;bottom:-8px}.arrowtext{position:absolute;font:20px var(--mono);color:var(--cyan)}
+    pre{margin:0;white-space:pre-wrap;font:20px/1.48 var(--mono)}.code-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:34px;margin-top:34px}.codebox{border:1px solid rgba(88,230,255,.28);background:rgba(3,8,18,.84);border-radius:26px;padding:28px;box-shadow:inset 0 0 60px rgba(88,230,255,.04),0 18px 70px rgba(0,0,0,.38)}.kw{color:#ff8bd2}.type{color:#78ffc0}.str{color:#ffd36a}.numlit{color:#a77cff}.comment{color:#746987}.op{color:#58e6ff}.underline,.squiggle{text-decoration:underline wavy #ff4f6d 2px;text-underline-offset:5px}.diagnostics{display:grid;gap:14px}.diag{border-left:5px solid #ff4f6d;border-radius:18px;background:rgba(255,79,109,.09);padding:17px 19px;font-family:var(--mono)}.diag.warn{border-left-color:var(--amber);background:rgba(255,211,106,.08)}.diag .code{font-weight:800;color:#fff}.diag .msg{font-size:17px;line-height:1.32;color:#eee2ff;margin-top:6px}.diag .hint{font-size:14px;color:var(--muted);margin-top:7px}
+    .editor{margin-top:34px;display:grid;grid-template-columns:260px 1fr;height:630px;border:1px solid rgba(255,255,255,.12);border-radius:28px;overflow:hidden;background:#070a12;box-shadow:0 28px 95px rgba(0,0,0,.45)}.sidebar{background:#0b0d16;padding:26px;border-right:1px solid rgba(255,255,255,.1);font-family:var(--mono);color:var(--muted)}.file{padding:12px 10px;border-radius:10px;margin-top:12px}.file.active{color:#fff;background:rgba(167,124,255,.16)}.editor-main{display:grid;grid-template-rows:1fr 180px}.editor-code{padding:28px 34px}.problems{border-top:1px solid rgba(255,255,255,.1);background:#0b0d16;padding:18px 24px;font-family:var(--mono)}.terminal-line{font-size:18px;color:#b7acc6;margin:8px 0}.err{color:#ff6f8a}.ok{color:#78ffc0}
+
+    .failure-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:34px}.failure-card{min-height:282px;display:grid;grid-template-rows:118px auto;padding:26px}.failure-card h3{font-size:31px}.failure-card p{font-size:22px;line-height:1.25}.failure-card .viz{height:118px;margin-bottom:16px}.mini-code{position:absolute;left:28px;right:28px;top:34px;font:23px var(--mono);color:var(--soft)}.viz{position:relative;height:140px;border-radius:22px;background:rgba(3,8,18,.55);border:1px solid rgba(255,255,255,.08);overflow:hidden;margin-bottom:22px}.viz:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 50% 50%,rgba(88,230,255,.14),transparent 58%)}.rename-a,.rename-b{position:absolute;left:34px;right:34px;height:30px;border-radius:10px;background:rgba(255,255,255,.08);font:16px var(--mono);color:var(--soft);display:flex;align-items:center;padding-left:14px}.rename-a{top:28px}.rename-b{bottom:28px;color:var(--green)}.rename-arrow{position:absolute;left:50%;top:58px;height:24px;width:2px;background:var(--cyan);box-shadow:0 0 12px var(--cyan)}.param-left,.param-right{position:absolute;top:43px;width:108px;height:54px;border-radius:16px;display:grid;place-items:center;font:700 19px var(--mono)}.param-left{left:46px;background:rgba(120,255,192,.1);border:1px solid rgba(120,255,192,.4);color:var(--green)}.param-right{right:46px;background:rgba(255,92,157,.1);border:1px solid rgba(255,92,157,.45);color:var(--rose)}.param-op{position:absolute;left:50%;top:58px;transform:translateX(-50%);font:700 28px var(--mono);color:var(--cyan)}.graph-dot{position:absolute;width:28px;height:28px;border-radius:50%;background:var(--cyan);box-shadow:0 0 18px rgba(88,230,255,.7)}.g1{left:44px;top:56px}.g2{right:44px;top:56px;background:var(--green)}.gline{position:absolute;left:72px;right:72px;top:69px;border-top:3px dashed var(--rose);filter:drop-shadow(0 0 8px rgba(255,92,157,.6))}.gbad{position:absolute;left:50%;top:43px;transform:translateX(-50%);font:800 40px var(--mono);color:var(--rose)}
+
+    .bridge-board{position:relative;height:590px;margin-top:28px}.bridge-source{position:absolute;top:70px;width:440px;height:310px;border-radius:30px;border:1px solid rgba(255,255,255,.13);background:rgba(255,255,255,.04);padding:28px}.bridge-source.schema{left:70px;border-color:rgba(88,230,255,.32)}.bridge-source.query{left:610px;border-color:rgba(255,92,157,.32)}.bridge-source pre{font:19px/1.5 var(--mono);color:var(--soft);margin-top:18px}.contract-card{position:absolute;right:90px;top:42px;width:470px;height:370px;border-radius:36px;border:1px solid rgba(120,255,192,.44);background:linear-gradient(135deg,rgba(120,255,192,.08),rgba(167,124,255,.07));padding:34px;box-shadow:0 30px 100px rgba(0,0,0,.35)}.contract-card h3{font-size:50px;line-height:1}.contract-list{margin-top:26px;display:grid;gap:12px}.contract-list div{font:21px var(--mono);color:#dcfff0}.bridge-output{position:absolute;left:220px;right:220px;bottom:30px;display:flex;justify-content:center;gap:18px}.bridge-output .pill{font-size:20px;background:rgba(120,255,192,.07);border-color:rgba(120,255,192,.2)}.connector{position:absolute;inset:0;pointer-events:none}.connector path{fill:none;stroke:rgba(88,230,255,.72);stroke-width:5;stroke-dasharray:10 10;filter:drop-shadow(0 0 12px rgba(88,230,255,.42))}
+    .diagnostic-editor{margin-top:30px;border:1px solid rgba(88,230,255,.25);background:#070a12;border-radius:28px;padding:26px 30px;box-shadow:0 24px 90px rgba(0,0,0,.42)}.statement{padding:14px 0 18px;border-bottom:1px solid rgba(255,255,255,.08)}.statement:last-child{border-bottom:0}.src-line{font:23px/1.45 var(--mono);color:var(--soft);white-space:pre-wrap}.inline-diag{margin:8px 0 0 38px;display:inline-flex;align-items:center;gap:12px;border-radius:12px;background:rgba(255,79,109,.10);border:1px solid rgba(255,79,109,.28);padding:9px 12px;font:16px var(--mono);color:#f4d9e2}.inline-diag.warn{background:rgba(255,211,106,.09);border-color:rgba(255,211,106,.28)}.caret{color:#ff6f8a;letter-spacing:2px}.diag-code{font-weight:800;color:#fff}.zed-editor{margin-top:30px;display:grid;grid-template-columns:260px 1fr;height:615px;border:1px solid rgba(255,255,255,.12);border-radius:28px;overflow:hidden;background:#070a12;box-shadow:0 28px 95px rgba(0,0,0,.45)}.zed-main{position:relative;padding:30px 36px}.inline-panel{position:absolute;left:560px;top:104px;width:470px;border-radius:18px;border:1px solid rgba(255,79,109,.32);background:#10111d;padding:18px 20px;font-family:var(--mono);box-shadow:0 20px 70px rgba(0,0,0,.48)}.inline-panel .title{color:#fff;font-weight:800;margin-bottom:8px}.inline-panel .body{color:#d8cfea;font-size:18px;line-height:1.36}.status-strip{position:absolute;left:0;right:0;bottom:0;height:64px;background:#0b0d16;border-top:1px solid rgba(255,255,255,.1);display:flex;align-items:center;gap:26px;padding:0 30px;font:19px var(--mono);color:#d7ccec}
+
+    .seam-label{position:absolute;left:50%;top:500px;transform:translateX(-50%);font:700 20px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--rose);background:rgba(255,92,157,.10);border:1px solid rgba(255,92,157,.32);border-radius:999px;padding:12px 18px;box-shadow:0 0 34px rgba(255,92,157,.18)}
+    .history-board{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;margin-top:42px}.era{min-height:410px}.era .num{font:800 24px var(--mono);color:var(--cyan);margin-bottom:24px}.era h3{font-size:42px}.era p{font-size:22px}.era.bad{border-color:rgba(255,92,157,.34)}.era.now{border-color:rgba(120,255,192,.38);background:rgba(120,255,192,.055)}
+    .phase-board{position:relative;height:610px;margin-top:30px}.phase-card{position:absolute;width:360px;min-height:210px;padding:28px;border-radius:30px;border:1px solid rgba(88,230,255,.28);background:rgba(8,7,16,.86);box-shadow:0 24px 70px rgba(0,0,0,.34)}.phase-card h3{font-size:34px}.phase-card p{font-size:21px;line-height:1.32;color:var(--soft);margin-top:12px}.phase-card .mini-title{margin-bottom:8px}.phase-a{left:70px;top:68px}.phase-b{left:495px;top:260px}.phase-c{left:920px;top:68px}.phase-d{right:70px;top:260px}.phase-arrow{position:absolute;inset:0;pointer-events:none}.phase-arrow path{fill:none;stroke:rgba(88,230,255,.7);stroke-width:5;stroke-dasharray:12 12;filter:drop-shadow(0 0 12px rgba(88,230,255,.4))}
+    .surface-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:34px;margin-top:36px;align-items:stretch}.surface-list{display:grid;gap:16px}.surface-row{display:grid;grid-template-columns:150px 1fr;gap:20px;align-items:center;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);border-radius:22px;padding:18px 20px}.surface-row strong{font:800 22px var(--mono);color:#fff}.surface-row span{font-size:22px;line-height:1.3;color:var(--soft)}.cli-card pre{font-size:22px;line-height:1.55}.ci-board{display:grid;grid-template-columns:1fr 1fr;gap:34px;margin-top:38px}.ci-list{display:grid;gap:14px;margin-top:20px}.ci-list div{font:22px var(--mono);color:#e9ddf7;border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:14px 16px;background:rgba(255,255,255,.045)}
+    .language-strip{display:flex;gap:16px;flex-wrap:wrap;margin-top:42px}.pill{padding:16px 20px;border-radius:18px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.1);font:21px var(--mono);color:#eadff7}.callout{margin-top:36px;padding:30px;border-radius:28px;border:1px solid rgba(120,255,192,.28);background:rgba(120,255,192,.06);font-size:29px;line-height:1.3;color:#ecfff6}.mini-title{font:18px var(--mono);color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:16px}
+    .footer-nav{position:fixed;right:34px;bottom:28px;display:flex;align-items:center;gap:13px;z-index:30;font:15px var(--mono);color:var(--muted)}button{color:var(--ink);background:rgba(5,2,10,.78);border:1px solid rgba(255,255,255,.14);border-radius:999px;padding:10px 15px;font:inherit;cursor:pointer}button:hover,button:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 3px rgba(88,230,255,.12)}.progress{width:140px;height:7px;background:rgba(255,255,255,.1);border-radius:999px;overflow:hidden}.bar{height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--violet),var(--rose));transition:width .25s ease}
+    @media print{body{overflow:visible}#deck{position:static}.stage{transform:none!important;position:static}.slide{position:relative;page-break-after:always;opacity:1;transform:none}.footer-nav{display:none}}@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}}
+  </style>
+</head>
+<body>
+<div id="deck"><main class="stage" id="stage">
+  <section class="slide active" data-title="Title">
+    <div class="kicker"><span class="tag"><span class="dot"></span> SurrealQL static analysis</span></div>
+    <h1>Surreal<span class="gradient">Guard</span></h1>
+    <p class="lede">Static checks for SurrealDB apps: catch schema/query drift before it becomes a runtime surprise.</p>
+    <div class="orb one"></div><div class="orb two"></div>
+    <p class="caption">You keep SurrealQL. The surrounding tooling finally understands it.</p>
+  </section>
+
+  <section class="slide split-slide" data-title="Split brain">
+    <div class="split-head"><div class="kicker">The split brain</div><h2>Your SurrealDB schema knows the truth. Your app code cannot see it.</h2><p class="lede">The seam is the query boundary: typed host code hands SurrealQL text to the database, and the compiler loses sight of fields, params, and graph edges.</p></div>
+    <div class="split-visual">
+      <div class="island left"><h3>Application</h3><pre><span class="kw">type</span> User = {
+  name: <span class="type">string</span>
+  age: <span class="type">number</span>
+}
+
+<span class="kw">const</span> q = <span class="str">`SELECT name, age FROM user`</span></pre></div>
+      <svg class="broken" viewBox="0 0 70 450"><path class="bolt" d="M42 6 L18 86 L46 152 L22 228 L50 306 L26 444"/></svg><div class="seam-label">query boundary</div>
+      <div class="island right"><h3>Database</h3><pre><span class="kw">DEFINE TABLE</span> user <span class="kw">SCHEMAFULL</span>;
+<span class="kw">DEFINE FIELD</span> name
+  <span class="kw">ON</span> user <span class="kw">TYPE</span> <span class="type">string</span>;
+<span class="kw">DEFINE FIELD</span> age
+  <span class="kw">ON</span> user <span class="kw">TYPE</span> <span class="type">int</span>;</pre></div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Problem examples">
+    <div class="kicker">How it fails</div>
+    <h2>Normal SurrealDB changes can silently break callers.</h2>
+    <div class="failure-cards">
+      <div class="card failure-card"><div class="viz"><div class="rename-a">email</div><div class="rename-arrow"></div><div class="rename-b">primary_email</div></div><div><h3>Renamed field</h3><p>`SELECT email` still ships.</p></div></div>
+      <div class="card failure-card"><div class="viz"><div class="param-left">int</div><div class="param-op">≠</div><div class="param-right">string</div></div><div><h3>Wrong param</h3><p>`$min_age` receives text.</p></div></div>
+      <div class="card failure-card"><div class="viz"><div class="graph-dot g1"></div><div class="gline"></div><div class="gbad">?</div><div class="graph-dot g2"></div></div><div><h3>Bad relation</h3><p>`person->liked_by->post` never existed.</p></div></div>
+      <div class="card failure-card"><div class="viz"><div class="mini-code"><span class="kw">FROM</span> people</div></div><div><h3>Wrong table</h3><p>A migration renamed `person`.</p></div></div>
+      <div class="card failure-card"><div class="viz"><div class="mini-code"><span class="kw">FETCH</span> posts</div></div><div><h3>Wrong shape</h3><p>The result changed under the UI.</p></div></div>
+      <div class="card failure-card"><div class="viz"><div class="mini-code"><span class="kw">DEFINE EVENT</span></div></div><div><h3>Hidden code</h3><p>Events and auth functions drift too.</p></div></div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Architecture gap">
+    <div class="grid2">
+      <div><div class="kicker">Audience frame</div><h2>If you use SurrealDB, this is about your schema and your queries staying in sync.</h2></div>
+      <div class="card"><p style="font-size:34px;line-height:1.25">SurrealGuard does not replace SurrealQL. It reads normal `.surql`, migrations, and embedded queries, then explains what will break.</p><div class="language-strip"><div class="pill">fields</div><div class="pill">params</div><div class="pill">graphs</div><div class="pill">functions</div></div></div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Solution bridge">
+    <div class="kicker">The bridge</div>
+    <h2>Make the implicit contract explicit.</h2>
+    <div class="bridge-board">
+      <div class="bridge-source schema"><div class="eyebrow">Schema contract</div><pre><span class="kw">DEFINE FIELD</span> email
+  <span class="kw">ON</span> person
+  <span class="kw">TYPE</span> <span class="type">string</span>;</pre></div>
+      <div class="bridge-source query"><div class="eyebrow">Query contract</div><pre><span class="kw">SELECT</span> name, email
+<span class="kw">FROM</span> person
+<span class="kw">WHERE</span> age <span class="op">&gt;</span> $min_age;</pre></div>
+      <div class="contract-card"><div class="eyebrow">SurrealGuard core</div><h3>checks the seam</h3><div class="contract-list"><div>✓ fields exist</div><div>✓ params match</div><div>✓ result shape inferred</div><div>✓ spans preserved</div></div></div>
+      <svg class="connector" viewBox="0 0 1712 590"><path d="M510 255 C640 315 710 315 790 255"/><path d="M1050 255 C1135 315 1185 315 1240 255"/><path d="M1090 405 C980 500 720 500 610 410"/></svg>
+      <div class="bridge-output"><div class="pill">diagnostics</div><div class="pill">typed results</div><div class="pill">param requirements</div><div class="pill">editor spans</div></div>
+    </div>
+  </section>
+
+
+  <section class="slide" data-title="Analysis phases">
+    <div class="kicker">Analysis phases</div><h2>How SurrealGuard checks a normal SurrealDB project.</h2>
+    <div class="phase-board">
+      <svg class="phase-arrow" viewBox="0 0 1712 610"><path d="M430 175 C500 190 510 300 495 344"/><path d="M855 344 C925 315 940 205 920 175"/><path d="M1280 175 C1360 190 1390 300 1340 344"/></svg>
+      <div class="phase-card phase-a"><div class="mini-title">01 source</div><h3>Parse with spans</h3><p>Keep every token tied to source locations.</p></div>
+      <div class="phase-card phase-b"><div class="mini-title">02 schema</div><h3>Build the catalog</h3><p>Tables, fields, relations, indexes, events, functions, permissions.</p></div>
+      <div class="phase-card phase-c"><div class="mini-title">03 semantics</div><h3>Analyze statements</h3><p>Resolve fields, expressions, graph traversals, function bodies.</p></div>
+      <div class="phase-card phase-d"><div class="mini-title">04 contract</div><h3>Emit outputs</h3><p>Diagnostics, shapes, params, and span mappings.</p></div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Pipeline">
+    <div class="kicker">Core pipeline</div><h2>One analyzer. Many places to surface the answer.</h2>
+    <div class="pipeline"><svg class="svgline" viewBox="0 0 1712 610"><defs><marker id="ah2" markerWidth="12" markerHeight="8" refX="10" refY="4" orient="auto"><polygon points="0 0,12 4,0 8" fill="rgba(88,230,255,.8)"/></marker></defs><path d="M290 276 C335 235 320 160 345 148" marker-end="url(#ah2)"/><path d="M615 148 C655 160 635 270 670 282" marker-end="url(#ah2)"/><path d="M940 282 C985 250 965 155 995 148" marker-end="url(#ah2)"/><path d="M1265 148 C1305 164 1288 270 1320 282" marker-end="url(#ah2)"/></svg>
+      <div class="node a"><h3>Inputs</h3><p>.surql · migrations · embedded queries</p></div><div class="node b"><h3>Syntax</h3><p>parse tree · exact source spans</p></div><div class="node c"><h3>Semantics</h3><p>schema catalog · expression rules</p></div><div class="node d"><h3>Contract</h3><p>diagnostics · shapes · params</p></div><div class="node e"><h3>Surfaces</h3><p>CLI · LSP · Rust · TS · Python</p></div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Diagnostics">
+    <div class="kicker">Diagnostics</div><h2>Errors live under the code.</h2>
+    <div class="diagnostic-editor">
+      <div class="statement"><div class="src-line"><span class="kw">SELECT</span> name, <span class="underline">emali</span> <span class="kw">FROM</span> person;</div><div class="inline-diag"><span class="caret">^^^^^</span><span class="diag-code">E1004 · schema</span><span>unknown field `emali` on table `person`</span></div></div>
+      <div class="statement"><div class="src-line"><span class="kw">SELECT</span> * <span class="kw">FROM</span> person <span class="kw">WHERE</span> age <span class="op">&gt;</span> <span class="str">"old enough"</span>;</div><div class="inline-diag"><span class="caret">^^^^^^^^^^^^</span><span class="diag-code">E2005 · type</span><span>operator `&gt;` cannot combine `int` and `string`</span></div></div>
+      <div class="statement"><div class="src-line"><span class="kw">SELECT</span> * <span class="kw">FROM</span> <span class="underline">people</span>;</div><div class="inline-diag"><span class="caret">^^^^^^</span><span class="diag-code">E1003 · schema</span><span>unknown table `people` in SELECT statement</span></div></div>
+      <div class="statement"><div class="src-line"><span class="kw">SELECT</span> * <span class="kw">FROM</span> person<span class="op">-&gt;</span><span class="underline">liked_by</span><span class="op">-&gt;</span>post;</div><div class="inline-diag warn"><span class="caret">^^^^^^^^</span><span class="diag-code">E3001 · graph</span><span>unknown graph edge table `liked_by`</span></div></div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Types">
+    <div class="kicker">Typed output</div><h2>Result shapes stop being a guess.</h2>
+    <div class="code-grid"><div class="codebox"><div class="mini-title">SurrealQL</div><pre><span class="kw">SELECT</span> name, age, posts.*
+<span class="kw">FROM</span> person
+<span class="kw">WHERE</span> age <span class="op">&gt;=</span> <span class="numlit">18</span>
+<span class="kw">FETCH</span> posts;</pre></div><div class="codebox"><div class="mini-title">Projected TypeScript</div><pre><span class="kw">type</span> PersonQueryResult = Array&lt;{
+  name: <span class="type">string</span>;
+  age: <span class="type">number</span>;
+  posts: Array&lt;Post&gt;;
+}&gt;;</pre></div></div>
+    <div class="callout">Same analysis core. Different consuming language.</div>
+  </section>
+
+  <section class="slide" data-title="Surfaces">
+    <div class="kicker">Surfaces</div><h2>The analyzer powers CI and host adapters.</h2>
+    <div class="surface-grid">
+      <div class="surface-list">
+        <div class="surface-row"><strong>CLI</strong><span>check schema files, migrations, events, functions, and query manifests.</span></div>
+        <div class="surface-row"><strong>Rust</strong><span><code>surql!</code> and build-time checks can fail with mapped spans.</span></div>
+        <div class="surface-row"><strong>TypeScript</strong><span>tagged templates or transforms feed types and diagnostics into tsserver.</span></div>
+        <div class="surface-row"><strong>Python</strong><span>generated stubs provide Pyright/Pylance-compatible params and result types.</span></div>
+      </div>
+      <div class="codebox cli-card"><div class="mini-title">CI / local</div><pre><span class="comment">$</span> surrealguard check
+<span class="ok">✓</span> schema/main.surql
+<span class="err">E1004</span> queries/feed.surql:12:24
+  unknown field <span class="str">`publised_at`</span>
+
+<span class="comment"># same core result, different surface</span></pre></div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="CI guardrails">
+    <div class="kicker">CI guardrails</div><h2>Not just SELECT statements.</h2>
+    <div class="ci-board">
+      <div class="card"><h3>Check application behavior</h3><div class="ci-list"><div>event handlers</div><div>computed fields</div><div>auth functions</div><div>graph traversals</div></div></div>
+      <div class="card"><h3>Keep code and schema together</h3><p>Every migration can be checked against the queries and functions that consume it.</p><div class="language-strip"><div class="pill">local CLI</div><div class="pill">pre-commit</div><div class="pill">CI/CD</div></div></div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Future LSP">
+    <div class="kicker">Future editor path</div><h2>Host adapters give language servers SurrealDB context.</h2>
+    <div class="zed-editor"><div class="sidebar"><div class="mini-title">project</div><div class="file active">src/feed.ts</div><div class="file">queries/feed.surql</div><div class="file">schema/main.surql</div></div><div class="zed-main"><pre><span class="kw">const</span> q = <span class="str">surql`</span>
+  <span class="kw">SELECT</span> title, author.name, <span class="squiggle">publised_at</span>
+  <span class="kw">FROM</span> post
+  <span class="kw">ORDER BY</span> created_at <span class="kw">DESC</span>;
+<span class="str">`</span>;</pre><div class="inline-panel"><div class="title"><span class="err">E1004</span> from SurrealGuard host adapter</div><div class="body">`publised_at` is not defined on table `post`.<br/>The host language server can show this where the query is written.</div></div><div class="status-strip"><span>Host LSPs: Pyright/Pylance · tsserver · rust-analyzer</span><span>SurrealQL LSP later · possible Zed PR</span></div></div></div>
+  </section>
+
+  <section class="slide" data-title="Roadmap">
+    <div class="kicker">Roadmap</div><h2>Core first. Then adapters that make the core visible.</h2>
+    <div class="history-board">
+      <div class="card era now"><div class="num">phase 1 · in progress</div><h3>Core type inference</h3><p>Catalog, expression inference, params, result shapes, graph traversals, and span diagnostics.</p></div>
+      <div class="card era"><div class="num">phase 2 · adapter-ready</div><h3>Host adapters</h3><p>Rust macro/build checks; TypeScript tagged templates into tsserver; Python stubs for Pyright/Pylance; CLI and CI.</p></div>
+      <div class="card era"><div class="num">phase 3 · editor-facing</div><h3>Editor support</h3><p>Use host LSPs first. Then SurrealQL LSP support for schema files, with a possible Zed PR.</p></div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Questions">
+    <div class="kicker">Thank you</div>
+    <h2>Questions?</h2>
+    <p class="lede">Make SurrealQL visible before runtime. SurrealGuard keeps SurrealQL intact while giving schema, queries, host code, and editor tooling the same contract.</p>
+    <div class="language-strip"><div class="pill">diagnostics</div><div class="pill">typed results</div><div class="pill">params</div><div class="pill">graphs</div><div class="pill">host adapters</div><div class="pill">LSP path</div></div>
+  </section>
+</main></div>
+<nav class="footer-nav" aria-label="Slide navigation"><button id="prev" type="button">←</button><span id="counter">1 / 11</span><div class="progress"><div class="bar" id="bar"></div></div><button id="next" type="button">→</button></nav>
+<script>
+const slides=[...document.querySelectorAll('.slide')],stage=document.getElementById('stage'),counter=document.getElementById('counter'),bar=document.getElementById('bar');let current=Math.min(Math.max(Number(localStorage.getItem('surrealguard-deck-slide')||0),0),slides.length-1);function scaleStage(){const scale=Math.min(innerWidth/1920,innerHeight/1080);stage.style.transform=`translate(-50%, -50%) scale(${scale})`}function show(i){current=(i+slides.length)%slides.length;slides.forEach((s,n)=>s.classList.toggle('active',n===current));counter.textContent=`${current+1} / ${slides.length}`;bar.style.width=`${((current+1)/slides.length)*100}%`;localStorage.setItem('surrealguard-deck-slide',current)}document.getElementById('prev').onclick=()=>show(current-1);document.getElementById('next').onclick=()=>show(current+1);addEventListener('keydown',e=>{if(['ArrowRight','PageDown',' '].includes(e.key)){e.preventDefault();show(current+1)} if(['ArrowLeft','PageUp'].includes(e.key)){e.preventDefault();show(current-1)} if(e.key==='Home')show(0); if(e.key==='End')show(slides.length-1)});addEventListener('resize',scaleStage);scaleStage();show(current);
+</script>
+</body></html>

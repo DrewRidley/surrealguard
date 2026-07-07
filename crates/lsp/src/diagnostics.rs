@@ -4,22 +4,29 @@
 
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString};
 
-use surrealguard_diagnostics::{Finding, Severity as WorkspaceSeverity};
+use surrealguard_diagnostics::{Finding, PolicyConfig, Severity as WorkspaceSeverity};
 
 use crate::text::byte_range_to_lsp;
 
-/// Convert a workspace-analysis finding to an LSP diagnostic.
-pub fn workspace_finding_to_lsp_diagnostic(source: &str, finding: &Finding) -> Diagnostic {
+/// Convert a workspace-analysis finding to an LSP diagnostic, applying the
+/// workspace policy at this consumption edge. Returns `None` when policy
+/// suppresses the finding (an allowed lint).
+pub fn workspace_finding_to_lsp_diagnostic(
+    source: &str,
+    finding: &Finding,
+    policy: &PolicyConfig,
+) -> Option<Diagnostic> {
+    let severity = policy.resolve_severity(finding.code(), finding.severity())?;
     let range = finding.span().range();
     let range = byte_range_to_lsp(source, range.start() as usize, range.end() as usize);
 
-    let severity = match finding.effective_severity() {
+    let severity = match severity {
         WorkspaceSeverity::Error => DiagnosticSeverity::ERROR,
         WorkspaceSeverity::Warning => DiagnosticSeverity::WARNING,
         WorkspaceSeverity::Hint => DiagnosticSeverity::HINT,
     };
 
-    Diagnostic {
+    Some(Diagnostic {
         range,
         severity: Some(severity),
         code: Some(NumberOrString::String(finding.code().to_string())),
@@ -27,7 +34,7 @@ pub fn workspace_finding_to_lsp_diagnostic(source: &str, finding: &Finding) -> D
         message: finding.message().to_string(),
         related_information: None,
         ..Diagnostic::default()
-    }
+    })
 }
 
 #[cfg(test)]
@@ -50,7 +57,9 @@ mod tests {
             "unexpected syntax",
         );
 
-        let diagnostic = workspace_finding_to_lsp_diagnostic(source, &finding);
+        let diagnostic =
+            workspace_finding_to_lsp_diagnostic(source, &finding, &PolicyConfig::default())
+                .expect("non-lint findings pass default policy");
 
         assert_eq!(
             diagnostic.code,

@@ -1,7 +1,9 @@
+//! `surrealguard.toml` workspace configuration.
+
 use serde::Deserialize;
 use surrealguard_diagnostics::LintLevel;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct WorkspaceConfig {
     pub sources: SourceConfig,
     pub analysis: AnalysisConfig,
@@ -22,7 +24,7 @@ pub struct AnalysisConfig {
     pub surrealdb_version: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct DiagnosticConfig {
     pub warnings_as_errors: bool,
     pub require_suppression_reasons: bool,
@@ -64,17 +66,6 @@ impl WorkspaceConfig {
     }
 }
 
-impl Default for WorkspaceConfig {
-    fn default() -> Self {
-        Self {
-            sources: SourceConfig::default(),
-            analysis: AnalysisConfig::default(),
-            diagnostics: DiagnosticConfig::default(),
-            lints: LintConfig::default(),
-        }
-    }
-}
-
 impl Default for SourceConfig {
     fn default() -> Self {
         Self {
@@ -94,15 +85,6 @@ impl Default for AnalysisConfig {
         Self {
             strict: false,
             surrealdb_version: "2".into(),
-        }
-    }
-}
-
-impl Default for DiagnosticConfig {
-    fn default() -> Self {
-        Self {
-            warnings_as_errors: false,
-            require_suppression_reasons: false,
         }
     }
 }

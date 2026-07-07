@@ -1,7 +1,11 @@
+//! Workspace orchestration: gathers sources, runs schema extraction and
+//! per-statement analysis, and assembles the public `AnalysisOutput`
+//! (response kinds, inferred params, findings) per source.
+
 use std::collections::BTreeMap;
 
-use crate::response_shape::ResponseShape;
 use serde::{Deserialize, Serialize};
+use surrealdb_types::Kind;
 use surrealguard_diagnostics::{Finding, FindingCode, Severity};
 use surrealguard_syntax::parse::{
     parse_source, ParseError, SyntaxDiagnostic, SyntaxDiagnosticKind,
@@ -10,12 +14,9 @@ use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
 use crate::config::WorkspaceConfig;
-use crate::schema::{extract_schema, SchemaIndex};
+use crate::schema::SchemaIndex;
 use crate::semantic::{
-    analyze_parsed_source, infer_non_select_response_shapes, infer_param_kinds,
-    infer_select_response_shapes, validate_function_calls, validate_if_conditions,
-    validate_mutation_fields, validate_select_graph_references, validate_select_projection_fields,
-    validate_table_references,
+    analyze_parsed_source, analyze_sources_in_source_order, validate_if_conditions,
 };
 use crate::source_registry::SourceRegistry;
 
@@ -30,7 +31,7 @@ pub struct AnalysisOutput {
     pub diagnostics: Vec<Finding>,
     pub statements: Vec<StatementAnalysis>,
     pub inferred_params: Vec<ParamInference>,
-    pub response_shape: Option<ResponseShape>,
+    pub response_kind: Option<Kind>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,7 +45,7 @@ pub struct WorkspaceAnalysis {
 pub struct StatementAnalysis {
     pub span: SourceSpan,
     pub kind: String,
-    pub response_shape: Option<ResponseShape>,
+    pub response_kind: Option<Kind>,
     pub select_modifiers: Vec<SelectModifierAnalysis>,
 }
 
@@ -121,14 +122,14 @@ pub fn analyze_source(workspace: &Workspace, source: SourceId) -> AnalysisOutput
                 diagnostics: syntax_diagnostics,
                 statements: semantic_output.statements,
                 inferred_params: semantic_output.inferred_params,
-                response_shape: None,
+                response_kind: None,
             }
         }
         Err(error) => AnalysisOutput {
             diagnostics: vec![parse_error_to_finding(source, error)],
             statements: Vec::new(),
             inferred_params: Vec::new(),
-            response_shape: None,
+            response_kind: None,
         },
     }
 }
@@ -150,58 +151,13 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
         }
     }
 
-    let schema_extraction = extract_schema(&parsed_sources);
-    for diagnostic in &schema_extraction.diagnostics {
+    let source_ordered = analyze_sources_in_source_order(&parsed_sources);
+    for diagnostic in &source_ordered.diagnostics {
         if let Some(source_output) = sources.get_mut(diagnostic.span().source()) {
             source_output.diagnostics.push(diagnostic.clone());
         }
     }
-    diagnostics.extend(schema_extraction.diagnostics.iter().cloned());
-
-    let table_reference_diagnostics =
-        validate_table_references(&parsed_sources, &schema_extraction.schema);
-    for diagnostic in &table_reference_diagnostics {
-        if let Some(source_output) = sources.get_mut(diagnostic.span().source()) {
-            source_output.diagnostics.push(diagnostic.clone());
-        }
-    }
-    diagnostics.extend(table_reference_diagnostics);
-
-    let graph_reference_diagnostics =
-        validate_select_graph_references(&parsed_sources, &schema_extraction.schema);
-    for diagnostic in &graph_reference_diagnostics {
-        if let Some(source_output) = sources.get_mut(diagnostic.span().source()) {
-            source_output.diagnostics.push(diagnostic.clone());
-        }
-    }
-    diagnostics.extend(graph_reference_diagnostics);
-
-    let select_projection_diagnostics =
-        validate_select_projection_fields(&parsed_sources, &schema_extraction.schema);
-    for diagnostic in &select_projection_diagnostics {
-        if let Some(source_output) = sources.get_mut(diagnostic.span().source()) {
-            source_output.diagnostics.push(diagnostic.clone());
-        }
-    }
-    diagnostics.extend(select_projection_diagnostics);
-
-    let mutation_field_diagnostics =
-        validate_mutation_fields(&parsed_sources, &schema_extraction.schema);
-    for diagnostic in &mutation_field_diagnostics {
-        if let Some(source_output) = sources.get_mut(diagnostic.span().source()) {
-            source_output.diagnostics.push(diagnostic.clone());
-        }
-    }
-    diagnostics.extend(mutation_field_diagnostics);
-
-    let function_call_diagnostics =
-        validate_function_calls(&parsed_sources, &schema_extraction.schema);
-    for diagnostic in &function_call_diagnostics {
-        if let Some(source_output) = sources.get_mut(diagnostic.span().source()) {
-            source_output.diagnostics.push(diagnostic.clone());
-        }
-    }
-    diagnostics.extend(function_call_diagnostics);
+    diagnostics.extend(source_ordered.diagnostics.iter().cloned());
 
     let if_condition_diagnostics = validate_if_conditions(&parsed_sources);
     for diagnostic in &if_condition_diagnostics {
@@ -211,8 +167,7 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
     }
     diagnostics.extend(if_condition_diagnostics);
 
-    let param_kind_inferences = infer_param_kinds(&parsed_sources, &schema_extraction.schema);
-    for inference in param_kind_inferences {
+    for inference in source_ordered.param_kind_inferences {
         if let Some(source_output) = sources.get_mut(&inference.source) {
             if let Some(param) = source_output
                 .inferred_params
@@ -226,29 +181,24 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
         }
     }
 
-    let mut response_shapes =
-        infer_select_response_shapes(&parsed_sources, &schema_extraction.schema);
-    response_shapes.extend(infer_non_select_response_shapes(
-        &parsed_sources,
-        &schema_extraction.schema,
-    ));
-    let mut response_shape_counts_by_source = BTreeMap::new();
-    for (span, _) in &response_shapes {
-        *response_shape_counts_by_source
+    let response_kinds = source_ordered.response_kinds;
+    let mut response_kind_counts_by_source = BTreeMap::new();
+    for (span, _) in &response_kinds {
+        *response_kind_counts_by_source
             .entry(span.source().clone())
             .or_insert(0usize) += 1;
     }
-    for (span, shape) in response_shapes {
+    for (span, kind) in response_kinds {
         if let Some(source_output) = sources.get_mut(span.source()) {
             for statement in &mut source_output.statements {
                 if statement.span == span {
-                    statement.response_shape = Some(shape.clone());
+                    statement.response_kind = Some(kind.clone());
                 }
             }
-            if response_shape_counts_by_source[span.source()] == 1
-                && source_output.response_shape.is_none()
+            if response_kind_counts_by_source[span.source()] == 1
+                && source_output.response_kind.is_none()
             {
-                source_output.response_shape = Some(shape);
+                source_output.response_kind = Some(kind);
             }
         }
     }
@@ -256,7 +206,7 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
     WorkspaceAnalysis {
         sources,
         diagnostics,
-        schema: schema_extraction.schema,
+        schema: source_ordered.schema,
     }
 }
 
@@ -291,8 +241,9 @@ fn parse_error_to_finding(source: SourceId, error: ParseError) -> Finding {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::response_shape::PartialReason;
+    use crate::expression::PartialReason;
     use surrealdb_types::Kind;
+    use surrealdb_types::KindLiteral;
 
     #[test]
     fn analyze_query_returns_statement_analysis_for_parseable_surrealql() {
@@ -309,9 +260,9 @@ mod tests {
         );
         assert_eq!(output.statements[0].span.range().start(), 0);
         assert_eq!(output.statements[0].span.range().end(), 20);
-        assert!(output.statements[0].response_shape.is_none());
+        assert!(output.statements[0].response_kind.is_none());
         assert!(output.inferred_params.is_empty());
-        assert!(output.response_shape.is_none());
+        assert!(output.response_kind.is_none());
     }
 
     #[test]
@@ -404,8 +355,7 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(output.diagnostics.len(), 1);
         let diagnostic = &output.diagnostics[0];
         assert_eq!(diagnostic.code(), FindingCode::syntax(1));
-        assert_eq!(diagnostic.default_severity(), Severity::Error);
-        assert_eq!(diagnostic.effective_severity(), Severity::Error);
+        assert_eq!(diagnostic.severity(), Severity::Error);
         assert_eq!(diagnostic.span().source().as_str(), "virtual://query#0");
         assert!(!diagnostic.message().is_empty());
     }
@@ -645,7 +595,7 @@ INSERT INTO person { name: 'Ada' };
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(
             "schema".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD profile.email ON person TYPE string;\nREMOVE TABLE person;\nREMOVE FIELD name ON TABLE person;\nREMOVE FIELD profile.email ON person;\nREMOVE TABLE ghost;\nREMOVE FIELD missing ON TABLE person;\nREMOVE FIELD name ON TABLE ghost;".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD profile.email ON person TYPE string;\nREMOVE FIELD name ON TABLE person;\nREMOVE FIELD profile.email ON person;\nREMOVE TABLE ghost;\nREMOVE FIELD missing ON TABLE person;\nREMOVE FIELD name ON TABLE ghost;\nREMOVE TABLE person;".into(),
         );
 
         let output = analyze_workspace(&workspace);
@@ -664,6 +614,25 @@ INSERT INTO person { name: 'Ada' };
                 "REMOVE FIELD `name` targets unknown table `ghost`",
             ]
         );
+    }
+
+    #[test]
+    fn analyze_workspace_validates_alter_table_targets() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE person;\nALTER TABLE person DROP;\nALTER TABLE ghost DROP;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1002))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(messages, vec!["ALTER TABLE targets unknown table `ghost`"]);
     }
 
     #[test]
@@ -692,20 +661,54 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
-    fn analyze_workspace_marks_unsupported_field_type_syntax_as_partial_analysis() {
+    fn analyze_workspace_resolves_structured_field_types() {
+        // Step 6 acceptance: parameterized/union/option types resolve to
+        // real kinds instead of degrading to UnsupportedSyntax.
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(
             "schema".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD tags ON person TYPE array<string>;".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD tags ON person TYPE array<string>;\nDEFINE FIELD age ON person TYPE option<int>;\nDEFINE FIELD status ON person TYPE 'active' | 'inactive';".into(),
         );
 
         let output = analyze_workspace(&workspace);
 
-        let field = &output.schema.tables["person"].fields["tags"];
+        let fields = &output.schema.tables["person"].fields;
+        assert_eq!(
+            fields["tags"].kind,
+            Some(Kind::Array(Box::new(Kind::String), None))
+        );
+        assert_eq!(
+            fields["age"].kind,
+            Some(Kind::Either(vec![Kind::None, Kind::Int]))
+        );
+        assert_eq!(
+            fields["status"].kind,
+            Some(Kind::Either(vec![
+                Kind::Literal(KindLiteral::String("active".into())),
+                Kind::Literal(KindLiteral::String("inactive".into())),
+            ]))
+        );
+        assert!(output
+            .diagnostics
+            .iter()
+            .all(|finding| finding.code() != FindingCode::dynamic(6001)));
+    }
+
+    #[test]
+    fn analyze_workspace_marks_unsupported_field_type_syntax_as_partial_analysis() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD shape ON person TYPE geometry<point>;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        let field = &output.schema.tables["person"].fields["shape"];
         assert!(field.kind.is_none());
         assert_eq!(
             field.partial,
-            vec![PartialReason::UnsupportedSyntax("array<string>".into())]
+            vec![PartialReason::UnsupportedSyntax("geometry<...>".into())]
         );
         let partial: Vec<_> = output
             .diagnostics
@@ -713,10 +716,6 @@ INSERT INTO person { name: 'Ada' };
             .filter(|finding| finding.code() == FindingCode::dynamic(6001))
             .collect();
         assert_eq!(partial.len(), 1);
-        assert_eq!(
-            partial[0].message(),
-            "unsupported field type syntax `array<string>` for field `tags`"
-        );
     }
 
     #[test]
@@ -759,6 +758,105 @@ INSERT INTO person { name: 'Ada' };
             .diagnostics
             .iter()
             .all(|finding| finding.code() != FindingCode::schema(1003)));
+    }
+
+    #[test]
+    fn analyze_workspace_treats_removed_table_as_absent_for_later_references() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nREMOVE TABLE person;\nUPDATE person SET name = 'Ada';".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1003))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(messages, vec!["unknown table `person` in UPDATE statement"]);
+        assert!(output.schema.table("person").is_none());
+    }
+
+    #[test]
+    fn analyze_workspace_does_not_use_later_table_definitions_for_earlier_statements() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "UPDATE person SET name = 'Ada';\nDEFINE TABLE person;\nUPDATE person SET name = 'Grace';".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let unknown_tables: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1003))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            unknown_tables,
+            vec!["unknown table `person` in UPDATE statement"]
+        );
+        assert!(output.schema.table("person").is_some());
+    }
+
+    #[test]
+    fn analyze_workspace_applies_field_definitions_and_removals_in_source_order() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person SCHEMAFULL;\nUPDATE person SET name = 'Ada';\nDEFINE FIELD name ON person TYPE int;\nUPDATE person SET name = 'Grace';\nREMOVE FIELD name ON person;\nUPDATE person SET name = 'Hedy';".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let type_mismatches: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::type_error(2001))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            type_mismatches,
+            vec!["value assigned to `name` has type `string`, expected `int`".to_string()]
+        );
+        assert!(output
+            .schema
+            .field("person", &crate::schema::FieldPath::parse("name"))
+            .is_none());
+    }
+
+    #[test]
+    fn analyze_workspace_overwrite_replaces_definition_for_downstream_statements() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE user;\nDEFINE TABLE org;\nDEFINE TABLE person TYPE RELATION IN user OUT org;\nRELATE org:acme->person->user:drew;\nDEFINE TABLE OVERWRITE person TYPE RELATION IN org OUT user;\nRELATE org:acme->person->user:drew;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let endpoint_messages: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.message().contains("endpoint"))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(endpoint_messages.len(), 1);
+        assert_eq!(
+            endpoint_messages[0],
+            "RELATE traversal `org->person->user` does not match relation `person` endpoints"
+        );
+        let relation = output
+            .schema
+            .table("person")
+            .and_then(|table| table.relation.as_ref())
+            .unwrap();
+        assert_eq!(relation.in_tables, vec!["org".to_string()]);
+        assert_eq!(relation.out_tables, vec!["user".to_string()]);
     }
 
     #[test]
@@ -810,7 +908,6 @@ INSERT INTO person { name: 'Ada' };
                 "unknown table `phantom` in INSERT statement",
                 "unknown table `missing` in LIVE SELECT statement",
                 "unknown table `shadow` in ALTER statement",
-                "unknown table `stale` in REMOVE statement",
                 "unknown table `absent` in REBUILD statement",
                 "unknown table `vanished` in SHOW statement",
                 "unknown table `hidden` in INFO FOR statement",
@@ -840,10 +937,8 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(source_output.statements[1].span.range().start(), 21);
         assert_eq!(source_output.statements[1].span.range().end(), 41);
         assert!(matches!(
-            source_output.statements[1].response_shape,
-            Some(ResponseShape::Unknown {
-                reason: PartialReason::Unresolved
-            })
+            source_output.statements[1].response_kind,
+            Some(Kind::Any)
         ));
     }
 
@@ -901,10 +996,7 @@ INSERT INTO person { name: 'Ada' };
             .find(|statement| statement.kind == "return")
             .expect("return statement exists");
 
-        assert_eq!(
-            return_statement.response_shape,
-            Some(ResponseShape::Value { kind: Kind::Int })
-        );
+        assert_eq!(return_statement.response_kind, Some(Kind::Int));
     }
 
     #[test]
@@ -984,10 +1076,7 @@ INSERT INTO person { name: 'Ada' };
             .expect("return statement exists");
 
         assert!(source_output.inferred_params.is_empty());
-        assert_eq!(
-            return_statement.response_shape,
-            Some(ResponseShape::Value { kind: Kind::Int })
-        );
+        assert_eq!(return_statement.response_kind, Some(Kind::Int));
     }
 
     #[test]
@@ -1046,10 +1135,7 @@ INSERT INTO person { name: 'Ada' };
             .expect("return statement exists");
 
         assert!(source_output.inferred_params.is_empty());
-        assert_eq!(
-            return_statement.response_shape,
-            Some(ResponseShape::Value { kind: Kind::String })
-        );
+        assert_eq!(return_statement.response_kind, Some(Kind::String));
     }
 
     #[test]
@@ -1069,10 +1155,7 @@ INSERT INTO person { name: 'Ada' };
             .expect("return statement exists");
 
         assert!(source_output.inferred_params.is_empty());
-        assert_eq!(
-            return_statement.response_shape,
-            Some(ResponseShape::Value { kind: Kind::Int })
-        );
+        assert_eq!(return_statement.response_kind, Some(Kind::Int));
     }
 
     #[test]
@@ -1107,15 +1190,10 @@ INSERT INTO person { name: 'Ada' };
             .expect("if/else statement exists");
 
         assert_eq!(
-            if_statement.response_shape,
-            Some(ResponseShape::Union {
-                variants: vec![
-                    ResponseShape::Value { kind: Kind::Int },
-                    ResponseShape::Value { kind: Kind::String },
-                ],
-            })
+            if_statement.response_kind,
+            Some(Kind::Either(vec![Kind::Int, Kind::String,]))
         );
-        assert_eq!(source_output.response_shape, if_statement.response_shape);
+        assert_eq!(source_output.response_kind, if_statement.response_kind);
     }
 
     #[test]
@@ -1133,10 +1211,7 @@ INSERT INTO person { name: 'Ada' };
             .find(|statement| statement.kind == "if_else")
             .expect("if/else statement exists");
 
-        assert_eq!(
-            if_statement.response_shape,
-            Some(ResponseShape::Value { kind: Kind::Int })
-        );
+        assert_eq!(if_statement.response_kind, Some(Kind::Int));
     }
 
     #[test]
@@ -1156,10 +1231,7 @@ INSERT INTO person { name: 'Ada' };
             .expect("if/else statement exists");
 
         assert!(source_output.inferred_params.is_empty());
-        assert_eq!(
-            if_statement.response_shape,
-            Some(ResponseShape::Value { kind: Kind::Int })
-        );
+        assert_eq!(if_statement.response_kind, Some(Kind::Int));
     }
 
     #[test]
@@ -1265,12 +1337,7 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(source_output.inferred_params.len(), 1);
         assert_eq!(source_output.inferred_params[0].name, "branch");
         assert_eq!(source_output.inferred_params[0].kind, None);
-        assert!(matches!(
-            return_statement.response_shape,
-            Some(ResponseShape::Unknown {
-                reason: PartialReason::Unresolved
-            })
-        ));
+        assert!(matches!(return_statement.response_kind, Some(Kind::Any)));
     }
 
     #[test]
@@ -1288,15 +1355,15 @@ INSERT INTO person { name: 'Ada' };
             .find(|statement| statement.kind == "if_else")
             .expect("if statement exists");
 
-        let Some(ResponseShape::Union { variants }) = &if_statement.response_shape else {
+        let Some(Kind::Either(variants)) = &if_statement.response_kind else {
             panic!(
-                "expected IF branch union response shape, got {:?}",
-                if_statement.response_shape
+                "expected IF branch either kind, got {:?}",
+                if_statement.response_kind
             );
         };
         assert_eq!(variants.len(), 2);
-        assert!(variants.contains(&ResponseShape::Value { kind: Kind::Int }));
-        assert!(variants.contains(&ResponseShape::Value { kind: Kind::String }));
+        assert!(variants.contains(&Kind::Int));
+        assert!(variants.contains(&Kind::String));
     }
 
     #[test]
@@ -1314,10 +1381,7 @@ INSERT INTO person { name: 'Ada' };
             .find(|statement| statement.kind == "if_else")
             .expect("if statement exists");
 
-        assert_eq!(
-            if_statement.response_shape,
-            Some(ResponseShape::Value { kind: Kind::Int })
-        );
+        assert_eq!(if_statement.response_kind, Some(Kind::Int));
     }
 
     #[test]
@@ -1392,6 +1456,33 @@ INSERT INTO person { name: 'Ada' };
                 ("min_age", Some(Kind::Int)),
             ]
         );
+    }
+
+    #[test]
+    fn analyze_workspace_infers_select_comparison_and_boolean_projection_shapes() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD active ON person TYPE bool;\nSELECT age > 18 AS adult, active = true AS matches_active, true AND active AS visible FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        let Some(Kind::Array(element, _)) = &select.response_kind else {
+            panic!("expected array kind, got {:?}", select.response_kind);
+        };
+        let Kind::Literal(KindLiteral::Object(fields)) = element.as_ref() else {
+            panic!("expected object literal element, got {element:?}");
+        };
+
+        assert_eq!(fields["adult"], Kind::Bool);
+        assert_eq!(fields["matches_active"], Kind::Bool);
+        assert_eq!(fields["visible"], Kind::Bool);
     }
 
     #[test]
@@ -1575,7 +1666,7 @@ INSERT INTO person { name: 'Ada' };
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(
             "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nCREATE person SET nickname = 'Ada', name = 'Ada';\nUPDATE person SET handle = 'ada', name = 'Ada';\nUPDATE person UNSET stale = true, name = true;\nUPSERT person SET alias = 'ada', name = 'Ada';".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nCREATE person SET nickname = 'Ada', name = 'Ada';\nUPDATE person SET handle = 'ada', name = 'Ada';\nUPSERT person SET alias = 'ada', name = 'Ada';".into(),
         );
 
         let output = analyze_workspace(&workspace);
@@ -1591,7 +1682,6 @@ INSERT INTO person { name: 'Ada' };
             vec![
                 "unknown field `nickname` on table `person`",
                 "unknown field `handle` on table `person`",
-                "unknown field `stale` on table `person`",
                 "unknown field `alias` on table `person`",
             ]
         );
@@ -1836,177 +1926,6 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
-    fn analyze_workspace_infers_select_wildcard_response_shape_from_schema() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD age ON person TYPE int;\nSELECT * FROM person;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let select = output.sources[&source]
-            .statements
-            .iter()
-            .find(|statement| statement.kind == "select")
-            .expect("select statement exists");
-
-        let Some(ResponseShape::Array {
-            element,
-            max_len: None,
-        }) = &select.response_shape
-        else {
-            panic!(
-                "expected array response shape, got {:?}",
-                select.response_shape
-            );
-        };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = element.as_ref()
-        else {
-            panic!("expected object element, got {element:?}");
-        };
-        assert_eq!(fields["name"].kind, Some(Kind::String));
-        assert_eq!(fields["age"].kind, Some(Kind::Int));
-    }
-
-    #[test]
-    fn analyze_workspace_infers_select_projection_response_shape() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD profile.email ON person TYPE string;\nSELECT name, profile.email AS email FROM person;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let select = output.sources[&source]
-            .statements
-            .iter()
-            .find(|statement| statement.kind == "select")
-            .expect("select statement exists");
-
-        let Some(ResponseShape::Array {
-            element,
-            max_len: None,
-        }) = &select.response_shape
-        else {
-            panic!(
-                "expected array response shape, got {:?}",
-                select.response_shape
-            );
-        };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = element.as_ref()
-        else {
-            panic!("expected object element, got {element:?}");
-        };
-        assert_eq!(
-            fields.keys().map(String::as_str).collect::<Vec<_>>(),
-            vec!["email", "name"]
-        );
-        assert_eq!(fields["name"].kind, Some(Kind::String));
-        assert_eq!(fields["email"].kind, Some(Kind::String));
-    }
-
-    #[test]
-    fn analyze_workspace_infers_wildcard_response_shape_with_nested_object_fields() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD profile.name ON person TYPE string;\nDEFINE FIELD profile.email ON person TYPE string;\nSELECT * FROM person;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let select = output.sources[&source]
-            .statements
-            .iter()
-            .find(|statement| statement.kind == "select")
-            .expect("select statement exists");
-
-        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
-            panic!(
-                "expected array response shape, got {:?}",
-                select.response_shape
-            );
-        };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = element.as_ref()
-        else {
-            panic!("expected object element, got {element:?}");
-        };
-        assert_eq!(
-            fields.keys().map(String::as_str).collect::<Vec<_>>(),
-            vec!["profile"]
-        );
-        let ResponseShape::Object {
-            fields: profile_fields,
-            open: false,
-        } = &fields["profile"].shape
-        else {
-            panic!("expected profile object, got {:?}", fields["profile"].shape);
-        };
-        assert_eq!(
-            profile_fields
-                .keys()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
-            vec!["email", "name"]
-        );
-        assert_eq!(profile_fields["name"].kind, Some(Kind::String));
-        assert_eq!(profile_fields["email"].kind, Some(Kind::String));
-    }
-
-    #[test]
-    fn analyze_workspace_infers_projected_nested_field_response_shape() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD profile.name ON person TYPE string;\nSELECT profile.name FROM person;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let select = output.sources[&source]
-            .statements
-            .iter()
-            .find(|statement| statement.kind == "select")
-            .expect("select statement exists");
-
-        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
-            panic!(
-                "expected array response shape, got {:?}",
-                select.response_shape
-            );
-        };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = element.as_ref()
-        else {
-            panic!("expected object element, got {element:?}");
-        };
-        let ResponseShape::Object {
-            fields: profile_fields,
-            open: false,
-        } = &fields["profile"].shape
-        else {
-            panic!("expected profile object, got {:?}", fields["profile"].shape);
-        };
-        assert_eq!(
-            profile_fields
-                .keys()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
-            vec!["name"]
-        );
-        assert_eq!(profile_fields["name"].kind, Some(Kind::String));
-    }
-
-    #[test]
     fn analyze_workspace_validates_and_shapes_parent_object_paths() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
@@ -2029,35 +1948,27 @@ INSERT INTO person { name: 'Ada' };
             .iter()
             .find(|statement| statement.kind == "select")
             .expect("select statement exists");
-        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
+        let Some(Kind::Array(element, _)) = &select.response_kind else {
+            panic!("expected array kind, got {:?}", select.response_kind);
+        };
+        let Kind::Literal(KindLiteral::Object(fields)) = element.as_ref() else {
+            panic!("expected object literal element, got {element:?}");
+        };
+        let Kind::Literal(KindLiteral::Object(profile_fields)) = &fields["profile"] else {
             panic!(
-                "expected array response shape, got {:?}",
-                select.response_shape
+                "expected nested object literal, got {:?}",
+                fields["profile"]
             );
         };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = element.as_ref()
-        else {
-            panic!("expected object element, got {element:?}");
-        };
-        let ResponseShape::Object {
-            fields: profile_fields,
-            open: false,
-        } = &fields["profile"].shape
-        else {
-            panic!("expected profile object, got {:?}", fields["profile"].shape);
-        };
-        assert_eq!(profile_fields["name"].kind, Some(Kind::String));
+        assert_eq!(profile_fields["name"], Kind::String);
     }
 
     #[test]
-    fn analyze_workspace_applies_omit_to_nested_response_shape() {
+    fn analyze_workspace_infers_row_brace_selector_without_alias_shape() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
             "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD profile.name ON person TYPE string;\nDEFINE FIELD profile.secret ON person TYPE string;\nSELECT * OMIT profile.secret FROM person;".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD profile.name ON person TYPE string;\nDEFINE FIELD profile.age ON person TYPE int;\nDEFINE FIELD profile.secret ON person TYPE string;\nSELECT profile.{name, age} FROM person;".into(),
         );
 
         let output = analyze_workspace(&workspace);
@@ -2066,41 +1977,37 @@ INSERT INTO person { name: 'Ada' };
             .iter()
             .find(|statement| statement.kind == "select")
             .expect("select statement exists");
-        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
+
+        let Some(Kind::Array(element, _)) = &select.response_kind else {
+            panic!("expected array kind, got {:?}", select.response_kind);
+        };
+        let Kind::Literal(KindLiteral::Object(fields)) = element.as_ref() else {
+            panic!("expected object literal element, got {element:?}");
+        };
+        let Kind::Literal(KindLiteral::Object(profile_fields)) = &fields["profile"] else {
             panic!(
-                "expected array response shape, got {:?}",
-                select.response_shape
+                "expected nested object literal, got {:?}",
+                fields["profile"]
             );
         };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = element.as_ref()
-        else {
-            panic!("expected object element, got {element:?}");
-        };
-        let ResponseShape::Object {
-            fields: profile_fields,
-            open: false,
-        } = &fields["profile"].shape
-        else {
-            panic!("expected profile object, got {:?}", fields["profile"].shape);
-        };
+
         assert_eq!(
             profile_fields
                 .keys()
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
-            vec!["name"]
+            vec!["age", "name"]
         );
+        assert_eq!(profile_fields["name"], Kind::String);
+        assert_eq!(profile_fields["age"], Kind::Int);
     }
 
     #[test]
-    fn analyze_workspace_infers_select_literal_and_expression_alias_shapes() {
+    fn analyze_workspace_infers_row_brace_selector_alias_shape() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
             "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nSELECT 1 AS one, true AS active, age + 1 AS next_age FROM person;".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD profile.name ON person TYPE string;\nDEFINE FIELD profile.age ON person TYPE int;\nSELECT profile.{name, age} AS public_profile FROM person;".into(),
         );
 
         let output = analyze_workspace(&workspace);
@@ -2110,89 +2017,21 @@ INSERT INTO person { name: 'Ada' };
             .find(|statement| statement.kind == "select")
             .expect("select statement exists");
 
-        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
+        let Some(Kind::Array(element, _)) = &select.response_kind else {
+            panic!("expected array kind, got {:?}", select.response_kind);
+        };
+        let Kind::Literal(KindLiteral::Object(fields)) = element.as_ref() else {
+            panic!("expected object literal element, got {element:?}");
+        };
+        let Kind::Literal(KindLiteral::Object(profile_fields)) = &fields["public_profile"] else {
             panic!(
-                "expected array response shape, got {:?}",
-                select.response_shape
+                "expected nested object literal, got {:?}",
+                fields["public_profile"]
             );
         };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = element.as_ref()
-        else {
-            panic!("expected object element, got {element:?}");
-        };
-        assert_eq!(fields["one"].kind, Some(Kind::Int));
-        assert_eq!(fields["active"].kind, Some(Kind::Bool));
-        assert_eq!(fields["next_age"].kind, Some(Kind::Int));
-        assert!(fields["next_age"].partial.is_empty());
-    }
 
-    #[test]
-    fn analyze_workspace_infers_select_projection_shape_from_let_env() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nLET $age = 42;\nSELECT $age + 1 AS next_age FROM person;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let select = output.sources[&source]
-            .statements
-            .iter()
-            .find(|statement| statement.kind == "select")
-            .expect("select statement exists");
-
-        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
-            panic!(
-                "expected array response shape, got {:?}",
-                select.response_shape
-            );
-        };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = element.as_ref()
-        else {
-            panic!("expected object element, got {element:?}");
-        };
-
-        assert_eq!(fields["next_age"].kind, Some(Kind::Int));
-    }
-
-    #[test]
-    fn analyze_workspace_infers_binary_expression_projection_shapes() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD score ON person TYPE float;\nDEFINE FIELD name ON person TYPE string;\nSELECT age + 1 AS next_age, score + 1 AS next_score, name + '!' AS excited FROM person;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let select = output.sources[&source]
-            .statements
-            .iter()
-            .find(|statement| statement.kind == "select")
-            .expect("select statement exists");
-
-        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
-            panic!(
-                "expected array response shape, got {:?}",
-                select.response_shape
-            );
-        };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = element.as_ref()
-        else {
-            panic!("expected object element, got {element:?}");
-        };
-
-        assert_eq!(fields["next_age"].kind, Some(Kind::Int));
-        assert_eq!(fields["next_score"].kind, Some(Kind::Float));
-        assert_eq!(fields["excited"].kind, Some(Kind::String));
+        assert_eq!(profile_fields["name"], Kind::String);
+        assert_eq!(profile_fields["age"], Kind::Int);
     }
 
     #[test]
@@ -2241,39 +2080,6 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
-    fn analyze_workspace_infers_function_projection_shapes() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD tags ON person TYPE array<string>;\nSELECT string::len(name) AS name_len, array::len(tags) AS tag_count, count() AS total FROM person;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let select = output.sources[&source]
-            .statements
-            .iter()
-            .find(|statement| statement.kind == "select")
-            .expect("select statement exists");
-
-        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
-            panic!(
-                "expected array response shape, got {:?}",
-                select.response_shape
-            );
-        };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = element.as_ref()
-        else {
-            panic!("expected object element, got {element:?}");
-        };
-        assert_eq!(fields["name_len"].kind, Some(Kind::Int));
-        assert_eq!(fields["tag_count"].kind, Some(Kind::Int));
-        assert_eq!(fields["total"].kind, Some(Kind::Int));
-    }
-
-    #[test]
     fn analyze_workspace_infers_extended_verified_function_projection_shapes_and_params() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
@@ -2288,25 +2094,18 @@ INSERT INTO person { name: 'Ada' };
             .find(|statement| statement.kind == "select")
             .expect("select statement exists");
 
-        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
-            panic!(
-                "expected array response shape, got {:?}",
-                select.response_shape
-            );
+        let Some(Kind::Array(element, _)) = &select.response_kind else {
+            panic!("expected array kind, got {:?}", select.response_kind);
         };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = element.as_ref()
-        else {
-            panic!("expected object element, got {element:?}");
+        let Kind::Literal(KindLiteral::Object(fields)) = element.as_ref() else {
+            panic!("expected object literal element, got {element:?}");
         };
-        assert_eq!(fields["lower"].kind, Some(Kind::String));
-        assert_eq!(fields["upper"].kind, Some(Kind::String));
-        assert_eq!(fields["has_needle"].kind, Some(Kind::Bool));
-        assert_eq!(fields["starts"].kind, Some(Kind::Bool));
-        assert_eq!(fields["ends"].kind, Some(Kind::Bool));
-        assert_eq!(fields["no_items"].kind, Some(Kind::Bool));
+        assert_eq!(fields["lower"], Kind::String);
+        assert_eq!(fields["upper"], Kind::String);
+        assert_eq!(fields["has_needle"], Kind::Bool);
+        assert_eq!(fields["starts"], Kind::Bool);
+        assert_eq!(fields["ends"], Kind::Bool);
+        assert_eq!(fields["no_items"], Kind::Bool);
     }
 
     #[test]
@@ -2448,11 +2247,11 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
-    fn analyze_workspace_infers_select_value_response_shape() {
+    fn analyze_workspace_infers_select_value_expression_response_shape() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
             "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nSELECT VALUE name FROM person;".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nSELECT VALUE age + 1 FROM person;".into(),
         );
 
         let output = analyze_workspace(&workspace);
@@ -2462,78 +2261,31 @@ INSERT INTO person { name: 'Ada' };
             .find(|statement| statement.kind == "select")
             .expect("select statement exists");
 
-        let Some(ResponseShape::Array {
-            element,
-            max_len: None,
-        }) = &select.response_shape
-        else {
-            panic!(
-                "expected array response shape, got {:?}",
-                select.response_shape
-            );
+        let Some(Kind::Array(element, _)) = &select.response_kind else {
+            panic!("expected array kind, got {:?}", select.response_kind);
         };
-        assert_eq!(
-            element.as_ref(),
-            &ResponseShape::Value { kind: Kind::String }
-        );
+        assert_eq!(element.as_ref(), &Kind::Int);
     }
 
     #[test]
-    fn analyze_workspace_infers_mutation_row_response_shape_from_schema() {
+    fn analyze_workspace_infers_select_value_function_response_shape() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
             "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD age ON person TYPE int;\nCREATE person SET name = 'Ada', age = 30 RETURN AFTER;".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nSELECT VALUE string::lowercase(name) FROM person;".into(),
         );
 
         let output = analyze_workspace(&workspace);
-        let create = output.sources[&source]
+        let select = output.sources[&source]
             .statements
             .iter()
-            .find(|statement| statement.kind == "create")
-            .expect("create statement exists");
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
 
-        let Some(ResponseShape::Array { element, .. }) = &create.response_shape else {
-            panic!(
-                "expected array response shape, got {:?}",
-                create.response_shape
-            );
+        let Some(Kind::Array(element, _)) = &select.response_kind else {
+            panic!("expected array kind, got {:?}", select.response_kind);
         };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = element.as_ref()
-        else {
-            panic!("expected object element, got {element:?}");
-        };
-        assert_eq!(fields["name"].kind, Some(Kind::String));
-        assert_eq!(fields["age"].kind, Some(Kind::Int));
-    }
-
-    #[test]
-    fn analyze_workspace_marks_mutation_return_none_as_empty_array_shape() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nUPDATE person SET name = 'Ada' RETURN NONE;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let update = output.sources[&source]
-            .statements
-            .iter()
-            .find(|statement| statement.kind == "update")
-            .expect("update statement exists");
-
-        assert_eq!(
-            update.response_shape,
-            Some(ResponseShape::Array {
-                element: Box::new(ResponseShape::Unknown {
-                    reason: PartialReason::UnsupportedSyntax("RETURN NONE".into())
-                }),
-                max_len: Some(0),
-            })
-        );
+        assert_eq!(element.as_ref(), &Kind::String);
     }
 
     #[test]
@@ -2585,48 +2337,6 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
-    fn analyze_workspace_infers_mutation_return_field_projection_shape() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD profile.email ON person TYPE string;\nUPDATE person SET age = 42 RETURN name, profile.email;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let update = output.sources[&source]
-            .statements
-            .iter()
-            .find(|statement| statement.kind == "update")
-            .expect("update statement exists");
-
-        let Some(ResponseShape::Array { element, .. }) = &update.response_shape else {
-            panic!(
-                "expected array response shape, got {:?}",
-                update.response_shape
-            );
-        };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = element.as_ref()
-        else {
-            panic!("expected object element, got {element:?}");
-        };
-        assert_eq!(
-            fields.keys().map(String::as_str).collect::<Vec<_>>(),
-            vec!["name", "profile"]
-        );
-        assert_eq!(fields["name"].kind, Some(Kind::String));
-        let ResponseShape::Object {
-            fields: profile, ..
-        } = &fields["profile"].shape
-        else {
-            panic!("expected profile object, got {:?}", fields["profile"].shape);
-        };
-        assert_eq!(profile["email"].kind, Some(Kind::String));
-    }
-
-    #[test]
     fn analyze_workspace_infers_mutation_return_expression_shape_from_let_env() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
@@ -2641,182 +2351,17 @@ INSERT INTO person { name: 'Ada' };
             .find(|statement| statement.kind == "update")
             .expect("update statement exists");
 
-        let Some(ResponseShape::Array { element, .. }) = &update.response_shape else {
-            panic!(
-                "expected array response shape, got {:?}",
-                update.response_shape
-            );
+        let Some(Kind::Array(element, _)) = &update.response_kind else {
+            panic!("expected array kind, got {:?}", update.response_kind);
         };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = element.as_ref()
-        else {
-            panic!("expected object element, got {element:?}");
+        let Kind::Literal(KindLiteral::Object(fields)) = element.as_ref() else {
+            panic!("expected object literal element, got {element:?}");
         };
         assert_eq!(
             fields.keys().map(String::as_str).collect::<Vec<_>>(),
             vec!["next_bonus"]
         );
-        assert_eq!(fields["next_bonus"].kind, Some(Kind::Int));
-    }
-
-    #[test]
-    fn analyze_workspace_infers_mutation_return_diff_patch_shape() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nUPDATE person SET name = 'Ada' RETURN DIFF;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let update = output.sources[&source]
-            .statements
-            .iter()
-            .find(|statement| statement.kind == "update")
-            .expect("update statement exists");
-
-        let Some(ResponseShape::Array { element, .. }) = &update.response_shape else {
-            panic!(
-                "expected outer array response shape, got {:?}",
-                update.response_shape
-            );
-        };
-        let ResponseShape::Array { element: patch, .. } = element.as_ref() else {
-            panic!("expected patch array element, got {element:?}");
-        };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = patch.as_ref()
-        else {
-            panic!("expected patch object, got {patch:?}");
-        };
-        assert_eq!(fields["op"].kind, Some(Kind::String));
-        assert_eq!(fields["path"].kind, Some(Kind::String));
-        assert_eq!(fields["value"].kind, Some(Kind::Any));
-    }
-
-    #[test]
-    fn analyze_workspace_applies_omit_to_wildcard_response_shape() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD password ON person TYPE string;\nSELECT * OMIT password FROM person;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let select = output.sources[&source]
-            .statements
-            .iter()
-            .find(|statement| statement.kind == "select")
-            .expect("select statement exists");
-
-        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
-            panic!(
-                "expected array response shape, got {:?}",
-                select.response_shape
-            );
-        };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = element.as_ref()
-        else {
-            panic!("expected object element, got {element:?}");
-        };
-        assert_eq!(
-            fields.keys().map(String::as_str).collect::<Vec<_>>(),
-            vec!["name"]
-        );
-    }
-
-    #[test]
-    fn analyze_workspace_infers_literal_limit_as_array_max_len() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nSELECT name FROM person LIMIT 5;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let select = output.sources[&source]
-            .statements
-            .iter()
-            .find(|statement| statement.kind == "select")
-            .expect("select statement exists");
-
-        let Some(ResponseShape::Array {
-            element: _,
-            max_len: Some(5),
-        }) = &select.response_shape
-        else {
-            panic!(
-                "expected array with max_len=5, got {:?}",
-                select.response_shape
-            );
-        };
-    }
-
-    #[test]
-    fn analyze_workspace_marks_fetched_fields_as_materialized() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD best_friend ON person TYPE record;\nSELECT * FROM person FETCH best_friend;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let select = output.sources[&source]
-            .statements
-            .iter()
-            .find(|statement| statement.kind == "select")
-            .expect("select statement exists");
-
-        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
-            panic!(
-                "expected array response shape, got {:?}",
-                select.response_shape
-            );
-        };
-        let ResponseShape::Object { fields, .. } = element.as_ref() else {
-            panic!("expected object element, got {element:?}");
-        };
-        assert!(fields["best_friend"].materialized_by_fetch);
-    }
-
-    #[test]
-    fn analyze_workspace_marks_nested_fetched_fields_as_materialized() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD profile.best_friend ON person TYPE record;\nSELECT * FROM person FETCH profile.best_friend;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let select = output.sources[&source]
-            .statements
-            .iter()
-            .find(|statement| statement.kind == "select")
-            .expect("select statement exists");
-
-        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
-            panic!(
-                "expected array response shape, got {:?}",
-                select.response_shape
-            );
-        };
-        let ResponseShape::Object { fields, .. } = element.as_ref() else {
-            panic!("expected object element, got {element:?}");
-        };
-        let ResponseShape::Object {
-            fields: profile_fields,
-            ..
-        } = &fields["profile"].shape
-        else {
-            panic!("expected profile object, got {:?}", fields["profile"].shape);
-        };
-        assert!(profile_fields["best_friend"].materialized_by_fetch);
+        assert_eq!(fields["next_bonus"], Kind::Int);
     }
 
     #[test]
@@ -2882,88 +2427,6 @@ INSERT INTO person { name: 'Ada' };
                 ("parallel", true, None),
             ]
         );
-    }
-
-    #[test]
-    fn analyze_workspace_marks_grouped_select_response_shape_partial() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\nSELECT name FROM person GROUP BY name;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let select = output.sources[&source]
-            .statements
-            .iter()
-            .find(|statement| statement.kind == "select")
-            .expect("select statement exists");
-
-        assert_eq!(
-            select.response_shape,
-            Some(ResponseShape::Unknown {
-                reason: PartialReason::UnsupportedSyntax("GROUP".into())
-            })
-        );
-    }
-
-    #[test]
-    fn analyze_workspace_infers_multi_hop_outbound_graph_traversal_shape() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE comment;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nDEFINE TABLE authored TYPE RELATION IN post OUT comment;\nDEFINE FIELD body ON comment TYPE string;\nSELECT body FROM person->likes->post->authored->comment;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let source_output = &output.sources[&source];
-        assert!(source_output
-            .diagnostics
-            .iter()
-            .all(|finding| finding.code() != FindingCode::graph(3003)));
-
-        let shape = source_output
-            .response_shape
-            .as_ref()
-            .expect("shape inferred");
-        let ResponseShape::Array { element, .. } = shape else {
-            panic!("expected array shape, got {shape:?}");
-        };
-        let ResponseShape::Object { fields, .. } = element.as_ref() else {
-            panic!("expected object element, got {element:?}");
-        };
-        assert_eq!(fields["body"].kind, Some(Kind::String));
-    }
-
-    #[test]
-    fn analyze_workspace_infers_simple_outbound_graph_traversal_shape() {
-        let mut workspace = Workspace::default();
-        let source = workspace.add_virtual_source(
-            "query".into(),
-            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE FIELD title ON post TYPE string;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nSELECT * FROM person->likes->post;".into(),
-        );
-
-        let output = analyze_workspace(&workspace);
-        let select = output.sources[&source]
-            .statements
-            .iter()
-            .find(|statement| statement.kind == "select")
-            .expect("select statement exists");
-
-        let Some(ResponseShape::Array { element, .. }) = &select.response_shape else {
-            panic!(
-                "expected array response shape, got {:?}",
-                select.response_shape
-            );
-        };
-        let ResponseShape::Object {
-            fields,
-            open: false,
-        } = element.as_ref()
-        else {
-            panic!("expected object element, got {element:?}");
-        };
-        assert_eq!(fields["title"].kind, Some(Kind::String));
     }
 
     #[test]

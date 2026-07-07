@@ -10,6 +10,8 @@ use crate::source::SourceId;
 use crate::span::{ByteRange, SourceSpan};
 
 #[derive(Debug)]
+/// A source file plus its parse tree; the input to lowering and to the
+/// syntax-diagnostic pass.
 pub struct ParsedSource {
     source_id: SourceId,
     text: Arc<str>,
@@ -44,6 +46,7 @@ impl ParsedSource {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A parse-level problem (an `ERROR` or `MISSING` region) with its span.
 pub struct SyntaxDiagnostic {
     kind: SyntaxDiagnosticKind,
     span: SourceSpan,
@@ -73,12 +76,16 @@ impl SyntaxDiagnostic {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Whether the parser recovered by skipping input or by inserting a
+/// missing token.
 pub enum SyntaxDiagnosticKind {
     ErrorNode,
     MissingNode,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Failure to produce a tree at all (as opposed to a recoverable
+/// [`SyntaxDiagnostic`]).
 pub enum ParseError {
     LanguageError,
     ParseFailed,
@@ -97,6 +104,8 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+/// Parses `text` into a [`ParsedSource`], collecting recoverable syntax
+/// diagnostics rather than failing on imperfect input.
 pub fn parse_source(
     source_id: SourceId,
     text: impl Into<Arc<str>>,

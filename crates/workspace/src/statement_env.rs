@@ -1,3 +1,7 @@
+//! The statement environment: `LET` bindings, param defaults, and param
+//! uses, threaded through statements in source order with child scopes for
+//! blocks and branches.
+
 use std::collections::BTreeMap;
 
 use surrealguard_syntax::span::SourceSpan;
@@ -58,6 +62,25 @@ impl StatementEnv {
             .push(span);
     }
 
+    pub fn merge_param_uses_from(&mut self, child: StatementEnv) {
+        for param in child.params.into_values() {
+            let entry = self
+                .params
+                .entry(param.name.clone())
+                .or_insert_with(|| ParamInference {
+                    name: param.name.clone(),
+                    kind: param.kind.clone(),
+                    required: param.required,
+                    spans: Vec::new(),
+                });
+            if entry.kind.is_none() {
+                entry.kind = param.kind;
+            }
+            entry.required |= param.required;
+            entry.spans.extend(param.spans);
+        }
+    }
+
     pub fn into_params(self) -> Vec<ParamInference> {
         self.params.into_values().collect()
     }
@@ -77,7 +100,6 @@ mod tests {
 
     use super::StatementEnv;
     use crate::expression::{ExpressionFact, ExpressionValueClass};
-    use crate::response_shape::ResponseShape;
 
     fn fact(kind: Kind) -> ExpressionFact {
         ExpressionFact::new(
@@ -85,7 +107,6 @@ mod tests {
             ExpressionValueClass::Literal,
         )
         .with_kind(kind.clone())
-        .with_shape(ResponseShape::Value { kind })
     }
 
     #[test]

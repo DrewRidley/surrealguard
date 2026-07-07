@@ -1,0 +1,42 @@
+//! `time::max` function analysis: `time::max(array<datetime>) -> datetime`.
+
+use surrealdb_types::Kind;
+use surrealguard_syntax::ast;
+
+use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::function::signature::{evaluate, ParamKind, ReturnKind, Signature};
+
+pub fn analyze_time_max(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
+    let _ = (ctx, call);
+    evaluate(
+        &Signature {
+            min_args: 1,
+            max_args: Some(1),
+            arg_kinds: vec![ParamKind::Array],
+            return_kind: ReturnKind::Fixed(Kind::Datetime),
+        },
+        args,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn signature() -> Signature {
+        Signature {
+            min_args: 1,
+            max_args: Some(1),
+            arg_kinds: vec![ParamKind::Array],
+            return_kind: ReturnKind::Fixed(Kind::Datetime),
+        }
+    }
+
+    #[test]
+    fn returns_datetime_for_array_argument() {
+        assert_eq!(
+            evaluate(&signature(), &[Kind::Array(Box::new(Kind::Datetime), None)]),
+            Kind::Datetime
+        );
+    }
+}

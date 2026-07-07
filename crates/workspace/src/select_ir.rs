@@ -1,3 +1,6 @@
+//! The pre-AST SELECT intermediate representation. Serves only the frozen
+//! validators in [`crate::semantic`]; dies with them.
+
 use surrealguard_syntax::parse::ParsedSource;
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
@@ -10,6 +13,7 @@ pub struct SelectIr {
     pub only: bool,
     pub omit: Vec<FieldPath>,
     pub fetch: Vec<FieldPath>,
+    pub split: Vec<FieldPath>,
     pub return_clause: Option<String>,
     pub modifiers: Vec<SelectModifier>,
     pub graph_lookups: Vec<GraphLookup>,
@@ -81,28 +85,34 @@ pub enum GraphDirection {
 
 pub fn extract_select_ir(parsed: &ParsedSource) -> Vec<SelectIr> {
     let mut irs = Vec::new();
-    collect_select_irs(parsed.tree().root_node(), parsed, &mut irs);
+    collect_select_irs(
+        parsed.tree().root_node(),
+        parsed.source_id(),
+        parsed.text(),
+        &mut irs,
+    );
     irs
 }
 
-fn collect_select_irs(node: Node<'_>, parsed: &ParsedSource, irs: &mut Vec<SelectIr>) {
+fn collect_select_irs(node: Node<'_>, source: &SourceId, text: &str, irs: &mut Vec<SelectIr>) {
     if node.kind() == "SelectStatement" {
-        irs.push(select_ir_from_statement(node, parsed));
+        irs.push(select_ir_from_statement(node, source, text));
         return;
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_select_irs(child, parsed, irs);
+        collect_select_irs(child, source, text, irs);
     }
 }
 
-pub(crate) fn select_ir_from_statement(node: Node<'_>, parsed: &ParsedSource) -> SelectIr {
-    let mut source = None;
+pub(crate) fn select_ir_from_statement(node: Node<'_>, source: &SourceId, text: &str) -> SelectIr {
+    let mut select_source = None;
     let mut projections = Vec::new();
     let mut only = false;
     let mut omit = Vec::new();
     let mut fetch = Vec::new();
+    let mut split = Vec::new();
     let mut return_clause = None;
     let mut modifiers = Vec::new();
     let mut graph_lookups = Vec::new();
@@ -111,60 +121,53 @@ pub(crate) fn select_ir_from_statement(node: Node<'_>, parsed: &ParsedSource) ->
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         match child.kind() {
-            "Fields" => projections = projections_from_fields(child, parsed),
-            "OmitClause" => omit = field_paths_from_clause(child, parsed),
-            "FetchClause" => fetch = field_paths_from_clause(child, parsed),
-            "ReturnClause" => {
-                return_clause = Some(node_text(child, parsed.text()).trim().to_string())
+            "Fields" => projections = projections_from_fields(child, source, text),
+            "OmitClause" => omit = field_paths_from_clause(child, source, text),
+            "FetchClause" => fetch = field_paths_from_clause(child, source, text),
+            "ReturnClause" => return_clause = Some(node_text(child, text).trim().to_string()),
+            "WhereClause" => {
+                modifiers.push(SelectModifier::Where(node_span(child, source.clone())))
             }
-            "WhereClause" => modifiers.push(SelectModifier::Where(node_span(
-                child,
-                parsed.source_id().clone(),
-            ))),
-            "OrderClause" => modifiers.push(SelectModifier::Order(node_span(
-                child,
-                parsed.source_id().clone(),
-            ))),
+            "OrderClause" => {
+                modifiers.push(SelectModifier::Order(node_span(child, source.clone())))
+            }
             "LimitClause" => modifiers.push(SelectModifier::Limit {
-                span: node_span(child, parsed.source_id().clone()),
-                max_len: literal_limit_from_clause(child, parsed),
+                span: node_span(child, source.clone()),
+                max_len: literal_limit_from_clause(child, text),
             }),
-            "StartClause" => modifiers.push(SelectModifier::Start(node_span(
-                child,
-                parsed.source_id().clone(),
-            ))),
-            "TimeoutClause" => modifiers.push(SelectModifier::Timeout(node_span(
-                child,
-                parsed.source_id().clone(),
-            ))),
-            "ParallelClause" => modifiers.push(SelectModifier::Parallel(node_span(
-                child,
-                parsed.source_id().clone(),
-            ))),
-            "GroupClause" => modifiers.push(SelectModifier::Group(node_span(
-                child,
-                parsed.source_id().clone(),
-            ))),
-            "SplitClause" => modifiers.push(SelectModifier::Split(node_span(
-                child,
-                parsed.source_id().clone(),
-            ))),
-            "ExplainClause" => modifiers.push(SelectModifier::Explain(node_span(
-                child,
-                parsed.source_id().clone(),
-            ))),
-            "LimitStartComboClause" => collect_modifier_clauses(child, parsed, &mut modifiers),
+            "StartClause" => {
+                modifiers.push(SelectModifier::Start(node_span(child, source.clone())))
+            }
+            "TimeoutClause" => {
+                modifiers.push(SelectModifier::Timeout(node_span(child, source.clone())))
+            }
+            "ParallelClause" => {
+                modifiers.push(SelectModifier::Parallel(node_span(child, source.clone())))
+            }
+            "GroupClause" => {
+                modifiers.push(SelectModifier::Group(node_span(child, source.clone())))
+            }
+            "SplitClause" => {
+                split = field_paths_from_clause(child, source, text);
+                modifiers.push(SelectModifier::Split(node_span(child, source.clone())));
+            }
+            "ExplainClause" => {
+                modifiers.push(SelectModifier::Explain(node_span(child, source.clone())))
+            }
+            "LimitStartComboClause" => {
+                collect_modifier_clauses(child, source, text, &mut modifiers)
+            }
             "Keyword" => {
-                let keyword = node_text(child, parsed.text()).to_ascii_lowercase();
+                let keyword = node_text(child, text).to_ascii_lowercase();
                 if keyword == "from" {
                     saw_from = true;
                 } else if saw_from && keyword == "only" {
                     only = true;
                 }
             }
-            _ if saw_from && source.is_none() && is_select_source_node(child) => {
-                let (select_source, lookups) = source_from_node(child, parsed);
-                source = Some(select_source);
+            _ if saw_from && select_source.is_none() && is_select_source_node(child) => {
+                let (source_value, lookups) = source_from_node(child, source, text);
+                select_source = Some(source_value);
                 graph_lookups = lookups;
             }
             _ => {}
@@ -172,11 +175,12 @@ pub(crate) fn select_ir_from_statement(node: Node<'_>, parsed: &ParsedSource) ->
     }
 
     SelectIr {
-        source,
+        source: select_source,
         projections,
         only,
         omit,
         fetch,
+        split,
         return_clause,
         modifiers,
         graph_lookups,
@@ -185,64 +189,64 @@ pub(crate) fn select_ir_from_statement(node: Node<'_>, parsed: &ParsedSource) ->
 
 fn collect_modifier_clauses(
     node: Node<'_>,
-    parsed: &ParsedSource,
+    source: &SourceId,
+    text: &str,
     modifiers: &mut Vec<SelectModifier>,
 ) {
     match node.kind() {
         "LimitClause" => modifiers.push(SelectModifier::Limit {
-            span: node_span(node, parsed.source_id().clone()),
-            max_len: literal_limit_from_clause(node, parsed),
+            span: node_span(node, source.clone()),
+            max_len: literal_limit_from_clause(node, text),
         }),
-        "StartClause" => modifiers.push(SelectModifier::Start(node_span(
-            node,
-            parsed.source_id().clone(),
-        ))),
+        "StartClause" => modifiers.push(SelectModifier::Start(node_span(node, source.clone()))),
         _ => {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
-                collect_modifier_clauses(child, parsed, modifiers);
+                collect_modifier_clauses(child, source, text, modifiers);
             }
         }
     }
 }
 
-fn literal_limit_from_clause(clause: Node<'_>, parsed: &ParsedSource) -> Option<u64> {
+fn literal_limit_from_clause(clause: Node<'_>, text: &str) -> Option<u64> {
     let mut cursor = clause.walk();
     for child in clause.children(&mut cursor) {
         if child.kind() == "Number" || child.kind() == "Int" {
-            if let Some(limit) = literal_limit_from_clause(child, parsed) {
+            if let Some(limit) = literal_limit_from_clause(child, text) {
                 return Some(limit);
             }
-            let text = node_text(child, parsed.text()).trim();
-            if let Ok(limit) = text.parse::<u64>() {
+            let child_text = node_text(child, text).trim();
+            if let Ok(limit) = child_text.parse::<u64>() {
                 return Some(limit);
             }
         }
     }
-    let text = node_text(clause, parsed.text()).trim();
-    text.parse::<u64>().ok()
+    let clause_text = node_text(clause, text).trim();
+    clause_text.parse::<u64>().ok()
 }
 
-fn projections_from_fields(fields_node: Node<'_>, parsed: &ParsedSource) -> Vec<SelectProjection> {
+fn projections_from_fields(
+    fields_node: Node<'_>,
+    source: &SourceId,
+    text: &str,
+) -> Vec<SelectProjection> {
     let mut projections = Vec::new();
     let mut value = false;
     let mut cursor = fields_node.walk();
 
     for child in fields_node.children(&mut cursor) {
-        if child.kind() == "Keyword"
-            && node_text(child, parsed.text()).eq_ignore_ascii_case("value")
-        {
+        if child.kind() == "Keyword" && node_text(child, text).eq_ignore_ascii_case("value") {
             value = true;
             continue;
         }
         if child.kind() == "Any" {
             projections.push(SelectProjection::Wildcard {
-                span: node_span(child, parsed.source_id().clone()),
+                span: node_span(child, source.clone()),
             });
             continue;
         }
         if child.kind() == "Predicate" {
-            projections.push(projection_from_predicate(child, parsed, value));
+            projections.push(projection_from_predicate(child, source, text, value));
         }
     }
 
@@ -251,7 +255,8 @@ fn projections_from_fields(fields_node: Node<'_>, parsed: &ParsedSource) -> Vec<
 
 fn projection_from_predicate(
     predicate: Node<'_>,
-    parsed: &ParsedSource,
+    source: &SourceId,
+    text: &str,
     value: bool,
 ) -> SelectProjection {
     let mut field_node = None;
@@ -264,12 +269,12 @@ fn projection_from_predicate(
         .children(&mut cursor)
         .filter(|child| child.is_named())
     {
-        if child.kind() == "Keyword" && node_text(child, parsed.text()).eq_ignore_ascii_case("as") {
+        if child.kind() == "Keyword" && node_text(child, text).eq_ignore_ascii_case("as") {
             saw_as = true;
             continue;
         }
         if saw_as && is_identifier_like(child) {
-            alias = Some(node_text(child, parsed.text()).trim().to_string());
+            alias = Some(node_text(child, text).trim().to_string());
             continue;
         }
         if expression_node.is_none() && !matches!(child.kind(), "Keyword") {
@@ -283,15 +288,15 @@ fn projection_from_predicate(
     let Some(field_node) = field_node else {
         let expression = expression_node.unwrap_or(predicate);
         return SelectProjection::Dynamic {
-            span: node_span(expression, parsed.source_id().clone()),
+            span: node_span(expression, source.clone()),
             alias,
             expression_kind: Some(expression.kind().to_string()),
-            expression_text: node_text(expression, parsed.text()).trim().to_string(),
+            expression_text: node_text(expression, text).trim().to_string(),
             value,
         };
     };
 
-    let path = field_path_from_node(field_node, parsed);
+    let path = field_path_from_node(field_node, source, text);
     SelectProjection::Field {
         span: path.span.clone(),
         path,
@@ -300,28 +305,32 @@ fn projection_from_predicate(
     }
 }
 
-fn field_paths_from_clause(clause: Node<'_>, parsed: &ParsedSource) -> Vec<FieldPath> {
+fn field_paths_from_clause(clause: Node<'_>, source: &SourceId, text: &str) -> Vec<FieldPath> {
     let mut paths = Vec::new();
     let mut cursor = clause.walk();
     for child in clause.children(&mut cursor) {
-        collect_field_paths(child, parsed, &mut paths);
+        collect_field_paths(child, source, text, &mut paths);
     }
     paths
 }
 
-fn collect_field_paths(node: Node<'_>, parsed: &ParsedSource, paths: &mut Vec<FieldPath>) {
+fn collect_field_paths(node: Node<'_>, source: &SourceId, text: &str, paths: &mut Vec<FieldPath>) {
     if is_field_path_node(node) {
-        paths.push(field_path_from_node(node, parsed));
+        paths.push(field_path_from_node(node, source, text));
         return;
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_field_paths(child, parsed, paths);
+        collect_field_paths(child, source, text, paths);
     }
 }
 
-fn source_from_node(node: Node<'_>, parsed: &ParsedSource) -> (SelectSource, Vec<GraphLookup>) {
+fn source_from_node(
+    node: Node<'_>,
+    source: &SourceId,
+    text: &str,
+) -> (SelectSource, Vec<GraphLookup>) {
     if node.kind() == "Path" {
         let mut source_node = None;
         let mut lookups = Vec::new();
@@ -332,16 +341,14 @@ fn source_from_node(node: Node<'_>, parsed: &ParsedSource) -> (SelectSource, Vec
                 continue;
             }
             if child.kind() == "Lookup" {
-                lookups.push(graph_lookup_from_node(child, parsed));
+                lookups.push(graph_lookup_from_node(child, source, text));
             }
         }
         let source_node = source_node.unwrap_or(node);
         return (
             SelectSource {
-                table: Some(
-                    table_name_from_node_text(node_text(source_node, parsed.text())).to_string(),
-                ),
-                span: node_span(source_node, parsed.source_id().clone()),
+                table: Some(table_name_from_node_text(node_text(source_node, text)).to_string()),
+                span: node_span(source_node, source.clone()),
                 dynamic: false,
             },
             lookups,
@@ -350,15 +357,15 @@ fn source_from_node(node: Node<'_>, parsed: &ParsedSource) -> (SelectSource, Vec
 
     (
         SelectSource {
-            table: Some(table_name_from_node_text(node_text(node, parsed.text())).to_string()),
-            span: node_span(node, parsed.source_id().clone()),
+            table: Some(table_name_from_node_text(node_text(node, text)).to_string()),
+            span: node_span(node, source.clone()),
             dynamic: false,
         },
         Vec::new(),
     )
 }
 
-fn graph_lookup_from_node(node: Node<'_>, parsed: &ParsedSource) -> GraphLookup {
+fn graph_lookup_from_node(node: Node<'_>, source: &SourceId, text: &str) -> GraphLookup {
     let mut direction = GraphDirection::Out;
     let mut table = None;
     let mut cursor = node.walk();
@@ -367,7 +374,7 @@ fn graph_lookup_from_node(node: Node<'_>, parsed: &ParsedSource) -> GraphLookup 
             "LookupRight" => direction = GraphDirection::Out,
             "LookupLeft" => direction = GraphDirection::In,
             "LookupBoth" => direction = GraphDirection::Both,
-            _ if table.is_none() => table = first_identifier_like_text(child, parsed),
+            _ if table.is_none() => table = first_identifier_like_text(child, text),
             _ => {}
         }
     }
@@ -375,30 +382,30 @@ fn graph_lookup_from_node(node: Node<'_>, parsed: &ParsedSource) -> GraphLookup 
     GraphLookup {
         direction,
         table,
-        span: node_span(node, parsed.source_id().clone()),
+        span: node_span(node, source.clone()),
     }
 }
 
-fn first_identifier_like_text(node: Node<'_>, parsed: &ParsedSource) -> Option<String> {
+fn first_identifier_like_text(node: Node<'_>, text: &str) -> Option<String> {
     if is_identifier_like(node) {
-        return Some(node_text(node, parsed.text()).trim().to_string());
+        return Some(node_text(node, text).trim().to_string());
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if let Some(text) = first_identifier_like_text(child, parsed) {
-            return Some(text);
+        if let Some(found) = first_identifier_like_text(child, text) {
+            return Some(found);
         }
     }
     None
 }
 
-fn field_path_from_node(node: Node<'_>, parsed: &ParsedSource) -> FieldPath {
-    let text = node_text(node, parsed.text()).trim().to_string();
+fn field_path_from_node(node: Node<'_>, source: &SourceId, text: &str) -> FieldPath {
+    let path_text = node_text(node, text).trim().to_string();
     FieldPath {
-        segments: text.split('.').map(str::to_string).collect(),
-        text,
-        span: node_span(node, parsed.source_id().clone()),
+        segments: path_text.split('.').map(str::to_string).collect(),
+        text: path_text,
+        span: node_span(node, source.clone()),
     }
 }
 
@@ -551,6 +558,16 @@ mod tests {
             vec!["profile"]
         );
 
+        let split = first_ir("SELECT tags FROM person SPLIT tags;");
+        assert_eq!(
+            split
+                .split
+                .iter()
+                .map(|path| path.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["tags"]
+        );
+
         let only = first_ir("SELECT * FROM ONLY person:one;");
         assert!(only.only);
         assert_eq!(
@@ -575,6 +592,38 @@ mod tests {
         assert_eq!(ir.graph_lookups[0].direction, GraphDirection::Out);
         assert_eq!(ir.graph_lookups[0].table.as_deref(), Some("likes"));
         assert_eq!(ir.graph_lookups[1].table.as_deref(), Some("post"));
+    }
+
+    #[test]
+    fn extracts_graph_projection_with_brace_selector() {
+        let ir = first_ir("SELECT ->friend->user.{name, age} FROM person;");
+
+        assert_eq!(ir.projections.len(), 1);
+        let SelectProjection::Field { path, alias, .. } = &ir.projections[0] else {
+            panic!("expected field projection, got {:?}", ir.projections[0]);
+        };
+        assert_eq!(path.text, "->friend->user.{name, age}");
+        assert_eq!(
+            path.segments,
+            vec!["->friend->user".to_string(), "{name, age}".to_string(),]
+        );
+        assert_eq!(alias, &None);
+    }
+
+    #[test]
+    fn extracts_aliased_graph_projection_with_brace_selector() {
+        let ir = first_ir("SELECT ->friend->user.{name, age} AS friends FROM person;");
+
+        assert_eq!(ir.projections.len(), 1);
+        let SelectProjection::Field { path, alias, .. } = &ir.projections[0] else {
+            panic!("expected field projection, got {:?}", ir.projections[0]);
+        };
+        assert_eq!(path.text, "->friend->user.{name, age}");
+        assert_eq!(
+            path.segments,
+            vec!["->friend->user".to_string(), "{name, age}".to_string(),]
+        );
+        assert_eq!(alias.as_deref(), Some("friends"));
     }
 
     #[test]

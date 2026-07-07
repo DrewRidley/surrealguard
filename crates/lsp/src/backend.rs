@@ -32,10 +32,15 @@ impl Backend {
             return;
         };
 
+        // Presentation policy applies here, at the consumption edge; the
+        // findings themselves carry only their intrinsic class.
+        let policy = surrealguard_diagnostics::PolicyConfig::default();
         let lsp_diagnostics: Vec<Diagnostic> = result
             .diagnostics
             .iter()
-            .map(|d| diagnostics::workspace_finding_to_lsp_diagnostic(&result.source, d))
+            .filter_map(|d| {
+                diagnostics::workspace_finding_to_lsp_diagnostic(&result.source, d, &policy)
+            })
             .collect();
 
         self.client

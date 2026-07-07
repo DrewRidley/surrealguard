@@ -1,0 +1,51 @@
+//! `vector::add` function analysis: `vector::add(array, array) -> array`.
+
+use surrealdb_types::Kind;
+use surrealguard_syntax::ast;
+
+use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::function::signature::{evaluate, ParamKind, ReturnKind, Signature};
+
+pub fn analyze_vector_add(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
+    let _ = (ctx, call);
+    evaluate(
+        &Signature {
+            min_args: 2,
+            max_args: Some(2),
+            arg_kinds: vec![ParamKind::Array, ParamKind::Array],
+            return_kind: ReturnKind::SameAsArg(0),
+        },
+        args,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn signature() -> Signature {
+        Signature {
+            min_args: 2,
+            max_args: Some(2),
+            arg_kinds: vec![ParamKind::Array, ParamKind::Array],
+            return_kind: ReturnKind::SameAsArg(0),
+        }
+    }
+
+    #[test]
+    fn returns_first_vector_kind() {
+        let vector = Kind::Array(Box::new(Kind::Float), None);
+        assert_eq!(
+            evaluate(&signature(), &[vector.clone(), vector.clone()]),
+            vector
+        );
+    }
+
+    #[test]
+    fn passes_the_first_argument_kind_through_even_when_mistaken() {
+        assert_eq!(
+            evaluate(&signature(), &[Kind::Float, Kind::Float]),
+            Kind::Float
+        );
+    }
+}

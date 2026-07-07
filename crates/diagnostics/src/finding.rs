@@ -10,12 +10,16 @@ pub enum Severity {
     Hint,
 }
 
+/// One diagnostic, carrying its *intrinsic* severity class from the
+/// catalog. Findings are policy-free: consumers (CLI, LSP, host adapters)
+/// map classes to their presentation through [`crate::PolicyConfig`] —
+/// promotion (`warnings_as_errors`), lint levels, and suppression happen
+/// at that edge, never here.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finding {
     span: SourceSpan,
     code: FindingCode,
-    default_severity: Severity,
-    effective_severity: Severity,
+    severity: Severity,
     message: String,
     help: Vec<Help>,
     related: Vec<RelatedInfo>,
@@ -27,25 +31,19 @@ impl Finding {
     pub fn new(
         span: SourceSpan,
         code: FindingCode,
-        default_severity: Severity,
+        severity: Severity,
         message: impl Into<String>,
     ) -> Self {
         Self {
             span,
             code,
-            default_severity,
-            effective_severity: default_severity,
+            severity,
             message: message.into(),
             help: Vec::new(),
             related: Vec::new(),
             tags: Vec::new(),
             data: FindingData::None,
         }
-    }
-
-    pub fn with_effective_severity(mut self, severity: Severity) -> Self {
-        self.effective_severity = severity;
-        self
     }
 
     pub fn with_data(mut self, data: FindingData) -> Self {
@@ -61,12 +59,9 @@ impl Finding {
         self.code
     }
 
-    pub fn default_severity(&self) -> Severity {
-        self.default_severity
-    }
-
-    pub fn effective_severity(&self) -> Severity {
-        self.effective_severity
+    /// The intrinsic severity class from the catalog.
+    pub fn severity(&self) -> Severity {
+        self.severity
     }
 
     pub fn message(&self) -> &str {
@@ -125,7 +120,7 @@ mod tests {
     use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
     #[test]
-    fn finding_keeps_default_and_effective_severity_separate() {
+    fn finding_carries_its_intrinsic_class() {
         let span = SourceSpan::new(
             SourceId::new("query:001"),
             ByteRange::new(7, 12).expect("valid range"),
@@ -137,15 +132,13 @@ mod tests {
             Severity::Warning,
             "dynamic table name cannot be fully analyzed",
         )
-        .with_effective_severity(Severity::Error)
         .with_data(FindingData::DynamicTableName {
             expression: "${table}".into(),
         });
 
         assert_eq!(finding.span(), &span);
         assert_eq!(finding.code().to_string(), "W6001");
-        assert_eq!(finding.default_severity(), Severity::Warning);
-        assert_eq!(finding.effective_severity(), Severity::Error);
+        assert_eq!(finding.severity(), Severity::Warning);
         assert_eq!(
             finding.message(),
             "dynamic table name cannot be fully analyzed"

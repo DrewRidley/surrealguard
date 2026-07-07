@@ -178,7 +178,7 @@ The semantic engine analyzes embedded sources through the same parser and worksp
 
 ## Next implementation slice
 
-The next work is full SurQL semantic coverage, not host integration. The source-of-truth plan is `docs/plans/2026-06-12-full-surql-semantics.md`, with supporting historical plans in `docs/plans/2026-06-06-select-semantics.md` and `docs/plans/2026-06-11-surql-statement-coverage.md`.
+The typed AST layer is implemented (`docs/plans/2026-07-03-typed-ast-lowering.md`, including its completion-status table): all statement kinds lower to `surrealguard_syntax::ast` and type inference runs entirely on it, producing upstream `surrealdb_types::Kind` response types. The next work is the diagnostics phase — a comprehensive invariant list with finding codes, each incorporated into the analyzer that owns its statement, which also retires the frozen pre-AST validators in `semantic.rs`. Historical plans: `docs/plans/2026-06-12-full-surql-semantics.md`, `2026-06-06-select-semantics.md`, `2026-06-11-surql-statement-coverage.md`, `analyzer-module-rewrite.md` (all superseded in part).
 
 Immediate focus:
 

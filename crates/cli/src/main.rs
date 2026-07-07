@@ -5,7 +5,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use surrealguard_diagnostics::Severity;
+use surrealguard_diagnostics::{PolicyConfig, Severity};
 use surrealguard_workspace::config::WorkspaceConfig;
 use surrealguard_workspace::{analyze_workspace, Workspace};
 use walkdir::{DirEntry, WalkDir};
@@ -137,14 +137,29 @@ fn run_check(start_dir: &Path) -> Result<CheckSummary, CheckFailed> {
     }
 
     let analysis = analyze_workspace(&workspace);
-    let diagnostics: Vec<_> = analysis
+
+    // Findings carry their intrinsic class; presentation policy
+    // (warnings-as-errors, lint levels, suppression) applies here, at the
+    // consumption edge.
+    let mut policy = PolicyConfig::default();
+    policy.set_warnings_as_errors(config.diagnostics.warnings_as_errors);
+    let resolved: Vec<_> = analysis
         .diagnostics
         .iter()
-        .map(|finding| {
+        .filter_map(|finding| {
+            policy
+                .resolve_severity(finding.code(), finding.severity())
+                .map(|severity| (finding, severity))
+        })
+        .collect();
+
+    let diagnostics: Vec<_> = resolved
+        .iter()
+        .map(|(finding, severity)| {
             let range = finding.span().range();
             CheckDiagnostic {
                 code: finding.code().to_string(),
-                severity: severity_name(finding.effective_severity()),
+                severity: severity_name(*severity),
                 source: finding.span().source().to_string(),
                 range: CheckRange {
                     start: range.start(),
@@ -154,14 +169,13 @@ fn run_check(start_dir: &Path) -> Result<CheckSummary, CheckFailed> {
             }
         })
         .collect();
-    let errors = analysis
-        .diagnostics
+    let errors = resolved
         .iter()
-        .filter(|finding| finding.effective_severity() == Severity::Error)
+        .filter(|(_, severity)| *severity == Severity::Error)
         .count();
     let summary = CheckSummary {
         sources_checked: analysis.sources.len(),
-        diagnostics: analysis.diagnostics.len(),
+        diagnostics: resolved.len(),
         errors,
     };
 
@@ -255,6 +269,59 @@ fn is_surrealql_source(path: &Path) -> bool {
         path.extension().and_then(|extension| extension.to_str()),
         Some("surql" | "surrealql")
     )
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Init => {
+            let config_path = env::current_dir()?.join("surrealguard.toml");
+            if config_path.exists() {
+                println!("Config file already exists at {}", config_path.display());
+                return Ok(());
+            }
+
+            fs::write(&config_path, EXAMPLE_CONFIG)?;
+            println!("Created surrealguard.toml");
+            Ok(())
+        }
+        Commands::Check { json } => {
+            if !json {
+                println!("Checking SurrealQL sources...");
+            }
+            match run_check(&env::current_dir()?) {
+                Ok(summary) => {
+                    if json {
+                        println!(
+                            "{}",
+                            render_check_json(&summary, &[])
+                                .expect("json serialization should not fail")
+                        );
+                    } else {
+                        println!(
+                            "Checked {} source(s), found {} diagnostic(s)",
+                            summary.sources_checked, summary.diagnostics
+                        );
+                        println!("All checks passed!");
+                    }
+                    Ok(())
+                }
+                Err(error) => {
+                    if json {
+                        println!(
+                            "{}",
+                            render_check_json(&error.summary, &error.diagnostics)
+                                .expect("json serialization should not fail")
+                        );
+                    } else {
+                        eprintln!("{error}");
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -351,58 +418,5 @@ mod tests {
         let root = std::env::temp_dir().join(format!("surrealguard-{name}-{unique}"));
         fs::create_dir_all(&root).expect("create temp project root");
         root
-    }
-}
-
-fn main() -> Result<(), Box<dyn Error>> {
-    let cli = Cli::parse();
-
-    match cli.command {
-        Commands::Init => {
-            let config_path = env::current_dir()?.join("surrealguard.toml");
-            if config_path.exists() {
-                println!("Config file already exists at {}", config_path.display());
-                return Ok(());
-            }
-
-            fs::write(&config_path, EXAMPLE_CONFIG)?;
-            println!("Created surrealguard.toml");
-            Ok(())
-        }
-        Commands::Check { json } => {
-            if !json {
-                println!("Checking SurrealQL sources...");
-            }
-            match run_check(&env::current_dir()?) {
-                Ok(summary) => {
-                    if json {
-                        println!(
-                            "{}",
-                            render_check_json(&summary, &[])
-                                .expect("json serialization should not fail")
-                        );
-                    } else {
-                        println!(
-                            "Checked {} source(s), found {} diagnostic(s)",
-                            summary.sources_checked, summary.diagnostics
-                        );
-                        println!("All checks passed!");
-                    }
-                    Ok(())
-                }
-                Err(error) => {
-                    if json {
-                        println!(
-                            "{}",
-                            render_check_json(&error.summary, &error.diagnostics)
-                                .expect("json serialization should not fail")
-                        );
-                    } else {
-                        eprintln!("{error}");
-                    }
-                    std::process::exit(1);
-                }
-            }
-        }
     }
 }
