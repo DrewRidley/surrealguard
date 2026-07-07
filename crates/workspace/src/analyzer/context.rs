@@ -60,7 +60,7 @@ impl<'a> AnalysisContext<'a> {
         }
     }
 
-    pub fn schema(&self) -> &SchemaIndex {
+    pub fn schema(&self) -> &'a SchemaIndex {
         self.schema
     }
 
@@ -68,7 +68,7 @@ impl<'a> AnalysisContext<'a> {
         &self.source
     }
 
-    pub fn source_text(&self) -> &str {
+    pub fn source_text(&self) -> &'a str {
         self.source_text
     }
 

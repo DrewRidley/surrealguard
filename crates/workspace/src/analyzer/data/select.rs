@@ -15,32 +15,18 @@ use std::collections::BTreeMap;
 
 use surrealdb_types::{Kind, KindLiteral};
 use surrealguard_syntax::ast;
-use surrealguard_syntax::source::SourceId;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::expression::infer::{infer_expression_fact, plain_field_segments};
 use crate::schema::{SchemaIndex, TableDef};
 use crate::select_ir::{FieldPath, GraphDirection, GraphLookup, SelectIr};
-use crate::statement_env::StatementEnv;
 
 pub fn analyze_select(ctx: &mut AnalysisContext<'_>, stmt: &ast::SelectStmt) -> Kind {
-    select_response_kind(
-        stmt,
-        ctx.source(),
-        ctx.source_text(),
-        ctx.schema(),
-        ctx.env(),
-    )
+    select_response_kind(stmt, ctx)
 }
 
 /// Pure core: infers the response type of a lowered `SELECT`.
-pub(crate) fn select_response_kind(
-    stmt: &ast::SelectStmt,
-    source: &SourceId,
-    text: &str,
-    schema: &SchemaIndex,
-    env: &StatementEnv,
-) -> Kind {
+pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
     if stmt.explain.is_some() {
         return explain_response_kind();
     }
@@ -50,7 +36,7 @@ pub(crate) fn select_response_kind(
     let table_name = match &from.node {
         ast::Expr::Table(name) => name.node.clone(),
         ast::Expr::RecordId { table, .. } => table.node.clone(),
-        ast::Expr::Idiom(idiom) => match graph_source_table(idiom, schema) {
+        ast::Expr::Idiom(idiom) => match graph_source_table(idiom, ctx.schema()) {
             Some(table) => table,
             None => return Kind::Any,
         },
@@ -66,19 +52,14 @@ pub(crate) fn select_response_kind(
             if !all_wildcards {
                 return Kind::Any;
             }
-            let scope = crate::analyzer::expression::infer::InferScope {
-                source,
-                text,
-                schema,
-                row_table: None,
-                env,
+            let inner_kind = ctx.with_row_table(None, |ctx| {
+                crate::analyzer::expression::infer::statement_value_kind(inner, ctx)
+            });
+            let row_kind = match inner_kind {
+                Some(Kind::Array(element, _)) => *element,
+                Some(other) => other,
+                None => return Kind::Any,
             };
-            let row_kind =
-                match crate::analyzer::expression::infer::statement_value_kind(inner, &scope) {
-                    Some(Kind::Array(element, _)) => *element,
-                    Some(other) => other,
-                    None => return Kind::Any,
-                };
             return if stmt.only {
                 row_kind
             } else {
@@ -88,7 +69,7 @@ pub(crate) fn select_response_kind(
         // Dynamic sources (params) and anything else stay undetermined.
         _ => return Kind::Any,
     };
-    let Some(table) = schema.tables.get(&table_name) else {
+    let Some(table) = ctx.schema().tables.get(&table_name) else {
         return Kind::Any;
     };
     if table.fields.is_empty() && !stmt.projections.iter().any(is_graph_projection) {
@@ -101,15 +82,13 @@ pub(crate) fn select_response_kind(
         .any(|projection| matches!(projection, ast::Projection::Wildcard(_)))
     {
         object_kind_for_all_fields(table)
-    } else if let Some(value_kind) =
-        value_projection_kind(stmt, source, text, &table_name, table, schema, env)
-    {
+    } else if let Some(value_kind) = value_projection_kind(stmt, &table_name, table, ctx) {
         value_kind
     } else {
-        projected_object_kind(stmt, source, text, &table_name, table, schema, env)
+        projected_object_kind(stmt, &table_name, table, ctx)
     };
     let row_kind = apply_omit(row_kind, &stmt.omit);
-    let row_kind = apply_fetch(row_kind, &stmt.fetch, schema);
+    let row_kind = apply_fetch(row_kind, &stmt.fetch, ctx.schema());
     let row_kind = apply_split(row_kind, &stmt.split);
 
     if stmt.only {
@@ -226,12 +205,9 @@ fn is_graph_projection(projection: &ast::Projection) -> bool {
 /// `SELECT VALUE <expr>` — the row type is the projected value itself.
 fn value_projection_kind(
     stmt: &ast::SelectStmt,
-    source: &SourceId,
-    text: &str,
     row_table_name: &str,
-    table: &TableDef,
-    schema: &SchemaIndex,
-    env: &StatementEnv,
+    table: &'_ TableDef,
+    ctx: &mut AnalysisContext<'_>,
 ) -> Option<Kind> {
     if !stmt.value {
         return None;
@@ -242,25 +218,21 @@ fn value_projection_kind(
 
     match &expr.node {
         ast::Expr::Idiom(idiom) if starts_with_graph(idiom) => {
-            graph_projection_kind(row_table_name, idiom, schema, false)
+            graph_projection_kind(row_table_name, idiom, ctx.schema(), false)
         }
         ast::Expr::Idiom(idiom) => {
             let segments = plain_field_segments(idiom)?;
             kind_for_path(table, &segments)
         }
-        _ => Some(computed_kind(expr, source, text, schema, table, env)),
+        _ => Some(computed_kind(expr, table, ctx)),
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn projected_object_kind(
     stmt: &ast::SelectStmt,
-    source: &SourceId,
-    text: &str,
     row_table_name: &str,
     table: &TableDef,
-    schema: &SchemaIndex,
-    env: &StatementEnv,
+    ctx: &mut AnalysisContext<'_>,
 ) -> Kind {
     let mut fields = BTreeMap::new();
 
@@ -270,19 +242,19 @@ fn projected_object_kind(
             // The projection itself failed to lower: a poison field keyed by
             // its source text.
             ast::Projection::Partial(partial) => {
-                fields.insert(slice(text, partial.span).to_string(), Kind::Any);
+                fields.insert(
+                    slice(ctx.source_text(), partial.span).to_string(),
+                    Kind::Any,
+                );
             }
             ast::Projection::Expr { expr, alias } => {
                 project_expr(
                     expr,
                     alias.as_ref(),
                     stmt,
-                    source,
-                    text,
                     row_table_name,
                     table,
-                    schema,
-                    env,
+                    ctx,
                     &mut fields,
                 );
             }
@@ -292,17 +264,13 @@ fn projected_object_kind(
     object_literal(fields)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn project_expr(
     expr: &ast::Spanned<ast::Expr>,
     alias: Option<&ast::Spanned<String>>,
     stmt: &ast::SelectStmt,
-    source: &SourceId,
-    text: &str,
     row_table_name: &str,
     table: &TableDef,
-    schema: &SchemaIndex,
-    env: &StatementEnv,
+    ctx: &mut AnalysisContext<'_>,
     fields: &mut BTreeMap<String, Kind>,
 ) {
     let alias_name = alias.map(|a| a.node.clone());
@@ -312,7 +280,8 @@ fn project_expr(
             // `->likes->post.{title, id}` without an alias fans out into
             // nested per-field arrays.
             if alias_name.is_none() {
-                if let Some(outputs) = graph_destructure_output(row_table_name, idiom, schema) {
+                if let Some(outputs) = graph_destructure_output(row_table_name, idiom, ctx.schema())
+                {
                     for (segments, kind) in outputs {
                         insert_kind_at_path(fields, &segments, kind);
                     }
@@ -324,7 +293,9 @@ fn project_expr(
             let materialize = alias_name
                 .as_ref()
                 .is_some_and(|alias| fetch_contains(&stmt.fetch, alias));
-            if let Some(kind) = graph_projection_kind(row_table_name, idiom, schema, materialize) {
+            if let Some(kind) =
+                graph_projection_kind(row_table_name, idiom, ctx.schema(), materialize)
+            {
                 match &alias_name {
                     Some(alias) => {
                         fields.insert(alias.clone(), kind);
@@ -375,35 +346,29 @@ fn project_expr(
 
         // Idioms with parts we don't project yet (Start/Index/Method/...).
         fields.insert(
-            alias_name.unwrap_or_else(|| slice(text, expr.span).to_string()),
+            alias_name.unwrap_or_else(|| slice(ctx.source_text(), expr.span).to_string()),
             Kind::Any,
         );
         return;
     }
 
     // Computed projection: full expression inference.
-    let key = alias_name.unwrap_or_else(|| slice(text, expr.span).to_string());
-    fields.insert(key, computed_kind(expr, source, text, schema, table, env));
+    let key = alias_name.unwrap_or_else(|| slice(ctx.source_text(), expr.span).to_string());
+    let kind = computed_kind(expr, table, ctx);
+    fields.insert(key, kind);
 }
 
 fn computed_kind(
     expr: &ast::Spanned<ast::Expr>,
-    source: &SourceId,
-    text: &str,
-    schema: &SchemaIndex,
     table: &TableDef,
-    env: &StatementEnv,
+    ctx: &mut AnalysisContext<'_>,
 ) -> Kind {
-    let scope = crate::analyzer::expression::infer::InferScope {
-        source,
-        text,
-        schema,
-        row_table: Some(table),
-        env,
-    };
-    infer_expression_fact(expr, &scope)
-        .kind
-        .unwrap_or(Kind::Any)
+    // Re-resolve the table from the schema so the borrow carries the
+    // context's lifetime rather than the caller's.
+    let table = ctx.schema().tables.get(&table.name);
+    ctx.with_row_table(table, |ctx| {
+        infer_expression_fact(expr, ctx).kind.unwrap_or(Kind::Any)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -873,8 +838,11 @@ pub(crate) fn is_graph_projection_path(path: &FieldPath) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::SchemaIndex;
+    use crate::statement_env::StatementEnv;
     use surrealguard_syntax::lower::lower_statement;
     use surrealguard_syntax::parse::{parse_source, ParsedSource};
+    use surrealguard_syntax::source::SourceId;
     use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
     use crate::expression::{ExpressionFact, ExpressionValueClass};
@@ -908,7 +876,16 @@ mod tests {
     fn analyze_with_env(schema: &SchemaIndex, query: &str, env: &StatementEnv) -> Kind {
         let parsed = parse(query);
         let stmt = lower_select(&parsed);
-        select_response_kind(&stmt, parsed.source_id(), parsed.text(), schema, env)
+        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        let mut ctx = AnalysisContext::scoped(
+            schema,
+            parsed.source_id().clone(),
+            parsed.text(),
+            &mut diagnostics,
+            env.clone(),
+            None,
+        );
+        select_response_kind(&stmt, &mut ctx)
     }
 
     fn object_fields(kind: &Kind) -> &BTreeMap<String, Kind> {

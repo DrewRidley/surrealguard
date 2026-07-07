@@ -5,50 +5,29 @@
 //! equivalent that the remaining validators in `crate::semantic` still
 //! use.)
 //!
-//! [`infer_expression_fact`] is pure over an [`InferScope`]; the
-//! ctx-carrying [`super::analyze_expr`] adds what purity can't:
-//! statement-position dispatch for blocks and parameter-use recording.
+//! [`infer_expression_fact`] computes facts over the one
+//! [`AnalysisContext`]; it never emits findings itself (inference never
+//! checks), but carrying the context means checking functions invoked
+//! along the way — and the statement cores it recurses into — share the
+//! same diagnostics sink, environment, and row table.
 
 use surrealdb_types::{Kind, KindLiteral};
 use surrealguard_syntax::ast;
-use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::SourceSpan;
 
+use crate::analyzer::context::AnalysisContext;
 use crate::expression::{ExpressionFact, ExpressionValueClass, PartialReason};
-use crate::schema::{SchemaIndex, TableDef};
+use crate::schema::SchemaIndex;
 use crate::statement_env::StatementEnv;
-
-/// Everything pure inference can consult: the schema (record links,
-/// subqueries, user-defined functions), the source text (naming only),
-/// the row context, and the statement environment (`LET` bindings).
-pub(crate) struct InferScope<'a> {
-    pub source: &'a SourceId,
-    pub text: &'a str,
-    pub schema: &'a SchemaIndex,
-    pub row_table: Option<&'a TableDef>,
-    pub env: &'a StatementEnv,
-}
-
-impl<'a> InferScope<'a> {
-    pub(crate) fn from_ctx(ctx: &'a crate::analyzer::context::AnalysisContext<'a>) -> Self {
-        InferScope {
-            source: ctx.source(),
-            text: ctx.source_text(),
-            schema: ctx.schema(),
-            row_table: ctx.row_table(),
-            env: ctx.env(),
-        }
-    }
-}
 
 pub(crate) fn infer_expression_fact(
     expr: &ast::Spanned<ast::Expr>,
-    scope: &InferScope<'_>,
+    ctx: &mut AnalysisContext<'_>,
 ) -> ExpressionFact {
-    let span = source_span(scope.source, expr.span);
+    let span = SourceSpan::new(ctx.source().clone(), expr.span);
     match &expr.node {
         ast::Expr::Literal(literal) => literal_fact(literal, span),
-        ast::Expr::Param(name) => param_fact(name, span, scope.env),
+        ast::Expr::Param(name) => param_fact(name, span, ctx.env()),
         ast::Expr::Table(name) => scalar_fact(
             span,
             ExpressionValueClass::Literal,
@@ -59,16 +38,16 @@ pub(crate) fn infer_expression_fact(
             ExpressionValueClass::Literal,
             Kind::Record(vec![table.node.as_str().into()]),
         ),
-        ast::Expr::Idiom(idiom) => idiom_fact(idiom, span, scope),
-        ast::Expr::Binary { lhs, op, rhs } => binary_fact(lhs, op, rhs, span, scope),
-        ast::Expr::Prefix { op, expr } => prefix_fact(op, expr, span, scope),
-        ast::Expr::Object(fields) => object_fact(fields, span, scope),
-        ast::Expr::Array(elements) => array_fact(elements, span, scope),
-        ast::Expr::Call(call) => call_fact(call, span, scope),
+        ast::Expr::Idiom(idiom) => idiom_fact(idiom, span, ctx),
+        ast::Expr::Binary { lhs, op, rhs } => binary_fact(lhs, op, rhs, span, ctx),
+        ast::Expr::Prefix { op, expr } => prefix_fact(op, expr, span, ctx),
+        ast::Expr::Object(fields) => object_fact(fields, span, ctx),
+        ast::Expr::Array(elements) => array_fact(elements, span, ctx),
+        ast::Expr::Call(call) => call_fact(call, span, ctx),
         ast::Expr::Cast { ty, .. } => cast_fact(ty, span),
         ast::Expr::Subquery(inner) => {
             let fact = ExpressionFact::new(span, ExpressionValueClass::Subquery);
-            match statement_value_kind(inner, scope) {
+            match statement_value_kind(inner, ctx) {
                 Some(kind) => fact.with_kind(kind),
                 None => fact.with_partial(PartialReason::UnsupportedSyntax("SubQuery".into())),
             }
@@ -77,7 +56,7 @@ pub(crate) fn infer_expression_fact(
         // the ctx path (`analyze_expr`); pure inference reports them as
         // partial rather than guessing.
         ast::Expr::Block(_) => partial_fact(span, ExpressionValueClass::Block, "Block".into()),
-        ast::Expr::Closure(closure) => closure_fact(closure, span, scope),
+        ast::Expr::Closure(closure) => closure_fact(closure, span, ctx),
         ast::Expr::Partial(partial) => partial_fact(
             span,
             ExpressionValueClass::Unknown,
@@ -91,38 +70,21 @@ pub(crate) fn infer_expression_fact(
 /// typing is pure; environment-threading statements need the ctx path.
 pub(crate) fn statement_value_kind(
     stmt: &ast::Spanned<ast::Statement>,
-    scope: &InferScope<'_>,
+    ctx: &mut AnalysisContext<'_>,
 ) -> Option<Kind> {
-    let (source, text, schema, env) = (scope.source, scope.text, scope.schema, scope.env);
     let kind = match &stmt.node {
-        ast::Statement::Select(s) => {
-            crate::analyzer::data::select::select_response_kind(s, source, text, schema, env)
-        }
-        ast::Statement::Create(s) => {
-            crate::analyzer::data::create::create_response_kind(s, source, text, schema, env)
-        }
-        ast::Statement::Update(s) => {
-            crate::analyzer::data::update::update_response_kind(s, source, text, schema, env)
-        }
-        ast::Statement::Upsert(s) => {
-            crate::analyzer::data::upsert::upsert_response_kind(s, source, text, schema, env)
-        }
-        ast::Statement::Delete(s) => {
-            crate::analyzer::data::delete::delete_response_kind(s, source, text, schema, env)
-        }
-        ast::Statement::Insert(s) => {
-            crate::analyzer::data::insert::insert_response_kind(s, source, text, schema, env)
-        }
-        ast::Statement::Relate(s) => {
-            crate::analyzer::data::relate::relate_response_kind(s, source, text, schema, env)
-        }
+        ast::Statement::Select(s) => crate::analyzer::data::select::select_response_kind(s, ctx),
+        ast::Statement::Create(s) => crate::analyzer::data::create::create_response_kind(s, ctx),
+        ast::Statement::Update(s) => crate::analyzer::data::update::update_response_kind(s, ctx),
+        ast::Statement::Upsert(s) => crate::analyzer::data::upsert::upsert_response_kind(s, ctx),
+        ast::Statement::Delete(s) => crate::analyzer::data::delete::delete_response_kind(s, ctx),
+        ast::Statement::Insert(s) => crate::analyzer::data::insert::insert_response_kind(s, ctx),
+        ast::Statement::Relate(s) => crate::analyzer::data::relate::relate_response_kind(s, ctx),
         ast::Statement::Return(s) => match &s.value {
-            Some(value) => infer_expression_fact(value, scope)
-                .kind
-                .unwrap_or(Kind::Any),
+            Some(value) => infer_expression_fact(value, ctx).kind.unwrap_or(Kind::Any),
             None => Kind::None,
         },
-        ast::Statement::Expr(e) => infer_expression_fact(e, scope).kind.unwrap_or(Kind::Any),
+        ast::Statement::Expr(e) => infer_expression_fact(e, ctx).kind.unwrap_or(Kind::Any),
         _ => return None,
     };
     Some(kind)
@@ -135,21 +97,24 @@ pub(crate) fn statement_value_kind(
 fn closure_fact(
     closure: &ast::Closure,
     span: SourceSpan,
-    scope: &InferScope<'_>,
+    ctx: &mut AnalysisContext<'_>,
 ) -> ExpressionFact {
     let param_kinds: Vec<Kind> = closure
         .params
         .iter()
-        .map(|(_, ty)| declared_kind(ty.as_ref(), scope).unwrap_or(Kind::Any))
+        .map(|(_, ty)| declared_kind(ty.as_ref(), ctx).unwrap_or(Kind::Any))
         .collect();
-    let return_kind = closure_return_kind(closure, &param_kinds, scope);
+    let return_kind = closure_return_kind(closure, &param_kinds, ctx);
 
     ExpressionFact::new(span, ExpressionValueClass::Literal)
         .with_kind(Kind::Function(Some(param_kinds), return_kind.map(Box::new)))
 }
 
-fn declared_kind(ty: Option<&ast::Spanned<ast::TypeExpr>>, scope: &InferScope<'_>) -> Option<Kind> {
-    crate::schema::kind_from_type_expr(&ty?.node, scope.text).kind
+fn declared_kind(
+    ty: Option<&ast::Spanned<ast::TypeExpr>>,
+    ctx: &mut AnalysisContext<'_>,
+) -> Option<Kind> {
+    crate::schema::kind_from_type_expr(&ty?.node, ctx.source_text()).kind
 }
 
 /// The closure's return kind when invoked with `arg_kinds` — the declared
@@ -159,70 +124,57 @@ fn declared_kind(ty: Option<&ast::Spanned<ast::TypeExpr>>, scope: &InferScope<'_
 pub(crate) fn closure_return_kind(
     closure: &ast::Closure,
     arg_kinds: &[Kind],
-    scope: &InferScope<'_>,
+    ctx: &mut AnalysisContext<'_>,
 ) -> Option<Kind> {
-    if let Some(declared) = declared_kind(closure.return_ty.as_ref(), scope) {
+    if let Some(declared) = declared_kind(closure.return_ty.as_ref(), ctx) {
         return Some(declared);
     }
 
-    let mut env = scope.env.fork_child_scope();
-    for (index, (name, ty)) in closure.params.iter().enumerate() {
-        let kind = match arg_kinds.get(index) {
-            Some(kind) if *kind != Kind::Any => kind.clone(),
-            _ => declared_kind(ty.as_ref(), scope).unwrap_or(Kind::Any),
-        };
-        let mut fact = ExpressionFact::new(
-            SourceSpan::new(scope.source.clone(), name.span),
-            ExpressionValueClass::Variable,
-        );
-        fact.kind = Some(kind);
-        env.define_let(name.node.clone(), fact);
-    }
+    ctx.with_child_env(|ctx| {
+        for (index, (name, ty)) in closure.params.iter().enumerate() {
+            let kind = match arg_kinds.get(index) {
+                Some(kind) if *kind != Kind::Any => kind.clone(),
+                _ => declared_kind(ty.as_ref(), ctx).unwrap_or(Kind::Any),
+            };
+            let mut fact = ExpressionFact::new(
+                SourceSpan::new(ctx.source().clone(), name.span),
+                ExpressionValueClass::Variable,
+            );
+            fact.kind = Some(kind);
+            ctx.define_local(name.node.clone(), fact);
+        }
 
-    let body_scope = InferScope {
-        source: scope.source,
-        text: scope.text,
-        schema: scope.schema,
-        row_table: scope.row_table,
-        env: &env,
-    };
-    match &closure.body.node {
-        ast::Expr::Block(block) => pure_block_kind(block, &body_scope),
-        _ => infer_expression_fact(&closure.body, &body_scope).kind,
-    }
+        match &closure.body.node {
+            ast::Expr::Block(block) => pure_block_kind(block, ctx),
+            _ => infer_expression_fact(&closure.body, ctx).kind,
+        }
+    })
 }
 
 /// The value of a block in pure inference: threads `LET` bindings through
 /// a child scope and returns on `RETURN` or the final statement's value.
 /// Environment-mutating statements beyond `LET` (IF/FOR with effects) are
 /// out of pure reach.
-fn pure_block_kind(block: &ast::Block, scope: &InferScope<'_>) -> Option<Kind> {
-    let mut env = scope.env.fork_child_scope();
-    let mut last = Kind::None;
-
-    for statement in &block.statements {
-        let inner = InferScope {
-            source: scope.source,
-            text: scope.text,
-            schema: scope.schema,
-            row_table: scope.row_table,
-            env: &env,
-        };
-        match &statement.node {
-            ast::Statement::Let(stmt) => {
-                let fact = infer_expression_fact(&stmt.value, &inner);
-                env.define_let(stmt.name.node.clone(), fact);
+fn pure_block_kind(block: &ast::Block, ctx: &mut AnalysisContext<'_>) -> Option<Kind> {
+    ctx.with_child_env(|ctx| {
+        let mut last = Kind::None;
+        for statement in &block.statements {
+            match &statement.node {
+                ast::Statement::Let(stmt) => {
+                    let fact = infer_expression_fact(&stmt.value, ctx);
+                    ctx.define_local(stmt.name.node.clone(), fact);
+                }
+                ast::Statement::Return(stmt) => {
+                    return match &stmt.value {
+                        Some(value) => infer_expression_fact(value, ctx).kind,
+                        None => Some(Kind::None),
+                    };
+                }
+                _ => last = statement_value_kind(statement, ctx)?,
             }
-            ast::Statement::Return(stmt) => {
-                return match &stmt.value {
-                    Some(value) => infer_expression_fact(value, &inner).kind,
-                    None => Some(Kind::None),
-                };
-            }
-            _ => last = statement_value_kind(statement, &inner)?,
         }
-    }
-    Some(last)
+        Some(last)
+    })
 }
 
 fn literal_fact(literal: &ast::Literal, span: SourceSpan) -> ExpressionFact {
@@ -278,7 +230,11 @@ fn param_fact(name: &str, span: SourceSpan, env: &StatementEnv) -> ExpressionFac
 // Idioms
 // ---------------------------------------------------------------------------
 
-fn idiom_fact(idiom: &ast::Idiom, span: SourceSpan, scope: &InferScope<'_>) -> ExpressionFact {
+fn idiom_fact(
+    idiom: &ast::Idiom,
+    span: SourceSpan,
+    ctx: &mut AnalysisContext<'_>,
+) -> ExpressionFact {
     let mut fact = ExpressionFact::new(span, ExpressionValueClass::FieldPath);
 
     if let Some(segments) = plain_field_segments(idiom) {
@@ -291,13 +247,13 @@ fn idiom_fact(idiom: &ast::Idiom, span: SourceSpan, scope: &InferScope<'_>) -> E
         idiom.parts.first().map(|p| &p.node),
         Some(ast::IdiomPart::Graph { .. })
     ) {
-        let Some(table) = scope.row_table else {
+        let Some(table) = ctx.row_table() else {
             return fact.with_partial(PartialReason::Unresolved);
         };
         return match crate::analyzer::data::select::graph_projection_kind(
             &table.name,
             idiom,
-            scope.schema,
+            ctx.schema(),
             false,
         ) {
             Some(kind) => fact.with_kind(kind),
@@ -305,7 +261,7 @@ fn idiom_fact(idiom: &ast::Idiom, span: SourceSpan, scope: &InferScope<'_>) -> E
         };
     }
 
-    match step_idiom_kind(idiom, scope) {
+    match step_idiom_kind(idiom, ctx) {
         Some(kind) => fact.with_kind(kind),
         None => fact.with_partial(PartialReason::Unresolved),
     }
@@ -327,12 +283,12 @@ pub(crate) fn plain_field_segments(idiom: &ast::Idiom) -> Option<Vec<String>> {
 /// row fields, `LET`-bound starts (`$user.name`), record links (stepping
 /// through the schema), literal objects, collection indexes, and method
 /// calls dispatched by receiver kind.
-fn step_idiom_kind(idiom: &ast::Idiom, scope: &InferScope<'_>) -> Option<Kind> {
+fn step_idiom_kind(idiom: &ast::Idiom, ctx: &mut AnalysisContext<'_>) -> Option<Kind> {
     let mut parts = idiom.parts.iter();
     let mut current: Kind = match &parts.next()?.node {
-        ast::IdiomPart::Start(expr) => infer_expression_fact(expr, scope).kind?,
+        ast::IdiomPart::Start(expr) => infer_expression_fact(expr, ctx).kind?,
         ast::IdiomPart::Field(name) => {
-            let table = scope.row_table?;
+            let table = ctx.row_table()?;
             crate::analyzer::data::select::kind_for_path(table, std::slice::from_ref(name))?
         }
         _ => return None,
@@ -340,7 +296,7 @@ fn step_idiom_kind(idiom: &ast::Idiom, scope: &InferScope<'_>) -> Option<Kind> {
 
     for part in parts {
         current = match &part.node {
-            ast::IdiomPart::Field(name) => field_of_kind(&current, name, scope.schema)?,
+            ast::IdiomPart::Field(name) => field_of_kind(&current, name, ctx.schema())?,
             ast::IdiomPart::Index(_) => match current {
                 Kind::Array(element, _) | Kind::Set(element, _) => *element,
                 _ => return None,
@@ -355,10 +311,10 @@ fn step_idiom_kind(idiom: &ast::Idiom, scope: &InferScope<'_>) -> Option<Kind> {
                 let arg_kinds: Vec<Kind> = std::iter::once(current.clone())
                     .chain(
                         args.iter()
-                            .map(|arg| infer_expression_fact(arg, scope).kind.unwrap_or(Kind::Any)),
+                            .map(|arg| infer_expression_fact(arg, ctx).kind.unwrap_or(Kind::Any)),
                     )
                     .collect();
-                method_return_kind(&current, &name.node, &arg_kinds, scope)?
+                method_return_kind(&current, &name.node, &arg_kinds, ctx)?
             }
             ast::IdiomPart::Destructure(selected) => {
                 let mut fields = std::collections::BTreeMap::new();
@@ -366,7 +322,7 @@ fn step_idiom_kind(idiom: &ast::Idiom, scope: &InferScope<'_>) -> Option<Kind> {
                     let segments = plain_field_segments(&sub.node)?;
                     let mut kind = current.clone();
                     for segment in &segments {
-                        kind = field_of_kind(&kind, segment, scope.schema)?;
+                        kind = field_of_kind(&kind, segment, ctx.schema())?;
                     }
                     fields.insert(segments.join("."), kind);
                 }
@@ -409,7 +365,7 @@ fn method_return_kind(
     receiver: &Kind,
     method: &str,
     args: &[Kind],
-    scope: &InferScope<'_>,
+    ctx: &mut AnalysisContext<'_>,
 ) -> Option<Kind> {
     let base = crate::semantic::literal_base_kind(receiver).unwrap_or_else(|| receiver.clone());
     let family = match base {
@@ -424,8 +380,8 @@ fn method_return_kind(
         Kind::Int | Kind::Float | Kind::Decimal | Kind::Number => "math",
         _ => return None,
     };
-    let kind =
-        crate::analyzer::function::builtin_return_kind(scope, &format!("{family}::{method}"), args);
+    let call = crate::analyzer::function::synthetic_call(&format!("{family}::{method}"));
+    let kind = crate::analyzer::function::analyze_builtin_function(ctx, &call, args);
     (kind != Kind::Any).then_some(kind)
 }
 
@@ -438,10 +394,10 @@ fn binary_fact(
     op: &ast::Spanned<ast::BinaryOp>,
     rhs: &ast::Spanned<ast::Expr>,
     span: SourceSpan,
-    scope: &InferScope<'_>,
+    ctx: &mut AnalysisContext<'_>,
 ) -> ExpressionFact {
-    let lhs_fact = infer_expression_fact(lhs, scope);
-    let rhs_fact = infer_expression_fact(rhs, scope);
+    let lhs_fact = infer_expression_fact(lhs, ctx);
+    let rhs_fact = infer_expression_fact(rhs, ctx);
 
     let mut fact = ExpressionFact::new(span, ExpressionValueClass::Unknown);
     merge_dependencies(&mut fact, lhs_fact.dependencies);
@@ -464,9 +420,9 @@ fn prefix_fact(
     op: &ast::Spanned<ast::PrefixOp>,
     operand: &ast::Spanned<ast::Expr>,
     span: SourceSpan,
-    scope: &InferScope<'_>,
+    ctx: &mut AnalysisContext<'_>,
 ) -> ExpressionFact {
-    let operand_fact = infer_expression_fact(operand, scope);
+    let operand_fact = infer_expression_fact(operand, ctx);
     let mut fact = ExpressionFact::new(span, ExpressionValueClass::Unknown);
     fact.dependencies = operand_fact.dependencies;
     fact.partial = operand_fact.partial;
@@ -490,13 +446,13 @@ fn prefix_fact(
 fn object_fact(
     fields: &[(ast::Spanned<String>, ast::Spanned<ast::Expr>)],
     span: SourceSpan,
-    scope: &InferScope<'_>,
+    ctx: &mut AnalysisContext<'_>,
 ) -> ExpressionFact {
     let mut kinds = std::collections::BTreeMap::new();
     let mut partial = Vec::new();
 
     for (key, value) in fields {
-        let value_fact = infer_expression_fact(value, scope);
+        let value_fact = infer_expression_fact(value, ctx);
         partial.extend(value_fact.partial.iter().cloned());
         kinds.insert(key.node.clone(), value_fact.kind.unwrap_or(Kind::Any));
     }
@@ -507,7 +463,7 @@ fn object_fact(
     let values: Option<std::collections::BTreeMap<String, surrealdb_types::Value>> = fields
         .iter()
         .map(|(key, value)| {
-            infer_expression_fact(value, scope)
+            infer_expression_fact(value, ctx)
                 .value
                 .map(|value| (key.node.clone(), value))
         })
@@ -521,11 +477,11 @@ fn object_fact(
 fn array_fact(
     elements: &[ast::Spanned<ast::Expr>],
     span: SourceSpan,
-    scope: &InferScope<'_>,
+    ctx: &mut AnalysisContext<'_>,
 ) -> ExpressionFact {
     let facts: Vec<_> = elements
         .iter()
-        .map(|element| infer_expression_fact(element, scope))
+        .map(|element| infer_expression_fact(element, ctx))
         .collect();
     let max_len = Some(facts.len() as u64);
 
@@ -553,16 +509,16 @@ fn array_fact(
     fact
 }
 
-fn call_fact(call: &ast::Call, span: SourceSpan, scope: &InferScope<'_>) -> ExpressionFact {
+fn call_fact(call: &ast::Call, span: SourceSpan, ctx: &mut AnalysisContext<'_>) -> ExpressionFact {
     let mut fact = ExpressionFact::new(span, ExpressionValueClass::FunctionCall);
     fact.dependencies.function = Some(call.path.node.clone());
 
     let args: Vec<Kind> = call
         .args
         .iter()
-        .map(|arg| infer_expression_fact(arg, scope).kind.unwrap_or(Kind::Any))
+        .map(|arg| infer_expression_fact(arg, ctx).kind.unwrap_or(Kind::Any))
         .collect();
-    let kind = crate::analyzer::function::builtin_return_kind_for_call(scope, call, &args);
+    let kind = crate::analyzer::function::analyze_builtin_function(ctx, call, &args);
     fact.with_kind(kind)
 }
 
@@ -644,15 +600,14 @@ fn partial_fact(span: SourceSpan, class: ExpressionValueClass, syntax: String) -
     ExpressionFact::new(span, class).with_partial(PartialReason::UnsupportedSyntax(syntax))
 }
 
-fn source_span(source: &SourceId, range: surrealguard_syntax::span::ByteRange) -> SourceSpan {
-    SourceSpan::new(source.clone(), range)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::TableDef;
+    use crate::statement_env::StatementEnv;
     use surrealguard_syntax::lower::lower_expr;
     use surrealguard_syntax::parse::{parse_source, ParsedSource};
+    use surrealguard_syntax::source::SourceId;
 
     use crate::schema::{extract_schema, SchemaIndex};
 
@@ -679,14 +634,16 @@ mod tests {
         let node = find_first(parsed.tree().root_node(), kind)
             .unwrap_or_else(|| panic!("no {kind} in {:?}", parsed.text()));
         let expr = lower_expr(node, parsed.text());
-        let scope = InferScope {
-            source: parsed.source_id(),
-            text: parsed.text(),
+        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        let mut ctx = AnalysisContext::scoped(
             schema,
+            parsed.source_id().clone(),
+            parsed.text(),
+            &mut diagnostics,
+            env.clone(),
             row_table,
-            env,
-        };
-        infer_expression_fact(&expr, &scope)
+        );
+        infer_expression_fact(&expr, &mut ctx)
     }
 
     fn find_first<'tree>(

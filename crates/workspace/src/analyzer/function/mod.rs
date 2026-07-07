@@ -100,17 +100,28 @@ pub(crate) fn json_value_kind() -> Kind {
     ])
 }
 
+/// A call value carrying only a path — for dispatch by name (method-call
+/// sugar like `value.len()`), where no argument expressions exist.
+pub(crate) fn synthetic_call(path: &str) -> ast::Call {
+    ast::Call {
+        path: ast::Spanned::new(
+            path.to_string(),
+            surrealguard_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered"),
+        ),
+        args: Vec::new(),
+    }
+}
+
 /// The compile-time value of the argument at `index`, when it is
 /// statically known (a literal, a composite of literals, or a binding
 /// tracing back to one).
 pub(crate) fn const_value_arg(
-    ctx: &crate::analyzer::context::AnalysisContext<'_>,
+    ctx: &mut crate::analyzer::context::AnalysisContext<'_>,
     call: &ast::Call,
     index: usize,
 ) -> Option<surrealdb_types::Value> {
     let arg = call.args.get(index)?;
-    let scope = crate::analyzer::expression::infer::InferScope::from_ctx(ctx);
-    crate::analyzer::expression::infer::infer_expression_fact(arg, &scope).value
+    crate::analyzer::expression::infer::infer_expression_fact(arg, ctx).value
 }
 
 /// The closure expression at argument position `index`, when the call site
@@ -121,45 +132,6 @@ pub(crate) fn closure_arg(call: &ast::Call, index: usize) -> Option<&ast::Closur
         Some(ast::Expr::Closure(closure)) => Some(closure),
         _ => None,
     }
-}
-
-/// Return-kind lookup for pure inference contexts (projections, nested
-/// facts) that have no [`AnalysisContext`]. Function analyzers receive a
-/// context so findings can be emitted from them and so value-dependent
-/// analyzers can consult the scope; the scope's environment and row table
-/// travel into the dispatch.
-pub(crate) fn builtin_return_kind_for_call(
-    scope: &crate::analyzer::expression::infer::InferScope<'_>,
-    call: &ast::Call,
-    args: &[Kind],
-) -> Kind {
-    let mut diagnostics = Vec::new();
-    let mut ctx = crate::analyzer::context::AnalysisContext::scoped(
-        scope.schema,
-        scope.source.clone(),
-        scope.text,
-        &mut diagnostics,
-        scope.env.clone(),
-        scope.row_table,
-    );
-    analyze_builtin_function(&mut ctx, call, args)
-}
-
-/// [`builtin_return_kind_for_call`] with a synthetic call, for dispatch by
-/// name only (method-call sugar like `value.len()`).
-pub(crate) fn builtin_return_kind(
-    scope: &crate::analyzer::expression::infer::InferScope<'_>,
-    path: &str,
-    args: &[Kind],
-) -> Kind {
-    let call = ast::Call {
-        path: ast::Spanned::new(
-            path.to_string(),
-            surrealguard_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered"),
-        ),
-        args: Vec::new(),
-    };
-    builtin_return_kind_for_call(scope, &call, args)
 }
 
 #[cfg(test)]

@@ -422,37 +422,33 @@ fn collect_mutation_response_shapes_with_env(
         "CreateStatement" | "InsertStatement" | "UpdateStatement" | "UpsertStatement"
         | "DeleteStatement" | "RelateStatement" => {
             let lowered = surrealguard_syntax::lower::lower_statement(node, parsed.text());
-            let (source, text) = (parsed.source_id(), parsed.text());
+            let mut scratch = Vec::new();
+            let mut ctx = crate::analyzer::context::AnalysisContext::scoped(
+                schema,
+                parsed.source_id().clone(),
+                parsed.text(),
+                &mut scratch,
+                env.clone(),
+                None,
+            );
             let kind = match &lowered.node {
                 surrealguard_syntax::ast::Statement::Create(s) => {
-                    crate::analyzer::data::create::create_response_kind(
-                        s, source, text, schema, env,
-                    )
+                    crate::analyzer::data::create::create_response_kind(s, &mut ctx)
                 }
                 surrealguard_syntax::ast::Statement::Update(s) => {
-                    crate::analyzer::data::update::update_response_kind(
-                        s, source, text, schema, env,
-                    )
+                    crate::analyzer::data::update::update_response_kind(s, &mut ctx)
                 }
                 surrealguard_syntax::ast::Statement::Upsert(s) => {
-                    crate::analyzer::data::upsert::upsert_response_kind(
-                        s, source, text, schema, env,
-                    )
+                    crate::analyzer::data::upsert::upsert_response_kind(s, &mut ctx)
                 }
                 surrealguard_syntax::ast::Statement::Delete(s) => {
-                    crate::analyzer::data::delete::delete_response_kind(
-                        s, source, text, schema, env,
-                    )
+                    crate::analyzer::data::delete::delete_response_kind(s, &mut ctx)
                 }
                 surrealguard_syntax::ast::Statement::Insert(s) => {
-                    crate::analyzer::data::insert::insert_response_kind(
-                        s, source, text, schema, env,
-                    )
+                    crate::analyzer::data::insert::insert_response_kind(s, &mut ctx)
                 }
                 surrealguard_syntax::ast::Statement::Relate(s) => {
-                    crate::analyzer::data::relate::relate_response_kind(
-                        s, source, text, schema, env,
-                    )
+                    crate::analyzer::data::relate::relate_response_kind(s, &mut ctx)
                 }
                 _ => Kind::Any,
             };
@@ -557,13 +553,16 @@ fn collect_select_response_shapes_with_env(
             let lowered = surrealguard_syntax::lower::lower_statement(node, parsed.text());
             let kind = match &lowered.node {
                 surrealguard_syntax::ast::Statement::Select(stmt) => {
-                    crate::analyzer::data::select::select_response_kind(
-                        stmt,
-                        parsed.source_id(),
-                        parsed.text(),
+                    let mut scratch = Vec::new();
+                    let mut ctx = crate::analyzer::context::AnalysisContext::scoped(
                         schema,
-                        env,
-                    )
+                        parsed.source_id().clone(),
+                        parsed.text(),
+                        &mut scratch,
+                        env.clone(),
+                        None,
+                    );
+                    crate::analyzer::data::select::select_response_kind(stmt, &mut ctx)
                 }
                 _ => Kind::Any,
             };

@@ -14,13 +14,12 @@ use std::collections::BTreeMap;
 
 use surrealdb_types::{Kind, KindLiteral};
 use surrealguard_syntax::ast;
-use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::ByteRange;
 use tree_sitter::Node;
 
-use crate::analyzer::expression::infer::{infer_expression_fact, plain_field_segments, InferScope};
-use crate::schema::{SchemaIndex, TableDef};
-use crate::statement_env::StatementEnv;
+use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::expression::infer::{infer_expression_fact, plain_field_segments};
+use crate::schema::TableDef;
 
 /// Builds the response type for a mutation once its target `table` is
 /// resolved: `RETURN` mode decides the row type, `ONLY` decides whether the
@@ -29,10 +28,7 @@ pub(crate) fn response_kind_for_target(
     only: bool,
     ret: Option<&ast::Spanned<ast::ReturnMode>>,
     table: &TableDef,
-    source: &SourceId,
-    text: &str,
-    schema: &SchemaIndex,
-    env: &StatementEnv,
+    ctx: &mut AnalysisContext<'_>,
 ) -> Kind {
     let row = match ret.map(|r| &r.node) {
         // `RETURN NONE` yields no rows at all.
@@ -45,9 +41,7 @@ pub(crate) fn response_kind_for_target(
         }
         Some(ast::ReturnMode::Null) => Kind::Null,
         Some(ast::ReturnMode::Diff) => patch_operations_kind(),
-        Some(ast::ReturnMode::Fields(projections)) => {
-            fields_row_kind(projections, table, source, text, schema, env)
-        }
+        Some(ast::ReturnMode::Fields(projections)) => fields_row_kind(projections, table, ctx),
         // BEFORE/AFTER/default all produce full rows. (BEFORE on CREATE is
         // arguably `none` — statement-specific refinement is tracked with
         // the DELETE default-shape question, pending verification against
@@ -80,10 +74,7 @@ fn patch_operations_kind() -> Kind {
 fn fields_row_kind(
     projections: &[ast::Projection],
     table: &TableDef,
-    source: &SourceId,
-    text: &str,
-    schema: &SchemaIndex,
-    env: &StatementEnv,
+    ctx: &mut AnalysisContext<'_>,
 ) -> Kind {
     if projections
         .iter()
@@ -97,7 +88,10 @@ fn fields_row_kind(
         match projection {
             ast::Projection::Wildcard(_) => {}
             ast::Projection::Partial(partial) => {
-                fields.insert(slice(text, partial.span).to_string(), Kind::Any);
+                fields.insert(
+                    slice(ctx.source_text(), partial.span).to_string(),
+                    Kind::Any,
+                );
             }
             ast::Projection::Expr { expr, alias } => {
                 let alias_name = alias.as_ref().map(|a| a.node.clone());
@@ -125,17 +119,12 @@ fn fields_row_kind(
                     }
                 }
                 // Computed return expression: full inference.
-                let key = alias_name.unwrap_or_else(|| slice(text, expr.span).to_string());
-                let scope = InferScope {
-                    source,
-                    text,
-                    schema,
-                    row_table: Some(table),
-                    env,
-                };
-                let kind = infer_expression_fact(expr, &scope)
-                    .kind
-                    .unwrap_or(Kind::Any);
+                let key =
+                    alias_name.unwrap_or_else(|| slice(ctx.source_text(), expr.span).to_string());
+                let row_table = ctx.schema().tables.get(&table.name);
+                let kind = ctx.with_row_table(row_table, |ctx| {
+                    infer_expression_fact(expr, ctx).kind.unwrap_or(Kind::Any)
+                });
                 fields.insert(key, kind);
             }
         }
@@ -221,15 +210,16 @@ mod tests {
     use super::*;
     use surrealguard_syntax::lower::lower_statement;
     use surrealguard_syntax::parse::parse_source;
+    use surrealguard_syntax::source::SourceId;
 
-    use crate::schema::{extract_schema, SchemaIndex};
+    use crate::schema::extract_schema;
 
     const PERSON_SCHEMA: &str = "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD age ON person TYPE int;";
 
     fn build_kind(schema_src: &str, query: &str, statement_kind: &str) -> Kind {
         let schema_parsed =
             parse_source(SourceId::new("schema"), schema_src).expect("schema should parse");
-        let schema: SchemaIndex = extract_schema(&[schema_parsed]).schema;
+        let schema = extract_schema(&[schema_parsed]).schema;
         let parsed = parse_source(SourceId::new("query"), query).expect("query should parse");
         let node = crate::analyzer::test_support::find_first_node(
             parsed.tree().root_node(),
@@ -237,7 +227,7 @@ mod tests {
         )
         .unwrap_or_else(|| panic!("{statement_kind} node exists in {query:?}"));
         let table = schema.tables.get("person").expect("person table indexed");
-        let env = StatementEnv::default();
+        let env = crate::statement_env::StatementEnv::default();
 
         let lowered = lower_statement(node, parsed.text());
         let (only, ret) = match &lowered.node {
@@ -245,15 +235,16 @@ mod tests {
             ast::Statement::Update(s) => (s.only, s.ret.clone()),
             other => panic!("unexpected statement {other:?}"),
         };
-        response_kind_for_target(
-            only,
-            ret.as_ref(),
-            table,
-            parsed.source_id(),
-            parsed.text(),
+        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        let mut ctx = AnalysisContext::scoped(
             &schema,
-            &env,
-        )
+            parsed.source_id().clone(),
+            parsed.text(),
+            &mut diagnostics,
+            env,
+            None,
+        );
+        response_kind_for_target(only, ret.as_ref(), table, &mut ctx)
     }
 
     fn object_fields(kind: &Kind) -> &BTreeMap<String, Kind> {

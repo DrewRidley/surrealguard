@@ -6,53 +6,33 @@
 
 use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
-use surrealguard_syntax::source::SourceId;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::data::mutation;
-use crate::schema::SchemaIndex;
-use crate::statement_env::StatementEnv;
 
 pub fn analyze_relate(ctx: &mut AnalysisContext<'_>, stmt: &ast::RelateStmt) -> Kind {
-    relate_response_kind(
-        stmt,
-        ctx.source(),
-        ctx.source_text(),
-        ctx.schema(),
-        ctx.env(),
-    )
+    relate_response_kind(stmt, ctx)
 }
 
-pub(crate) fn relate_response_kind(
-    stmt: &ast::RelateStmt,
-    source: &SourceId,
-    text: &str,
-    schema: &SchemaIndex,
-    env: &StatementEnv,
-) -> Kind {
+pub(crate) fn relate_response_kind(stmt: &ast::RelateStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
     let Some(table_name) = mutation::source_table_name(stmt.edge.as_ref()) else {
         return Kind::Any;
     };
-    let Some(table) = schema.tables.get(&table_name) else {
+    let Some(table) = ctx.schema().tables.get(&table_name) else {
         return Kind::Any;
     };
 
-    mutation::response_kind_for_target(
-        stmt.only,
-        stmt.ret.as_ref(),
-        table,
-        source,
-        text,
-        schema,
-        env,
-    )
+    mutation::response_kind_for_target(stmt.only, stmt.ret.as_ref(), table, ctx)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::SchemaIndex;
+    use crate::statement_env::StatementEnv;
     use surrealguard_syntax::lower::lower_statement;
     use surrealguard_syntax::parse::parse_source;
+    use surrealguard_syntax::source::SourceId;
 
     use crate::schema::extract_schema;
 
@@ -67,7 +47,16 @@ mod tests {
             panic!("expected relate statement");
         };
         let env = StatementEnv::default();
-        relate_response_kind(&stmt, parsed.source_id(), parsed.text(), schema, &env)
+        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        let mut ctx = AnalysisContext::scoped(
+            schema,
+            parsed.source_id().clone(),
+            parsed.text(),
+            &mut diagnostics,
+            env,
+            None,
+        );
+        relate_response_kind(&stmt, &mut ctx)
     }
 
     #[test]

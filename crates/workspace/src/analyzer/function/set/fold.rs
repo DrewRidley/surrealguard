@@ -8,7 +8,7 @@ use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
-use crate::analyzer::expression::infer::{closure_return_kind, InferScope};
+use crate::analyzer::expression::infer::closure_return_kind;
 use crate::analyzer::function::closure_arg;
 
 pub fn analyze_set_fold(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
@@ -24,8 +24,7 @@ pub fn analyze_set_fold(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &
         return Kind::Any;
     };
 
-    let scope = InferScope::from_ctx(ctx);
-    closure_return_kind(closure, &[accumulator, element, Kind::Int], &scope).unwrap_or(Kind::Any)
+    closure_return_kind(closure, &[accumulator, element, Kind::Int], ctx).unwrap_or(Kind::Any)
 }
 
 #[cfg(test)]

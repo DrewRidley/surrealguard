@@ -28,8 +28,7 @@ pub fn analyze_expr(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr
 
 /// [`analyze_expr`], but returning the full fact.
 pub fn expr_fact(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) -> ExpressionFact {
-    let source = ctx.source().clone();
-    let span = surrealguard_syntax::span::SourceSpan::new(source.clone(), expr.span);
+    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
 
     // Blocks thread an environment through their statements — that is the
     // dispatcher's job, so route through it rather than pure inference.
@@ -40,16 +39,7 @@ pub fn expr_fact(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) 
             .with_kind(kind);
     }
 
-    let fact = {
-        let scope = infer::InferScope {
-            source: &source,
-            text: ctx.source_text(),
-            schema: ctx.schema(),
-            row_table: ctx.row_table(),
-            env: ctx.env(),
-        };
-        infer::infer_expression_fact(expr, &scope)
-    };
+    let fact = infer::infer_expression_fact(expr, ctx);
     for param in &fact.dependencies.params {
         ctx.record_param_use(param.clone(), fact.span.clone());
     }
