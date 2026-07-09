@@ -1,8 +1,9 @@
 # Diagnostic catalog: categories, codes, and the parameter-constraint channel
 
-Status: catalog v1 complete (four iteration rounds, 2026-07-07); awaiting
-severity stamps. This is the canonical registry the diagnostics phase
-implements against; codes are assigned here and only here, append-only.
+Status: contract audit complete (2026-07-09) — every code states the
+contract it enforces. This is the canonical registry the diagnostics phase
+implements against; codes are assigned here and only here; retired numbers
+are never reused.
 
 ## Principles (settled in prior rulings)
 
@@ -66,95 +67,78 @@ Detection status legend: ✅ inference already computes everything needed
 
 ## 1xxx — Schema references
 
-| Code | Finding | Example | Sev | Status |
+Family contract: **every name a query uses must resolve against the schema,
+wherever the schema constrains it.** One code per kind of name; the position
+(projection, WHERE, SET, a DEFINE, a RELATE endpoint, a PATCH path) is
+carried by the span and message, never by the code.
+
+| Code | Contract | Covers (message variants) | Sev | Status |
 |---|---|---|---|---|
-| 1001 | unknown table in FROM/target | `SELECT * FROM ghost` | E | ✅ |
-| 1002 | unknown field in projection | `SELECT nickname FROM person` | E | ✅ |
-| 1003 | unknown field in WHERE/expression | `... WHERE nickname = 'x'` | E | ✅ |
-| 1004 | unknown field as SET/UNSET target | `UPDATE person SET aeg = 1` | E | ✅ |
-| 1005 | unknown field as CONTENT/MERGE key | `CONTENT { aeg: 1 }` | E | ✅ |
-| 1006 | unknown field in RETURN projection | `RETURN aeg` | E | ✅ |
-| 1007 | unknown field in OMIT | `OMIT aeg` | E | ✅ |
-| 1008 | unknown field in FETCH | `FETCH aeg` | E | ✅ |
-| 1009 | unknown field in SPLIT | `SPLIT aeg` | E | ✅ |
-| 1010 | unknown field in GROUP/ORDER BY | `ORDER BY aeg` | E | ✅ |
-| 1011 | unknown INSERT tuple column | `INSERT INTO person (aeg) ...` | E | ✅ |
-| 1012 | unknown index target | `REBUILD INDEX ghost ON person` | E | 🔶 index registry exists in extraction |
-| 1013 | unknown event target | `REMOVE EVENT ghost ON person` | E | 🔶 |
-| 1014 | unknown analyzer reference | index `SEARCH ANALYZER ghost` | E | 🔶 |
-| 1015 | unknown user function | `RETURN fn::ghost()` | E | ✅ |
-| 1016 | `record<t>` names unknown table | `DEFINE FIELD f ... TYPE record<ghost>` | E | ✅ |
-| 1017 | relation endpoint names unknown table | `DEFINE TABLE e TYPE RELATION IN ghost OUT post` | E | ✅ |
-| 1018 | DEFINE FIELD/INDEX/EVENT on unknown table | `DEFINE FIELD x ON ghost` | E | ✅ |
-| 1019 | index field not on table | `DEFINE INDEX i ON person FIELDS aeg` | E | ✅ (exists today) |
-| 1020 | event WHEN/THEN references unknown field | | E | 🔶 |
-| 1021 | REMOVE of object that doesn't exist | `REMOVE TABLE ghost` | W | ✅ (exists today) |
-| 1022 | duplicate definition without OVERWRITE | two `DEFINE TABLE person` | W | 🔶 extraction sees both |
-| 1023 | FETCH of a non-record field | `FETCH age` (int) | E | ✅ kinds known |
-| 1024 | SPLIT of a non-collection field | `SPLIT age` | E | ✅ |
-| 1025 | subfield declared under a non-object field | `FIELD a TYPE int` then `FIELD a.b` | E | ✅ extraction sees both |
-| 1026 | use of a table/field after its REMOVE earlier in the script | `REMOVE TABLE t; SELECT * FROM t` | E | ✅ source-order effects exist |
-| 1027 | full-text operator/function without a search index | `WHERE text @@ 'x'`, `search::score(1)` with no `SEARCH ANALYZER` index on the field | E | 🔶 index registry lookup |
-| 1028 | KNN operator without a vector index | `<\|4\|>` with no MTREE/HNSW index | E | 🔶 same |
-| 1029 | duplicate index over identical fields | two indexes on `(email)` | W | 🔶 |
-| 1030 | WITH index hint names unknown index | `WITH INDEX ghost` | E | 🔶 lower `WithClause` |
-| 1031 | PATCH path names unknown field | `PATCH [{op:'replace', path:'/aeg', ..}]` | E | 🔶 walk const patch objects |
-| 1032 | unknown tokenizer/filter/snowball language in DEFINE ANALYZER | `TOKENIZERS blanc`, `FILTERS snowball(klingon)` | E | 🔶 lower analyzer definitions |
+| 1001 | a table reference names a known table | FROM/targets, thin statements, RELATE endpoints, `record<t>` in DEFINE FIELD, relation IN/OUT tables, DEFINE ... ON table | E | ✅ emitting (endpoints/DDL variants pending) |
+| 1002 | a field reference names a declared field of its row's table (schemafull only; FLEXIBLE subtrees exempt) | projections, WHERE/expressions, SET/UNSET targets, payload keys, RETURN, OMIT, FETCH, SPLIT, GROUP/ORDER keys, INSERT columns, index/event fields in DEFINE, const PATCH paths | E | ✅ emitting (currently split across 1002-1011; renumbering to 1002) |
+| 1012 | a schema-object reference names a known object of that kind | REBUILD/REMOVE INDEX, REMOVE EVENT, SEARCH ANALYZER refs, WITH INDEX hints | E | 🔶 registries exist in extraction |
+| 1021 | REMOVE removes something that exists | `REMOVE TABLE ghost` | W | ✅ (exists today) |
+| 1022 | a definition does not silently redefine (OVERWRITE states intent) | two `DEFINE TABLE person` | W | 🔶 |
+| 1023 | FETCH names something that can hold records | `FETCH age` (int); an alias of a computed non-record value | E | ✅ emitting |
+| 1024 | SPLIT names a collection field | `SPLIT age` | E | ✅ emitting |
+| 1025 | a subfield is declared under an object-shaped parent | `FIELD a TYPE int` then `FIELD a.b` | E | 🔶 |
+| 1027 | an index-backed operator has its supporting index | `@@`/search::* need a SEARCH index; `<\|k\|>` needs MTREE/HNSW | E | 🔶 index-kind registry |
+| 1029 | each index covers a distinct field set | two indexes on `(email)` | W | 🔶 |
+| 1032 | DEFINE ANALYZER components name known tokenizers/filters/languages | `TOKENIZERS blanc` | E | 🔶 |
+
+Folded by the contract audit (2026-07-09): 1003–1011 → 1002; 1013, 1014,
+1030 → 1012; 1015 → 5001 (function resolution); 1016, 1017, 1018 → 1001;
+1019, 1020, 1031 → 1002; 1026 → 1001 (source-order effects already make a
+removed table unknown); 1028 → 1027.
 
 ## 2xxx — Types and nullability
 
-| Code | Finding | Example | Sev | Status |
+| Code | Contract | Covers (message variants) | Sev | Status |
 |---|---|---|---|---|
-| 2001 | assignability contract: a SET value must inhabit the field's declared type | `SET age = 'string'`, `SET age = NONE` (message points at option<>) | E | ✅ emitting |
-| 2002 | CONTENT/MERGE value not assignable per key | `CONTENT { age: 'x' }` | E | ✅ |
-| 2003 | INSERT tuple value not assignable to column | `(age) VALUES ('x')` | E | ✅ |
-| 2004 | operand contract: the operands must make sense together for the operator | `name > 18`, `1 + 'a'`, `-name` — covers binary and unary, arithmetic and comparison; SurrealDB kind-orders cross-kind comparisons rather than throwing, which changes nothing | E | ✅ emitting |
-| 2005 | IF condition not boolean | `IF 'yes' { }` | W | ✅ |
-| 2006 | WHERE clause not boolean-ish | `WHERE age` (truthiness works; style) | I | ✅ |
-| 2007 | cast to unknown type | `<ghost> x` | E | ✅ |
-| 2008 | cast that cannot succeed | `<duration> true` | W | 🔶 castability table |
-| 2009 | DEFAULT not assignable to declared type | `TYPE int DEFAULT 'x'` | E | 🔶 lower DefaultClause |
-| 2010 | VALUE clause not assignable to declared type | | E | 🔶 lower ValueClause |
-| 2011 | ASSERT not boolean | `ASSERT $value + 1` | E | 🔶 lower AssertClause |
-| 2012 | fn:: body return doesn't match declared `->` type | `-> string { RETURN 1 }` | E | 🔨 body analysis vs declaration (body already lowers) |
-| 2013 | closure body vs declared return mismatch | `\|$x\| -> string { RETURN 1 }` | E | ✅ closure inference exists |
-| 2015 | possibly-NONE value where value required | `option<int>` field in `x + 1` | W | 🔶 Either[None, T] flows exist; needs the operand rule |
-| 2017 | ORDER BY availability contract: each key names a field of the result rows (or RAND()) | non-field key; or, with explicit projections, a key that isn't among them — both parse-rejected by SurrealDB, tolerated by our grammar | E | ✅ emitting |
-| 2018 | LIMIT/START not an integer | `LIMIT 'a'` | E | ✅ |
-| 2019 | TIMEOUT not a duration | `TIMEOUT 5` — our grammar only parses duration literals here, so this is parser-covered today; the emission exists for when params are grammatical | E | ☑ parser-covered |
-| 2020 | KILL argument not a uuid | `KILL 42` — parser-covered today; grammar-fork bug: `KILL $id` (valid SurrealQL) fails to parse, blocking the param form the emission exists for | E | ☑ parser-covered |
-| 2021 | SHOW SINCE not versionstamp/datetime | | E | ✅ |
-| 2022 | FOR over a non-iterable | `FOR $x IN 42 { }` | E | ✅ iterable kind known |
-| 2023 | const conversion provably fails | `<int> 'abc'`, `type::int('x')` | E | ✅ const tracking evaluates it |
-| 2024 | negative const LIMIT/START | `LIMIT -1` | E | ✅ const tracking |
-| 2025 | assignment to a READONLY field | `UPDATE t SET created = ...` | E | 🔶 lower `ReadonlyClause` |
-| 2026 | assignment to a computed (VALUE-clause) field | value will be overwritten | W | 🔶 lower `ValueClause` |
-| 2027 | record link targets the wrong table | `SET friend = post:1` when `friend: record<user>` | E | 🔶 record-target assignability rule |
-| 2028 | VERSION clause not a datetime | `VERSION 5` | E | 🔶 lower `VersionClause` |
-| 2029 | compound assignment incompatible with field kind | `SET age += 'x'`; `tags -= 42` on `array<string>` | E | 🔶 operator-aware assignability (`+=` is push on arrays, add on numbers, concat on strings) |
-| 2030 | index/filter/splat on a non-collection | `age[0]`, `name[WHERE ..]`, `age.*` | E | ✅ idiom stepping knows the kind |
-| 2031 | invalid const regex pattern | `name ~ 'unclosed('` | E | ✅ const tracking + regex compile |
-| 2032 | invalid literal content | `d'2024-13-45'`, `u'not-a-uuid'`, duration `5x` | E | 🔶 validate the slice at the literal site |
-| 2033 | invalid PATCH operation | `{op: 'remvoe', ...}`, path without `/` | E | 🔶 const patch objects |
-| 2034 | missing required field on CREATE/CONTENT/INSERT | `CREATE person;` when `name: string` has no DEFAULT and isn't optional | E | 🔶 required-field metadata in extraction |
-| 2035 | invalid analyzer filter arguments | `edgengram(5, 2)` (min > max) | E | 🔶 same lowering as 1032 |
-| 2036 | invalid GeoJSON literal shape | `{type: 'Pointt', ...}`, Point with 3-ring coordinates | E | ✅ const objects carry the shape |
+| 2001 | a value written to a field inhabits the field's declared type | SET values, CONTENT/MERGE/REPLACE payload values, INSERT tuple values and object payloads, DEFAULT and VALUE clauses in DEFINE, record-link targets (`record<a>` ⊄ `record<b>`), NONE into non-optional (message points at option<>) | E | ✅ emitting (SET/payload/tuple); DEFINE clauses 🔶 |
+| 2004 | the operands make sense together for the operator | binary and unary, arithmetic and comparison, compound assignment (`age += 'x'`); SurrealDB kind-ordering instead of throwing changes nothing | E | ✅ emitting |
+| 2005 | a condition position expects a boolean | IF conditions, ASSERT clauses, bare non-boolean WHERE | W | ✅ emitting (IF); ASSERT/WHERE 🔶 |
+| 2007 | a cast names a known type | `<ghost> x` | E | ✅ |
+| 2008 | a conversion can succeed | kind-proven (`<duration> true`) or value-proven (`<int> 'abc'`, `type::int('x')`) — the proof strength varies, the contract doesn't | E | 🔶 castability table; const half ✅ |
+| 2012 | a body returns what it declares | `fn::` `-> string { RETURN 1 }`; closures `\|$x\| -> string { RETURN 1 }` | E | 🔨 fn:: body-vs-declaration; closure half ✅ |
+| 2015 | a value-requiring position gets a value that is always present | `option<int>` field in `x + 1` | W | 🔶 needs the operand rule |
+| 2017 | ORDER BY keys name fields available on the result rows (or RAND()) | non-field key; explicit projections not containing the key | E | ✅ emitting |
+| 2018 | LIMIT/START take a non-negative integer | wrong kind (via params; literals parse-rejected), negative constants | E | ✅ emitting |
+| 2019 | TIMEOUT takes a duration | parser-covered today; emission exists for when params are grammatical | E | ☑ parser-covered |
+| 2020 | KILL takes a live-query uuid | parser-covered; grammar-fork bug: `KILL $id` fails to parse | E | ☑ parser-covered |
+| 2021 | SHOW SINCE takes a versionstamp or datetime | | E | 🔶 |
+| 2022 | FOR iterates something iterable | `FOR $x IN 42` — ranges must be modeled first or this false-positives | E | 🔶 gated on Kind::Range |
+| 2025 | READONLY fields are written only at creation | `UPDATE t SET created = ...` | E | 🔶 lower ReadonlyClause |
+| 2026 | computed (VALUE-clause) fields are not hand-assigned | the write is silently overwritten | W | 🔶 |
+| 2030 | index/filter/splat apply to collections | `age[0]`, `name[WHERE ..]`, `age.*` | E | ✅ idiom stepping knows |
+| 2031 | a regex literal compiles | `name ~ 'unclosed('` | E | ✅ const tracking |
+| 2032 | literal content is valid for its kind | `d'2024-13-45'`, `u'not-a-uuid'` | E | 🔶 literal text retention |
+| 2033 | PATCH operations are well-formed | unknown op, path without `/` | E | 🔶 |
+| 2034 | required fields are provided at creation | `CREATE person;` with non-optional, no-DEFAULT `name` | E | 🔶 required-field metadata |
+| 2035 | DEFINE ANALYZER filter arguments are valid | `edgengram(5, 2)` | E | 🔶 |
+| 2036 | GeoJSON literals have their declared shape | `{type: 'Pointt', ...}` | E | ✅ const objects |
+
+Folded by the contract audit (2026-07-09): 2002, 2003, 2009, 2010, 2027 →
+2001; 2006, 2011 → 2005; 2013 → 2012; 2014, 2029 → 2004; 2023 → 2008;
+2024 → 2018.
 
 ## 3xxx — Graph and relations
 
-| Code | Finding | Example | Sev | Status |
+Family contract: **a traversal or RELATE must use relations as declared.**
+
+| Code | Contract | Covers (message variants) | Sev | Status |
 |---|---|---|---|---|
-| 3001 | traversal edge is not a relation table | `->person->` | E | ✅ |
-| 3002 | relation does not connect these tables in this direction | `user->writes->user` when `writes` relates user→post | E | ✅ (`relation_step_target` already resolves) |
-| 3003 | traversal target unreachable from edge | `->writes->comment` when OUT is post | E | ✅ |
-| 3004 | dangling edge hop (edge without target where one is required) | `SELECT ->writes FROM user` is valid; `FROM user->writes` is not | E | ✅ odd-chain detection exists |
-| 3005 | multi-target step cannot resolve | `->(a, b)->x` | W | ✅ |
-| 3006 | RELATE endpoints violate the relation's IN/OUT | `RELATE post:1->writes->user:1` | E | ✅ endpoints + relation known |
-| 3007 | RELATE edge is not a relation table | `RELATE a->person->b` | E | ✅ |
-| 3008 | RELATE endpoint table unknown | `RELATE ghost:1->writes->post:1` | E | ✅ |
-| 3009 | graph step off a non-record position | `age->writes->` | E | ✅ |
-| 3010 | FETCH alias that is not a record target | alias of a computed value | W | ✅ |
-| 3011 | unbounded graph recursion | `@{..}` / recurse range with no upper bound | W | 🔶 `Recurse` nodes lower as partials today |
+| 3001 | a step traverses a relation table | `->person->` in a chain; a RELATE edge that is a plain table | E | ✅ emitting |
+| 3002 | the usage matches the relation's declared shape (`in`->edge->`out`) | wrong-direction traversal, a hop landing off the far side, RELATE writing endpoints on the wrong sides — messages show declared vs written shape | E | ✅ emitting (as 3002/3003/3006; renumbering to 3002) |
+| 3004 | a FROM-position chain is complete (edge->target pairs) | `FROM user->writes` | E | ✅ |
+| 3009 | a traversal starts from records | `age->writes->` | E | ✅ |
+| 3011 | graph recursion is bounded | `@{..}` with no upper bound | W | 🔶 Recurse lowering |
+
+Folded by the contract audit (2026-07-09): 3003, 3006 → 3002; 3007 → 3001;
+3008 → 1001 (an endpoint naming an unknown table is a table-reference
+violation); 3010 → 1023 (FETCH's contract). Deleted: 3005 — `->(a, b)` is
+*valid*; not resolving it to one table is an analyzer limitation, not a
+contract violation.
 
 ## 4xxx — Statement and clause misuse
 
@@ -166,15 +150,12 @@ Detection status legend: ✅ inference already computes everything needed
 | 4004 | INSERT tuple column/value count mismatch | `(a, b) VALUES (1)` | E | ✅ lowering counts |
 | 4005 | BREAK/CONTINUE outside a loop | top-level `BREAK` | E | 🔶 loop-depth flag on ctx |
 | 4006 | unreachable statements after RETURN/BREAK/THROW | `RETURN 1; SELECT ...` in a block | W | 🔶 block walk already sequential |
-| 4007 | COMMIT/CANCEL without BEGIN | | E | 🔨 transaction state in script walk |
-| 4008 | nested BEGIN | | E | 🔨 same |
+| 4007 | transaction pairing contract: BEGIN opens exactly one transaction that COMMIT/CANCEL closes | unopened COMMIT/CANCEL, nested BEGIN, BEGIN never closed | E | 🔨 transaction state in script walk |
 | 4009 | LIVE SELECT with unsupported clause | `LIVE SELECT ... GROUP BY` | E | 🔶 LiveSelect lowering keeps clauses |
 | 4010 | duplicate SET target in one statement | `SET age = 1, age = 2` | W | ✅ assignments are structured |
 | 4011 | duplicate projection key/alias | `SELECT age, age FROM t`, two `AS x` | W | ✅ keys computed |
 | 4012 | OMIT without a wildcard projection | `SELECT age OMIT age` | W | ✅ |
 | 4013 | GROUP BY field not in projections | SurrealDB aggregate rules | W | 🔶 verify exact semantics first |
-| 4014 | RETURN outside a function/block context where invalid | | W | 🔶 |
-| 4015 | BEGIN never closed | `BEGIN;` with no COMMIT/CANCEL by script end | E | 🔨 transaction state (same walk as 4007/4008) |
 | 4016 | empty block | verified unreachable: `{}` in value position is an empty *object* literal, and statement-position blocks don't have their value consumed — code reserved, no emission | I | ☑ unreachable |
 | 4017 | block ends with LET — its value is NONE | `{ LET $x = f(); }` consumed as a value | W | ✅ block value known |
 | 4018 | side-effecting subquery in read position | `SELECT (CREATE log) FROM t` | W | ✅ statement kinds known |
@@ -183,22 +164,21 @@ Detection status legend: ✅ inference already computes everything needed
 | 4021 | SHOW CHANGES on a table without CHANGEFEED | | E | 🔶 changefeed flag in extraction |
 | 4022 | SELECT from a DROP table | rows are never retained | W | 🔶 drop flag in extraction |
 
+Folded by the contract audit (2026-07-09): 4008, 4015 → 4007. Deleted:
+4014 — no statable contract (RETURN is legal at top level and in blocks).
+
 ## 5xxx — Functions and closures
 
-| Code | Finding | Example | Sev | Status |
+| Code | Contract | Covers (message variants) | Sev | Status |
 |---|---|---|---|---|
-| 5001 | unknown function | `RETURN string::lenght('x')` | E | ✅ dispatch fallthrough |
-| 5002 | wrong argument count | `string::len()` | E | ✅ Signature.min/max |
-| 5003 | argument kind mismatch (per-argument span) | `string::len(42)` | E | ✅ Signature.arg_kinds + call spans |
-| 5004 | closure parameter count wrong for consumer | `array::map(a, \|$x, $y, $z, $w\| ...)` | W | ✅ invoke arity known per consumer |
-| 5005 | const value-dependent violation | `type::field('aeg')` — no such field | E | ✅ const tracking resolves it |
-| 5006 | fn:: argument count/kind vs its DEFINE | `fn::greet()` when it takes `$name: string` | E | ✅ params extracted with kinds |
-| 5007 | non-string idiom in value-dependent position | `type::field(42)` | E | ✅ |
-| 5008 | method not available on receiver kind | `age.uppercase()` | E | ✅ method dispatch knows |
-| 5009 | fn:: recursion cycle (direct or mutual) | `fn::f` calls `fn::f` | W | 🔨 call graph over lowered bodies (bodies already lower) |
-| 5010 | event trigger cycle | event on `person` THEN mutates `person` (or A→B→A) | W | 🔨 event-effect graph |
-| 5011 | const table argument names unknown table | `type::thing('ghost', $id)` | E | ✅ const tracking + schema |
-| 5012 | const argument outside the function's valid range | `math::fixed(x, -1)`, `string::slice(s, 0, -5)` | W | 🔶 per-function range metadata, grown lazily |
+| 5001 | a call resolves to a function that exists | unknown builtins, undefined `fn::`, methods not available on the receiver's kind | E | ✅ emitting (fn:: renumbering from 1015; methods pending) |
+| 5002 | a call matches the function's signature | argument count, per-argument kinds (anchored per argument), `fn::` declared params, a closure declaring more parameters than its consumer binds | E | ✅ emitting (as 5002/5003/5004/5006; renumbering to 5002) |
+| 5005 | a const argument satisfies the function's value contract | `type::field('aeg')` naming no field, non-string paths (`type::field(42)`), `type::thing('ghost', ..)` naming no table, out-of-range constants (`math::fixed(x, -1)`) | E | ✅ emitting (path cases); table/range variants 🔶 |
+| 5009 | `fn::` definitions terminate (no direct/mutual recursion cycles) | `fn::f` calls `fn::f` | W | 🔨 call graph (bodies already lower) |
+| 5010 | events do not trigger themselves (directly or in a cycle) | event on `person` THEN mutates `person`; A→B→A | W | 🔨 event-effect graph |
+
+Folded by the contract audit (2026-07-09): 5003, 5004, 5006 → 5002; 5007,
+5011, 5012 → 5005; 5008 → 5001; 1015 → 5001.
 
 ## 6xxx — Parameters
 
@@ -219,12 +199,11 @@ Detection status legend: ✅ inference already computes everything needed
 | 7001 | unused LET binding | `LET $x = 1;` never read | W | 🔶 use-tracking exists in env |
 | 7002 | LET shadowing | inner `LET $x` over outer | I | ✅ scopes exist |
 | 7003 | mixed-kind array literal | `[1, 'a']` | I | ✅ (today's partial fact) |
-| 7004 | condition is constant | `IF true`, `WHERE 1 = 1` | W | ✅ const tracking |
+| 7004 | control flow is decided by a constant | `IF true`, `WHERE 1 = 1`, `FOR $x IN []` | W | ✅ emitting (IF); others 🔶 |
 | 7006 | empty IN/CONTAINS list | `WHERE x IN []` | W | ✅ const arrays |
 | 7007 | SELECT * with explicit fields | `SELECT *, age FROM t` | I | ✅ |
 | 7008 | schemaless table in a typed workspace | queries against fieldless tables | I | ✅ |
 | 7009 | whole-table UPDATE/DELETE without WHERE | `DELETE person;` | W | ✅ (deliberate ones silence per-code) |
-| 7010 | FOR over an empty const collection | `FOR $x IN [] { ... }` | W | ✅ const tracking |
 | 7011 | assignment to `id` in SET | `SET id = ...` | W | ✅ |
 | 7012 | blocking or side-effecting call in a computed context | `http::get(...)` / `sleep()` in a field `VALUE` or event body | W | ✅ call paths known |
 
@@ -236,17 +215,13 @@ from the surrealdb source the same way the signature table was.
 
 | Code | Finding | Example | Sev | Status |
 |---|---|---|---|---|
-| 8001 | function not available in the configured version | `array::fold` on a 1.x target | E | 🔨 version registry |
-| 8002 | function renamed in the configured version | `string::endsWith` → `string::ends_with` (suggests the rename) | E | 🔨 same |
+| 8001 | every function used exists in the configured target version | unavailable (`array::fold` on 1.x) or renamed (`string::endsWith` — message suggests `string::ends_with`) | E | 🔨 version registry |
 | 8003 | syntax requires a newer version | closures / `??` on old targets | E | 🔨 same |
 
-**Count: 135 codes across 8 families**, of which **87 are ✅ ready** (the
-detection already exists inside inference or lowering; emission is
-additive), 38 🔶 need modest site work, 10 🔨 need a named new capability
-(transaction state, call/event graphs, fn:: body-vs-declaration,
-castability table, constraint unification, index-dependency registry,
-version registry, the adapter layer). The catalog is append-only within
-each family.
+**After the contract audit (2026-07-09): ~80 contracts across 8 families**
+(from 135 rows). Every row states its contract; message variants never get
+their own codes; checks that cannot be phrased as contract violations were
+deleted. Folded numbers are retired permanently — never reused.
 
 ---
 

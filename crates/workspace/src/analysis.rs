@@ -482,7 +482,7 @@ INSERT INTO person { name: 'Ada' };
         assert!(output
             .diagnostics
             .iter()
-            .all(|finding| finding.code() != FindingCode::schema(1004)));
+            .all(|finding| finding.code() != FindingCode::schema(1002)));
     }
 
     #[test]
@@ -497,7 +497,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1004)))
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1002)))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -527,7 +527,7 @@ INSERT INTO person { name: 'Ada' };
         assert!(output
             .diagnostics
             .iter()
-            .all(|finding| finding.code() != FindingCode::schema(1004)));
+            .all(|finding| finding.code() != FindingCode::schema(1002)));
     }
 
     #[test]
@@ -542,7 +542,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1004)))
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1002)))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -567,7 +567,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1005)))
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1002)))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -592,7 +592,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1004)))
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1002)))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -744,7 +744,7 @@ INSERT INTO person { name: 'Ada' };
         assert!(output
             .diagnostics
             .iter()
-            .all(|finding| finding.code() != FindingCode::schema(1003)));
+            .all(|finding| finding.code() != FindingCode::schema(1002)));
     }
 
     #[test]
@@ -825,7 +825,7 @@ INSERT INTO person { name: 'Ada' };
         let endpoint_messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::graph(3006))
+            .filter(|finding| finding.code() == FindingCode::graph(3002))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -1544,7 +1544,7 @@ INSERT INTO person { name: 'Ada' };
         assert!(output
             .diagnostics
             .iter()
-            .all(|finding| finding.code() != FindingCode::schema(1004)));
+            .all(|finding| finding.code() != FindingCode::schema(1002)));
     }
 
     #[test]
@@ -1591,7 +1591,7 @@ INSERT INTO person { name: 'Ada' };
         let unknown_fields: Vec<_> = output.sources[&source]
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1010))
+            .filter(|finding| finding.code() == FindingCode::schema(1002))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -1613,7 +1613,7 @@ INSERT INTO person { name: 'Ada' };
         let unknown_fields: Vec<_> = output.sources[&source]
             .diagnostics
             .iter()
-            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1009) || code == FindingCode::schema(1010)))
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1002)))
             .map(|finding| finding.message().to_string())
             .collect();
         let mut unknown_fields = unknown_fields;
@@ -1640,7 +1640,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1003))
+            .filter(|finding| finding.code() == FindingCode::schema(1002))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -1659,7 +1659,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .filter(|finding| finding.code() == FindingCode::schema(1002))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -1760,7 +1760,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::type_error(2002))
+            .filter(|finding| finding.code() == FindingCode::type_error(2001))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -1810,7 +1810,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::type_error(2003))
+            .filter(|finding| finding.code() == FindingCode::type_error(2001))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -1829,7 +1829,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1003))
+            .filter(|finding| finding.code() == FindingCode::schema(1002))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -1905,7 +1905,7 @@ INSERT INTO person { name: 'Ada' };
         assert!(output
             .diagnostics
             .iter()
-            .all(|finding| finding.code() != FindingCode::schema(1004)));
+            .all(|finding| finding.code() != FindingCode::schema(1002)));
     }
 
     #[test]
@@ -1920,7 +1920,7 @@ INSERT INTO person { name: 'Ada' };
         assert!(output
             .diagnostics
             .iter()
-            .all(|finding| finding.code() != FindingCode::schema(1004)));
+            .all(|finding| finding.code() != FindingCode::schema(1002)));
         let params = &output.sources[&source].inferred_params;
         assert_eq!(params.len(), 1);
         assert_eq!(params[0].name, "profile");
@@ -2219,7 +2219,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5003" && message == "`string::len` argument 1 expects `string`, found `int`"
+            code == "E5002" && message == "`string::len` argument 1 expects `string`, found `int`"
         }));
     }
 
@@ -2239,7 +2239,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5003" && message == "`string::len` argument 1 expects `string`, found `int`"
+            code == "E5002" && message == "`string::len` argument 1 expects `string`, found `int`"
         }));
     }
 
@@ -2261,10 +2261,10 @@ INSERT INTO person { name: 'Ada' };
         // WHERE conditions and SET values are walked like any other
         // expression position.
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5003" && message == "`string::len` argument 1 expects `string`, found `int`"
+            code == "E5002" && message == "`string::len` argument 1 expects `string`, found `int`"
         }));
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5003" && message == "`math::abs` argument 1 expects a number, found `string`"
+            code == "E5002" && message == "`math::abs` argument 1 expects a number, found `string`"
         }));
     }
 
@@ -2284,7 +2284,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E1015" && message == "unknown function `fn::gret`"
+            code == "E5001" && message == "unknown function `fn::gret`"
         }));
         // The defined function produces no finding.
         assert!(!messages
@@ -2312,10 +2312,10 @@ INSERT INTO person { name: 'Ada' };
             code == "E5002" && message == "`string::len` expects 1 argument, found 0"
         }));
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5003" && message == "`string::len` argument 1 expects `string`, found `int`"
+            code == "E5002" && message == "`string::len` argument 1 expects `string`, found `int`"
         }));
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5003" && message == "`array::len` argument 1 expects an array, found `int`"
+            code == "E5002" && message == "`array::len` argument 1 expects an array, found `int`"
         }));
         assert!(messages.iter().any(|(code, message)| {
             code == "E5001" && message == "unknown function `unknown::fn`"
@@ -2376,7 +2376,7 @@ INSERT INTO person { name: 'Ada' };
         let unknown_fields: Vec<_> = output.sources[&source]
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1006))
+            .filter(|finding| finding.code() == FindingCode::schema(1002))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -2402,7 +2402,7 @@ INSERT INTO person { name: 'Ada' };
         let unknown_fields: Vec<_> = output.sources[&source]
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1006))
+            .filter(|finding| finding.code() == FindingCode::schema(1002))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -2452,7 +2452,7 @@ INSERT INTO person { name: 'Ada' };
         let unknown_fields: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1007) || code == FindingCode::schema(1008)))
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1002)))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -2582,7 +2582,7 @@ INSERT INTO person { name: 'Ada' };
 
         for (code, message) in [
             ("E2018", "LIMIT expects an integer, found `string`"),
-            ("E2024", "START cannot be negative"),
+            ("E2018", "START cannot be negative"),
             ("E1023", "FETCH `age` does nothing: `int` holds no records"),
             (
                 "E1024",
@@ -2599,7 +2599,7 @@ INSERT INTO person { name: 'Ada' };
             ("L7003", "array literal mixes kinds: `int`, `string`"),
             ("L7004", "condition is constant"),
             (
-                "E5004",
+                "E5002",
                 "`array::map` calls its closure with 2 arguments; `$extra` is never bound",
             ),
             ("E5005", "`ghost` is not a field of table `person`"),
@@ -2705,7 +2705,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output.sources[&source]
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::graph(3003))
+            .filter(|finding| finding.code() == FindingCode::graph(3002))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -2750,7 +2750,7 @@ INSERT INTO person { name: 'Ada' };
         assert!(output
             .diagnostics
             .iter()
-            .all(|finding| finding.code() != FindingCode::graph(3003)));
+            .all(|finding| finding.code() != FindingCode::graph(3002)));
     }
 
     #[test]
@@ -2765,7 +2765,7 @@ INSERT INTO person { name: 'Ada' };
         let mismatches: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::graph(3006))
+            .filter(|finding| finding.code() == FindingCode::graph(3002))
             .collect();
 
         let messages: Vec<_> = mismatches
@@ -2795,7 +2795,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1001) || code == FindingCode::graph(3008)))
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1001) || code == FindingCode::from_number(1001)))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -2821,7 +2821,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1003))
+            .filter(|finding| finding.code() == FindingCode::schema(1002))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -2843,7 +2843,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1003))
+            .filter(|finding| finding.code() == FindingCode::schema(1002))
             .map(|finding| finding.message().to_string())
             .collect();
 

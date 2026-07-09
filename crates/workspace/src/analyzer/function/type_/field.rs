@@ -22,7 +22,7 @@ pub fn analyze_type_field(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args:
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), arg.span);
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
                     span,
-                    5007,
+                    5005,
                     format!("type::field expects a field-path string, found `{other:?}`"),
                 ));
             }

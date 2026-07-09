@@ -90,14 +90,14 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
             infer_expression_fact(cond, ctx);
             crate::analyzer::expression::check::check_value_expression(ctx, cond);
         });
-        crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1003);
+        crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1002);
     }
 
     // Row-context clauses reference fields by name; each position has its
     // own code so hosts can configure them independently.
     for idiom in &stmt.omit {
         if let Some(segments) = plain_field_segments(&idiom.node) {
-            crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1007);
+            crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
         }
     }
     for idiom in &stmt.fetch {
@@ -112,7 +112,7 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
             continue;
         }
         if let Some(segments) = plain_field_segments(&idiom.node) {
-            crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1008);
+            crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
             // FETCH substitutes records; fetching a scalar does nothing.
             if let Some(kind) = kind_for_path(table, &segments) {
                 if kind != Kind::Any && !kind_may_hold_record(&kind) {
@@ -134,7 +134,7 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     }
     for idiom in &stmt.split {
         if let Some(segments) = plain_field_segments(&idiom.node) {
-            crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1009);
+            crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
             // SPLIT fans rows out over a collection field.
             if let Some(kind) = kind_for_path(table, &segments) {
                 let base =
@@ -159,7 +159,7 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     if let Some(group) = &stmt.group {
         for idiom in &group.keys {
             if let Some(segments) = plain_field_segments(&idiom.node) {
-                crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1010);
+                crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
             }
         }
     }
@@ -206,7 +206,7 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
                 ));
                 continue;
             };
-            crate::analyzer::data::check_field_path(ctx, table, &segments, key.expr.span, 1010);
+            crate::analyzer::data::check_field_path(ctx, table, &segments, key.expr.span, 1002);
             if let Some(keys) = &explicit_keys {
                 let name = segments.join(".");
                 if !keys.contains(&name) {
@@ -292,7 +292,7 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
                     span,
-                    2024,
+                    2018,
                     format!("{name} cannot be negative"),
                 ));
             }

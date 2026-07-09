@@ -37,7 +37,7 @@ pub(crate) fn analyze_expression_positions(
             infer_expression_fact(cond, ctx);
             crate::analyzer::expression::check::check_value_expression(ctx, cond);
             if let Some(table) = row_table {
-                crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1003);
+                crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1002);
             }
         }
         match data {
@@ -60,7 +60,7 @@ pub(crate) fn analyze_expression_positions(
                     for idiom in idioms {
                         if let Some(segments) = plain_field_segments(&idiom.node) {
                             crate::analyzer::data::check_field_path(
-                                ctx, table, &segments, idiom.span, 1004,
+                                ctx, table, &segments, idiom.span, 1002,
                             );
                         }
                     }
@@ -179,7 +179,7 @@ fn check_assignment_target(
     target: &ast::Spanned<ast::Idiom>,
 ) {
     if let Some(segments) = plain_field_segments(&target.node) {
-        crate::analyzer::data::check_field_path(ctx, table, &segments, target.span, 1004);
+        crate::analyzer::data::check_field_path(ctx, table, &segments, target.span, 1002);
     }
 }
 
@@ -208,7 +208,7 @@ pub(crate) fn check_payload_object_keys(
             segments.push(key.node.clone());
             let Some(field_kind) = crate::analyzer::data::select::kind_for_path(table, &segments)
             else {
-                crate::analyzer::data::check_field_path(ctx, table, &segments, key.span, 1005);
+                crate::analyzer::data::check_field_path(ctx, table, &segments, key.span, 1002);
                 continue;
             };
             if matches!(value.node, surrealguard_syntax::ast::Expr::Object(_)) {
@@ -226,7 +226,7 @@ pub(crate) fn check_payload_object_keys(
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), value.span);
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
                     span,
-                    2002,
+                    2001,
                     format!(
                         "field `{}` expects `{field_kind}`, found `{value_kind}`",
                         segments.join(".")
@@ -327,7 +327,7 @@ fn fields_row_kind(
                             },
                             None => {
                                 crate::analyzer::data::check_field_path(
-                                    ctx, table, &segments, expr.span, 1006,
+                                    ctx, table, &segments, expr.span, 1002,
                                 );
                                 fields.insert(
                                     alias_name.unwrap_or_else(|| segments.join(".")),

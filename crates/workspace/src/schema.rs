@@ -301,7 +301,7 @@ impl SchemaIndex {
         if table_def.fields.remove(&key).is_none() {
             return Some(Finding::new(
                 field_span,
-                FindingCode::schema(1004),
+                FindingCode::schema(1002),
                 Severity::Error,
                 format!("REMOVE FIELD targets unknown field `{field}` on table `{table}`"),
             ));
@@ -851,7 +851,7 @@ fn validate_indexes(
             if !index_field_path_exists_on_table(table, &field.path) {
                 diagnostics.push(Finding::new(
                     field.span.clone(),
-                    FindingCode::schema(1004),
+                    FindingCode::schema(1002),
                     Severity::Error,
                     format!(
                         "index `{}` references unknown field `{}` on table `{}`",
@@ -963,7 +963,7 @@ fn validate_index_targets(
         if !table.indexes.contains_key(&target.index) {
             diagnostics.push(Finding::new(
                 target.index_span,
-                FindingCode::schema(1005),
+                FindingCode::schema(1002),
                 Severity::Error,
                 format!(
                     "unknown index `{}` on table `{}` in {} statement",
@@ -1173,7 +1173,7 @@ fn validate_events(schema: &SchemaIndex, events: Vec<EventDef>, diagnostics: &mu
             if !index_field_path_exists_on_table(table, &field_ref.path) {
                 diagnostics.push(Finding::new(
                     field_ref.span,
-                    FindingCode::schema(1004),
+                    FindingCode::schema(1002),
                     Severity::Error,
                     format!(
                         "event `{}` references unknown field `{}` on table `{}`",

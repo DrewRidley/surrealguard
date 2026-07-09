@@ -24,7 +24,7 @@ pub(crate) fn relate_response_kind(stmt: &ast::RelateStmt, ctx: &mut AnalysisCon
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), endpoint.span);
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
                     span,
-                    3008,
+                    1001,
                     format!("unknown table `{endpoint_table}` in RELATE endpoint"),
                 ));
             }
@@ -61,7 +61,7 @@ fn check_relate_endpoints(ctx: &mut AnalysisContext<'_>, stmt: &ast::RelateStmt,
             let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), edge.span);
             ctx.emit(surrealguard_diagnostics::catalog::finding(
                 span,
-                3007,
+                3001,
                 format!("`{edge_name}` is not a relation table"),
             ));
         }
@@ -99,7 +99,7 @@ fn check_relate_endpoints(ctx: &mut AnalysisContext<'_>, stmt: &ast::RelateStmt,
     let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), anchor.span);
     ctx.emit(surrealguard_diagnostics::catalog::finding(
         span,
-        3006,
+        3002,
         format!(
             "relation `{edge_name}` connects {}, but this RELATE writes {written}",
             crate::analyzer::data::graph::declared_shape(edge_name, &relation),

@@ -85,7 +85,7 @@ pub fn analyze_builtin_function(
                     let span = SourceSpan::new(ctx.source().clone(), call.path.span);
                     ctx.emit(surrealguard_diagnostics::catalog::finding(
                         span,
-                        1015,
+                        5001,
                         format!("unknown function `{path}`"),
                     ));
                 }
@@ -169,7 +169,7 @@ pub(crate) fn check_closure_arity(
     let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), name.span);
     ctx.emit(surrealguard_diagnostics::catalog::finding(
         span,
-        5004,
+        5002,
         format!(
             "`{}` calls its closure with {provided} {}; `${}` is never bound",
             call.path.node,

@@ -45,7 +45,7 @@ pub(crate) fn check_graph_idiom(
                 let Some(source) = current.clone() else {
                     return;
                 };
-                let step_result = check_step(ctx, &source, dir.node, step, part.span);
+                let step_result = check_step(ctx, &source, dir.node, step);
 
                 // A plain-table landing completes a hop: verify it is on
                 // the previous edge's far side.
@@ -68,7 +68,11 @@ pub(crate) fn check_graph_idiom(
                     .edge_table
                     .clone()
                     .or_else(|| step_result.landed_on.clone());
-                pending_edge = step_result.edge_table.map(|edge| (edge, dir.node));
+                pending_edge = if step_result.violated {
+                    None
+                } else {
+                    step_result.edge_table.map(|edge| (edge, dir.node))
+                };
                 if let Some(landed) = step_result.landed_on {
                     current = Some(landed);
                 }
@@ -93,6 +97,9 @@ struct StepOutcome {
     /// the walk going even when the far side is ambiguous — `None` only
     /// when checking cannot meaningfully continue.
     landed_on: Option<String>,
+    /// The step already violated the shape contract; downstream checks on
+    /// the same chain stay quiet (one finding per broken traversal).
+    violated: bool,
 }
 
 fn check_step(
@@ -100,25 +107,18 @@ fn check_step(
     source: &str,
     dir: ast::GraphDir,
     step: &ast::GraphStep,
-    span: ByteRange,
 ) -> StepOutcome {
     let [target] = step.targets.as_slice() else {
-        // `->(a, b)` — each named edge must still be a relation; the
-        // landing table is ambiguous by construction.
+        // `->(a, b)` is valid — each named edge must still be a relation,
+        // but not resolving the landing to one table is an analyzer
+        // limitation, not a contract violation.
         for target in &step.targets {
             check_edge_is_relation(ctx, &target.node, target.span);
-        }
-        if step.targets.len() > 1 {
-            emit(
-                ctx,
-                span,
-                3005,
-                "multi-edge step cannot resolve to a single target table".to_string(),
-            );
         }
         return StepOutcome {
             edge_table: None,
             landed_on: None,
+            violated: false,
         };
     };
     let edge = target.node.as_str();
@@ -139,6 +139,7 @@ fn check_step(
             return StepOutcome {
                 edge_table: None,
                 landed_on: Some(edge.to_string()),
+                violated: false,
             };
         }
         // Not in the schema at all: the standardized unknown-table finding.
@@ -146,6 +147,7 @@ fn check_step(
         return StepOutcome {
             edge_table: None,
             landed_on: None,
+            violated: false,
         };
     };
 
@@ -173,6 +175,7 @@ fn check_step(
         return StepOutcome {
             edge_table: Some(edge.to_string()),
             landed_on: None,
+            violated: true,
         };
     }
 
@@ -187,6 +190,7 @@ fn check_step(
             return StepOutcome {
                 edge_table: Some(edge.to_string()),
                 landed_on: None,
+                violated: false,
             };
         }
     };
@@ -196,6 +200,7 @@ fn check_step(
             [only] => Some(only.to_string()),
             _ => None,
         },
+        violated: false,
     }
 }
 
@@ -228,7 +233,7 @@ pub(crate) fn check_hop_reachability(
     emit(
         ctx,
         target.span,
-        3003,
+        3002,
         format!(
             "relation `{edge}` connects {}, so this hop cannot land on `{}`",
             declared_shape(edge, &relation),
@@ -268,7 +273,7 @@ fn check_filter_fields(
     table: &TableDef,
     cond: &ast::Spanned<ast::Expr>,
 ) {
-    crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1003);
+    crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1002);
 }
 
 fn arrow_text(dir: ast::GraphDir) -> &'static str {

@@ -151,7 +151,7 @@ fn check_argument_kinds(
         let span = SourceSpan::new(ctx.source().clone(), arg_expr.span);
         ctx.emit(surrealguard_diagnostics::catalog::finding(
             span,
-            5003,
+            5002,
             format!(
                 "`{}` argument {} expects {}, found `{kind}`",
                 call.path.node,

@@ -67,7 +67,7 @@ pub(crate) fn insert_response_kind(stmt: &ast::InsertStmt, ctx: &mut AnalysisCon
                             table,
                             &segments,
                             column.span,
-                            1011,
+                            1002,
                         );
                         continue;
                     };
@@ -83,7 +83,7 @@ pub(crate) fn insert_response_kind(stmt: &ast::InsertStmt, ctx: &mut AnalysisCon
                         );
                         ctx.emit(surrealguard_diagnostics::catalog::finding(
                             span,
-                            2003,
+                            2001,
                             format!(
                                 "column `{}` expects `{column_kind}`, found `{value_kind}`",
                                 segments.join(".")
@@ -105,7 +105,7 @@ pub(crate) fn insert_response_kind(stmt: &ast::InsertStmt, ctx: &mut AnalysisCon
                             table,
                             &segments,
                             target.span,
-                            1004,
+                            1002,
                         );
                     }
                 }
