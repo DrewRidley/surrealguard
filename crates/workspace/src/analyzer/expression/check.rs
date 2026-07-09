@@ -57,7 +57,63 @@ pub(crate) fn check_value_expression(
             }
         }
         ast::Expr::Cast { expr: inner, .. } => check_value_expression(ctx, inner),
+        ast::Expr::Idiom(idiom) => check_idiom_positions(ctx, idiom),
         _ => {}
+    }
+}
+
+/// Walks an idiom's parts with the kind in hand, enforcing position
+/// contracts: index/filter/splat apply to collections (2030), and method
+/// calls resolve on their receiver's kind (5001).
+fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
+    use crate::analyzer::expression::infer::idiom_prefix_kinds;
+    for (part, receiver) in idiom_prefix_kinds(idiom, ctx) {
+        let Some(receiver) = receiver else {
+            continue;
+        };
+        if receiver == Kind::Any {
+            continue;
+        }
+        let base =
+            crate::semantic::literal_base_kind(&receiver).unwrap_or_else(|| receiver.clone());
+        match &part.node {
+            ast::IdiomPart::Index(_)
+            | ast::IdiomPart::Where(_)
+            | ast::IdiomPart::All
+            | ast::IdiomPart::Last
+                if !matches!(base, Kind::Array(_, _) | Kind::Set(_, _) | Kind::Object) =>
+            {
+                emit(
+                    ctx,
+                    part.span,
+                    2030,
+                    format!("cannot index or filter a value of type `{receiver}`"),
+                );
+                return;
+            }
+            ast::IdiomPart::Method { name, args } => {
+                let arg_kinds: Vec<Kind> = std::iter::once(receiver.clone())
+                    .chain(
+                        args.iter()
+                            .map(|arg| infer_expression_fact(arg, ctx).kind.unwrap_or(Kind::Any)),
+                    )
+                    .collect();
+                if crate::analyzer::expression::infer::method_result(
+                    &receiver, &name.node, &arg_kinds, ctx,
+                )
+                .is_none()
+                {
+                    emit(
+                        ctx,
+                        name.span,
+                        5001,
+                        format!("no method `{}` on `{receiver}`", name.node),
+                    );
+                    return;
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -73,6 +129,57 @@ fn check_binary(
     };
 
     use ast::BinaryOp as Op;
+
+    // Membership against a provably empty collection never matches (7006).
+    if let Op::Other(name) = op {
+        if matches!(
+            name.to_ascii_uppercase().as_str(),
+            "IN" | "INSIDE" | "CONTAINS"
+        ) {
+            let collection = if name.eq_ignore_ascii_case("contains") {
+                lhs
+            } else {
+                rhs
+            };
+            if let Some(surrealdb_types::Value::Array(values)) =
+                infer_expression_fact(collection, ctx).value
+            {
+                if values.is_empty() {
+                    emit(
+                        ctx,
+                        whole.span,
+                        7006,
+                        "membership test against an empty collection is always false".to_string(),
+                    );
+                }
+            }
+        }
+        return;
+    }
+
+    // Arithmetic on a possibly-NONE value fails whenever the NONE side
+    // shows up (2015).
+    if matches!(op, Op::Add | Op::Sub | Op::Mul | Op::Div) {
+        for (side, kind) in [(lhs, &left), (rhs, &right)] {
+            if let Kind::Either(variants) = kind {
+                if variants
+                    .iter()
+                    .any(|v| matches!(v, Kind::None | Kind::Null))
+                    && variants
+                        .iter()
+                        .any(|v| !matches!(v, Kind::None | Kind::Null))
+                {
+                    emit(
+                        ctx,
+                        side.span,
+                        2015,
+                        format!("this value may be NONE at runtime (`{kind}`)"),
+                    );
+                }
+            }
+        }
+    }
+
     // One contract, one code: the operands must make sense together for
     // the operator (2004). Whether SurrealDB throws (arithmetic) or
     // silently kind-orders (comparisons) is irrelevant — tolerated misuse

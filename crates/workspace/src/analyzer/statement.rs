@@ -32,9 +32,11 @@ pub fn analyze_lowered_statement(
         ast::Statement::For(s) => crate::analyzer::flow::for_loop::analyze_for_loop(ctx, s),
         ast::Statement::Block(s) => crate::analyzer::flow::block::analyze_block(ctx, s),
         ast::Statement::Throw(s) => crate::analyzer::flow::throw::analyze_throw(ctx, s),
-        ast::Statement::Break(s) => crate::analyzer::flow::break_stmt::analyze_break(ctx, s),
+        ast::Statement::Break(s) => {
+            crate::analyzer::flow::break_stmt::analyze_break(ctx, s, stmt.span)
+        }
         ast::Statement::Continue(s) => {
-            crate::analyzer::flow::continue_stmt::analyze_continue(ctx, s)
+            crate::analyzer::flow::continue_stmt::analyze_continue(ctx, s, stmt.span)
         }
         ast::Statement::LiveSelect(s) => {
             crate::analyzer::data::live_select::analyze_live_select(ctx, s)

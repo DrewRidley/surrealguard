@@ -32,10 +32,17 @@ pub struct ParamDef {
     pub value_span: Option<SourceSpan>,
 }
 
+/// One declared `fn::` parameter: `$name: string`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FunctionParam {
+    pub name: String,
+    pub kind: Option<Kind>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FunctionDef {
     pub name: String,
-    pub args: Vec<String>,
+    pub args: Vec<FunctionParam>,
     pub return_kind: Option<Kind>,
     pub source: SourceId,
     pub name_span: SourceSpan,
@@ -94,6 +101,10 @@ pub struct TableDef {
     pub fields: BTreeMap<String, FieldDef>,
     pub indexes: BTreeMap<String, IndexDef>,
     pub relation: Option<RelationDef>,
+    /// `DEFINE TABLE ... DROP` — rows are never retained.
+    pub drop_table: bool,
+    /// `DEFINE TABLE ... CHANGEFEED <duration>`.
+    pub changefeed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +116,8 @@ pub struct RelationDef {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldDef {
+    /// The field has a `DEFAULT` clause (or `VALUE`, which supplies one).
+    pub has_default: bool,
     pub path: Vec<String>,
     pub table: String,
     pub kind: Option<Kind>,
@@ -223,7 +236,7 @@ impl SchemaIndex {
                 self.tables.insert(existing.name.clone(), existing);
                 return Some(Finding::new(
                     span,
-                    FindingCode::schema(1001),
+                    FindingCode::schema(1022),
                     Severity::Error,
                     format!("duplicate table definition `{name}`"),
                 ));
@@ -246,7 +259,7 @@ impl SchemaIndex {
         let Some(table) = self.tables.get_mut(&table_name) else {
             return Some(Finding::new(
                 table_span,
-                FindingCode::schema(1002),
+                FindingCode::schema(1001),
                 Severity::Error,
                 format!(
                     "field `{}` targets unknown table `{}`",
@@ -258,7 +271,7 @@ impl SchemaIndex {
         if table.fields.contains_key(&field_key) && !overwrite {
             return Some(Finding::new(
                 field.name_span,
-                FindingCode::schema(1001),
+                FindingCode::schema(1022),
                 Severity::Error,
                 format!("duplicate field definition `{field_key}` on table `{table_name}`"),
             ));
@@ -272,7 +285,7 @@ impl SchemaIndex {
         if self.tables.remove(table).is_none() {
             return Some(Finding::new(
                 span,
-                FindingCode::schema(1002),
+                FindingCode::schema(1021),
                 Severity::Error,
                 format!("REMOVE TABLE targets unknown table `{table}`"),
             ));
@@ -291,7 +304,7 @@ impl SchemaIndex {
         let Some(table_def) = self.tables.get_mut(table) else {
             return Some(Finding::new(
                 table_span,
-                FindingCode::schema(1002),
+                FindingCode::schema(1021),
                 Severity::Error,
                 format!("REMOVE FIELD `{field}` targets unknown table `{table}`"),
             ));
@@ -301,7 +314,7 @@ impl SchemaIndex {
         if table_def.fields.remove(&key).is_none() {
             return Some(Finding::new(
                 field_span,
-                FindingCode::schema(1002),
+                FindingCode::schema(1021),
                 Severity::Error,
                 format!("REMOVE FIELD targets unknown field `{field}` on table `{table}`"),
             ));
@@ -350,7 +363,7 @@ pub(crate) fn apply_schema_statement_effects(
     validate_indexes(schema, indexes, &mut diagnostics);
     validate_events(schema, events, &mut diagnostics);
     validate_index_targets(schema, index_targets, &mut diagnostics);
-    validate_alter_targets(schema, alter_targets, &mut diagnostics);
+    let _ = alter_targets;
 
     diagnostics
 }
@@ -380,7 +393,7 @@ pub fn extract_schema(parsed_sources: &[ParsedSource]) -> SchemaExtraction {
     validate_indexes(&mut schema, indexes, &mut diagnostics);
     validate_events(&schema, events, &mut diagnostics);
     validate_index_targets(&schema, index_targets, &mut diagnostics);
-    validate_alter_targets(&schema, alter_targets, &mut diagnostics);
+    let _ = alter_targets;
 
     SchemaExtraction {
         schema,
@@ -490,6 +503,7 @@ fn extract_table_def(node: Node<'_>, parsed: &ParsedSource) -> Option<TableDef> 
         }
 
         if saw_define && saw_table && is_identifier_like(child) {
+            let statement = node_text(node, parsed.text()).to_ascii_lowercase();
             return Some(TableDef {
                 name: text.to_string(),
                 source: parsed.source_id().clone(),
@@ -497,6 +511,8 @@ fn extract_table_def(node: Node<'_>, parsed: &ParsedSource) -> Option<TableDef> 
                 fields: BTreeMap::new(),
                 indexes: BTreeMap::new(),
                 relation: relation_def_from_define_table(node, parsed),
+                drop_table: statement.split_whitespace().any(|word| word == "drop"),
+                changefeed: statement.contains("changefeed"),
             });
         }
     }
@@ -606,7 +622,10 @@ fn extract_field_def(node: Node<'_>, parsed: &ParsedSource) -> Option<FieldDef> 
         None => (None, vec![PartialReason::Unresolved], None),
     };
 
+    let statement = node_text(node, parsed.text()).to_ascii_lowercase();
     Some(FieldDef {
+        has_default: statement.split_whitespace().any(|word| word == "default")
+            || statement.split_whitespace().any(|word| word == "value"),
         path: field_text.split('.').map(str::to_string).collect(),
         table: table_text.to_string(),
         kind,
@@ -680,16 +699,37 @@ fn extract_function_def(node: Node<'_>, parsed: &ParsedSource) -> Option<Functio
             .unwrap_or(statement.len() - name_start);
     let name = statement[name_start..name_end].to_string();
 
-    let args = statement[name_end..]
-        .find('(')
-        .and_then(|open| {
-            let open = name_end + open;
-            statement[open + 1..]
-                .find(')')
-                .map(|close| (open + 1, open + 1 + close))
-        })
-        .map(|(open, close)| parse_function_arg_names(&statement[open..close]))
-        .unwrap_or_default();
+    // Parameters come from the CST's ParamDefinition nodes: name plus the
+    // declared type, structurally.
+    let mut args = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() != "ParamDefinition" {
+            continue;
+        }
+        let mut name = None;
+        let mut kind = None;
+        let mut inner = child.walk();
+        for part in child.children(&mut inner) {
+            match part.kind() {
+                "VariableName" => {
+                    name = Some(
+                        node_text(part, parsed.text())
+                            .trim_start_matches('$')
+                            .to_string(),
+                    );
+                }
+                "Type" | "TypeName" | "ParameterizedType" | "UnionType" | "LiteralType" => {
+                    let ty = surrealguard_syntax::lower::lower_type_expr(part, parsed.text());
+                    kind = kind_from_type_expr(&ty.node, parsed.text()).kind;
+                }
+                _ => {}
+            }
+        }
+        if let Some(name) = name {
+            args.push(FunctionParam { name, kind });
+        }
+    }
 
     let (return_kind, return_span) = statement.find("->").map_or((None, None), |arrow| {
         let type_start = arrow
@@ -794,20 +834,6 @@ fn parse_analyzer_list_after_keyword(
         .collect()
 }
 
-fn parse_function_arg_names(args_text: &str) -> Vec<String> {
-    args_text
-        .split(',')
-        .filter_map(|arg| {
-            let arg = arg.trim();
-            let name = arg.strip_prefix('$')?;
-            let end = name
-                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-                .unwrap_or(name.len());
-            (end > 0).then(|| name[..end].to_string())
-        })
-        .collect()
-}
-
 fn span_from_relative_range(
     node: Node<'_>,
     source: SourceId,
@@ -837,7 +863,7 @@ fn validate_indexes(
         let Some(table) = schema.tables.get_mut(&index.table) else {
             diagnostics.push(Finding::new(
                 index.table_span.clone(),
-                FindingCode::schema(1002),
+                FindingCode::schema(1001),
                 Severity::Error,
                 format!(
                     "index `{}` targets unknown table `{}`",
@@ -950,7 +976,7 @@ fn validate_index_targets(
         let Some(table) = schema.tables.get(&target.table) else {
             diagnostics.push(Finding::new(
                 target.table_span,
-                FindingCode::schema(1002),
+                FindingCode::schema(1012),
                 Severity::Error,
                 format!(
                     "index `{}` targets unknown table `{}` in {} statement",
@@ -963,7 +989,7 @@ fn validate_index_targets(
         if !table.indexes.contains_key(&target.index) {
             diagnostics.push(Finding::new(
                 target.index_span,
-                FindingCode::schema(1002),
+                FindingCode::schema(1012),
                 Severity::Error,
                 format!(
                     "unknown index `{}` on table `{}` in {} statement",
@@ -1021,23 +1047,6 @@ fn extract_index_target_ref(node: Node<'_>, parsed: &ParsedSource) -> Option<Ind
         index_span: node_span(index_node, parsed.source_id().clone()),
         table_span: node_span(table_node, parsed.source_id().clone()),
     })
-}
-
-fn validate_alter_targets(
-    schema: &SchemaIndex,
-    targets: Vec<AlterTargetRef>,
-    diagnostics: &mut Vec<Finding>,
-) {
-    for target in targets {
-        if !schema.tables.contains_key(&target.table) {
-            diagnostics.push(Finding::new(
-                target.table_span,
-                FindingCode::schema(1002),
-                Severity::Error,
-                format!("ALTER TABLE targets unknown table `{}`", target.table),
-            ));
-        }
-    }
 }
 
 fn extract_alter_target_ref(node: Node<'_>, parsed: &ParsedSource) -> Option<AlterTargetRef> {
@@ -1159,7 +1168,7 @@ fn validate_events(schema: &SchemaIndex, events: Vec<EventDef>, diagnostics: &mu
         let Some(table) = schema.tables.get(&event.table) else {
             diagnostics.push(Finding::new(
                 event.table_span,
-                FindingCode::schema(1002),
+                FindingCode::schema(1001),
                 Severity::Error,
                 format!(
                     "event `{}` targets unknown table `{}`",
@@ -1610,7 +1619,9 @@ mod tests {
             .function("fn::score")
             .expect("function is directly indexed with namespace path");
         assert_eq!(function.name, "fn::score");
-        assert_eq!(function.args, vec!["age"]);
+        assert_eq!(function.args.len(), 1);
+        assert_eq!(function.args[0].name, "age");
+        assert_eq!(function.args[0].kind, Some(Kind::Int));
         assert_eq!(function.return_kind, Some(Kind::Int));
 
         let analyzer = extraction

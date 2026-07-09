@@ -15,6 +15,7 @@ pub fn analyze_update(ctx: &mut AnalysisContext<'_>, stmt: &ast::UpdateStmt) -> 
 
 pub(crate) fn update_response_kind(stmt: &ast::UpdateStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
     mutation::check_only_on_table(ctx, stmt.only, stmt.targets.first());
+    mutation::check_whole_table_write(ctx, stmt.targets.first(), stmt.where_clause.as_ref());
     let table_hint = mutation::source_table_name(stmt.targets.first());
     mutation::analyze_expression_positions(
         ctx,

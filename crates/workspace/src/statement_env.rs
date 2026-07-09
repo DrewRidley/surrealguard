@@ -2,7 +2,7 @@
 //! uses, threaded through statements in source order with child scopes for
 //! blocks and branches.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use surrealguard_syntax::span::SourceSpan;
 
@@ -12,6 +12,9 @@ use crate::expression::ExpressionFact;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StatementEnv {
     lets: BTreeMap<String, ExpressionFact>,
+    /// Names that were already bound when this scope began — a `LET` on
+    /// one of these shadows the outer binding.
+    inherited: BTreeSet<String>,
     param_defaults: BTreeMap<String, ExpressionFact>,
     params: BTreeMap<String, ParamInference>,
 }
@@ -20,9 +23,16 @@ impl StatementEnv {
     pub fn fork_child_scope(&self) -> Self {
         Self {
             lets: self.lets.clone(),
+            inherited: self.lets.keys().cloned().collect(),
             param_defaults: self.param_defaults.clone(),
             params: BTreeMap::new(),
         }
+    }
+
+    /// Whether a `LET` of `name` here would shadow a binding from an
+    /// enclosing scope.
+    pub fn would_shadow(&self, name: &str) -> bool {
+        self.inherited.contains(name)
     }
 
     pub fn define_let(&mut self, name: String, fact: ExpressionFact) {

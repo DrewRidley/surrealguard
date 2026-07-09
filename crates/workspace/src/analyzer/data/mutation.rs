@@ -84,6 +84,203 @@ pub(crate) fn analyze_expression_positions(
     });
 }
 
+/// A required field (non-optional declared type, no DEFAULT) must be
+/// provided when a row is created (2034).
+pub(crate) fn check_required_fields(
+    ctx: &mut AnalysisContext<'_>,
+    table: &TableDef,
+    provided: &[String],
+    anchor: surrealguard_syntax::span::ByteRange,
+) {
+    for (path, field) in &table.fields {
+        // Only top-level fields are directly required; nested paths are
+        // satisfied through their parent object.
+        if field.path.len() != 1 || path == "id" || field.has_default {
+            continue;
+        }
+        let Some(kind) = &field.kind else {
+            continue;
+        };
+        let optional = match kind {
+            Kind::Either(variants) => variants
+                .iter()
+                .any(|v| matches!(v, Kind::None | Kind::Null)),
+            Kind::None | Kind::Null | Kind::Any => true,
+            _ => false,
+        };
+        if optional || provided.iter().any(|name| name == path) {
+            continue;
+        }
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), anchor);
+        ctx.emit(surrealguard_diagnostics::catalog::finding(
+            span,
+            2034,
+            format!("required field `{path}` (`{kind}`) has no value here and no DEFAULT"),
+        ));
+    }
+}
+
+/// The top-level field names a data clause provides.
+pub(crate) fn provided_field_names(data: Option<&ast::DataClause>) -> Vec<String> {
+    match data {
+        Some(ast::DataClause::Set(assignments)) => assignments
+            .iter()
+            .filter_map(|assignment| {
+                plain_field_segments(&assignment.target.node)
+                    .and_then(|segments| segments.first().cloned())
+            })
+            .collect(),
+        Some(
+            ast::DataClause::Content(expr)
+            | ast::DataClause::Replace(expr)
+            | ast::DataClause::Merge(expr),
+        ) => object_keys(expr),
+        _ => Vec::new(),
+    }
+}
+
+pub(crate) fn object_keys(expr: &ast::Spanned<ast::Expr>) -> Vec<String> {
+    match &expr.node {
+        ast::Expr::Object(fields) => fields.iter().map(|(key, _)| key.node.clone()).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// A write to a whole table with no WHERE touches every row — legal, and
+/// occasionally intended, but worth a deliberate look (7009).
+pub(crate) fn check_whole_table_write(
+    ctx: &mut AnalysisContext<'_>,
+    target: Option<&ast::Spanned<ast::Expr>>,
+    where_clause: Option<&ast::Spanned<ast::Expr>>,
+) {
+    if where_clause.is_some() {
+        return;
+    }
+    let Some(target) = target else {
+        return;
+    };
+    if let ast::Expr::Table(name) = &target.node {
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), target.span);
+        ctx.emit(surrealguard_diagnostics::catalog::finding(
+            span,
+            7009,
+            format!(
+                "this writes every row of `{}`; add WHERE or a record id",
+                name.node
+            ),
+        ));
+    }
+}
+
+/// Relation rows need `in` and `out`; creating one without them makes an
+/// edge connected to nothing (4019).
+pub(crate) fn check_relation_write(
+    ctx: &mut AnalysisContext<'_>,
+    target: Option<&ast::Spanned<ast::Expr>>,
+    data: Option<&ast::DataClause>,
+) {
+    let Some(target) = target else {
+        return;
+    };
+    let Some(name) = source_table_name(Some(target)) else {
+        return;
+    };
+    let is_relation = ctx
+        .schema()
+        .tables
+        .get(&name)
+        .is_some_and(|table| table.relation.is_some());
+    if !is_relation {
+        return;
+    }
+    let provides = |key: &str| match data {
+        Some(ast::DataClause::Set(assignments)) => assignments.iter().any(|assignment| {
+            crate::analyzer::expression::infer::plain_field_segments(&assignment.target.node)
+                .is_some_and(|segments| segments == [key])
+        }),
+        Some(ast::DataClause::Content(expr) | ast::DataClause::Replace(expr)) => {
+            matches!(&expr.node, ast::Expr::Object(fields)
+                if fields.iter().any(|(k, _)| k.node == key))
+        }
+        _ => false,
+    };
+    if !(provides("in") && provides("out")) {
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), target.span);
+        ctx.emit(surrealguard_diagnostics::catalog::finding(
+            span,
+            4019,
+            format!("`{name}` is a relation; use RELATE (or provide `in` and `out`)"),
+        ));
+    }
+}
+
+/// INSERT's variant of the relation contract (4019).
+pub(crate) fn check_relation_insert(
+    ctx: &mut AnalysisContext<'_>,
+    target: Option<&ast::Spanned<ast::Expr>>,
+    data: &ast::InsertData,
+) {
+    let Some(target) = target else {
+        return;
+    };
+    let Some(name) = source_table_name(Some(target)) else {
+        return;
+    };
+    let is_relation = ctx
+        .schema()
+        .tables
+        .get(&name)
+        .is_some_and(|table| table.relation.is_some());
+    if !is_relation {
+        return;
+    }
+    let object_has = |expr: &ast::Spanned<ast::Expr>, key: &str| {
+        matches!(&expr.node, ast::Expr::Object(fields)
+            if fields.iter().any(|(k, _)| k.node == key))
+    };
+    let provided = match data {
+        ast::InsertData::Values(values) => values
+            .iter()
+            .all(|value| object_has(value, "in") && object_has(value, "out")),
+        ast::InsertData::Rows { rows, .. } => rows.iter().all(|row| {
+            let has = |key: &str| {
+                row.iter().any(|(column, _)| {
+                    crate::analyzer::expression::infer::plain_field_segments(&column.node)
+                        .is_some_and(|segments| segments == [key])
+                })
+            };
+            has("in") && has("out")
+        }),
+        _ => false,
+    };
+    if !provided {
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), target.span);
+        ctx.emit(surrealguard_diagnostics::catalog::finding(
+            span,
+            4019,
+            format!("`{name}` is a relation; use RELATE (or provide `in` and `out`)"),
+        ));
+    }
+}
+
+/// `CREATE ... RETURN BEFORE` always returns NONE — there is no before
+/// state at creation (4020).
+pub(crate) fn check_return_before_on_create(
+    ctx: &mut AnalysisContext<'_>,
+    ret: Option<&ast::Spanned<ast::ReturnMode>>,
+) {
+    if let Some(ret) = ret {
+        if matches!(ret.node, ast::ReturnMode::Before) {
+            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), ret.span);
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                span,
+                4020,
+                "RETURN BEFORE on CREATE is always NONE; there is no before state".to_string(),
+            ));
+        }
+    }
+}
+
 /// `SET age = 1, age = 2` — the later assignment silently wins (4010).
 fn check_duplicate_targets(ctx: &mut AnalysisContext<'_>, assignments: &[ast::Assignment]) {
     let mut seen = std::collections::BTreeMap::new();
@@ -133,21 +330,67 @@ pub(crate) fn check_only_on_table(
     }
 }
 
-/// `SET target = value`: a plainly-assigned value must be assignable to
-/// the field's declared kind — 2001, or 2016 when the value is NONE and
-/// the field isn't optional. Compound operators (`+=`) have their own
-/// operator-aware rules (2029) and are not checked here.
+/// `SET target = value`: the written value must inhabit the field's
+/// declared type (2001); compound operators check as operator
+/// applications against the field's kind (2004); `id` is not writable
+/// (7011).
 fn check_assignment_value(
     ctx: &mut AnalysisContext<'_>,
     table: &TableDef,
     assignment: &ast::Assignment,
 ) {
-    if !matches!(assignment.op.node, ast::AssignOp::Assign) {
-        return;
-    }
     let Some(segments) = plain_field_segments(&assignment.target.node) else {
         return;
     };
+    if segments == ["id"] {
+        let span = surrealguard_syntax::span::SourceSpan::new(
+            ctx.source().clone(),
+            assignment.target.span,
+        );
+        ctx.emit(surrealguard_diagnostics::catalog::finding(
+            span,
+            7011,
+            "record ids are immutable; `id` is set at creation".to_string(),
+        ));
+        return;
+    }
+    // Compound assignment is an operator application: `age += x` must make
+    // sense as `age + x`.
+    if !matches!(assignment.op.node, ast::AssignOp::Assign) {
+        let (Some(field_kind), Some(value_kind)) = (
+            crate::analyzer::data::select::kind_for_path(table, &segments),
+            infer_expression_fact(&assignment.value, ctx).kind,
+        ) else {
+            return;
+        };
+        if field_kind == Kind::Any || value_kind == Kind::Any {
+            return;
+        }
+        let op = match assignment.op.node {
+            ast::AssignOp::Add => ast::BinaryOp::Add,
+            ast::AssignOp::Sub => ast::BinaryOp::Sub,
+            _ => return,
+        };
+        if crate::analyzer::expression::infer::binary_result_kind(&op, &field_kind, &value_kind)
+            .is_none()
+        {
+            let span = surrealguard_syntax::span::SourceSpan::new(
+                ctx.source().clone(),
+                assignment.value.span,
+            );
+            let op_text = if matches!(op, ast::BinaryOp::Add) {
+                "+="
+            } else {
+                "-="
+            };
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                span,
+                2004,
+                format!("incompatible operands for `{op_text}`: `{field_kind}` and `{value_kind}`"),
+            ));
+        }
+        return;
+    }
     let Some(field_kind) = crate::analyzer::data::select::kind_for_path(table, &segments) else {
         return;
     };

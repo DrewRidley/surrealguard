@@ -14,6 +14,7 @@ pub fn analyze_insert(ctx: &mut AnalysisContext<'_>, stmt: &ast::InsertStmt) -> 
 }
 
 pub(crate) fn insert_response_kind(stmt: &ast::InsertStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
+    mutation::check_relation_insert(ctx, stmt.target.as_ref(), &stmt.data);
     let row_table = mutation::source_table_name(stmt.target.as_ref())
         .and_then(|name| ctx.schema().tables.get(&name));
     match &stmt.data {
@@ -122,6 +123,32 @@ pub(crate) fn insert_response_kind(stmt: &ast::InsertStmt, ctx: &mut AnalysisCon
         }
         return Kind::Any;
     };
+
+    if let Some(target) = stmt.target.as_ref() {
+        match &stmt.data {
+            ast::InsertData::Values(values) => {
+                for value in values {
+                    let keys = mutation::object_keys(value);
+                    if !keys.is_empty() {
+                        mutation::check_required_fields(ctx, table, &keys, target.span);
+                    }
+                }
+            }
+            ast::InsertData::Rows { rows, .. } => {
+                for row in rows {
+                    let keys: Vec<String> = row
+                        .iter()
+                        .filter_map(|(column, _)| {
+                            crate::analyzer::expression::infer::plain_field_segments(&column.node)
+                                .and_then(|segments| segments.first().cloned())
+                        })
+                        .collect();
+                    mutation::check_required_fields(ctx, table, &keys, target.span);
+                }
+            }
+            _ => {}
+        }
+    }
 
     // INSERT has no ONLY modifier — the result is always an array.
     mutation::response_kind_for_target(false, stmt.ret.as_ref(), table, ctx)

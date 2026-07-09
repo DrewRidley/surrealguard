@@ -15,6 +15,8 @@ pub fn analyze_create(ctx: &mut AnalysisContext<'_>, stmt: &ast::CreateStmt) -> 
 }
 
 pub(crate) fn create_response_kind(stmt: &ast::CreateStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
+    mutation::check_relation_write(ctx, stmt.targets.first(), stmt.data.as_ref());
+    mutation::check_return_before_on_create(ctx, stmt.ret.as_ref());
     let table_hint = mutation::source_table_name(stmt.targets.first());
     mutation::analyze_expression_positions(ctx, stmt.data.as_ref(), None, table_hint.as_deref());
     let Some(table_name) = mutation::source_table_name(stmt.targets.first()) else {
@@ -26,6 +28,12 @@ pub(crate) fn create_response_kind(stmt: &ast::CreateStmt, ctx: &mut AnalysisCon
         }
         return Kind::Any;
     };
+
+    // A CREATE without CONTENT/SET providing a required field fails.
+    if let Some(target) = stmt.targets.first() {
+        let provided = mutation::provided_field_names(stmt.data.as_ref());
+        mutation::check_required_fields(ctx, table, &provided, target.span);
+    }
 
     mutation::response_kind_for_target(stmt.only, stmt.ret.as_ref(), table, ctx)
 }

@@ -20,6 +20,7 @@ pub struct AnalysisContext<'a> {
     diagnostics: &'a mut Vec<Finding>,
     env: StatementEnv,
     row_table: Option<&'a TableDef>,
+    loop_depth: u32,
 }
 
 impl<'a> AnalysisContext<'a> {
@@ -36,6 +37,7 @@ impl<'a> AnalysisContext<'a> {
             diagnostics,
             env: StatementEnv::default(),
             row_table: None,
+            loop_depth: 0,
         }
     }
 
@@ -57,6 +59,7 @@ impl<'a> AnalysisContext<'a> {
             diagnostics,
             env,
             row_table,
+            loop_depth: 0,
         }
     }
 
@@ -64,6 +67,19 @@ impl<'a> AnalysisContext<'a> {
     /// construct one context per statement but thread bindings across them.
     pub(crate) fn into_env(self) -> StatementEnv {
         self.env
+    }
+
+    /// Whether the current statement sits inside a `FOR` body.
+    pub fn in_loop(&self) -> bool {
+        self.loop_depth > 0
+    }
+
+    /// Runs `f` with the loop depth incremented (a `FOR` body).
+    pub fn with_loop<T>(&mut self, f: impl FnOnce(&mut AnalysisContext<'_>) -> T) -> T {
+        self.loop_depth += 1;
+        let result = f(self);
+        self.loop_depth -= 1;
+        result
     }
 
     pub fn schema(&self) -> &'a SchemaIndex {
@@ -146,8 +162,10 @@ impl<'a> AnalysisContext<'a> {
             diagnostics: self.diagnostics,
             env: child_env,
             row_table: self.row_table,
+            loop_depth: self.loop_depth,
         };
         let result = f(&mut child);
+        self.loop_depth = child.loop_depth;
         self.env.merge_param_uses_from(child.env);
         result
     }

@@ -12,8 +12,28 @@ use crate::analyzer::statement::analyze_lowered_statement;
 
 pub fn analyze_block(ctx: &mut AnalysisContext<'_>, block: &ast::Block) -> Kind {
     let mut last = Kind::None;
+    let mut terminated = false;
     for statement in &block.statements {
+        if terminated {
+            // Everything after a RETURN/BREAK/CONTINUE/THROW never runs
+            // (4006) — one finding at the first dead statement.
+            let span =
+                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), statement.span);
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                span,
+                4006,
+                "unreachable: the block already returned".to_string(),
+            ));
+            break;
+        }
         last = analyze_lowered_statement(ctx, statement);
+        terminated = matches!(
+            statement.node,
+            ast::Statement::Return(_)
+                | ast::Statement::Break(_)
+                | ast::Statement::Continue(_)
+                | ast::Statement::Throw(_)
+        );
     }
     last
 }

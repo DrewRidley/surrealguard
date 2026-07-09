@@ -154,7 +154,7 @@ contract violation.
 | 4009 | LIVE SELECT with unsupported clause | `LIVE SELECT ... GROUP BY` | E | 🔶 LiveSelect lowering keeps clauses |
 | 4010 | duplicate SET target in one statement | `SET age = 1, age = 2` | W | ✅ assignments are structured |
 | 4011 | duplicate projection key/alias | `SELECT age, age FROM t`, two `AS x` | W | ✅ keys computed |
-| 4012 | OMIT without a wildcard projection | `SELECT age OMIT age` | W | ✅ |
+| 4012 | OMIT without a wildcard projection | verified parser-covered: the grammar only accepts OMIT alongside `*` — code reserved, no emission | W | ☑ parser-covered |
 | 4013 | GROUP BY field not in projections | SurrealDB aggregate rules | W | 🔶 verify exact semantics first |
 | 4016 | empty block | verified unreachable: `{}` in value position is an empty *object* literal, and statement-position blocks don't have their value consumed — code reserved, no emission | I | ☑ unreachable |
 | 4017 | block ends with LET — its value is NONE | `{ LET $x = f(); }` consumed as a value | W | ✅ block value known |

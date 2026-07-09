@@ -58,7 +58,7 @@ pub fn analyze_if_else(ctx: &mut AnalysisContext<'_>, stmt: &ast::IfElseStmt) ->
 
 /// Whether a condition of this kind can never evaluate to a boolean.
 /// Unknowns, unions containing bool, and NONE/NULL (falsy) are all fine.
-fn definitely_not_bool(kind: &Kind) -> bool {
+pub(crate) fn definitely_not_bool(kind: &Kind) -> bool {
     match kind {
         Kind::Bool | Kind::Any | Kind::None | Kind::Null => false,
         Kind::Either(variants) => variants.iter().all(definitely_not_bool),

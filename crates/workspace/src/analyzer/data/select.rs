@@ -79,18 +79,46 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
         crate::analyzer::data::check_table_reference(ctx, &table_name, from.span);
         return walk_projections_for_findings(stmt, ctx);
     };
+    if table.drop_table {
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from.span);
+        ctx.emit(surrealguard_diagnostics::catalog::finding(
+            span,
+            4022,
+            format!("`{table_name}` is a DROP table; rows are never retained"),
+        ));
+    }
     if table.fields.is_empty() && !stmt.projections.iter().any(is_graph_projection) {
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from.span);
+        ctx.emit(surrealguard_diagnostics::catalog::finding(
+            span,
+            7008,
+            format!("table `{table_name}` has no declared fields; analysis is limited"),
+        ));
         return walk_projections_for_findings(stmt, ctx);
     }
 
     if let Some(cond) = &stmt.where_clause {
         // The WHERE kind is irrelevant to the response; the walk emits
         // findings inside the condition, with row fields resolvable.
-        ctx.with_row_table(Some(table), |ctx| {
-            infer_expression_fact(cond, ctx);
+        let cond_kind = ctx.with_row_table(Some(table), |ctx| {
+            let fact = infer_expression_fact(cond, ctx);
             crate::analyzer::expression::check::check_value_expression(ctx, cond);
+            fact.kind
         });
         crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1002);
+        // The condition contract covers WHERE too: a kind that can never
+        // be truthy-tested meaningfully is a warning-grade violation.
+        if let Some(kind) = cond_kind {
+            if crate::analyzer::flow::if_else::definitely_not_bool(&kind) {
+                let span =
+                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), cond.span);
+                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                    span,
+                    2005,
+                    format!("WHERE condition has type `{kind}`, expected `bool`"),
+                ));
+            }
+        }
     }
 
     // Row-context clauses reference fields by name; each position has its
@@ -109,6 +137,39 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
                     && matches!(&idiom.node.parts[0].node, ast::IdiomPart::Field(name) if *name == alias.node))
         });
         if named_alias {
+            // The alias must still name something that can hold records.
+            if idiom.node.parts.len() == 1 {
+                if let ast::IdiomPart::Field(alias_name) = &idiom.node.parts[0].node {
+                    let aliased_kind =
+                        stmt.projections
+                            .iter()
+                            .find_map(|projection| match projection {
+                                ast::Projection::Expr {
+                                    expr,
+                                    alias: Some(alias),
+                                } if alias.node == *alias_name => ctx
+                                    .with_row_table(ctx.schema().tables.get(&table.name), |ctx| {
+                                        infer_expression_fact(expr, ctx).kind
+                                    }),
+                                _ => None,
+                            });
+                    if let Some(kind) = aliased_kind {
+                        if kind != Kind::Any && !kind_may_hold_record(&kind) {
+                            let span = surrealguard_syntax::span::SourceSpan::new(
+                                ctx.source().clone(),
+                                idiom.span,
+                            );
+                            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                                span,
+                                1023,
+                                format!(
+                                    "FETCH `{alias_name}` does nothing: `{kind}` holds no records"
+                                ),
+                            ));
+                        }
+                    }
+                }
+            }
             continue;
         }
         if let Some(segments) = plain_field_segments(&idiom.node) {
@@ -321,6 +382,42 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
 /// parser and ours reject the syntax.)
 fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
     check_clause_values(stmt, ctx);
+
+    let has_wildcard = stmt
+        .projections
+        .iter()
+        .any(|projection| matches!(projection, ast::Projection::Wildcard(_)));
+
+    // `SELECT *, age` — the explicit field is already inside `*`.
+    if has_wildcard {
+        for projection in &stmt.projections {
+            if let ast::Projection::Expr { expr, alias: None } = projection {
+                if let ast::Expr::Idiom(idiom) = &expr.node {
+                    if plain_field_segments(idiom).is_some() {
+                        let span = surrealguard_syntax::span::SourceSpan::new(
+                            ctx.source().clone(),
+                            expr.span,
+                        );
+                        ctx.emit(surrealguard_diagnostics::catalog::finding(
+                            span,
+                            7007,
+                            "field is already included by `*`".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // Reads that hide writes: a mutation used as a projection or filter.
+    for projection in &stmt.projections {
+        if let ast::Projection::Expr { expr, .. } = projection {
+            check_read_position_subquery(ctx, expr);
+        }
+    }
+    if let Some(cond) = &stmt.where_clause {
+        check_read_position_subquery(ctx, cond);
+    }
     if stmt.only {
         let table_target = stmt
             .from
@@ -369,6 +466,29 @@ fn kind_may_hold_record(kind: &Kind) -> bool {
         Kind::Array(element, _) | Kind::Set(element, _) => kind_may_hold_record(element),
         Kind::Either(variants) => variants.iter().any(kind_may_hold_record),
         _ => false,
+    }
+}
+
+/// A SELECT is a read; a mutation hiding inside its projections or WHERE
+/// is almost never intended (4018).
+fn check_read_position_subquery(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) {
+    if let ast::Expr::Subquery(inner) = &expr.node {
+        if matches!(
+            inner.node,
+            ast::Statement::Create(_)
+                | ast::Statement::Update(_)
+                | ast::Statement::Upsert(_)
+                | ast::Statement::Delete(_)
+                | ast::Statement::Insert(_)
+                | ast::Statement::Relate(_)
+        ) {
+            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                span,
+                4018,
+                "this SELECT hides a write; run the mutation as its own statement".to_string(),
+            ));
+        }
     }
 }
 

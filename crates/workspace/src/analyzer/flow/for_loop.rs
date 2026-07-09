@@ -21,7 +21,7 @@ pub fn analyze_for_loop(ctx: &mut AnalysisContext<'_>, stmt: &ast::ForStmt) -> K
             ExpressionFact::new(iterable.span.clone(), ExpressionValueClass::Variable);
         binding.kind = element_kind;
         ctx.define_local(stmt.binding.node.clone(), binding);
-        crate::analyzer::flow::block::analyze_block(ctx, &stmt.body)
+        ctx.with_loop(|ctx| crate::analyzer::flow::block::analyze_block(ctx, &stmt.body))
     });
 
     Kind::None

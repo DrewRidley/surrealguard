@@ -283,6 +283,85 @@ pub(crate) fn plain_field_segments(idiom: &ast::Idiom) -> Option<Vec<String>> {
 /// row fields, `LET`-bound starts (`$user.name`), record links (stepping
 /// through the schema), literal objects, collection indexes, and method
 /// calls dispatched by receiver kind.
+/// The receiver kind standing before each idiom part, for the
+/// checking-side position contracts: `(part, kind-before-part)` pairs.
+/// `None` receivers mean the prefix didn't resolve; checking skips them.
+pub(crate) fn idiom_prefix_kinds<'i>(
+    idiom: &'i ast::Idiom,
+    ctx: &mut AnalysisContext<'_>,
+) -> Vec<(&'i ast::Spanned<ast::IdiomPart>, Option<Kind>)> {
+    let mut result = Vec::new();
+    let mut parts = idiom.parts.iter();
+    let Some(first) = parts.next() else {
+        return result;
+    };
+    let mut current: Option<Kind> = match &first.node {
+        ast::IdiomPart::Start(expr) => infer_expression_fact(expr, ctx).kind,
+        ast::IdiomPart::Field(name) => ctx.row_table().and_then(|table| {
+            crate::analyzer::data::select::kind_for_path(table, std::slice::from_ref(name))
+        }),
+        _ => None,
+    };
+    for part in parts {
+        result.push((part, current.clone()));
+        current = current.and_then(|kind| step_part_kind(&kind, &part.node, ctx));
+    }
+    result
+}
+
+/// One stepping rule shared by pure inference and position checking.
+fn step_part_kind(
+    current: &Kind,
+    part: &ast::IdiomPart,
+    ctx: &mut AnalysisContext<'_>,
+) -> Option<Kind> {
+    match part {
+        ast::IdiomPart::Field(name) => field_of_kind(current, name, ctx.schema()),
+        ast::IdiomPart::Index(_) | ast::IdiomPart::Last => match current {
+            Kind::Array(element, _) | Kind::Set(element, _) => Some((**element).clone()),
+            _ => None,
+        },
+        ast::IdiomPart::All | ast::IdiomPart::Where(_) | ast::IdiomPart::Optional => {
+            Some(current.clone())
+        }
+        ast::IdiomPart::Method { name, args } => {
+            let arg_kinds: Vec<Kind> = std::iter::once(current.clone())
+                .chain(
+                    args.iter()
+                        .map(|arg| infer_expression_fact(arg, ctx).kind.unwrap_or(Kind::Any)),
+                )
+                .collect();
+            method_return_kind(current, &name.node, &arg_kinds, ctx)
+        }
+        ast::IdiomPart::Destructure(selected) => {
+            let mut fields = std::collections::BTreeMap::new();
+            for sub in selected {
+                let segments = plain_field_segments(&sub.node)?;
+                let mut kind = current.clone();
+                for segment in &segments {
+                    kind = field_of_kind(&kind, segment, ctx.schema())?;
+                }
+                fields.insert(segments.join("."), kind);
+            }
+            Some(Kind::Literal(KindLiteral::Object(fields)))
+        }
+        ast::IdiomPart::Start(_) | ast::IdiomPart::Graph { .. } | ast::IdiomPart::Partial(_) => {
+            None
+        }
+    }
+}
+
+/// Checking-side view of method dispatch: the resolved return kind, or
+/// `None` when the receiver's kind family has no such method.
+pub(crate) fn method_result(
+    receiver: &Kind,
+    method: &str,
+    args: &[Kind],
+    ctx: &mut AnalysisContext<'_>,
+) -> Option<Kind> {
+    method_return_kind(receiver, method, args, ctx)
+}
+
 fn step_idiom_kind(idiom: &ast::Idiom, ctx: &mut AnalysisContext<'_>) -> Option<Kind> {
     let mut parts = idiom.parts.iter();
     let mut current: Kind = match &parts.next()?.node {

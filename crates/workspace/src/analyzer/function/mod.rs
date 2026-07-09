@@ -76,10 +76,14 @@ pub fn analyze_builtin_function(
         "type" => type_::analyze_type_function(ctx, call, path, args),
         "value" => value::analyze_value_function(ctx, call, path, args),
         "vector" => vector::analyze_vector_function(ctx, call, path, args),
-        // User-defined functions carry their declared return type on the
-        // schema; an undefined one is a schema-reference finding (1015).
+        // User-defined functions carry their declared signature on the
+        // schema; calls check against it (5002) like any builtin.
         "fn" => match ctx.schema().functions.get(path) {
-            Some(function) => function.return_kind.clone().unwrap_or(Kind::Any),
+            Some(function) => {
+                let function = function.clone();
+                check_custom_call(ctx, call, &function, args);
+                function.return_kind.clone().unwrap_or(Kind::Any)
+            }
             None => {
                 if !is_synthetic(call) {
                     let span = SourceSpan::new(ctx.source().clone(), call.path.span);
@@ -150,6 +154,60 @@ pub(crate) fn const_value_arg(
 ) -> Option<surrealdb_types::Value> {
     let arg = call.args.get(index)?;
     crate::analyzer::expression::infer::infer_expression_fact(arg, ctx).value
+}
+
+/// `fn::` calls check against the DEFINE FUNCTION signature: argument
+/// count and, where the params declare kinds, per-argument kinds (5002).
+fn check_custom_call(
+    ctx: &mut crate::analyzer::context::AnalysisContext<'_>,
+    call: &ast::Call,
+    function: &crate::schema::FunctionDef,
+    args: &[Kind],
+) {
+    if call.path.span.start() == call.path.span.end() {
+        return;
+    }
+    if args.len() != function.args.len() {
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), call.path.span);
+        ctx.emit(surrealguard_diagnostics::catalog::finding(
+            span,
+            5002,
+            format!(
+                "`{}` expects {} {}, found {}",
+                call.path.node,
+                function.args.len(),
+                if function.args.len() == 1 {
+                    "argument"
+                } else {
+                    "arguments"
+                },
+                args.len()
+            ),
+        ));
+        return;
+    }
+    for (index, (param, kind)) in function.args.iter().zip(args).enumerate() {
+        let Some(expected) = &param.kind else {
+            continue;
+        };
+        if *kind == Kind::Any || crate::semantic::kind_is_assignable_to(kind, expected) {
+            continue;
+        }
+        let Some(arg_expr) = call.args.get(index) else {
+            continue;
+        };
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), arg_expr.span);
+        ctx.emit(surrealguard_diagnostics::catalog::finding(
+            span,
+            5002,
+            format!(
+                "`{}` argument {} (`${}`) expects `{expected}`, found `{kind}`",
+                call.path.node,
+                index + 1,
+                param.name,
+            ),
+        ));
+    }
 }
 
 /// A consumer invokes its closure with a fixed argument list; declaring

@@ -412,7 +412,7 @@ INSERT INTO person { name: 'Ada' };
         let duplicates: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1001))
+            .filter(|finding| finding.code() == FindingCode::schema(1022))
             .collect();
         assert_eq!(duplicates.len(), 1);
         assert_eq!(
@@ -497,7 +497,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1002)))
+            .filter(|finding| matches!(finding.code().number(), 1001 | 1002))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -542,7 +542,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1002)))
+            .filter(|finding| matches!(finding.code().number(), 1001 | 1002))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -567,7 +567,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1002)))
+            .filter(|finding| finding.code().number() == 1012)
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -592,7 +592,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1002) || code == FindingCode::schema(1002)))
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1021) || code == FindingCode::schema(1021)))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -618,11 +618,11 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1002))
+            .filter(|finding| finding.code() == FindingCode::schema(1001))
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(messages, vec!["ALTER TABLE targets unknown table `ghost`"]);
+        assert_eq!(messages, vec!["unknown table `ghost`"]);
     }
 
     #[test]
@@ -639,7 +639,7 @@ INSERT INTO person { name: 'Ada' };
         let unknown_table: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1002))
+            .filter(|finding| finding.code() == FindingCode::schema(1001))
             .collect();
         assert_eq!(unknown_table.len(), 1);
         assert_eq!(
@@ -2603,6 +2603,106 @@ INSERT INTO person { name: 'Ada' };
                 "`array::map` calls its closure with 2 arguments; `$extra` is never bound",
             ),
             ("E5005", "`ghost` is not a field of table `person`"),
+        ] {
+            assert!(
+                messages.iter().any(|(c, m)| c == code && m == message),
+                "missing {code}: {message}\nhave: {messages:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn analyze_workspace_full_coverage_batch_one() {
+        // Slice batch: required fields (2034), relation writes (4019),
+        // RETURN BEFORE on CREATE (4020), whole-table writes (7009),
+        // SET id (7011), compound assignment operands (2004), fn::
+        // signatures (5002), loop contracts (4005), unreachable code
+        // (4006), shadowing (7002), wildcard-plus-field (7007),
+        // OMIT-without-* (4012), read-position writes (4018), empty
+        // membership (7006), DROP reads (4022), changefeed (4021).
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            concat!(
+                "DEFINE TABLE person SCHEMAFULL;\n",
+                "DEFINE FIELD name ON person TYPE string;\n",
+                "DEFINE FIELD age ON person TYPE int DEFAULT 0;\n",
+                "DEFINE TABLE post;\n",
+                "DEFINE TABLE likes TYPE RELATION IN person OUT post;\n",
+                "DEFINE TABLE audit DROP;\n",
+                "DEFINE FUNCTION fn::greet($who: string) -> string { RETURN 'hi'; };\n",
+                "CREATE person;\n",
+                "CREATE person RETURN BEFORE;\n",
+                "CREATE likes SET strength = 1;\n",
+                "UPDATE person SET name = 'Ada';\n",
+                "UPDATE person SET id = person:two WHERE name = 'Ada';\n",
+                "UPDATE person SET age += '1' WHERE name = 'Ada';\n",
+                "RETURN fn::greet(1);\n",
+                "RETURN fn::greet();\n",
+                "BREAK;\n",
+                "RETURN { LET $x = 1; RETURN $x; LET $y = 2; };\n",
+                "LET $shadow = 1;\n",
+                "IF $shadow > 0 { LET $shadow = 2; RETURN $shadow; };\n",
+                "SELECT *, name FROM person;\n",
+                "SELECT (CREATE person SET name = 'x') AS made FROM person;\n",
+                "SELECT * FROM person WHERE name IN [];\n",
+                "SELECT * FROM audit;\n",
+                "SHOW CHANGES FOR TABLE person SINCE 0;\n",
+            )
+            .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        for (code, message) in [
+            (
+                "E2034",
+                "required field `name` (`string`) has no value here and no DEFAULT",
+            ),
+            (
+                "E4020",
+                "RETURN BEFORE on CREATE is always NONE; there is no before state",
+            ),
+            (
+                "E4019",
+                "`likes` is a relation; use RELATE (or provide `in` and `out`)",
+            ),
+            (
+                "L7009",
+                "this writes every row of `person`; add WHERE or a record id",
+            ),
+            ("L7011", "record ids are immutable; `id` is set at creation"),
+            (
+                "E2004",
+                "incompatible operands for `+=`: `int` and `string`",
+            ),
+            (
+                "E5002",
+                "`fn::greet` argument 1 (`$who`) expects `string`, found `int`",
+            ),
+            ("E5002", "`fn::greet` expects 1 argument, found 0"),
+            ("E4005", "BREAK outside a FOR loop does nothing"),
+            ("E4006", "unreachable: the block already returned"),
+            ("L7002", "`$shadow` shadows an outer binding"),
+            ("L7007", "field is already included by `*`"),
+            (
+                "E4018",
+                "this SELECT hides a write; run the mutation as its own statement",
+            ),
+            (
+                "L7006",
+                "membership test against an empty collection is always false",
+            ),
+            ("E4022", "`audit` is a DROP table; rows are never retained"),
+            (
+                "E4021",
+                "`person` has no CHANGEFEED; SHOW CHANGES has nothing to read",
+            ),
         ] {
             assert!(
                 messages.iter().any(|(c, m)| c == code && m == message),

@@ -15,6 +15,14 @@ pub fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) -> Kind {
         "auth", "session", "token", "access", "this", "parent", "event", "value", "before",
         "after", "input",
     ];
+    if ctx.env().would_shadow(&stmt.name.node) {
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.name.span);
+        ctx.emit(surrealguard_diagnostics::catalog::finding(
+            span,
+            7002,
+            format!("`${}` shadows an outer binding", stmt.name.node),
+        ));
+    }
     if PROTECTED.contains(&stmt.name.node.as_str()) {
         let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.name.span);
         ctx.emit(surrealguard_diagnostics::catalog::finding(

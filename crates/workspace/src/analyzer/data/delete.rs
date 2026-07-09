@@ -16,6 +16,7 @@ pub fn analyze_delete(ctx: &mut AnalysisContext<'_>, stmt: &ast::DeleteStmt) -> 
 
 pub(crate) fn delete_response_kind(stmt: &ast::DeleteStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
     mutation::check_only_on_table(ctx, stmt.only, stmt.targets.first());
+    mutation::check_whole_table_write(ctx, stmt.targets.first(), stmt.where_clause.as_ref());
     let table_hint = mutation::source_table_name(stmt.targets.first());
     mutation::analyze_expression_positions(
         ctx,
