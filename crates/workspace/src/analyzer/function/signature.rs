@@ -88,14 +88,19 @@ pub(crate) fn apply(
     args: &[Kind],
 ) -> Kind {
     if !is_synthetic(call) {
+        let arity_ok = arity_matches(signature, args.len());
         check_arity(ctx, call, signature, args.len());
-        check_argument_kinds(ctx, call, signature, args);
+        check_argument_kinds(ctx, call, signature, args, arity_ok);
     }
     evaluate(signature, args)
 }
 
 fn is_synthetic(call: &ast::Call) -> bool {
     call.path.span.start() == call.path.span.end()
+}
+
+fn arity_matches(signature: &Signature, found: usize) -> bool {
+    found >= signature.min_args && signature.max_args.is_none_or(|max| found <= max)
 }
 
 fn check_arity(
@@ -124,10 +129,36 @@ fn check_argument_kinds(
     call: &ast::Call,
     signature: &Signature,
     args: &[Kind],
+    arity_ok: bool,
 ) {
     for (index, kind) in args.iter().enumerate() {
-        // Unknown argument kinds are not mismatches.
+        // Trailing variadic expectations are resolved below; unbound
+        // parameters take the expectation as a constraint, not a finding.
         if *kind == Kind::Any {
+            // A mis-called function constrains nothing (arguments may be
+            // shifted), and an `Any` expectation carries no information.
+            if arity_ok {
+                if let Some(arg_expr) = call.args.get(index) {
+                    if let ast::Expr::Param(param) = &arg_expr.node {
+                        if ctx.env().let_fact(param).is_none() {
+                            let expected = signature.arg_kinds.get(index).or_else(|| {
+                                signature
+                                    .max_args
+                                    .is_none()
+                                    .then(|| signature.arg_kinds.last())
+                                    .flatten()
+                            });
+                            if let Some(expected) = expected {
+                                let constraint = param_kind_to_kind(expected);
+                                if constraint != Kind::Any {
+                                    let span = SourceSpan::new(ctx.source().clone(), arg_expr.span);
+                                    ctx.constrain_param(param, span, constraint, None);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             continue;
         }
         // Trailing variadic arguments repeat the last expectation.
@@ -174,6 +205,17 @@ fn param_matches(expected: &ParamKind, kind: &Kind) -> bool {
         ParamKind::Array => matches!(base, Kind::Array(_, _) | Kind::Set(_, _)),
         ParamKind::Object => matches!(base, Kind::Object),
         ParamKind::Any => true,
+    }
+}
+
+/// The `Kind` a signature expectation constrains an unbound parameter to.
+fn param_kind_to_kind(expected: &ParamKind) -> Kind {
+    match expected {
+        ParamKind::Exact(kind) => kind.clone(),
+        ParamKind::Numeric => Kind::Number,
+        ParamKind::Array => Kind::Array(Box::new(Kind::Any), None),
+        ParamKind::Object => Kind::Object,
+        ParamKind::Any => Kind::Any,
     }
 }
 

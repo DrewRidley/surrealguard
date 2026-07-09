@@ -128,6 +128,33 @@ impl<'a> AnalysisContext<'a> {
         self.env.record_param_use(name, span);
     }
 
+    /// Records a typed constraint on an unbound parameter; irreconcilable
+    /// constraints mean no value can satisfy the query (6001).
+    pub fn constrain_param(
+        &mut self,
+        name: &str,
+        span: SourceSpan,
+        kind: surrealdb_types::Kind,
+        domain: Option<crate::analysis::ValueDomain>,
+    ) {
+        if self.env.let_fact(name).is_some() {
+            // Bound locally: not a host parameter.
+            return;
+        }
+        if let Some((existing, new)) =
+            self.env
+                .constrain_param(name.to_string(), span.clone(), kind, domain)
+        {
+            self.emit(surrealguard_diagnostics::catalog::finding(
+                span,
+                6001,
+                format!(
+                    "`${name}` cannot satisfy this query: one use needs `{existing}`, this one needs `{new}`"
+                ),
+            ));
+        }
+    }
+
     /// The schema table backing the row/document currently in scope, if
     /// any (e.g. the `FROM` target of an enclosing `SELECT`, or the target
     /// table of a mutation). `None` outside any row context, such as a

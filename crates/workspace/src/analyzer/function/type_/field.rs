@@ -28,7 +28,30 @@ pub fn analyze_type_field(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args:
             }
             return Kind::Any;
         }
-        None => return Kind::Any,
+        None => {
+            // An unbound parameter is constrained to the table's field
+            // paths — a typed host narrows it to a literal union.
+            if let Some(ast::Expr::Param(param)) = call.args.first().map(|arg| &arg.node) {
+                if let Some(table) = ctx.row_table() {
+                    let paths: Vec<surrealdb_types::Value> = table
+                        .fields
+                        .keys()
+                        .map(|path| surrealdb_types::Value::String(path.clone()))
+                        .collect();
+                    let span = surrealguard_syntax::span::SourceSpan::new(
+                        ctx.source().clone(),
+                        call.args[0].span,
+                    );
+                    ctx.constrain_param(
+                        param,
+                        span,
+                        Kind::String,
+                        (!paths.is_empty()).then_some(crate::analysis::ValueDomain::OneOf(paths)),
+                    );
+                }
+            }
+            return Kind::Any;
+        }
     };
     match field_kind_for_path(ctx, &path) {
         Some(kind) => kind,

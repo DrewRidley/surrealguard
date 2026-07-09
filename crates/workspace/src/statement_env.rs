@@ -9,7 +9,7 @@ use surrealguard_syntax::span::SourceSpan;
 use crate::analysis::ParamInference;
 use crate::expression::ExpressionFact;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct StatementEnv {
     lets: BTreeMap<String, ExpressionFact>,
     /// Names that were already bound when this scope began — a `LET` on
@@ -65,6 +65,7 @@ impl StatementEnv {
             .or_insert_with(|| ParamInference {
                 name,
                 kind: default_kind,
+                domain: None,
                 required,
                 spans: Vec::new(),
             })
@@ -80,11 +81,15 @@ impl StatementEnv {
                 .or_insert_with(|| ParamInference {
                     name: param.name.clone(),
                     kind: param.kind.clone(),
+                    domain: param.domain.clone(),
                     required: param.required,
                     spans: Vec::new(),
                 });
             if entry.kind.is_none() {
                 entry.kind = param.kind;
+            }
+            if entry.domain.is_none() {
+                entry.domain = param.domain;
             }
             entry.required |= param.required;
             entry.spans.extend(param.spans);
@@ -95,8 +100,73 @@ impl StatementEnv {
         self.params.into_values().collect()
     }
 
+    /// Records a typed constraint on a parameter from a checkable use
+    /// site, unifying with anything already known. Returns the conflict
+    /// pair when the kinds cannot be reconciled — the query is then
+    /// unsatisfiable by any value (6001).
+    pub fn constrain_param(
+        &mut self,
+        name: String,
+        span: SourceSpan,
+        kind: surrealdb_types::Kind,
+        domain: Option<crate::analysis::ValueDomain>,
+    ) -> Option<(surrealdb_types::Kind, surrealdb_types::Kind)> {
+        self.record_param_use(name.clone(), span);
+        let entry = self.params.get_mut(&name).expect("recorded above");
+        match &entry.kind {
+            None => entry.kind = Some(kind),
+            Some(existing) => match unify_kinds(existing, &kind) {
+                Some(unified) => entry.kind = Some(unified),
+                None => return Some((existing.clone(), kind)),
+            },
+        }
+        if entry.domain.is_none() {
+            entry.domain = domain;
+        } else if let (
+            Some(crate::analysis::ValueDomain::Range { min, max }),
+            Some(crate::analysis::ValueDomain::Range {
+                min: new_min,
+                max: new_max,
+            }),
+        ) = (&mut entry.domain, &domain)
+        {
+            // Ranges intersect; enumerable domains keep the first (an
+            // intersection refinement can come with a consumer).
+            *min = (*min).max(*new_min);
+            *max = match (*max, *new_max) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+        }
+        None
+    }
+
     pub fn params(&self) -> Vec<ParamInference> {
         self.params.values().cloned().collect()
+    }
+}
+
+/// The kind two constraint sites agree on, when they can: identical kinds,
+/// `any` deferring to the specific one, numeric widening picking the
+/// narrower, and unions intersecting with their members.
+fn unify_kinds(
+    a: &surrealdb_types::Kind,
+    b: &surrealdb_types::Kind,
+) -> Option<surrealdb_types::Kind> {
+    use surrealdb_types::Kind;
+    if a == b {
+        return Some(a.clone());
+    }
+    match (a, b) {
+        (Kind::Any, other) | (other, Kind::Any) => Some(other.clone()),
+        (Kind::Number, narrow @ (Kind::Int | Kind::Float | Kind::Decimal))
+        | (narrow @ (Kind::Int | Kind::Float | Kind::Decimal), Kind::Number) => {
+            Some(narrow.clone())
+        }
+        (Kind::Either(variants), other) | (other, Kind::Either(variants)) => variants
+            .iter()
+            .find_map(|variant| unify_kinds(variant, other)),
+        _ => None,
     }
 }
 

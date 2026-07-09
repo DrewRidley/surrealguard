@@ -24,7 +24,7 @@ pub struct Workspace {
     registry: SourceRegistry,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AnalysisOutput {
     pub diagnostics: Vec<Finding>,
     pub statements: Vec<StatementAnalysis>,
@@ -32,7 +32,7 @@ pub struct AnalysisOutput {
     pub response_kind: Option<Kind>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct WorkspaceAnalysis {
     pub sources: BTreeMap<SourceId, AnalysisOutput>,
     pub diagnostics: Vec<Finding>,
@@ -55,12 +55,28 @@ pub struct SelectModifierAnalysis {
     pub max_len: Option<u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ParamInference {
     pub name: String,
+    /// The kind every use agrees on, unified across constraint sites.
     pub kind: Option<surrealdb_types::Kind>,
+    /// Beyond the kind: an enumerable or bounded value domain, when the
+    /// uses imply one (`type::field($f)` → the table's field paths;
+    /// `LIMIT $n` → non-negative).
+    pub domain: Option<ValueDomain>,
     pub required: bool,
     pub spans: Vec<SourceSpan>,
+}
+
+/// The value domain a parameter constraint carries beyond its kind. Host
+/// adapters discharge these at their tier: a typed host narrows to a
+/// literal union, a dynamic one emits a runtime guard.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum ValueDomain {
+    /// One of an enumerable set of values.
+    OneOf(Vec<surrealdb_types::Value>),
+    /// A numeric range (inclusive bounds; `None` = unbounded).
+    Range { min: Option<i64>, max: Option<i64> },
 }
 
 impl Workspace {
@@ -157,16 +173,22 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
     }
     diagnostics.extend(source_ordered.diagnostics.iter().cloned());
 
-    for inference in source_ordered.param_kind_inferences {
-        if let Some(source_output) = sources.get_mut(&inference.source) {
-            if let Some(param) = source_output
+    for (source, constraint) in source_ordered.param_constraints {
+        if let Some(source_output) = sources.get_mut(&source) {
+            match source_output
                 .inferred_params
                 .iter_mut()
-                .find(|param| param.name == inference.name)
+                .find(|param| param.name == constraint.name)
             {
-                if param.kind.is_none() {
-                    param.kind = Some(inference.kind);
+                Some(param) => {
+                    if param.kind.is_none() {
+                        param.kind = constraint.kind;
+                    }
+                    if param.domain.is_none() {
+                        param.domain = constraint.domain;
+                    }
                 }
+                None => source_output.inferred_params.push(constraint),
             }
         }
     }
@@ -1924,7 +1946,14 @@ INSERT INTO person { name: 'Ada' };
         let params = &output.sources[&source].inferred_params;
         assert_eq!(params.len(), 1);
         assert_eq!(params[0].name, "profile");
-        assert_eq!(params[0].kind, None);
+        // The comparison against the declared object field constrains the
+        // parameter to that field's shape.
+        assert_eq!(
+            params[0].kind,
+            Some(Kind::Literal(surrealdb_types::KindLiteral::Object(
+                std::collections::BTreeMap::from([("name".to_string(), Kind::String)])
+            )))
+        );
 
         let select = output.sources[&source]
             .statements
@@ -2609,6 +2638,53 @@ INSERT INTO person { name: 'Ada' };
                 "missing {code}: {message}\nhave: {messages:#?}"
             );
         }
+    }
+
+    #[test]
+    fn analyze_workspace_exports_param_constraints() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            concat!(
+                "DEFINE TABLE person SCHEMAFULL;\n",
+                "DEFINE FIELD age ON person TYPE int DEFAULT 0;\n",
+                "DEFINE FIELD name ON person TYPE string DEFAULT '';\n",
+                "UPDATE person SET age = $age WHERE name = $who;\n",
+                "SELECT * FROM person LIMIT $page_size;\n",
+                "SELECT type::field($field) FROM person;\n",
+                "SELECT * FROM person WHERE age > $min AND $min = 'x';\n",
+            )
+            .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let params = &output.sources[&source].inferred_params;
+        let get = |name: &str| params.iter().find(|p| p.name == name).unwrap();
+
+        // Assignment position: the field's kind.
+        assert_eq!(get("age").kind, Some(Kind::Int));
+        // Comparison position: the other side's kind.
+        assert_eq!(get("who").kind, Some(Kind::String));
+        // LIMIT: an integer with a non-negative domain.
+        assert_eq!(get("page_size").kind, Some(Kind::Int));
+        assert_eq!(
+            get("page_size").domain,
+            Some(ValueDomain::Range {
+                min: Some(0),
+                max: None
+            })
+        );
+        // Value-dependent builtin: string plus the field-path domain.
+        assert_eq!(get("field").kind, Some(Kind::String));
+        let Some(ValueDomain::OneOf(paths)) = &get("field").domain else {
+            panic!("expected OneOf domain, got {:?}", get("field").domain);
+        };
+        assert!(paths.contains(&surrealdb_types::Value::String("age".into())));
+        // Irreconcilable uses: int vs string on $min is 6001.
+        assert!(output.sources[&source].diagnostics.iter().any(|finding| {
+            finding.code().to_string() == "E6001"
+                && finding.message().contains("cannot satisfy this query")
+        }));
     }
 
     #[test]

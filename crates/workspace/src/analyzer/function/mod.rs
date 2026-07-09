@@ -190,6 +190,18 @@ fn check_custom_call(
         let Some(expected) = &param.kind else {
             continue;
         };
+        if let Some(arg_expr) = call.args.get(index) {
+            if let ast::Expr::Param(param) = &arg_expr.node {
+                if *kind == Kind::Any {
+                    let span = surrealguard_syntax::span::SourceSpan::new(
+                        ctx.source().clone(),
+                        arg_expr.span,
+                    );
+                    ctx.constrain_param(param, span, expected.clone(), None);
+                    continue;
+                }
+            }
+        }
         if *kind == Kind::Any || crate::semantic::kind_is_assignable_to(kind, expected) {
             continue;
         }

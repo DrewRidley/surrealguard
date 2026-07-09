@@ -19,7 +19,6 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::expression::infer::{infer_expression_fact, plain_field_segments};
 use crate::schema::{SchemaIndex, TableDef};
-use crate::select_ir::{GraphDirection, GraphLookup, SelectIr};
 
 pub fn analyze_select(ctx: &mut AnalysisContext<'_>, stmt: &ast::SelectStmt) -> Kind {
     select_response_kind(stmt, ctx)
@@ -72,7 +71,24 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
                 Kind::Array(Box::new(row_kind), literal_limit(stmt))
             };
         }
-        // Dynamic sources (params) and anything else stay undetermined.
+        // A parameter source is constrained to the known table names.
+        ast::Expr::Param(param) => {
+            let tables: Vec<surrealdb_types::Value> = ctx
+                .schema()
+                .tables
+                .keys()
+                .map(|name| surrealdb_types::Value::String(name.clone()))
+                .collect();
+            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from.span);
+            ctx.constrain_param(
+                param,
+                span,
+                Kind::Any,
+                (!tables.is_empty()).then_some(crate::analysis::ValueDomain::OneOf(tables)),
+            );
+            return walk_projections_for_findings(stmt, ctx);
+        }
+        // Dynamic sources and anything else stay undetermined.
         _ => return walk_projections_for_findings(stmt, ctx),
     };
     let Some(table) = ctx.schema().tables.get(&table_name) else {
@@ -331,6 +347,22 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
         let Some(expr) = clause else {
             continue;
         };
+        if let ast::Expr::Param(param) = &expr.node {
+            if ctx.env().let_fact(param).is_none() {
+                let span =
+                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
+                ctx.constrain_param(
+                    param,
+                    span,
+                    Kind::Int,
+                    Some(crate::analysis::ValueDomain::Range {
+                        min: Some(0),
+                        max: None,
+                    }),
+                );
+                continue;
+            }
+        }
         let fact = infer_expression_fact(expr, ctx);
         if let Some(kind) = &fact.kind {
             let base = crate::semantic::literal_base_kind(kind).unwrap_or_else(|| kind.clone());
@@ -1211,38 +1243,6 @@ fn explain_response_kind() -> Kind {
 // SelectIr-typed resolvers, used only by the validators in
 // `crate::semantic`; they delegate to the shared relation core above.
 // ---------------------------------------------------------------------------
-
-pub(crate) fn resolved_select_table_name(ir: &SelectIr, schema: &SchemaIndex) -> Option<String> {
-    let source_table = ir.source.as_ref()?.table.as_ref()?;
-    if ir.graph_lookups.is_empty() {
-        return Some(source_table.clone());
-    }
-
-    if !ir.graph_lookups.len().is_multiple_of(2) {
-        return None;
-    }
-    let mut current = source_table.clone();
-    for pair in ir.graph_lookups.chunks_exact(2) {
-        current = resolve_graph_step_target_table(&current, &pair[0], &pair[1], schema)?;
-    }
-    Some(current)
-}
-
-pub(crate) fn resolve_graph_step_target_table(
-    source_table: &str,
-    edge_lookup: &GraphLookup,
-    target_lookup: &GraphLookup,
-    schema: &SchemaIndex,
-) -> Option<String> {
-    let edge = edge_lookup.table.as_deref()?;
-    let target = target_lookup.table.as_deref()?;
-    let dir = match edge_lookup.direction {
-        GraphDirection::Out => ast::GraphDir::Out,
-        GraphDirection::In => ast::GraphDir::In,
-        GraphDirection::Both => ast::GraphDir::Both,
-    };
-    relation_step_target(source_table, dir, edge, target, schema)
-}
 
 #[cfg(test)]
 mod tests {

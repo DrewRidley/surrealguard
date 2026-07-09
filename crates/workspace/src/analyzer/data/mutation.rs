@@ -15,7 +15,6 @@ use std::collections::BTreeMap;
 use surrealdb_types::{Kind, KindLiteral};
 use surrealguard_syntax::ast;
 use surrealguard_syntax::span::ByteRange;
-use tree_sitter::Node;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::expression::infer::{infer_expression_fact, plain_field_segments};
@@ -484,6 +483,18 @@ fn check_assignment_value(
     let Some(field_kind) = crate::analyzer::data::select::kind_for_path(table, &segments) else {
         return;
     };
+    // An unbound parameter here is constrained to the field's kind;
+    // bound ones check like any value.
+    if let ast::Expr::Param(param) = &assignment.value.node {
+        if ctx.env().let_fact(param).is_none() {
+            let span = surrealguard_syntax::span::SourceSpan::new(
+                ctx.source().clone(),
+                assignment.value.span,
+            );
+            ctx.constrain_param(param, span, field_kind.clone(), None);
+            return;
+        }
+    }
     let Some(value_kind) = infer_expression_fact(&assignment.value, ctx).kind else {
         return;
     };
@@ -548,6 +559,16 @@ pub(crate) fn check_payload_object_keys(
                 // The path resolves; descend for nested keys under it.
                 walk(ctx, table, value, &segments);
                 continue;
+            }
+            if let surrealguard_syntax::ast::Expr::Param(param) = &value.node {
+                if ctx.env().let_fact(param).is_none() {
+                    let span = surrealguard_syntax::span::SourceSpan::new(
+                        ctx.source().clone(),
+                        value.span,
+                    );
+                    ctx.constrain_param(param, span, field_kind.clone(), None);
+                    continue;
+                }
             }
             let Some(value_kind) = infer_expression_fact(value, ctx).kind else {
                 continue;
@@ -707,54 +728,6 @@ fn slice(text: &str, range: ByteRange) -> &str {
 // inference in `crate::semantic`, which walk all six mutation kinds
 // generically.
 // ---------------------------------------------------------------------------
-
-pub(crate) fn mutation_table_name(node: Node<'_>, text: &str) -> Option<String> {
-    match node.kind() {
-        "CreateStatement" => crate::semantic::leading_table_references(node, text, "CREATE")
-            .first()
-            .map(|reference| reference.name.to_string()),
-        "UpdateStatement" => crate::semantic::leading_table_references(node, text, "UPDATE")
-            .first()
-            .map(|reference| reference.name.to_string()),
-        "DeleteStatement" => crate::semantic::leading_table_references(node, text, "DELETE")
-            .first()
-            .map(|reference| reference.name.to_string()),
-        "UpsertStatement" => crate::semantic::leading_table_references(node, text, "UPSERT")
-            .first()
-            .map(|reference| reference.name.to_string()),
-        "InsertStatement" => crate::semantic::table_references_after_keyword(node, text, "INTO")
-            .first()
-            .map(|reference| reference.name.to_string()),
-        "RelateStatement" => relate_edge_table_name(node, text),
-        _ => None,
-    }
-}
-
-pub(crate) fn relate_edge_table_name(node: Node<'_>, text: &str) -> Option<String> {
-    let mut saw_first_lookup = false;
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if matches!(child.kind(), "LookupRight" | "LookupLeft") {
-            saw_first_lookup = true;
-            continue;
-        }
-        if saw_first_lookup && is_identifier_like(child) {
-            let text = &text[child.start_byte()..child.end_byte()];
-            return Some(
-                text.split_once(':')
-                    .map(|(table, _)| table)
-                    .unwrap_or(text)
-                    .trim()
-                    .to_string(),
-            );
-        }
-    }
-    None
-}
-
-fn is_identifier_like(node: Node<'_>) -> bool {
-    matches!(node.kind(), "Ident" | "RecordId" | "Thing" | "Identifier")
-}
 
 #[cfg(test)]
 mod tests {

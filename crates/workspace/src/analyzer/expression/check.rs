@@ -286,6 +286,23 @@ fn check_binary(
         }
     }
 
+    // A comparison against an unbound parameter constrains it to the
+    // other side's kind.
+    if matches!(
+        op,
+        Op::Eq | Op::NotEq | Op::Lt | Op::LtEq | Op::Gt | Op::GtEq
+    ) {
+        let sides = [(lhs, rhs), (rhs, lhs)];
+        for (param_side, typed_side) in sides {
+            if let ast::Expr::Param(param) = &param_side.node {
+                if let Some(kind) = known_kind(ctx, typed_side) {
+                    let span = SourceSpan::new(ctx.source().clone(), param_side.span);
+                    ctx.constrain_param(param, span, kind, None);
+                }
+            }
+        }
+    }
+
     let (Some(left), Some(right)) = (known_kind(ctx, lhs), known_kind(ctx, rhs)) else {
         return;
     };
