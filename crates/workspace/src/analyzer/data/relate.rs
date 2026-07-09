@@ -32,7 +32,13 @@ pub(crate) fn relate_response_kind(stmt: &ast::RelateStmt, ctx: &mut AnalysisCon
     }
 
     let table_hint = mutation::source_table_name(stmt.edge.as_ref());
-    mutation::analyze_expression_positions(ctx, stmt.data.as_ref(), None, table_hint.as_deref());
+    mutation::analyze_expression_positions_for(
+        ctx,
+        stmt.data.as_ref(),
+        None,
+        table_hint.as_deref(),
+        true,
+    );
     let Some(table_name) = mutation::source_table_name(stmt.edge.as_ref()) else {
         return Kind::Any;
     };

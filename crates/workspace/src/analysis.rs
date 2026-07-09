@@ -2612,6 +2612,55 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_checks_define_field_clauses() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            concat!(
+                "DEFINE TABLE person SCHEMAFULL;\n",
+                "DEFINE FIELD age ON person TYPE int DEFAULT 'young';\n",
+                "DEFINE FIELD score ON person TYPE int ASSERT $value + 1;\n",
+                "DEFINE FIELD ratio ON person TYPE int ASSERT $value > 'high';\n",
+                "DEFINE FIELD created ON person TYPE datetime VALUE time::now() READONLY;\n",
+                "DEFINE FIELD synced ON person TYPE bool VALUE http::get('https://x.test');\n",
+                "UPDATE person SET created = time::now();\n",
+                "UPDATE person SET synced = true;\n",
+            )
+            .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        for (code, message) in [
+            // DEFAULT must inhabit the declared type.
+            ("E2001", "field `age` expects `int`, found `string`"),
+            // ASSERT is a condition; `$value` carries the declared kind.
+            ("E2005", "ASSERT has type `int`, expected `bool`"),
+            ("E2004", "incompatible operands for `>`: `int` and `string`"),
+            // READONLY blocks non-creation writes; computed fields warn.
+            ("E2025", "`created` is READONLY; it is set at creation only"),
+            (
+                "E2026",
+                "`synced` is computed by its VALUE clause; this write is overwritten",
+            ),
+            (
+                "L7012",
+                "`http::get` runs on every write from a computed field clause",
+            ),
+        ] {
+            assert!(
+                messages.iter().any(|(c, m)| c == code && m == message),
+                "missing {code}: {message}\nhave: {messages:#?}"
+            );
+        }
+    }
+
+    #[test]
     fn analyze_workspace_full_coverage_batch_one() {
         // Slice batch: required fields (2034), relation writes (4019),
         // RETURN BEFORE on CREATE (4020), whole-table writes (7009),

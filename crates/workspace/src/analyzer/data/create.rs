@@ -18,7 +18,13 @@ pub(crate) fn create_response_kind(stmt: &ast::CreateStmt, ctx: &mut AnalysisCon
     mutation::check_relation_write(ctx, stmt.targets.first(), stmt.data.as_ref());
     mutation::check_return_before_on_create(ctx, stmt.ret.as_ref());
     let table_hint = mutation::source_table_name(stmt.targets.first());
-    mutation::analyze_expression_positions(ctx, stmt.data.as_ref(), None, table_hint.as_deref());
+    mutation::analyze_expression_positions_for(
+        ctx,
+        stmt.data.as_ref(),
+        None,
+        table_hint.as_deref(),
+        true,
+    );
     let Some(table_name) = mutation::source_table_name(stmt.targets.first()) else {
         return Kind::Any;
     };

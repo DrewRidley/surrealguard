@@ -118,6 +118,11 @@ pub struct RelationDef {
 pub struct FieldDef {
     /// The field has a `DEFAULT` clause (or `VALUE`, which supplies one).
     pub has_default: bool,
+    /// `READONLY` — writable only at creation.
+    pub readonly: bool,
+    /// `VALUE <expr>` — computed on write; hand-written values are
+    /// overwritten.
+    pub computed: bool,
     pub path: Vec<String>,
     pub table: String,
     pub kind: Option<Kind>,
@@ -622,10 +627,23 @@ fn extract_field_def(node: Node<'_>, parsed: &ParsedSource) -> Option<FieldDef> 
         None => (None, vec![PartialReason::Unresolved], None),
     };
 
-    let statement = node_text(node, parsed.text()).to_ascii_lowercase();
+    // Clause flags come from the lowered statement — structural, not
+    // text-scanned.
+    let lowered = surrealguard_syntax::lower::lower_statement(node, parsed.text());
+    let (has_default, readonly, computed) = match &lowered.node {
+        surrealguard_syntax::ast::Statement::Define(
+            surrealguard_syntax::ast::DefineStmt::Field(field),
+        ) => (
+            field.default.is_some() || field.value.is_some(),
+            field.readonly,
+            field.value.is_some(),
+        ),
+        _ => (false, false, false),
+    };
     Some(FieldDef {
-        has_default: statement.split_whitespace().any(|word| word == "default")
-            || statement.split_whitespace().any(|word| word == "value"),
+        has_default,
+        readonly,
+        computed,
         path: field_text.split('.').map(str::to_string).collect(),
         table: table_text.to_string(),
         kind,

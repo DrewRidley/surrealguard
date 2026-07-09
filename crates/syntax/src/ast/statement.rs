@@ -220,6 +220,14 @@ pub struct DefineField {
     pub table: Spanned<String>,
     pub ty: Option<Spanned<TypeExpr>>,
     pub overwrite: bool,
+    /// `DEFAULT <expr>` — supplied when a row is created without the field.
+    pub default: Option<Spanned<Expr>>,
+    /// `VALUE <expr>` — the field is computed; writes are overwritten.
+    pub value: Option<Spanned<Expr>>,
+    /// `ASSERT <expr>` — must hold for every write (`$value` in scope).
+    pub assert: Option<Spanned<Expr>>,
+    /// `READONLY` — writable only at creation.
+    pub readonly: bool,
 }
 
 /// `DEFINE INDEX`.

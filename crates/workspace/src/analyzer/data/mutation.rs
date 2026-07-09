@@ -31,6 +31,18 @@ pub(crate) fn analyze_expression_positions(
     where_clause: Option<&ast::Spanned<ast::Expr>>,
     table: Option<&str>,
 ) {
+    analyze_expression_positions_for(ctx, data, where_clause, table, false)
+}
+
+/// `creating` distinguishes CREATE/INSERT/RELATE (where READONLY fields
+/// are legitimately written) from UPDATE/UPSERT (2025).
+pub(crate) fn analyze_expression_positions_for(
+    ctx: &mut AnalysisContext<'_>,
+    data: Option<&ast::DataClause>,
+    where_clause: Option<&ast::Spanned<ast::Expr>>,
+    table: Option<&str>,
+    creating: bool,
+) {
     let row_table = table.and_then(|name| ctx.schema().tables.get(name));
     ctx.with_row_table(row_table, |ctx| {
         if let Some(cond) = where_clause {
@@ -52,6 +64,7 @@ pub(crate) fn analyze_expression_positions(
                     if let Some(table) = row_table {
                         check_assignment_target(ctx, table, &assignment.target);
                         check_assignment_value(ctx, table, assignment);
+                        check_field_write_flags(ctx, table, &assignment.target, creating);
                     }
                 }
             }
@@ -278,6 +291,44 @@ pub(crate) fn check_return_before_on_create(
                 "RETURN BEFORE on CREATE is always NONE; there is no before state".to_string(),
             ));
         }
+    }
+}
+
+/// READONLY fields are written only at creation (2025); computed
+/// (VALUE-clause) fields are overwritten on every write (2026).
+fn check_field_write_flags(
+    ctx: &mut AnalysisContext<'_>,
+    table: &TableDef,
+    target: &ast::Spanned<ast::Idiom>,
+    creating: bool,
+) {
+    let Some(segments) = plain_field_segments(&target.node) else {
+        return;
+    };
+    let Some(field) = table.fields.get(&segments.join(".")) else {
+        return;
+    };
+    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), target.span);
+    if field.readonly && !creating {
+        ctx.emit(surrealguard_diagnostics::catalog::finding(
+            span,
+            2025,
+            format!(
+                "`{}` is READONLY; it is set at creation only",
+                segments.join(".")
+            ),
+        ));
+        return;
+    }
+    if field.computed {
+        ctx.emit(surrealguard_diagnostics::catalog::finding(
+            span,
+            2026,
+            format!(
+                "`{}` is computed by its VALUE clause; this write is overwritten",
+                segments.join(".")
+            ),
+        ));
     }
 }
 

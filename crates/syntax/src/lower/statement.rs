@@ -956,6 +956,10 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
         table: Spanned::new(String::new(), span),
         ty: None,
         overwrite: false,
+        default: None,
+        value: None,
+        assert: None,
+        readonly: false,
     };
 
     for child in named_children(node) {
@@ -975,6 +979,10 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
                     def.table = table;
                 }
             }
+            "DefaultClause" => def.default = clause_expr(child, text),
+            "ValueClause" => def.value = clause_expr(child, text),
+            "AssertClause" => def.assert = clause_expr(child, text),
+            "ReadonlyClause" => def.readonly = true,
             "TypeClause" => {
                 def.ty = named_children(child)
                     .into_iter()
@@ -992,12 +1000,8 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
                     })
                     .map(|ty| super::expr::lower_type_expr(ty, text));
             }
-            "DefaultClause"
-            | "AssertClause"
-            | "ValueClause"
-            | "PermissionsBasicClause"
+            "PermissionsBasicClause"
             | "PermissionsForClause"
-            | "ReadonlyClause"
             | "CommentClause"
             | "ReferenceClause" => {}
             _ if child.is_error() || child.is_missing() => {}

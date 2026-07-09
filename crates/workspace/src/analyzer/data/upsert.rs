@@ -17,11 +17,12 @@ pub(crate) fn upsert_response_kind(stmt: &ast::UpsertStmt, ctx: &mut AnalysisCon
     mutation::check_only_on_table(ctx, stmt.only, stmt.targets.first());
     mutation::check_whole_table_write(ctx, stmt.targets.first(), stmt.where_clause.as_ref());
     let table_hint = mutation::source_table_name(stmt.targets.first());
-    mutation::analyze_expression_positions(
+    mutation::analyze_expression_positions_for(
         ctx,
         stmt.data.as_ref(),
         stmt.where_clause.as_ref(),
         table_hint.as_deref(),
+        false,
     );
     let Some(table_name) = mutation::source_table_name(stmt.targets.first()) else {
         return Kind::Any;
