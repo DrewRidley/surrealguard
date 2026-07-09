@@ -4,6 +4,7 @@
 
 pub mod create;
 pub mod delete;
+pub mod graph;
 pub mod insert;
 pub mod kill;
 pub mod live_select;

@@ -829,10 +829,14 @@ INSERT INTO person { name: 'Ada' };
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(endpoint_messages.len(), 1);
+        // The first RELATE (before OVERWRITE) violates both sides; the
+        // second (after) matches the overwritten relation and is clean.
         assert_eq!(
-            endpoint_messages[0],
-            "RELATE traversal `org->person->user` does not match relation `person` endpoints"
+            endpoint_messages,
+            vec![
+                "relation `person` expects its `in` endpoint to be `user`; found `org`",
+                "relation `person` expects its `out` endpoint to be `org`; found `user`",
+            ]
         );
         let relation = output
             .schema
@@ -2511,11 +2515,11 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::graph(3001))
+            .filter(|finding| finding.code() == FindingCode::schema(1001))
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(messages, vec!["unknown graph edge table `missing`"]);
+        assert_eq!(messages, vec!["unknown table `missing`"]);
     }
 
     #[test]
@@ -2530,16 +2534,13 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| matches!(finding.code(), code if code == FindingCode::graph(3001) || code == FindingCode::graph(3002)))
+            .filter(|finding| finding.code() == FindingCode::schema(1001))
             .map(|finding| finding.message().to_string())
             .collect();
 
         assert_eq!(
             messages,
-            vec![
-                "unknown graph edge table `missing`",
-                "unknown graph target table `ghost`",
-            ]
+            vec!["unknown table `missing`", "unknown table `ghost`",]
         );
     }
 
@@ -2555,11 +2556,60 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::graph(3001))
+            .filter(|finding| finding.code() == FindingCode::schema(1001))
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(messages, vec!["unknown graph edge table `missing`"]);
+        assert_eq!(messages, vec!["unknown table `missing`"]);
+    }
+
+    #[test]
+    fn analyze_workspace_type_checks_edge_filter_conditions() {
+        // Both edge-filter forms get full expression checking with the
+        // edge table as the row: operand misuse inside them is 2004.
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nDEFINE FIELD since ON likes TYPE datetime;\nSELECT * FROM person->likes[WHERE since > 5]->post;\nSELECT * FROM person->(likes WHERE since + 1)->post;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::type_error(2004))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert!(
+            messages.contains(&"incompatible operands for `>`: `datetime` and `int`".to_string())
+        );
+        assert!(
+            messages.contains(&"incompatible operands for `+`: `datetime` and `int`".to_string())
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_reports_unreachable_graph_hop_targets() {
+        // `likes` goes to `post`; landing on `comment` is 3003.
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE comment;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nSELECT * FROM person->likes->comment;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::graph(3003))
+            .map(|finding| finding.message().to_string())
+            .collect();
+
+        assert_eq!(
+            messages,
+            vec!["relation `likes` cannot reach `comment` (goes to `post`)"]
+        );
     }
 
     #[test]
@@ -2574,13 +2624,13 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::graph(3003))
+            .filter(|finding| finding.code() == FindingCode::graph(3002))
             .map(|finding| finding.message().to_string())
             .collect();
 
         assert_eq!(
             messages,
-            vec!["graph traversal `post->likes->person` does not match relation `likes` endpoints"]
+            vec!["relation `likes` does not connect `post` as `in` (source of `->`)"]
         );
     }
 
@@ -2612,16 +2662,23 @@ INSERT INTO person { name: 'Ada' };
         let mismatches: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::graph(3003))
+            .filter(|finding| finding.code() == FindingCode::graph(3006))
             .collect();
 
-        assert_eq!(mismatches.len(), 1);
+        let messages: Vec<_> = mismatches
+            .iter()
+            .map(|finding| finding.message().to_string())
+            .collect();
+        // Both endpoints sit on the wrong side.
         assert_eq!(
-            mismatches[0].message(),
-            "RELATE traversal `post->likes->person` does not match relation `likes` endpoints"
+            messages,
+            vec![
+                "relation `likes` expects its `in` endpoint to be `person`; found `post`",
+                "relation `likes` expects its `out` endpoint to be `post`; found `person`",
+            ]
         );
         assert_eq!(mismatches[0].span().source(), &source);
-        assert_eq!(output.sources[&source].diagnostics.len(), 1);
+        assert_eq!(output.sources[&source].diagnostics.len(), 2);
     }
 
     #[test]
@@ -2636,16 +2693,16 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| matches!(finding.code(), code if code == FindingCode::graph(3001) || code == FindingCode::graph(3002)))
+            .filter(|finding| matches!(finding.code(), code if code == FindingCode::schema(1001) || code == FindingCode::graph(3008)))
             .map(|finding| finding.message().to_string())
             .collect();
 
         assert_eq!(
             messages,
             vec![
-                "unknown RELATE edge table `missing`",
-                "unknown RELATE edge table `likes`",
-                "unknown RELATE target table `ghost`",
+                "unknown table `missing`",
+                "unknown table `ghost` in RELATE endpoint",
+                "unknown table `likes`",
             ]
         );
     }
@@ -2662,7 +2719,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .filter(|finding| finding.code() == FindingCode::schema(1003))
             .map(|finding| finding.message().to_string())
             .collect();
 
@@ -2684,7 +2741,7 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1004))
+            .filter(|finding| finding.code() == FindingCode::schema(1003))
             .map(|finding| finding.message().to_string())
             .collect();
 

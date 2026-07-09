@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use surrealguard_diagnostics::{Finding, FindingCode, Severity};
+use surrealguard_diagnostics::Finding;
 use surrealguard_syntax::parse::ParsedSource;
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
@@ -100,18 +100,6 @@ pub fn analyze_sources_in_source_order(
                 analyzer_env = ctx.into_env();
             }
 
-            collect_select_graph_reference_diagnostics(
-                statement,
-                parsed,
-                &output.schema,
-                &mut output.diagnostics,
-            );
-            collect_select_projection_field_diagnostics(
-                statement,
-                parsed,
-                &output.schema,
-                &mut output.diagnostics,
-            );
             collect_select_param_kind_inferences_with_env(
                 statement,
                 parsed,
@@ -172,50 +160,6 @@ fn collect_statement_nodes<'tree>(node: Node<'tree>, statements: &mut Vec<Node<'
     for child in node.children(&mut cursor) {
         collect_statement_nodes(child, statements);
     }
-}
-
-pub fn validate_select_graph_references(
-    parsed_sources: &[ParsedSource],
-    schema: &SchemaIndex,
-) -> Vec<Finding> {
-    let mut diagnostics = Vec::new();
-
-    for parsed in parsed_sources {
-        if !parsed.syntax_diagnostics().is_empty() {
-            continue;
-        }
-
-        collect_select_graph_reference_diagnostics(
-            parsed.tree().root_node(),
-            parsed,
-            schema,
-            &mut diagnostics,
-        );
-    }
-
-    diagnostics
-}
-
-pub fn validate_select_projection_fields(
-    parsed_sources: &[ParsedSource],
-    schema: &SchemaIndex,
-) -> Vec<Finding> {
-    let mut diagnostics = Vec::new();
-
-    for parsed in parsed_sources {
-        if !parsed.syntax_diagnostics().is_empty() {
-            continue;
-        }
-
-        collect_select_projection_field_diagnostics(
-            parsed.tree().root_node(),
-            parsed,
-            schema,
-            &mut diagnostics,
-        );
-    }
-
-    diagnostics
 }
 
 pub fn infer_param_kinds(
@@ -976,193 +920,6 @@ fn non_row_preserving_modifier(kind: &str, span: SourceSpan) -> SelectModifierAn
     }
 }
 
-fn collect_select_graph_reference_diagnostics(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    schema: &SchemaIndex,
-    diagnostics: &mut Vec<Finding>,
-) {
-    match node.kind() {
-        "SelectStatement" => {
-            validate_graph_references_for_select_statement(node, parsed, schema, diagnostics)
-        }
-        "RelateStatement" => {
-            validate_graph_references_for_relate_statement(node, parsed, schema, diagnostics)
-        }
-        _ => {}
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_select_graph_reference_diagnostics(child, parsed, schema, diagnostics);
-    }
-}
-
-fn validate_graph_references_for_select_statement(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    schema: &SchemaIndex,
-    diagnostics: &mut Vec<Finding>,
-) {
-    let ir = select_ir_from_statement(node, parsed.source_id(), parsed.text());
-    if ir.graph_lookups.is_empty() {
-        return;
-    }
-    if !ir.graph_lookups.len().is_multiple_of(2) {
-        return;
-    }
-
-    let Some(mut current_table) = ir.source.as_ref().and_then(|source| source.table.clone()) else {
-        return;
-    };
-
-    for pair in ir.graph_lookups.chunks_exact(2) {
-        let edge_lookup = &pair[0];
-        let target_lookup = &pair[1];
-        let Some(edge_table) = edge_lookup.table.as_deref() else {
-            return;
-        };
-        let edge_relation = schema
-            .tables
-            .get(edge_table)
-            .and_then(|table| table.relation.as_ref());
-        if edge_relation.is_none() {
-            diagnostics.push(Finding::new(
-                edge_lookup.span.clone(),
-                FindingCode::graph(3001),
-                Severity::Error,
-                format!("unknown graph edge table `{edge_table}`"),
-            ));
-        }
-
-        let Some(target_table) = target_lookup.table.as_deref() else {
-            return;
-        };
-        let target_exists = schema.tables.contains_key(target_table);
-        if !target_exists {
-            diagnostics.push(Finding::new(
-                target_lookup.span.clone(),
-                FindingCode::graph(3002),
-                Severity::Error,
-                format!("unknown graph target table `{target_table}`"),
-            ));
-        }
-
-        if edge_relation.is_some() && target_exists {
-            if let Some(next_table) = crate::analyzer::data::select::resolve_graph_step_target_table(
-                &current_table,
-                edge_lookup,
-                target_lookup,
-                schema,
-            ) {
-                current_table = next_table;
-            } else {
-                diagnostics.push(Finding::new(
-                    node_span(node, parsed.source_id().clone()),
-                    FindingCode::graph(3003),
-                    Severity::Error,
-                    format!(
-                        "graph traversal `{current_table}->{edge_table}->{target_table}` does not match relation `{edge_table}` endpoints"
-                    ),
-                ));
-                return;
-            }
-        }
-    }
-}
-
-fn validate_graph_references_for_relate_statement(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    schema: &SchemaIndex,
-    diagnostics: &mut Vec<Finding>,
-) {
-    let Some(relate) = relate_graph_reference(node, parsed) else {
-        return;
-    };
-
-    let source_exists = schema.tables.contains_key(&relate.source_table);
-    if !source_exists {
-        diagnostics.push(Finding::new(
-            relate.source_span.clone(),
-            FindingCode::graph(3002),
-            Severity::Error,
-            format!("unknown RELATE source table `{}`", relate.source_table),
-        ));
-    }
-
-    let edge_relation = schema
-        .tables
-        .get(&relate.edge_table)
-        .and_then(|table| table.relation.as_ref());
-    if edge_relation.is_none() {
-        diagnostics.push(Finding::new(
-            relate.edge_span.clone(),
-            FindingCode::graph(3001),
-            Severity::Error,
-            format!("unknown RELATE edge table `{}`", relate.edge_table),
-        ));
-    }
-
-    let target_exists = schema.tables.contains_key(&relate.target_table);
-    if !target_exists {
-        diagnostics.push(Finding::new(
-            relate.target_span.clone(),
-            FindingCode::graph(3002),
-            Severity::Error,
-            format!("unknown RELATE target table `{}`", relate.target_table),
-        ));
-    }
-
-    if let Some(relation) = edge_relation {
-        let endpoints_match = relation
-            .in_tables
-            .iter()
-            .any(|table| table == &relate.source_table)
-            && relation
-                .out_tables
-                .iter()
-                .any(|table| table == &relate.target_table);
-        if source_exists && target_exists && !endpoints_match {
-            diagnostics.push(Finding::new(
-                node_span(node, parsed.source_id().clone()),
-                FindingCode::graph(3003),
-                Severity::Error,
-                format!(
-                    "RELATE traversal `{}->{}->{}` does not match relation `{}` endpoints",
-                    relate.source_table, relate.edge_table, relate.target_table, relate.edge_table
-                ),
-            ));
-        }
-    }
-}
-
-struct RelateGraphReference {
-    source_table: String,
-    source_span: SourceSpan,
-    edge_table: String,
-    edge_span: SourceSpan,
-    target_table: String,
-    target_span: SourceSpan,
-}
-
-fn relate_graph_reference(node: Node<'_>, parsed: &ParsedSource) -> Option<RelateGraphReference> {
-    let mut cursor = node.walk();
-    let mut children = node.children(&mut cursor);
-    let source = children.find(|child| child.kind() == "RecordId")?;
-    let edge = children.find(|child| is_identifier_like(*child))?;
-    let target = children.find(|child| child.kind() == "RecordId")?;
-
-    Some(RelateGraphReference {
-        source_table: table_name_from_node_text(node_text(source, parsed.text())).to_string(),
-        source_span: node_span(source, parsed.source_id().clone()),
-        edge_table: table_name_from_node_text(node_text(edge, parsed.text())).to_string(),
-        edge_span: node_span(edge, parsed.source_id().clone()),
-        target_table: table_name_from_node_text(node_text(target, parsed.text())).to_string(),
-        target_span: node_span(target, parsed.source_id().clone()),
-    })
-}
-
 fn define_let_from_statement(node: Node<'_>, parsed: &ParsedSource, env: &mut StatementEnv) {
     if let (Some(name_node), Some(value_node)) =
         (let_variable_name_node(node), let_value_node(node))
@@ -1309,33 +1066,6 @@ fn first_child_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>>
     found
 }
 
-fn collect_select_projection_field_diagnostics(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    schema: &SchemaIndex,
-    diagnostics: &mut Vec<Finding>,
-) {
-    // Field references now emit from the SELECT analyzer; the graph-local
-    // WHERE check remains here until the graph family lands.
-    if node.kind() == "SelectStatement" {
-        validate_graph_local_where_fields_for_select_statement(node, parsed, schema, diagnostics);
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_select_projection_field_diagnostics(child, parsed, schema, diagnostics);
-    }
-}
-
-fn row_context_field_paths_from_clause(clause: Node<'_>, parsed: &ParsedSource) -> Vec<FieldPath> {
-    let mut paths = Vec::new();
-    let mut cursor = clause.walk();
-    for child in clause.children(&mut cursor) {
-        collect_row_context_field_paths(child, parsed, &mut paths);
-    }
-    paths
-}
-
 pub(crate) fn kind_is_assignable_to(actual: &Kind, expected: &Kind) -> bool {
     if matches!(expected, Kind::Any) || actual == expected {
         return true;
@@ -1389,88 +1119,8 @@ pub(crate) fn literal_base_kind(kind: &Kind) -> Option<Kind> {
     Some(base)
 }
 
-fn validate_graph_local_where_fields_for_select_statement(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    schema: &SchemaIndex,
-    diagnostics: &mut Vec<Finding>,
-) {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        validate_graph_local_where_fields_in_node(child, parsed, schema, diagnostics);
-    }
-}
-
-fn validate_graph_local_where_fields_in_node(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    schema: &SchemaIndex,
-    diagnostics: &mut Vec<Finding>,
-) {
-    if node.kind() == "Path" {
-        validate_graph_local_where_fields_in_path(node, parsed, schema, diagnostics);
-        return;
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        validate_graph_local_where_fields_in_node(child, parsed, schema, diagnostics);
-    }
-}
-
-fn validate_graph_local_where_fields_in_path(
-    path: Node<'_>,
-    parsed: &ParsedSource,
-    schema: &SchemaIndex,
-    diagnostics: &mut Vec<Finding>,
-) {
-    let mut cursor = path.walk();
-    let children: Vec<_> = path.children(&mut cursor).collect();
-
-    for (index, child) in children.iter().copied().enumerate() {
-        if child.kind() != "Lookup" {
-            continue;
-        }
-        let Some(edge_table_name) = graph_lookup_table_name_from_node(child, parsed) else {
-            continue;
-        };
-        let Some(edge_table) = schema.tables.get(&edge_table_name) else {
-            continue;
-        };
-        if edge_table.fields.is_empty() {
-            continue;
-        }
-
-        validate_where_descendants_on_table(child, parsed, edge_table, diagnostics);
-        if let Some(next) = children.get(index + 1).copied() {
-            if next.kind() == "Filter" {
-                validate_where_descendants_on_table(next, parsed, edge_table, diagnostics);
-            }
-        }
-    }
-}
-
 // Used by the graph-local WHERE check below; retires with the graph
 // family (3xxx).
-fn validate_where_descendants_on_table(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    table: &crate::schema::TableDef,
-    diagnostics: &mut Vec<Finding>,
-) {
-    if node.kind() == "WhereClause" {
-        for path in row_context_field_paths_from_clause(node, parsed) {
-            validate_field_path_on_table(path, table, diagnostics);
-        }
-        return;
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        validate_where_descendants_on_table(child, parsed, table, diagnostics);
-    }
-}
-
 fn graph_lookup_table_name_from_node(node: Node<'_>, parsed: &ParsedSource) -> Option<String> {
     if is_identifier_like(node) {
         return Some(node_text(node, parsed.text()).trim().to_string());
@@ -1483,26 +1133,6 @@ fn graph_lookup_table_name_from_node(node: Node<'_>, parsed: &ParsedSource) -> O
         }
     }
     None
-}
-
-fn collect_row_context_field_paths(
-    node: Node<'_>,
-    parsed: &ParsedSource,
-    paths: &mut Vec<FieldPath>,
-) {
-    if node.kind() == "VariableName" || node.kind() == "Keyword" {
-        return;
-    }
-
-    if is_row_context_field_path_node(node) {
-        paths.push(field_path_from_node(node, parsed));
-        return;
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_row_context_field_paths(child, parsed, paths);
-    }
 }
 
 pub(crate) fn is_row_context_field_path_node(node: Node<'_>) -> bool {
@@ -2094,33 +1724,11 @@ fn is_kind_inference_operator(operator: &str) -> bool {
     matches!(operator, "=" | "!=" | "<" | "<=" | ">" | ">=")
 }
 
-fn validate_field_path_on_table(
-    path: FieldPath,
-    table: &crate::schema::TableDef,
-    diagnostics: &mut Vec<Finding>,
-) {
-    if !field_path_exists_on_table(table, &path) {
-        diagnostics.push(Finding::new(
-            path.span,
-            FindingCode::schema(1004),
-            Severity::Error,
-            format!("unknown field `{}` on table `{}`", path.text, table.name),
-        ));
-    }
-}
-
 fn exact_field_def_for_path<'a>(
     table: &'a crate::schema::TableDef,
     path: &FieldPath,
 ) -> Option<&'a crate::schema::FieldDef> {
     table.fields.get(&path.segments.join("."))
-}
-
-fn field_path_exists_on_table(table: &crate::schema::TableDef, path: &FieldPath) -> bool {
-    exact_field_def_for_path(table, path).is_some()
-        || table.fields.values().any(|field| {
-            field.path.len() > path.segments.len() && field.path.starts_with(&path.segments)
-        })
 }
 
 #[derive(Clone, Copy)]

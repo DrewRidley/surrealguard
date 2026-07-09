@@ -36,10 +36,15 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     let table_name = match &from.node {
         ast::Expr::Table(name) => name.node.clone(),
         ast::Expr::RecordId { table, .. } => table.node.clone(),
-        ast::Expr::Idiom(idiom) => match graph_source_table(idiom, ctx.schema()) {
-            Some(table) => table,
-            None => return Kind::Any,
-        },
+        ast::Expr::Idiom(idiom) => {
+            if let Some(leading) = leading_field_table(idiom) {
+                crate::analyzer::data::graph::check_graph_idiom(ctx, &leading, idiom);
+            }
+            match graph_source_table(idiom, ctx.schema()) {
+                Some(table) => table,
+                None => return Kind::Any,
+            }
+        }
         // A subquery source iterates the inner response's rows: with a
         // wildcard projection the row type is the inner element type.
         // (Field projections over subquery rows need object-literal field
@@ -171,6 +176,13 @@ fn object_literal(fields: BTreeMap<String, Kind>) -> Kind {
 }
 
 /// Resolves `FROM person->likes->post` to the traversal's target table.
+fn leading_field_table(idiom: &ast::Idiom) -> Option<String> {
+    match idiom.parts.first().map(|part| &part.node) {
+        Some(ast::IdiomPart::Field(name)) => Some(name.clone()),
+        _ => None,
+    }
+}
+
 fn graph_source_table(idiom: &ast::Idiom, schema: &SchemaIndex) -> Option<String> {
     let (first, rest) = idiom.parts.split_first()?;
     let ast::IdiomPart::Field(source_table) = &first.node else {
@@ -286,6 +298,7 @@ fn value_projection_kind(
 
     match &expr.node {
         ast::Expr::Idiom(idiom) if starts_with_graph(idiom) => {
+            crate::analyzer::data::graph::check_graph_idiom(ctx, row_table_name, idiom);
             graph_projection_kind(row_table_name, idiom, ctx.schema(), false)
         }
         ast::Expr::Idiom(idiom) => {
@@ -345,6 +358,7 @@ fn project_expr(
 
     if let ast::Expr::Idiom(idiom) = &expr.node {
         if starts_with_graph(idiom) {
+            crate::analyzer::data::graph::check_graph_idiom(ctx, row_table_name, idiom);
             // `->likes->post.{title, id}` without an alias fans out into
             // nested per-field arrays.
             if alias_name.is_none() {
