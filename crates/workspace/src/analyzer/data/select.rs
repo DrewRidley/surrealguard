@@ -113,11 +113,47 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
         }
         if let Some(segments) = plain_field_segments(&idiom.node) {
             crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1008);
+            // FETCH substitutes records; fetching a scalar does nothing.
+            if let Some(kind) = kind_for_path(table, &segments) {
+                if kind != Kind::Any && !kind_may_hold_record(&kind) {
+                    let span = surrealguard_syntax::span::SourceSpan::new(
+                        ctx.source().clone(),
+                        idiom.span,
+                    );
+                    ctx.emit(surrealguard_diagnostics::catalog::finding(
+                        span,
+                        1023,
+                        format!(
+                            "FETCH `{}` does nothing: `{kind}` holds no records",
+                            segments.join(".")
+                        ),
+                    ));
+                }
+            }
         }
     }
     for idiom in &stmt.split {
         if let Some(segments) = plain_field_segments(&idiom.node) {
             crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1009);
+            // SPLIT fans rows out over a collection field.
+            if let Some(kind) = kind_for_path(table, &segments) {
+                let base =
+                    crate::semantic::literal_base_kind(&kind).unwrap_or_else(|| kind.clone());
+                if !matches!(base, Kind::Array(_, _) | Kind::Set(_, _) | Kind::Any) {
+                    let span = surrealguard_syntax::span::SourceSpan::new(
+                        ctx.source().clone(),
+                        idiom.span,
+                    );
+                    ctx.emit(surrealguard_diagnostics::catalog::finding(
+                        span,
+                        1024,
+                        format!(
+                            "SPLIT `{}` expects a collection field, found `{kind}`",
+                            segments.join(".")
+                        ),
+                    ));
+                }
+            }
         }
     }
     if let Some(group) = &stmt.group {
@@ -130,6 +166,27 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     if let Some(order) = &stmt.order {
         for key in &order.keys {
             crate::analyzer::data::check_expression_field_paths(ctx, table, &key.expr, 1010);
+            let kind = ctx.with_row_table(Some(table), |ctx| {
+                infer_expression_fact(&key.expr, ctx).kind
+            });
+            if let Some(kind) = kind {
+                let base =
+                    crate::semantic::literal_base_kind(&kind).unwrap_or_else(|| kind.clone());
+                if matches!(
+                    base,
+                    Kind::Array(_, _) | Kind::Set(_, _) | Kind::Object | Kind::Geometry(_)
+                ) {
+                    let span = surrealguard_syntax::span::SourceSpan::new(
+                        ctx.source().clone(),
+                        key.expr.span,
+                    );
+                    ctx.emit(surrealguard_diagnostics::catalog::finding(
+                        span,
+                        2017,
+                        format!("ORDER BY on `{kind}` orders by structure, not value"),
+                    ));
+                }
+            }
         }
     }
 
@@ -172,12 +229,64 @@ fn walk_projections_for_findings(stmt: &ast::SelectStmt, ctx: &mut AnalysisConte
     Kind::Any
 }
 
+/// Clause-value invariants: LIMIT/START must be integers (2018) and
+/// non-negative when constant (2024); TIMEOUT takes a duration (2019).
+fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
+    for (clause, name) in [(&stmt.limit, "LIMIT"), (&stmt.start, "START")] {
+        let Some(expr) = clause else {
+            continue;
+        };
+        let fact = infer_expression_fact(expr, ctx);
+        if let Some(kind) = &fact.kind {
+            let base = crate::semantic::literal_base_kind(kind).unwrap_or_else(|| kind.clone());
+            if !matches!(base, Kind::Int | Kind::Number | Kind::Any) {
+                let span =
+                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
+                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                    span,
+                    2018,
+                    format!("{name} expects an integer, found `{kind}`"),
+                ));
+                continue;
+            }
+        }
+        if let Some(surrealdb_types::Value::Number(surrealdb_types::Number::Int(value))) =
+            &fact.value
+        {
+            if *value < 0 {
+                let span =
+                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
+                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                    span,
+                    2024,
+                    format!("{name} cannot be negative"),
+                ));
+            }
+        }
+    }
+    if let Some(expr) = &stmt.timeout {
+        let kind = infer_expression_fact(expr, ctx).kind;
+        if let Some(kind) = kind {
+            if !matches!(kind, Kind::Duration | Kind::Any) {
+                let span =
+                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
+                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                    span,
+                    2019,
+                    format!("TIMEOUT expects a duration, found `{kind}`"),
+                ));
+            }
+        }
+    }
+}
+
 /// Statement-shape invariants that don't depend on the schema: ONLY
 /// without a single-row guarantee (4003 — a deterministic
 /// `SingleOnlyOutput` runtime error) and duplicate projection keys (4011).
 /// (VALUE's single-projection rule needs no finding: both SurrealDB's
 /// parser and ours reject the syntax.)
 fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
+    check_clause_values(stmt, ctx);
     if stmt.only {
         let table_target = stmt
             .from
@@ -215,6 +324,17 @@ fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContex
                 format!("duplicate projection key `{key}`"),
             ));
         }
+    }
+}
+
+/// Whether a kind can transitively hold record links (making FETCH
+/// meaningful): records themselves, collections/options/unions of them.
+fn kind_may_hold_record(kind: &Kind) -> bool {
+    match kind {
+        Kind::Record(_) | Kind::Any | Kind::Object => true,
+        Kind::Array(element, _) | Kind::Set(element, _) => kind_may_hold_record(element),
+        Kind::Either(variants) => variants.iter().any(kind_may_hold_record),
+        _ => false,
     }
 }
 

@@ -44,6 +44,7 @@ pub(crate) fn check_value_expression(
             for element in elements {
                 check_value_expression(ctx, element);
             }
+            check_mixed_array(ctx, expr, elements);
         }
         ast::Expr::Object(fields) => {
             for (_, value) in fields {
@@ -72,27 +73,45 @@ fn check_binary(
     };
 
     use ast::BinaryOp as Op;
-    let compatible = match op {
-        Op::Add | Op::Sub | Op::Mul | Op::Div => binary_result_kind(op, &left, &right).is_some(),
-        // Values of one kind compare among themselves; numerics widen.
-        // NONE/NULL comparisons are the idiomatic existence checks.
-        Op::Eq | Op::NotEq | Op::Lt | Op::LtEq | Op::Gt | Op::GtEq => comparable(&left, &right),
-        // Truthiness makes AND/OR legal on any operand (2006 lints style
-        // separately); ?? accepts anything by design.
-        _ => true,
-    };
-    if compatible {
-        return;
-    }
-    emit(
-        ctx,
-        whole.span,
-        2004,
-        format!(
-            "incompatible operands for `{}`: `{left}` and `{right}`",
-            op_text(op)
+    // Arithmetic outside SurrealDB's operator tables fails at runtime
+    // (2004). Comparisons never fail — values of different kinds order by
+    // kind — so a cross-kind comparison runs and is just meaningless
+    // (7005). NONE/NULL comparisons are the idiomatic existence checks;
+    // truthiness makes AND/OR legal on anything; ?? accepts anything.
+    let (code, message) = match op {
+        Op::Add | Op::Sub | Op::Mul | Op::Div
+            if binary_result_kind(op, &left, &right).is_none() =>
+        {
+            (
+                2004,
+                format!(
+                    "incompatible operands for `{}`: `{left}` and `{right}`",
+                    op_text(op)
+                ),
+            )
+        }
+        Op::Eq | Op::NotEq if !comparable(&left, &right) => (
+            7005,
+            format!(
+                "`{}` between `{left}` and `{right}` is always {}",
+                op_text(op),
+                if matches!(op, Op::Eq) {
+                    "false"
+                } else {
+                    "true"
+                },
+            ),
         ),
-    );
+        Op::Lt | Op::LtEq | Op::Gt | Op::GtEq if !comparable(&left, &right) => (
+            7005,
+            format!(
+                "`{}` between `{left}` and `{right}` orders by kind, not value",
+                op_text(op),
+            ),
+        ),
+        _ => return,
+    };
+    emit(ctx, whole.span, code, message);
 }
 
 fn comparable(left: &Kind, right: &Kind) -> bool {
@@ -122,6 +141,40 @@ fn comparable(left: &Kind, right: &Kind) -> bool {
                 }
             }
         }
+    }
+}
+
+/// An array literal whose elements have several kinds usually wants a
+/// review (7003) — heterogeneous arrays are legal but rarely intended.
+fn check_mixed_array(
+    ctx: &mut AnalysisContext<'_>,
+    whole: &ast::Spanned<ast::Expr>,
+    elements: &[ast::Spanned<ast::Expr>],
+) {
+    let mut kinds: Vec<Kind> = Vec::new();
+    for element in elements {
+        let Some(kind) = known_kind(ctx, element) else {
+            return;
+        };
+        let base = crate::semantic::literal_base_kind(&kind).unwrap_or(kind);
+        if !kinds.contains(&base) {
+            kinds.push(base);
+        }
+    }
+    if kinds.len() > 1 {
+        emit(
+            ctx,
+            whole.span,
+            7003,
+            format!(
+                "array literal mixes kinds: {}",
+                kinds
+                    .iter()
+                    .map(|k| format!("`{k}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
     }
 }
 

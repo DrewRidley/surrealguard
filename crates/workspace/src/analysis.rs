@@ -2563,6 +2563,52 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_reports_clause_value_and_lint_findings() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD tags ON person TYPE array<string>;\nLET $lim = 'a';\nSELECT * FROM person LIMIT $lim;\nSELECT * FROM person START -1;\nSELECT * FROM person FETCH age;\nSELECT * FROM person SPLIT age;\nSELECT * FROM person ORDER BY tags;\nLET $auth = 1;\nRETURN [1, 'a'];\nIF true { RETURN 1; };\nRETURN array::map([1], |$v, $i, $extra| $v);\nSELECT type::field('ghost') FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        for (code, message) in [
+            ("E2018", "LIMIT expects an integer, found `string`"),
+            ("E2024", "START cannot be negative"),
+            ("E1023", "FETCH `age` does nothing: `int` holds no records"),
+            (
+                "E1024",
+                "SPLIT `age` expects a collection field, found `int`",
+            ),
+            (
+                "E2017",
+                "ORDER BY on `array<string>` orders by structure, not value",
+            ),
+            (
+                "E6007",
+                "`$auth` is a protected parameter and cannot be assigned",
+            ),
+            ("L7003", "array literal mixes kinds: `int`, `string`"),
+            ("L7004", "condition is constant"),
+            (
+                "E5004",
+                "`array::map` calls its closure with 2 arguments; `$extra` is never bound",
+            ),
+            ("E5005", "`ghost` is not a field of table `person`"),
+        ] {
+            assert!(
+                messages.iter().any(|(c, m)| c == code && m == message),
+                "missing {code}: {message}\nhave: {messages:#?}"
+            );
+        }
+    }
+
+    #[test]
     fn analyze_workspace_reports_statement_shape_misuse() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
@@ -2617,7 +2663,7 @@ INSERT INTO person { name: 'Ada' };
     #[test]
     fn analyze_workspace_type_checks_edge_filter_conditions() {
         // Both edge-filter forms get full expression checking with the
-        // edge table as the row: operand misuse inside them is 2004.
+        // edge table as the row.
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
             "query".into(),
@@ -2628,16 +2674,19 @@ INSERT INTO person { name: 'Ada' };
         let messages: Vec<_> = output.sources[&source]
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::type_error(2004))
-            .map(|finding| finding.message().to_string())
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
             .collect();
 
-        assert!(
-            messages.contains(&"incompatible operands for `>`: `datetime` and `int`".to_string())
-        );
-        assert!(
-            messages.contains(&"incompatible operands for `+`: `datetime` and `int`".to_string())
-        );
+        // Comparisons never fail at runtime (values order by kind), so the
+        // cross-kind comparison is a lint; the arithmetic is a type error.
+        assert!(messages.contains(&(
+            "L7005".to_string(),
+            "`>` between `datetime` and `int` orders by kind, not value".to_string()
+        )));
+        assert!(messages.contains(&(
+            "E2004".to_string(),
+            "incompatible operands for `+`: `datetime` and `int`".to_string()
+        )));
     }
 
     #[test]

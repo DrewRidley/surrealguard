@@ -9,7 +9,7 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::expression::infer::closure_return_kind;
-use crate::analyzer::function::closure_arg;
+use crate::analyzer::function::{check_closure_arity, closure_arg};
 
 pub fn analyze_set_map(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
     let Some((Kind::Set(element, max_len), closure)) =
@@ -17,6 +17,7 @@ pub fn analyze_set_map(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[
     else {
         return Kind::Any;
     };
+    check_closure_arity(ctx, call, closure, 2);
 
     let mapped =
         closure_return_kind(closure, &[(*element).clone(), Kind::Int], ctx).unwrap_or(Kind::Any);

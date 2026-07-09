@@ -9,7 +9,7 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::expression::infer::closure_return_kind;
-use crate::analyzer::function::closure_arg;
+use crate::analyzer::function::{check_closure_arity, closure_arg};
 
 pub fn analyze_set_reduce(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
     let element = match args.first() {
@@ -20,6 +20,7 @@ pub fn analyze_set_reduce(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args:
     let Some(closure) = closure else {
         return Kind::Any;
     };
+    check_closure_arity(ctx, call, closure, 3);
 
     closure_return_kind(closure, &[accumulator, element, Kind::Int], ctx).unwrap_or(Kind::Any)
 }

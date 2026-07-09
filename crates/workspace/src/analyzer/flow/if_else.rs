@@ -16,7 +16,19 @@ pub fn analyze_if_else(ctx: &mut AnalysisContext<'_>, stmt: &ast::IfElseStmt) ->
         // Conditions are analyzed for their facts (params, dependencies),
         // not their value — but a condition whose kind can never be a bool
         // is worth a warning (truthiness makes it run regardless).
-        let condition_kind = crate::analyzer::expression::analyze_expr(ctx, &branch.condition);
+        let condition_fact = crate::analyzer::expression::expr_fact(ctx, &branch.condition);
+        if condition_fact.value.is_some() {
+            let span = surrealguard_syntax::span::SourceSpan::new(
+                ctx.source().clone(),
+                branch.condition.span,
+            );
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                span,
+                7004,
+                "condition is constant".to_string(),
+            ));
+        }
+        let condition_kind = condition_fact.kind.unwrap_or(Kind::Any);
         if definitely_not_bool(&condition_kind) {
             let span = surrealguard_syntax::span::SourceSpan::new(
                 ctx.source().clone(),

@@ -13,10 +13,41 @@ use crate::analyzer::function::const_value_arg;
 
 pub fn analyze_type_field(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
     let _ = args;
-    let Some(surrealdb_types::Value::String(path)) = const_value_arg(ctx, call, 0) else {
-        return Kind::Any;
+    let path = match const_value_arg(ctx, call, 0) {
+        Some(surrealdb_types::Value::String(path)) => path,
+        Some(other) => {
+            // The value is known and provably not a field path.
+            if let Some(arg) = call.args.first() {
+                let span =
+                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), arg.span);
+                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                    span,
+                    5007,
+                    format!("type::field expects a field-path string, found `{other:?}`"),
+                ));
+            }
+            return Kind::Any;
+        }
+        None => return Kind::Any,
     };
-    field_kind_for_path(ctx, &path).unwrap_or(Kind::Any)
+    match field_kind_for_path(ctx, &path) {
+        Some(kind) => kind,
+        None => {
+            if ctx.row_table().is_some() {
+                if let Some(arg) = call.args.first() {
+                    let span =
+                        surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), arg.span);
+                    let table = ctx.row_table().map(|t| t.name.clone()).unwrap_or_default();
+                    ctx.emit(surrealguard_diagnostics::catalog::finding(
+                        span,
+                        5005,
+                        format!("`{path}` is not a field of table `{table}`"),
+                    ));
+                }
+            }
+            Kind::Any
+        }
+    }
 }
 
 pub(crate) fn field_kind_for_path(ctx: &AnalysisContext<'_>, path: &str) -> Option<Kind> {

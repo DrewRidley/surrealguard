@@ -152,6 +152,37 @@ pub(crate) fn const_value_arg(
     crate::analyzer::expression::infer::infer_expression_fact(arg, ctx).value
 }
 
+/// A consumer invokes its closure with a fixed argument list; declaring
+/// more parameters than it passes leaves the extras unbound (5004).
+pub(crate) fn check_closure_arity(
+    ctx: &mut crate::analyzer::context::AnalysisContext<'_>,
+    call: &ast::Call,
+    closure: &ast::Closure,
+    provided: usize,
+) {
+    if closure.params.len() <= provided {
+        return;
+    }
+    let Some((name, _)) = closure.params.get(provided) else {
+        return;
+    };
+    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), name.span);
+    ctx.emit(surrealguard_diagnostics::catalog::finding(
+        span,
+        5004,
+        format!(
+            "`{}` calls its closure with {provided} {}; `${}` is never bound",
+            call.path.node,
+            if provided == 1 {
+                "argument"
+            } else {
+                "arguments"
+            },
+            name.node,
+        ),
+    ));
+}
+
 /// The closure expression at argument position `index`, when the call site
 /// provides one. (Synthetic calls from pure method dispatch have no
 /// argument expressions.)

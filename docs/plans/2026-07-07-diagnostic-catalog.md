@@ -114,8 +114,8 @@ Detection status legend: ✅ inference already computes everything needed
 | 2016 | assigning NONE to non-optional field | `SET age = NONE` | E | ✅ |
 | 2017 | ORDER BY on non-comparable kind | `ORDER BY tags` (array) | W | ✅ |
 | 2018 | LIMIT/START not an integer | `LIMIT 'a'` | E | ✅ |
-| 2019 | TIMEOUT not a duration | `TIMEOUT 5` | E | ✅ |
-| 2020 | KILL argument not a uuid | `KILL 42` | E | ✅ |
+| 2019 | TIMEOUT not a duration | `TIMEOUT 5` — our grammar only parses duration literals here, so this is parser-covered today; the emission exists for when params are grammatical | E | ☑ parser-covered |
+| 2020 | KILL argument not a uuid | `KILL 42` — parser-covered today; grammar-fork bug: `KILL $id` (valid SurrealQL) fails to parse, blocking the param form the emission exists for | E | ☑ parser-covered |
 | 2021 | SHOW SINCE not versionstamp/datetime | | E | ✅ |
 | 2022 | FOR over a non-iterable | `FOR $x IN 42 { }` | E | ✅ iterable kind known |
 | 2023 | const conversion provably fails | `<int> 'abc'`, `type::int('x')` | E | ✅ const tracking evaluates it |

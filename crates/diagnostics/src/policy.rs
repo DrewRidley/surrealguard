@@ -26,11 +26,12 @@ impl PolicyConfig {
         self.lint_levels.insert(code, level);
     }
 
+    /// Lints default to `Warn` — visible until individually allowed.
     pub fn resolve_lint_level(&self, code: FindingCode) -> LintLevel {
         self.lint_levels
             .get(&code)
             .copied()
-            .unwrap_or(LintLevel::Allow)
+            .unwrap_or(LintLevel::Warn)
     }
 
     pub fn resolve_severity(
@@ -64,7 +65,12 @@ mod tests {
         let mut config = PolicyConfig::default();
         let code = FindingCode::lint(7001);
 
-        assert_eq!(config.resolve_lint_level(code), LintLevel::Allow);
+        assert_eq!(config.resolve_lint_level(code), LintLevel::Warn);
+        assert_eq!(
+            config.resolve_severity(code, Severity::Hint),
+            Some(Severity::Warning)
+        );
+        config.set_lint_level(code, LintLevel::Allow);
         assert_eq!(config.resolve_severity(code, Severity::Hint), None);
 
         config.set_lint_level(code, LintLevel::Warn);
