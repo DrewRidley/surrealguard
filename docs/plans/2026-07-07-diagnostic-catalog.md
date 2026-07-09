@@ -200,6 +200,7 @@ Folded by the contract audit (2026-07-09): 5003, 5004, 5006 → 5002; 5007,
 | 7002 | LET shadowing | inner `LET $x` over outer | I | ✅ scopes exist |
 | 7003 | mixed-kind array literal | `[1, 'a']` | I | ✅ (today's partial fact) |
 | 7004 | control flow is decided by a constant | `IF true`, `WHERE 1 = 1`, `FOR $x IN []` | W | ✅ emitting (IF); others 🔶 |
+| 7005 | a comparison against a closed literal set must be able to match | `WHEN $event = 'CRATE'` — `$event` is `'CREATE' \| 'UPDATE' \| 'DELETE'`; value-proven always-false (distinct from 2004: the kinds are comparable) | W | ✅ emitting |
 | 7006 | empty IN/CONTAINS list | `WHERE x IN []` | W | ✅ const arrays |
 | 7007 | SELECT * with explicit fields | `SELECT *, age FROM t` | I | ✅ |
 | 7008 | schemaless table in a typed workspace | queries against fieldless tables | I | ✅ |

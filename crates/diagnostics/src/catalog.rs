@@ -94,6 +94,11 @@ const ENTRIES: &[(u16, &str, Severity)] = &[
     (7002, "LET shadowing", Severity::Hint),
     (7003, "mixed-kind array literal", Severity::Hint),
     (7004, "control flow is decided by a constant", Severity::Warning),
+    (
+        7005,
+        "a comparison against a closed literal set must be able to match",
+        Severity::Warning,
+    ),
     (7006, "empty IN/CONTAINS list", Severity::Warning),
     (7007, "SELECT * with explicit fields", Severity::Hint),
     (7008, "schemaless table in a typed workspace", Severity::Hint),

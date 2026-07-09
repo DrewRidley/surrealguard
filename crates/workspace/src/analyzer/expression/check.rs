@@ -364,6 +364,28 @@ fn check_binary(
     // the operator (2004). Whether SurrealDB throws (arithmetic) or
     // silently kind-orders (comparisons) is irrelevant — tolerated misuse
     // is still misuse; surfacing it is this tool's entire purpose.
+    // A literal-union side compared against a constant outside the union
+    // never matches (7005) — `WHEN $event = 'CRATE'`.
+    if matches!(op, Op::Eq | Op::NotEq)
+        && (literal_union_excludes(ctx, &left, rhs) || literal_union_excludes(ctx, &right, lhs))
+    {
+        emit(
+            ctx,
+            whole.span,
+            7005,
+            format!(
+                "`{}` between `{left}` and `{right}` is always {}",
+                op_text(op),
+                if matches!(op, Op::Eq) {
+                    "false"
+                } else {
+                    "true"
+                },
+            ),
+        );
+        return;
+    }
+
     let violated = match op {
         Op::Add | Op::Sub | Op::Mul | Op::Div => binary_result_kind(op, &left, &right).is_none(),
         // NONE/NULL comparisons are the idiomatic existence checks;
@@ -383,6 +405,38 @@ fn check_binary(
             ),
         );
     }
+}
+
+/// Whether `kind` is a union/literal of string constants that provably
+/// excludes the other side's constant value.
+fn literal_union_excludes(
+    ctx: &mut AnalysisContext<'_>,
+    kind: &Kind,
+    other: &ast::Spanned<ast::Expr>,
+) -> bool {
+    let members: Vec<&str> = match kind {
+        Kind::Either(variants) => variants
+            .iter()
+            .filter_map(|variant| match variant {
+                Kind::Literal(surrealdb_types::KindLiteral::String(s)) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect(),
+        Kind::Literal(surrealdb_types::KindLiteral::String(s)) => vec![s.as_str()],
+        _ => return false,
+    };
+    let expected_len = match kind {
+        Kind::Either(variants) => variants.len(),
+        _ => 1,
+    };
+    if members.is_empty() || members.len() != expected_len {
+        return false;
+    }
+    let Some(surrealdb_types::Value::String(value)) = infer_expression_fact(other, ctx).value
+    else {
+        return false;
+    };
+    !members.contains(&value.as_str())
 }
 
 fn comparable(left: &Kind, right: &Kind) -> bool {

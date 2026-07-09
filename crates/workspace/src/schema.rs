@@ -43,6 +43,8 @@ pub struct FunctionParam {
 pub struct FunctionDef {
     pub name: String,
     pub args: Vec<FunctionParam>,
+    /// `fn::` paths called from the body, for cycle detection.
+    pub callees: Vec<String>,
     pub return_kind: Option<Kind>,
     pub source: SourceId,
     pub name_span: SourceSpan,
@@ -812,7 +814,7 @@ fn extract_param_def(node: Node<'_>, parsed: &ParsedSource) -> Option<ParamDef> 
     })
 }
 
-fn extract_function_def(node: Node<'_>, parsed: &ParsedSource) -> Option<FunctionDef> {
+pub(crate) fn extract_function_def(node: Node<'_>, parsed: &ParsedSource) -> Option<FunctionDef> {
     let statement = node_text(node, parsed.text());
     if !statement
         .trim_start()
@@ -886,9 +888,29 @@ fn extract_function_def(node: Node<'_>, parsed: &ParsedSource) -> Option<Functio
         )
     });
 
+    // Body callees for cycle detection (5009) — a text scan over the body
+    // is enough: a false positive requires `fn::name` inside a string
+    // literal, which is vanishingly rare in function bodies.
+    let mut callees: Vec<String> = Vec::new();
+    let body = &statement[name_end..];
+    let mut offset = 0;
+    while let Some(at) = body[offset..].find("fn::") {
+        let start = offset + at;
+        let end = start
+            + body[start..]
+                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
+                .unwrap_or(body.len() - start);
+        let callee = body[start..end].to_string();
+        if !callees.contains(&callee) {
+            callees.push(callee);
+        }
+        offset = end.max(start + 4);
+    }
+
     Some(FunctionDef {
         name,
         args,
+        callees,
         return_kind,
         source: parsed.source_id().clone(),
         name_span: span_from_relative_range(node, parsed.source_id().clone(), name_start, name_end),

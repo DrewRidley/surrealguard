@@ -1133,9 +1133,16 @@ fn lower_define_function(node: Node<'_>, text: &str) -> DefineFunction {
         return_ty: None,
     };
 
+    let mut saw_arrow = false;
     for child in named_children(node) {
         match child.kind() {
             "Keyword" => {}
+            "LookupRight" => saw_arrow = true,
+            "Type" | "TypeName" | "ParameterizedType" | "UnionType" | "LiteralType"
+                if saw_arrow && def.return_ty.is_none() =>
+            {
+                def.return_ty = Some(super::expr::lower_type_expr(child, text));
+            }
             "FunctionName" => def.name = spanned_text(child, text),
             "ParamDefinition" => {
                 let mut name = None;

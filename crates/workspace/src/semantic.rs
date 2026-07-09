@@ -76,8 +76,19 @@ pub fn analyze_sources_in_source_order(
         let mut mutation_param_env = StatementEnv::default();
         let mut select_shape_env = StatementEnv::default();
         let mut mutation_shape_env = StatementEnv::default();
+        // fn:: signatures hoist: a body references functions at invocation
+        // time, so definitions later in the source are legitimate targets.
+        for statement in &statements {
+            if let Some(function) = crate::schema::extract_function_def(*statement, parsed) {
+                output.schema.insert_function(function);
+            }
+        }
+
         let mut statement_shape_env = StatementEnv::default();
         let mut analyzer_env = StatementEnv::default();
+        // Transaction pairing (4007): BEGIN opens exactly one transaction
+        // that COMMIT/CANCEL closes.
+        let mut open_transaction: Option<surrealguard_syntax::span::ByteRange> = None;
 
         for statement in statements {
             // The analyzer tree is the emission spine: each statement is
@@ -98,6 +109,41 @@ pub fn analyze_sources_in_source_order(
                 );
                 crate::analyzer::statement::analyze_lowered_statement(&mut ctx, &lowered);
                 analyzer_env = ctx.into_env();
+
+                let span = || {
+                    surrealguard_syntax::span::SourceSpan::new(
+                        parsed.source_id().clone(),
+                        lowered.span,
+                    )
+                };
+                match &lowered.node {
+                    surrealguard_syntax::ast::Statement::Begin(_) => {
+                        if open_transaction.is_some() {
+                            output
+                                .diagnostics
+                                .push(surrealguard_diagnostics::catalog::finding(
+                                    span(),
+                                    4007,
+                                    "BEGIN inside an open transaction; transactions do not nest"
+                                        .to_string(),
+                                ));
+                        }
+                        open_transaction = Some(lowered.span);
+                    }
+                    surrealguard_syntax::ast::Statement::Commit(_)
+                    | surrealguard_syntax::ast::Statement::Cancel(_)
+                        if open_transaction.take().is_none() =>
+                    {
+                        output
+                            .diagnostics
+                            .push(surrealguard_diagnostics::catalog::finding(
+                                span(),
+                                4007,
+                                "COMMIT/CANCEL without an open BEGIN".to_string(),
+                            ));
+                    }
+                    _ => {}
+                }
             }
 
             collect_select_param_kind_inferences_with_env(
@@ -146,6 +192,19 @@ pub fn analyze_sources_in_source_order(
             ));
         }
 
+        if let Some(open_span) = open_transaction {
+            output
+                .diagnostics
+                .push(surrealguard_diagnostics::catalog::finding(
+                    surrealguard_syntax::span::SourceSpan::new(
+                        parsed.source_id().clone(),
+                        open_span,
+                    ),
+                    4007,
+                    "this BEGIN is never closed; add COMMIT or CANCEL".to_string(),
+                ));
+        }
+
         // A parameter read before its LET in source order sees nothing
         // (6004): compare recorded uses against the bindings' spans.
         for param in analyzer_env.params() {
@@ -165,6 +224,64 @@ pub fn analyze_sources_in_source_order(
                         ));
                 }
             }
+        }
+    }
+
+    // fn:: definitions must terminate: direct or mutual recursion never
+    // does (5009). Classic three-color DFS; each cycle reports once, at
+    // the first function found on it.
+    fn find_cycle(
+        name: &str,
+        functions: &BTreeMap<String, crate::schema::FunctionDef>,
+        gray: &mut Vec<String>,
+        black: &mut std::collections::BTreeSet<String>,
+    ) -> Option<Vec<String>> {
+        if black.contains(name) {
+            return None;
+        }
+        if let Some(position) = gray.iter().position(|entry| entry == name) {
+            return Some(gray[position..].to_vec());
+        }
+        gray.push(name.to_string());
+        if let Some(def) = functions.get(name) {
+            for callee in &def.callees {
+                if let Some(cycle) = find_cycle(callee, functions, gray, black) {
+                    return Some(cycle);
+                }
+            }
+        }
+        gray.pop();
+        black.insert(name.to_string());
+        None
+    }
+
+    let mut black = std::collections::BTreeSet::new();
+    let mut on_reported_cycle = std::collections::BTreeSet::new();
+    for function in output.schema.functions.values() {
+        if black.contains(&function.name) || on_reported_cycle.contains(&function.name) {
+            continue;
+        }
+        let mut gray = Vec::new();
+        if let Some(cycle) = find_cycle(
+            &function.name,
+            &output.schema.functions,
+            &mut gray,
+            &mut black,
+        ) {
+            for name in &cycle {
+                on_reported_cycle.insert(name.clone());
+            }
+            output
+                .diagnostics
+                .push(surrealguard_diagnostics::catalog::finding(
+                    function.name_span.clone(),
+                    5009,
+                    format!(
+                        "`{}` never terminates: {} calls itself",
+                        function.name,
+                        cycle.join(" -> "),
+                    ),
+                ));
         }
     }
 

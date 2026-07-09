@@ -2612,6 +2612,62 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_machinery_batch() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            concat!(
+                "DEFINE TABLE person SCHEMAFULL;\n",
+                "DEFINE FIELD age ON person TYPE int DEFAULT 0;\n",
+                "DEFINE FUNCTION fn::bad() -> string { RETURN 1; };\n",
+                "DEFINE FUNCTION fn::loop_a() { RETURN fn::loop_b(); };\n",
+                "DEFINE FUNCTION fn::loop_b() { RETURN fn::loop_a(); };\n",
+                "DEFINE EVENT audit ON person WHEN $event = 'CRATE' THEN { RETURN 1; };\n",
+                "RETURN $before;\n",
+                "COMMIT;\n",
+                "BEGIN;\n",
+                "BEGIN;\n",
+                "COMMIT;\n",
+                "BEGIN;\n",
+                "RETURN 1;\n",
+            )
+            .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        for (code, needle) in [
+            (
+                "E2012",
+                "`fn::bad` declares `-> string` but its body returns `int`",
+            ),
+            ("E5009", "never terminates"),
+            // $event is the literal union, so the typo comparison is the
+            // ordinary always-false lint with the edge-filter machinery.
+            ("L7005", "`=` between"),
+            (
+                "E6005",
+                "`$before` only exists inside the construct that binds it",
+            ),
+            ("E4007", "COMMIT/CANCEL without an open BEGIN"),
+            ("E4007", "BEGIN inside an open transaction"),
+            ("E4007", "this BEGIN is never closed"),
+        ] {
+            assert!(
+                messages
+                    .iter()
+                    .any(|(c, m)| c == code && m.contains(needle)),
+                "missing {code}: {needle}\nhave: {messages:#?}"
+            );
+        }
+    }
+
+    #[test]
     fn analyze_workspace_full_coverage_batch_two() {
         // Slice F: literal content (2032/2031), casts (2008), SINCE (2021),
         // FOR iterables (2022 via params; literals are parser-rejected),
