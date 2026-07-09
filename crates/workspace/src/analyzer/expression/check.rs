@@ -33,8 +33,8 @@ pub(crate) fn check_value_expression(
                         emit(
                             ctx,
                             expr.span,
-                            2014,
-                            format!("cannot negate a value of type `{kind}`"),
+                            2004,
+                            format!("incompatible operand for `-`: `{kind}`"),
                         );
                     }
                 }
@@ -73,45 +73,29 @@ fn check_binary(
     };
 
     use ast::BinaryOp as Op;
-    // Arithmetic outside SurrealDB's operator tables fails at runtime
-    // (2004). Comparisons never fail — values of different kinds order by
-    // kind — so a cross-kind comparison runs and is just meaningless
-    // (7005). NONE/NULL comparisons are the idiomatic existence checks;
-    // truthiness makes AND/OR legal on anything; ?? accepts anything.
-    let (code, message) = match op {
-        Op::Add | Op::Sub | Op::Mul | Op::Div
-            if binary_result_kind(op, &left, &right).is_none() =>
-        {
-            (
-                2004,
-                format!(
-                    "incompatible operands for `{}`: `{left}` and `{right}`",
-                    op_text(op)
-                ),
-            )
-        }
-        Op::Eq | Op::NotEq if !comparable(&left, &right) => (
-            7005,
-            format!(
-                "`{}` between `{left}` and `{right}` is always {}",
-                op_text(op),
-                if matches!(op, Op::Eq) {
-                    "false"
-                } else {
-                    "true"
-                },
-            ),
-        ),
-        Op::Lt | Op::LtEq | Op::Gt | Op::GtEq if !comparable(&left, &right) => (
-            7005,
-            format!(
-                "`{}` between `{left}` and `{right}` orders by kind, not value",
-                op_text(op),
-            ),
-        ),
-        _ => return,
+    // One contract, one code: the operands must make sense together for
+    // the operator (2004). Whether SurrealDB throws (arithmetic) or
+    // silently kind-orders (comparisons) is irrelevant — tolerated misuse
+    // is still misuse; surfacing it is this tool's entire purpose.
+    let violated = match op {
+        Op::Add | Op::Sub | Op::Mul | Op::Div => binary_result_kind(op, &left, &right).is_none(),
+        // NONE/NULL comparisons are the idiomatic existence checks;
+        // numerics widen. Truthiness makes AND/OR legal on anything; ??
+        // accepts anything by design.
+        Op::Eq | Op::NotEq | Op::Lt | Op::LtEq | Op::Gt | Op::GtEq => !comparable(&left, &right),
+        _ => false,
     };
-    emit(ctx, whole.span, code, message);
+    if violated {
+        emit(
+            ctx,
+            whole.span,
+            2004,
+            format!(
+                "incompatible operands for `{}`: `{left}` and `{right}`",
+                op_text(op)
+            ),
+        );
+    }
 }
 
 fn comparable(left: &Kind, right: &Kind) -> bool {

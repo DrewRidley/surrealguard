@@ -6,6 +6,15 @@ implements against; codes are assigned here and only here, append-only.
 
 ## Principles (settled in prior rulings)
 
+- **Contracts, not engine behavior.** Every construct has a contract — what
+  the author must mean for the statement to make sense. A diagnostic exists
+  when the contract is provably violated; whether SurrealDB throws, silently
+  tolerates (kind-ordered comparisons), or coerces is *irrelevant to
+  severity* — tolerated misuse is the reason this tool exists. One code per
+  contract: variations of the same violation are message variants, never new
+  codes (operand mismatch is 2004 whether binary, unary, arithmetic, or
+  comparison; assignability is 2001 whether the value is a wrong kind or
+  NONE).
 - **Inference is never affected.** A finding never changes an inferred type.
   Most findings coincide with a perfectly known type (`UPDATE person SET
   age = 'x'` still types as person rows); poison (`Any`) appears only where
@@ -96,10 +105,10 @@ Detection status legend: ✅ inference already computes everything needed
 
 | Code | Finding | Example | Sev | Status |
 |---|---|---|---|---|
-| 2001 | SET value not assignable to field | `UPDATE person SET age = 'string'` | E | ✅ |
+| 2001 | assignability contract: a SET value must inhabit the field's declared type | `SET age = 'string'`, `SET age = NONE` (message points at option<>) | E | ✅ emitting |
 | 2002 | CONTENT/MERGE value not assignable per key | `CONTENT { age: 'x' }` | E | ✅ |
 | 2003 | INSERT tuple value not assignable to column | `(age) VALUES ('x')` | E | ✅ |
-| 2004 | operand kinds incompatible for operator | `name > 18`, `1 + 'a'` | E | ✅ (`binary_operands_compatible`) |
+| 2004 | operand contract: the operands must make sense together for the operator | `name > 18`, `1 + 'a'`, `-name` — covers binary and unary, arithmetic and comparison; SurrealDB kind-orders cross-kind comparisons rather than throwing, which changes nothing | E | ✅ emitting |
 | 2005 | IF condition not boolean | `IF 'yes' { }` | W | ✅ |
 | 2006 | WHERE clause not boolean-ish | `WHERE age` (truthiness works; style) | I | ✅ |
 | 2007 | cast to unknown type | `<ghost> x` | E | ✅ |
@@ -109,10 +118,8 @@ Detection status legend: ✅ inference already computes everything needed
 | 2011 | ASSERT not boolean | `ASSERT $value + 1` | E | 🔶 lower AssertClause |
 | 2012 | fn:: body return doesn't match declared `->` type | `-> string { RETURN 1 }` | E | 🔨 body analysis vs declaration (body already lowers) |
 | 2013 | closure body vs declared return mismatch | `\|$x\| -> string { RETURN 1 }` | E | ✅ closure inference exists |
-| 2014 | negation of non-numeric | `-name` (string field) | E | ✅ |
 | 2015 | possibly-NONE value where value required | `option<int>` field in `x + 1` | W | 🔶 Either[None, T] flows exist; needs the operand rule |
-| 2016 | assigning NONE to non-optional field | `SET age = NONE` | E | ✅ |
-| 2017 | ORDER BY on non-comparable kind | `ORDER BY tags` (array) | W | ✅ |
+| 2017 | ORDER BY availability contract: each key names a field of the result rows (or RAND()) | non-field key; or, with explicit projections, a key that isn't among them — both parse-rejected by SurrealDB, tolerated by our grammar | E | ✅ emitting |
 | 2018 | LIMIT/START not an integer | `LIMIT 'a'` | E | ✅ |
 | 2019 | TIMEOUT not a duration | `TIMEOUT 5` — our grammar only parses duration literals here, so this is parser-covered today; the emission exists for when params are grammatical | E | ☑ parser-covered |
 | 2020 | KILL argument not a uuid | `KILL 42` — parser-covered today; grammar-fork bug: `KILL $id` (valid SurrealQL) fails to parse, blocking the param form the emission exists for | E | ☑ parser-covered |
@@ -213,7 +220,6 @@ Detection status legend: ✅ inference already computes everything needed
 | 7002 | LET shadowing | inner `LET $x` over outer | I | ✅ scopes exist |
 | 7003 | mixed-kind array literal | `[1, 'a']` | I | ✅ (today's partial fact) |
 | 7004 | condition is constant | `IF true`, `WHERE 1 = 1` | W | ✅ const tracking |
-| 7005 | comparison always false by kind | `age = 'x'` (int vs string, `=` runs but never matches) | W | ✅ |
 | 7006 | empty IN/CONTAINS list | `WHERE x IN []` | W | ✅ const arrays |
 | 7007 | SELECT * with explicit fields | `SELECT *, age FROM t` | I | ✅ |
 | 7008 | schemaless table in a typed workspace | queries against fieldless tables | I | ✅ |

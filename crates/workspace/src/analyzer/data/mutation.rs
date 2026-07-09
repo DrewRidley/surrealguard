@@ -160,20 +160,16 @@ fn check_assignment_value(
     let span =
         surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), assignment.value.span);
     let field = segments.join(".");
-    let finding = if matches!(value_kind, Kind::None | Kind::Null) {
-        surrealguard_diagnostics::catalog::finding(
-            span,
-            2016,
-            format!("cannot assign NONE to non-optional field `{field}` (`{field_kind}`)"),
-        )
+    // One contract: the value must inhabit the field's declared type. NONE
+    // gets the actionable variant of the message, not its own code.
+    let message = if matches!(value_kind, Kind::None | Kind::Null) {
+        format!("field `{field}` (`{field_kind}`) is not optional; wrap it in option<> or assign a value")
     } else {
-        surrealguard_diagnostics::catalog::finding(
-            span,
-            2001,
-            format!("field `{field}` expects `{field_kind}`, found `{value_kind}`"),
-        )
+        format!("field `{field}` expects `{field_kind}`, found `{value_kind}`")
     };
-    ctx.emit(finding);
+    ctx.emit(surrealguard_diagnostics::catalog::finding(
+        span, 2001, message,
+    ));
 }
 
 /// `SET target = ...`: the target must be a declared field path (1004).

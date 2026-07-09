@@ -2077,9 +2077,12 @@ INSERT INTO person { name: 'Ada' };
             .map(|finding| (finding.code().to_string(), finding.message().to_string()))
             .collect();
 
-        // NONE into non-optional int is 2016; into option<datetime> is fine.
+        // NONE into a non-optional field violates the one assignability
+        // contract (2001); into option<datetime> it is fine.
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2016" && message == "cannot assign NONE to non-optional field `age` (`int`)"
+            code == "E2001"
+                && message
+                    == "field `age` (`int`) is not optional; wrap it in option<> or assign a value"
         }));
         assert!(!messages
             .iter()
@@ -2567,7 +2570,7 @@ INSERT INTO person { name: 'Ada' };
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
             "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD tags ON person TYPE array<string>;\nLET $lim = 'a';\nSELECT * FROM person LIMIT $lim;\nSELECT * FROM person START -1;\nSELECT * FROM person FETCH age;\nSELECT * FROM person SPLIT age;\nSELECT * FROM person ORDER BY tags;\nLET $auth = 1;\nRETURN [1, 'a'];\nIF true { RETURN 1; };\nRETURN array::map([1], |$v, $i, $extra| $v);\nSELECT type::field('ghost') FROM person;".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD tags ON person TYPE array<string>;\nLET $lim = 'a';\nSELECT * FROM person LIMIT $lim;\nSELECT * FROM person START -1;\nSELECT * FROM person FETCH age;\nSELECT * FROM person SPLIT age;\nSELECT age FROM person ORDER BY name;\nDEFINE FIELD name ON person TYPE string;\nLET $auth = 1;\nRETURN [1, 'a'];\nIF true { RETURN 1; };\nRETURN array::map([1], |$v, $i, $extra| $v);\nSELECT type::field('ghost') FROM person;".into(),
         );
 
         let output = analyze_workspace(&workspace);
@@ -2587,7 +2590,7 @@ INSERT INTO person { name: 'Ada' };
             ),
             (
                 "E2017",
-                "ORDER BY on `array<string>` orders by structure, not value",
+                "ORDER BY `name` does not name a field selected by this query",
             ),
             (
                 "E6007",
@@ -2677,11 +2680,11 @@ INSERT INTO person { name: 'Ada' };
             .map(|finding| (finding.code().to_string(), finding.message().to_string()))
             .collect();
 
-        // Comparisons never fail at runtime (values order by kind), so the
-        // cross-kind comparison is a lint; the arithmetic is a type error.
+        // One operand contract, one code — SurrealDB tolerating the
+        // comparison (it kind-orders) changes nothing.
         assert!(messages.contains(&(
-            "L7005".to_string(),
-            "`>` between `datetime` and `int` orders by kind, not value".to_string()
+            "E2004".to_string(),
+            "incompatible operands for `>`: `datetime` and `int`".to_string()
         )));
         assert!(messages.contains(&(
             "E2004".to_string(),

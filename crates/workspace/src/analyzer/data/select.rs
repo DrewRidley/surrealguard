@@ -164,18 +164,52 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
         }
     }
     if let Some(order) = &stmt.order {
+        // ORDER BY's contract: each key names a field available on the
+        // result rows — a field of the source (checked against the schema),
+        // and, when the projection list is explicit, one of the projected
+        // names. SurrealDB's own parser enforces both; our grammar is more
+        // permissive, so the contract is enforced here (2017).
+        let explicit_keys: Option<Vec<String>> = if stmt
+            .projections
+            .iter()
+            .any(|projection| matches!(projection, ast::Projection::Wildcard(_)))
+        {
+            None
+        } else {
+            Some(
+                stmt.projections
+                    .iter()
+                    .filter_map(|projection| match projection {
+                        ast::Projection::Expr { expr, alias } => Some(match alias {
+                            Some(alias) => alias.node.clone(),
+                            None => slice(ctx.source_text(), expr.span).to_string(),
+                        }),
+                        _ => None,
+                    })
+                    .collect(),
+            )
+        };
         for key in &order.keys {
-            crate::analyzer::data::check_expression_field_paths(ctx, table, &key.expr, 1010);
-            let kind = ctx.with_row_table(Some(table), |ctx| {
-                infer_expression_fact(&key.expr, ctx).kind
-            });
-            if let Some(kind) = kind {
-                let base =
-                    crate::semantic::literal_base_kind(&kind).unwrap_or_else(|| kind.clone());
-                if matches!(
-                    base,
-                    Kind::Array(_, _) | Kind::Set(_, _) | Kind::Object | Kind::Geometry(_)
-                ) {
+            let field = match &key.expr.node {
+                ast::Expr::Idiom(idiom) => plain_field_segments(idiom),
+                // ORDER BY RAND() is the one non-field form.
+                ast::Expr::Call(call) if call.path.node == "rand" => continue,
+                _ => None,
+            };
+            let Some(segments) = field else {
+                let span =
+                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), key.expr.span);
+                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                    span,
+                    2017,
+                    "ORDER BY expects a field of the query source (or RAND())".to_string(),
+                ));
+                continue;
+            };
+            crate::analyzer::data::check_field_path(ctx, table, &segments, key.expr.span, 1010);
+            if let Some(keys) = &explicit_keys {
+                let name = segments.join(".");
+                if !keys.contains(&name) {
                     let span = surrealguard_syntax::span::SourceSpan::new(
                         ctx.source().clone(),
                         key.expr.span,
@@ -183,7 +217,7 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
                     ctx.emit(surrealguard_diagnostics::catalog::finding(
                         span,
                         2017,
-                        format!("ORDER BY on `{kind}` orders by structure, not value"),
+                        format!("ORDER BY `{name}` does not name a field selected by this query"),
                     ));
                 }
             }
