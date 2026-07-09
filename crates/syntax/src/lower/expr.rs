@@ -89,8 +89,10 @@ impl Lowerer<'_> {
                     Expr::Literal(Literal::None)
                 }
             }
-            "Duration" => Expr::Literal(Literal::Duration),
-            "Regex" => Expr::Literal(Literal::Regex),
+            "Duration" => Expr::Literal(Literal::Duration(self.node_text(node).to_string())),
+            "Regex" => Expr::Literal(Literal::Regex(
+                self.node_text(node).trim_matches('/').to_string(),
+            )),
             "VariableName" => Expr::Param(self.param_name(node)),
             "RecordId" => self.record_id(node),
             "Array" => Expr::Array(
@@ -138,10 +140,11 @@ impl Lowerer<'_> {
         let text = self.node_text(node);
         let bytes = text.as_bytes();
         let prefixed = bytes.len() > 2 && matches!(bytes.get(1), Some(b'\'') | Some(b'"'));
+        let inner = || text[1..].trim_matches(['\'', '"']).to_string();
         let literal = match bytes.first().map(u8::to_ascii_lowercase) {
-            Some(b'd') if prefixed => Literal::Datetime,
-            Some(b'u') if prefixed => Literal::Uuid,
-            Some(b'r') if prefixed => Literal::Regex,
+            Some(b'd') if prefixed => Literal::Datetime(inner()),
+            Some(b'u') if prefixed => Literal::Uuid(inner()),
+            Some(b'r') if prefixed => Literal::Regex(inner()),
             _ => {
                 let content = text
                     .trim_start_matches(['d', 'u', 'r'])
@@ -422,6 +425,16 @@ impl Lowerer<'_> {
             let part = match child.kind() {
                 "Ident" => IdiomPart::Field(self.node_text(child).to_string()),
                 "Destructure" => IdiomPart::Destructure(self.destructure_fields(child)),
+                "Recurse" => {
+                    // `{1..3}` bounded; `{..}` / `{1..}` unbounded above.
+                    let text = self.node_text(child);
+                    let bounded = text.rsplit("..").next().is_some_and(|tail| {
+                        tail.trim_end_matches(['}', ' '])
+                            .chars()
+                            .any(|c| c.is_ascii_digit())
+                    });
+                    IdiomPart::Recurse { bounded }
+                }
                 "IdiomFunction" => self.method_part(child),
                 "Any" => IdiomPart::All,
                 _ if child.is_error() || child.is_missing() => IdiomPart::Partial(partial(child)),
@@ -681,14 +694,14 @@ mod tests {
                 Literal::Decimal,
                 Literal::String("hi".into()),
                 Literal::String("there".into()),
-                Literal::Datetime,
-                Literal::Uuid,
-                Literal::Regex,
+                Literal::Datetime("2024-01-01T00:00:00Z".into()),
+                Literal::Uuid("0189-aa".into()),
+                Literal::Regex("ab+".into()),
                 Literal::Bool(true),
                 Literal::Bool(false),
                 Literal::None,
                 Literal::Null,
-                Literal::Duration,
+                Literal::Duration("1h".into()),
             ]
         );
     }

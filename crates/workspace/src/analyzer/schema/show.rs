@@ -28,5 +28,20 @@ pub fn analyze_show(ctx: &mut AnalysisContext<'_>, stmt: &ast::ShowStmt) -> Kind
             }
         }
     }
+    // SINCE takes a versionstamp (number) or a datetime string (2021).
+    if let Some(since) = &stmt.since {
+        if let ast::Expr::Literal(ast::Literal::String(text)) = &since.node {
+            use std::str::FromStr;
+            if surrealdb_types::Datetime::from_str(text).is_err() {
+                let span =
+                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), since.span);
+                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                    span,
+                    2021,
+                    format!("SINCE expects a versionstamp or datetime; `{text}` is neither"),
+                ));
+            }
+        }
+    }
     Kind::Array(Box::new(Kind::Object), None)
 }

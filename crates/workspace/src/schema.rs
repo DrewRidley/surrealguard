@@ -138,8 +138,33 @@ pub struct IndexDef {
     pub name: String,
     pub table: String,
     fields: Vec<IndexFieldDef>,
+    pub kind: IndexKind,
     pub name_span: SourceSpan,
     pub table_span: SourceSpan,
+}
+
+impl IndexDef {
+    /// Whether this index covers the given dotted field path.
+    pub fn covers(&self, path: &str) -> bool {
+        self.fields.iter().any(|field| field.path.join(".") == path)
+    }
+
+    /// The dotted field paths this index covers, for duplicate detection.
+    pub(crate) fn field_paths(&self) -> Vec<String> {
+        self.fields
+            .iter()
+            .map(|field| field.path.join("."))
+            .collect()
+    }
+}
+
+/// What backs the index: full-text search, a vector structure, or plain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IndexKind {
+    Normal,
+    Unique,
+    Search,
+    Vector,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,6 +252,92 @@ impl SchemaIndex {
 
     pub fn insert_function(&mut self, function: FunctionDef) {
         self.functions.insert(function.name.clone(), function);
+    }
+
+    /// DEFINE ANALYZER components must name known tokenizers/filters with
+    /// valid arguments (1032/2035).
+    pub(crate) fn validate_analyzer(analyzer: &AnalyzerDef) -> Vec<Finding> {
+        const TOKENIZERS: &[&str] = &["blank", "camel", "class", "punct"];
+        const SNOWBALL_LANGS: &[&str] = &[
+            "arabic",
+            "danish",
+            "dutch",
+            "english",
+            "french",
+            "german",
+            "greek",
+            "hungarian",
+            "italian",
+            "norwegian",
+            "portuguese",
+            "romanian",
+            "russian",
+            "spanish",
+            "swedish",
+            "tamil",
+            "turkish",
+        ];
+        let mut findings = Vec::new();
+        for tokenizer in &analyzer.tokenizers {
+            if !TOKENIZERS.contains(&tokenizer.to_ascii_lowercase().as_str()) {
+                findings.push(Finding::new(
+                    analyzer.name_span.clone(),
+                    FindingCode::schema(1032),
+                    Severity::Error,
+                    format!("`{tokenizer}` is not a tokenizer"),
+                ));
+            }
+        }
+        for filter in &analyzer.filters {
+            let (name, args) = match filter.split_once('(') {
+                Some((name, rest)) => (
+                    name.trim(),
+                    rest.trim_end_matches(')')
+                        .split(',')
+                        .map(|arg| arg.trim().to_string())
+                        .collect::<Vec<_>>(),
+                ),
+                None => (filter.trim(), Vec::new()),
+            };
+            match name.to_ascii_lowercase().as_str() {
+                "ascii" | "lowercase" | "uppercase" => {}
+                "snowball" => {
+                    if !args.first().is_some_and(|lang| {
+                        SNOWBALL_LANGS.contains(&lang.to_ascii_lowercase().as_str())
+                    }) {
+                        findings.push(Finding::new(
+                            analyzer.name_span.clone(),
+                            FindingCode::schema(1032),
+                            Severity::Error,
+                            format!(
+                                "`{}` is not a snowball language",
+                                args.first().cloned().unwrap_or_default()
+                            ),
+                        ));
+                    }
+                }
+                "edgengram" | "ngram" => {
+                    let bounds: Vec<Option<u64>> =
+                        args.iter().map(|arg| arg.parse::<u64>().ok()).collect();
+                    match bounds.as_slice() {
+                        [Some(min), Some(max)] if min <= max => {}
+                        _ => findings.push(Finding::new(
+                            analyzer.name_span.clone(),
+                            FindingCode::type_error(2035),
+                            Severity::Error,
+                            format!("`{filter}` needs `(min, max)` with min <= max"),
+                        )),
+                    }
+                }
+                _ => findings.push(Finding::new(
+                    analyzer.name_span.clone(),
+                    FindingCode::schema(1032),
+                    Severity::Error,
+                    format!("`{name}` is not a filter"),
+                )),
+            }
+        }
+        findings
     }
 
     pub fn insert_analyzer(&mut self, analyzer: AnalyzerDef) {
@@ -447,6 +558,7 @@ fn collect_definitions(
             schema.insert_function(function);
         }
         if let Some(analyzer) = extract_analyzer_def(node, parsed) {
+            diagnostics.extend(SchemaIndex::validate_analyzer(&analyzer));
             schema.insert_analyzer(analyzer);
         }
     }
@@ -877,6 +989,33 @@ fn validate_indexes(
     indexes: Vec<IndexDef>,
     diagnostics: &mut Vec<Finding>,
 ) {
+    // Two indexes over the same field set do the same work twice (1029).
+    let mut seen_field_sets: BTreeMap<(String, Vec<String>), String> = BTreeMap::new();
+    for index in &indexes {
+        let mut paths = index.field_paths();
+        paths.sort();
+        if paths.is_empty() {
+            continue;
+        }
+        match seen_field_sets.entry((index.table.clone(), paths)) {
+            std::collections::btree_map::Entry::Occupied(existing) => {
+                diagnostics.push(Finding::new(
+                    index.name_span.clone(),
+                    FindingCode::schema(1029),
+                    Severity::Warning,
+                    format!(
+                        "index `{}` covers the same fields as `{}`",
+                        index.name,
+                        existing.get()
+                    ),
+                ));
+            }
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert(index.name.clone());
+            }
+        }
+    }
+
     for index in indexes {
         let Some(table) = schema.tables.get_mut(&index.table) else {
             diagnostics.push(Finding::new(
@@ -900,6 +1039,26 @@ fn validate_indexes(
                     format!(
                         "index `{}` references unknown field `{}` on table `{}`",
                         index.name, field.text, index.table
+                    ),
+                ));
+            }
+        }
+        // Two indexes over the same field set do the same work twice (1029).
+        let mut paths = index.field_paths();
+        paths.sort();
+        if !paths.is_empty() {
+            if let Some(existing) = table.indexes.values().find(|other| {
+                let mut other_paths = other.field_paths();
+                other_paths.sort();
+                other.name != index.name && other_paths == paths
+            }) {
+                diagnostics.push(Finding::new(
+                    index.name_span.clone(),
+                    FindingCode::schema(1029),
+                    Severity::Warning,
+                    format!(
+                        "index `{}` covers the same fields as `{}`",
+                        index.name, existing.name
                     ),
                 ));
             }
@@ -960,10 +1119,22 @@ fn extract_index_def(node: Node<'_>, parsed: &ParsedSource) -> Option<IndexDef> 
     let index_name = node_text(index_node, parsed.text()).trim().to_string();
     let table_name = node_text(table_node, parsed.text()).trim().to_string();
 
+    let statement = node_text(node, parsed.text()).to_ascii_lowercase();
+    let kind = if statement.contains("search") && statement.contains("analyzer") {
+        IndexKind::Search
+    } else if statement.contains("mtree") || statement.contains("hnsw") {
+        IndexKind::Vector
+    } else if statement.contains("unique") {
+        IndexKind::Unique
+    } else {
+        IndexKind::Normal
+    };
+
     Some(IndexDef {
         name: index_name,
         table: table_name,
         fields,
+        kind,
         name_span: node_span(index_node, parsed.source_id().clone()),
         table_span: node_span(table_node, parsed.source_id().clone()),
     })
@@ -1294,7 +1465,7 @@ fn unsupported_type_diagnostic(field: &FieldDef) -> Option<Finding> {
             .type_span
             .clone()
             .unwrap_or_else(|| field.name_span.clone()),
-        FindingCode::dynamic(6001),
+        FindingCode::param(6003),
         Severity::Warning,
         format!(
             "unsupported field type syntax `{}` for field `{}`",

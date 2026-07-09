@@ -74,10 +74,14 @@ pub enum Literal {
     Bool(bool),
     None,
     Null,
-    Duration,
-    Datetime,
-    Uuid,
-    Regex,
+    /// A duration literal, carrying its raw text (`1w2d`).
+    Duration(String),
+    /// A datetime literal's inner text (`2024-01-01T00:00:00Z`).
+    Datetime(String),
+    /// A uuid literal's inner text.
+    Uuid(String),
+    /// A regex literal's pattern text.
+    Regex(String),
 }
 
 /// A dotted / graph path: `profile.email`, `->likes->post.{title, id}`,
@@ -117,6 +121,11 @@ pub enum IdiomPart {
     Method {
         name: Spanned<String>,
         args: Vec<Spanned<Expr>>,
+    },
+    /// Graph recursion: `.{1..3}` / `.{..}` — `bounded` is whether an
+    /// upper bound was written.
+    Recurse {
+        bounded: bool,
     },
     /// Optional chaining marker: `foo?.bar`.
     Optional,

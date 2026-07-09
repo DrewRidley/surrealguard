@@ -50,15 +50,123 @@ pub(crate) fn check_value_expression(
             for (_, value) in fields {
                 check_value_expression(ctx, value);
             }
+            check_geometry_shape(ctx, expr, fields);
         }
         ast::Expr::Call(call) => {
             for arg in &call.args {
                 check_value_expression(ctx, arg);
             }
         }
-        ast::Expr::Cast { expr: inner, .. } => check_value_expression(ctx, inner),
+        ast::Expr::Cast { ty, expr: inner } => {
+            check_value_expression(ctx, inner);
+            check_cast(ctx, expr, ty, inner);
+        }
         ast::Expr::Idiom(idiom) => check_idiom_positions(ctx, idiom),
+        ast::Expr::Literal(literal) => check_literal_content(ctx, expr, literal),
         _ => {}
+    }
+}
+
+/// Literal content must be valid for its kind (2032); regex literals must
+/// compile (2031).
+fn check_literal_content(
+    ctx: &mut AnalysisContext<'_>,
+    whole: &ast::Spanned<ast::Expr>,
+    literal: &ast::Literal,
+) {
+    use std::str::FromStr;
+    let problem = match literal {
+        ast::Literal::Datetime(text) => surrealdb_types::Datetime::from_str(text)
+            .is_err()
+            .then(|| (2032, format!("`{text}` is not a valid datetime"))),
+        ast::Literal::Duration(text) => surrealdb_types::Duration::from_str(text)
+            .is_err()
+            .then(|| (2032, format!("`{text}` is not a valid duration"))),
+        ast::Literal::Uuid(text) => surrealdb_types::Uuid::from_str(text)
+            .is_err()
+            .then(|| (2032, format!("`{text}` is not a valid uuid"))),
+        ast::Literal::Regex(pattern) => {
+            use std::str::FromStr;
+            surrealdb_types::Regex::from_str(pattern)
+                .is_err()
+                .then(|| (2031, format!("`{pattern}` is not a valid regex")))
+        }
+        _ => None,
+    };
+    if let Some((code, message)) = problem {
+        emit(ctx, whole.span, code, message);
+    }
+}
+
+/// The cast contract: the conversion must be able to succeed (2008) — by
+/// kind (mirroring SurrealDB's `Cast` impls: every non-string target
+/// accepts itself and strings; numerics interconvert; bytes also accept
+/// arrays) or, when the operand is a known constant, by value.
+fn check_cast(
+    ctx: &mut AnalysisContext<'_>,
+    whole: &ast::Spanned<ast::Expr>,
+    ty: &ast::Spanned<ast::TypeExpr>,
+    inner: &ast::Spanned<ast::Expr>,
+) {
+    let Some(target) = crate::analyzer::expression::infer::cast_target_kind(&ty.node) else {
+        return;
+    };
+    let fact = infer_expression_fact(inner, ctx);
+
+    // Value-proven: the constant can be converted right now.
+    if let Some(surrealdb_types::Value::String(text)) = &fact.value {
+        use std::str::FromStr;
+        let fails = match target {
+            Kind::Int => text.trim().parse::<i64>().is_err(),
+            Kind::Float => text.trim().parse::<f64>().is_err(),
+            Kind::Number => {
+                text.trim().parse::<i64>().is_err() && text.trim().parse::<f64>().is_err()
+            }
+            Kind::Datetime => surrealdb_types::Datetime::from_str(text).is_err(),
+            Kind::Duration => surrealdb_types::Duration::from_str(text).is_err(),
+            Kind::Uuid => surrealdb_types::Uuid::from_str(text).is_err(),
+            Kind::Bool => !matches!(text.as_str(), "true" | "false"),
+            _ => false,
+        };
+        if fails {
+            emit(
+                ctx,
+                whole.span,
+                2008,
+                format!("`{text}` can never convert to `{target}`"),
+            );
+        }
+        return;
+    }
+
+    // Kind-proven: no value of the operand's kind converts.
+    let Some(kind) = fact.kind else {
+        return;
+    };
+    if kind == Kind::Any {
+        return;
+    }
+    let base = crate::semantic::literal_base_kind(&kind).unwrap_or_else(|| kind.clone());
+    let possible = match &target {
+        Kind::String | Kind::Any => true,
+        Kind::Bool => matches!(base, Kind::Bool | Kind::String),
+        Kind::Int | Kind::Float | Kind::Decimal | Kind::Number => {
+            is_numeric(&base) || matches!(base, Kind::String)
+        }
+        Kind::Datetime => matches!(base, Kind::Datetime | Kind::String),
+        Kind::Duration => matches!(base, Kind::Duration | Kind::String),
+        Kind::Uuid => matches!(base, Kind::Uuid | Kind::String),
+        Kind::Bytes => matches!(base, Kind::Bytes | Kind::String | Kind::Array(_, _)),
+        Kind::Record(_) => matches!(base, Kind::Record(_) | Kind::String),
+        _ => true,
+    };
+    if !possible {
+        emit(
+            ctx,
+            whole.span,
+            2008,
+            format!("a `{kind}` can never convert to `{target}`"),
+        );
     }
 }
 
@@ -67,6 +175,21 @@ pub(crate) fn check_value_expression(
 /// calls resolve on their receiver's kind (5001).
 fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
     use crate::analyzer::expression::infer::idiom_prefix_kinds;
+
+    // Idioms containing graph steps get the traversal contract checks,
+    // from wherever they stand (the row table).
+    if idiom
+        .parts
+        .iter()
+        .any(|part| matches!(part.node, ast::IdiomPart::Graph { .. }))
+    {
+        if let Some(table) = ctx.row_table() {
+            let name = table.name.clone();
+            crate::analyzer::data::graph::check_graph_idiom(ctx, &name, idiom);
+        }
+        return;
+    }
+
     for (part, receiver) in idiom_prefix_kinds(idiom, ctx) {
         let Some(receiver) = receiver else {
             continue;
@@ -124,11 +247,68 @@ fn check_binary(
     op: &ast::BinaryOp,
     rhs: &ast::Spanned<ast::Expr>,
 ) {
+    use ast::BinaryOp as Op;
+    // Index-backed operators need their supporting index (1027).
+    if let Op::Other(name) = op {
+        let needs = if name == "@@" || name.to_ascii_uppercase().starts_with("@") {
+            Some(crate::schema::IndexKind::Search)
+        } else if name.starts_with("<|") {
+            Some(crate::schema::IndexKind::Vector)
+        } else {
+            None
+        };
+        if let Some(required) = needs {
+            if let ast::Expr::Idiom(idiom) = &lhs.node {
+                if let Some(segments) =
+                    crate::analyzer::expression::infer::plain_field_segments(idiom)
+                {
+                    if let Some(table) = ctx.row_table() {
+                        let path = segments.join(".");
+                        let covered = table
+                            .indexes
+                            .values()
+                            .any(|index| index.kind == required && index.covers(&path));
+                        if !covered {
+                            let what = match required {
+                                crate::schema::IndexKind::Search => "a SEARCH ANALYZER index",
+                                _ => "an MTREE or HNSW index",
+                            };
+                            emit(
+                                ctx,
+                                whole.span,
+                                1027,
+                                format!("`{}` on `{path}` needs {what} on that field", name),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let (Some(left), Some(right)) = (known_kind(ctx, lhs), known_kind(ctx, rhs)) else {
         return;
     };
 
-    use ast::BinaryOp as Op;
+    // A `~` pattern must compile (2031) — the pattern side is a plain
+    // string.
+    if let Op::Other(name) = op {
+        if matches!(name.as_str(), "~" | "!~") {
+            if let Some(surrealdb_types::Value::String(pattern)) =
+                infer_expression_fact(rhs, ctx).value
+            {
+                use std::str::FromStr;
+                if surrealdb_types::Regex::from_str(&pattern).is_err() {
+                    emit(
+                        ctx,
+                        rhs.span,
+                        2031,
+                        format!("`{pattern}` is not a valid regex"),
+                    );
+                }
+            }
+        }
+    }
 
     // Membership against a provably empty collection never matches (7006).
     if let Op::Other(name) = op {
@@ -265,6 +445,44 @@ fn check_mixed_array(
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+        );
+    }
+}
+
+/// An object with `type` + `coordinates` keys is GeoJSON-shaped; its
+/// `type` must name a geometry kind (2036).
+fn check_geometry_shape(
+    ctx: &mut AnalysisContext<'_>,
+    whole: &ast::Spanned<ast::Expr>,
+    fields: &[(ast::Spanned<String>, ast::Spanned<ast::Expr>)],
+) {
+    const TYPES: &[&str] = &[
+        "Point",
+        "LineString",
+        "Polygon",
+        "MultiPoint",
+        "MultiLineString",
+        "MultiPolygon",
+        "GeometryCollection",
+    ];
+    let has_coordinates = fields
+        .iter()
+        .any(|(key, _)| key.node == "coordinates" || key.node == "geometries");
+    if !has_coordinates {
+        return;
+    }
+    let Some((_, type_value)) = fields.iter().find(|(key, _)| key.node == "type") else {
+        return;
+    };
+    let ast::Expr::Literal(ast::Literal::String(name)) = &type_value.node else {
+        return;
+    };
+    if !TYPES.contains(&name.as_str()) {
+        emit(
+            ctx,
+            whole.span,
+            2036,
+            format!("`{name}` is not a GeoJSON geometry type"),
         );
     }
 }

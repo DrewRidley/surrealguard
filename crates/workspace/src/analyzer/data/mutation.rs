@@ -89,7 +89,11 @@ pub(crate) fn analyze_expression_positions_for(
                     check_payload_object_keys(ctx, table, expr);
                 }
             }
-            Some(ast::DataClause::Patch(expr) | ast::DataClause::Single(expr)) => {
+            Some(ast::DataClause::Patch(expr)) => {
+                infer_expression_fact(expr, ctx);
+                check_patch_operations(ctx, expr);
+            }
+            Some(ast::DataClause::Single(expr)) => {
                 infer_expression_fact(expr, ctx);
             }
             Some(ast::DataClause::Partial(_)) | None => {}
@@ -290,6 +294,41 @@ pub(crate) fn check_return_before_on_create(
                 4020,
                 "RETURN BEFORE on CREATE is always NONE; there is no before state".to_string(),
             ));
+        }
+    }
+}
+
+/// PATCH operations must be well-formed JSON-Patch (2033): known ops and
+/// `/`-prefixed paths. Only constant payloads are checkable.
+fn check_patch_operations(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) {
+    const OPS: &[&str] = &["add", "remove", "replace", "move", "copy", "test", "change"];
+    let ast::Expr::Array(operations) = &expr.node else {
+        return;
+    };
+    for operation in operations {
+        let ast::Expr::Object(fields) = &operation.node else {
+            continue;
+        };
+        for (key, value) in fields {
+            let ast::Expr::Literal(ast::Literal::String(text)) = &value.node else {
+                continue;
+            };
+            let problem = match key.node.as_str() {
+                "op" if !OPS.contains(&text.as_str()) => {
+                    Some(format!("`{text}` is not a PATCH operation"))
+                }
+                "path" if !text.starts_with('/') => {
+                    Some(format!("PATCH paths start with `/`; found `{text}`"))
+                }
+                _ => None,
+            };
+            if let Some(message) = problem {
+                let span =
+                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), value.span);
+                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                    span, 2033, message,
+                ));
+            }
         }
     }
 }

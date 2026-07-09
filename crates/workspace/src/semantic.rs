@@ -145,6 +145,27 @@ pub fn analyze_sources_in_source_order(
                 &mut output.schema,
             ));
         }
+
+        // A parameter read before its LET in source order sees nothing
+        // (6004): compare recorded uses against the bindings' spans.
+        for param in analyzer_env.params() {
+            let Some(binding) = analyzer_env.let_fact(&param.name) else {
+                continue;
+            };
+            for use_span in &param.spans {
+                if use_span.source() == binding.span.source()
+                    && use_span.range().start() < binding.span.range().start()
+                {
+                    output
+                        .diagnostics
+                        .push(surrealguard_diagnostics::catalog::finding(
+                            use_span.clone(),
+                            6004,
+                            format!("`${}` is read before its LET on this line runs", param.name),
+                        ));
+                }
+            }
+        }
     }
 
     output

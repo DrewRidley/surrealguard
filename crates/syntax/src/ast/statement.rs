@@ -367,6 +367,8 @@ pub struct InfoStmt {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShowStmt {
     pub table: Option<Spanned<String>>,
+    /// `SINCE <versionstamp|datetime>` — the raw expression.
+    pub since: Option<Spanned<Expr>>,
 }
 
 /// `REBUILD INDEX ... ON ...`.

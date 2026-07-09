@@ -82,9 +82,9 @@ carried by the span and message, never by the code.
 | 1023 | FETCH names something that can hold records | `FETCH age` (int); an alias of a computed non-record value | E | ✅ emitting |
 | 1024 | SPLIT names a collection field | `SPLIT age` | E | ✅ emitting |
 | 1025 | a subfield is declared under an object-shaped parent | `FIELD a TYPE int` then `FIELD a.b` | E | 🔶 |
-| 1027 | an index-backed operator has its supporting index | `@@`/search::* need a SEARCH index; `<\|k\|>` needs MTREE/HNSW | E | 🔶 index-kind registry |
-| 1029 | each index covers a distinct field set | two indexes on `(email)` | W | 🔶 |
-| 1032 | DEFINE ANALYZER components name known tokenizers/filters/languages | `TOKENIZERS blanc` | E | 🔶 |
+| 1027 | an index-backed operator has its supporting index | `@@`/search::* need a SEARCH index; `<\|k\|>` needs MTREE/HNSW | E | ✅ emitting |
+| 1029 | each index covers a distinct field set | two indexes on `(email)` | W | ✅ emitting |
+| 1032 | DEFINE ANALYZER components name known tokenizers/filters/languages | `FILTERS snowball(klingon)` — tokenizer names are parser-covered (the grammar hard-codes them); filter names/languages emit here | E | ✅ emitting |
 
 Folded by the contract audit (2026-07-09): 1003–1011 → 1002; 1013, 1014,
 1030 → 1012; 1015 → 5001 (function resolution); 1016, 1017, 1018 → 1001;
@@ -99,24 +99,24 @@ removed table unknown); 1028 → 1027.
 | 2004 | the operands make sense together for the operator | binary and unary, arithmetic and comparison, compound assignment (`age += 'x'`); SurrealDB kind-ordering instead of throwing changes nothing | E | ✅ emitting |
 | 2005 | a condition position expects a boolean | IF conditions, ASSERT clauses, bare non-boolean WHERE | W | ✅ emitting (IF); ASSERT/WHERE 🔶 |
 | 2007 | a cast names a known type | `<ghost> x` | E | ✅ |
-| 2008 | a conversion can succeed | kind-proven (`<duration> true`) or value-proven (`<int> 'abc'`, `type::int('x')`) — the proof strength varies, the contract doesn't | E | 🔶 castability table; const half ✅ |
+| 2008 | a conversion can succeed | kind-proven (`<duration> true`) or value-proven (`<int> 'abc'`, `type::int('x')`) — the proof strength varies, the contract doesn't | E | ✅ emitting |
 | 2012 | a body returns what it declares | `fn::` `-> string { RETURN 1 }`; closures `\|$x\| -> string { RETURN 1 }` | E | 🔨 fn:: body-vs-declaration; closure half ✅ |
 | 2015 | a value-requiring position gets a value that is always present | `option<int>` field in `x + 1` | W | 🔶 needs the operand rule |
 | 2017 | ORDER BY keys name fields available on the result rows (or RAND()) | non-field key; explicit projections not containing the key | E | ✅ emitting |
 | 2018 | LIMIT/START take a non-negative integer | wrong kind (via params; literals parse-rejected), negative constants | E | ✅ emitting |
 | 2019 | TIMEOUT takes a duration | parser-covered today; emission exists for when params are grammatical | E | ☑ parser-covered |
 | 2020 | KILL takes a live-query uuid | parser-covered; grammar-fork bug: `KILL $id` fails to parse | E | ☑ parser-covered |
-| 2021 | SHOW SINCE takes a versionstamp or datetime | | E | 🔶 |
+| 2021 | SHOW SINCE takes a versionstamp or datetime | | E | ✅ emitting |
 | 2022 | FOR iterates something iterable | `FOR $x IN 42` — ranges must be modeled first or this false-positives | E | 🔶 gated on Kind::Range |
-| 2025 | READONLY fields are written only at creation | `UPDATE t SET created = ...` | E | 🔶 lower ReadonlyClause |
-| 2026 | computed (VALUE-clause) fields are not hand-assigned | the write is silently overwritten | W | 🔶 |
-| 2030 | index/filter/splat apply to collections | `age[0]`, `name[WHERE ..]`, `age.*` | E | ✅ idiom stepping knows |
-| 2031 | a regex literal compiles | `name ~ 'unclosed('` | E | ✅ const tracking |
-| 2032 | literal content is valid for its kind | `d'2024-13-45'`, `u'not-a-uuid'` | E | 🔶 literal text retention |
-| 2033 | PATCH operations are well-formed | unknown op, path without `/` | E | 🔶 |
-| 2034 | required fields are provided at creation | `CREATE person;` with non-optional, no-DEFAULT `name` | E | 🔶 required-field metadata |
-| 2035 | DEFINE ANALYZER filter arguments are valid | `edgengram(5, 2)` | E | 🔶 |
-| 2036 | GeoJSON literals have their declared shape | `{type: 'Pointt', ...}` | E | ✅ const objects |
+| 2025 | READONLY fields are written only at creation | `UPDATE t SET created = ...` | E | ✅ emitting |
+| 2026 | computed (VALUE-clause) fields are not hand-assigned | the write is silently overwritten | W | ✅ emitting |
+| 2030 | index/filter/splat apply to collections | `age[0]`, `name[WHERE ..]`, `age.*` | E | ✅ emitting |
+| 2031 | a regex literal compiles | `name ~ 'unclosed('` | E | ✅ emitting |
+| 2032 | literal content is valid for its kind | `d'2024-13-45'`, `u'not-a-uuid'` | E | ✅ emitting |
+| 2033 | PATCH operations are well-formed | unknown op, path without `/` | E | ✅ emitting |
+| 2034 | required fields are provided at creation | `CREATE person;` with non-optional, no-DEFAULT `name` | E | ✅ emitting |
+| 2035 | DEFINE ANALYZER filter arguments are valid | `edgengram(5, 2)` | E | ✅ emitting |
+| 2036 | GeoJSON literals have their declared shape | `{type: 'Pointt', ...}` | E | ✅ emitting |
 
 Folded by the contract audit (2026-07-09): 2002, 2003, 2009, 2010, 2027 →
 2001; 2006, 2011 → 2005; 2013 → 2012; 2014, 2029 → 2004; 2023 → 2008;
@@ -132,7 +132,7 @@ Family contract: **a traversal or RELATE must use relations as declared.**
 | 3002 | the usage matches the relation's declared shape (`in`->edge->`out`) | wrong-direction traversal, a hop landing off the far side, RELATE writing endpoints on the wrong sides — messages show declared vs written shape | E | ✅ emitting (as 3002/3003/3006; renumbering to 3002) |
 | 3004 | a FROM-position chain is complete (edge->target pairs) | `FROM user->writes` | E | ✅ |
 | 3009 | a traversal starts from records | `age->writes->` | E | ✅ |
-| 3011 | graph recursion is bounded | `@{..}` with no upper bound | W | 🔶 Recurse lowering |
+| 3011 | graph recursion is bounded | `@{..}` with no upper bound | W | ✅ emitting |
 
 Folded by the contract audit (2026-07-09): 3003, 3006 → 3002; 3007 → 3001;
 3008 → 1001 (an endpoint naming an unknown table is a table-reference

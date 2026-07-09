@@ -13,6 +13,7 @@
 //! The kind of a traversal comes from [`super::select`]'s resolvers; this
 //! module is the checking-side twin, invoked from the same sites.
 
+use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
@@ -28,6 +29,46 @@ pub(crate) fn check_graph_idiom(
     source_table: &str,
     idiom: &ast::Idiom,
 ) {
+    check_graph_idiom_at(ctx, source_table, idiom, false)
+}
+
+/// `require_landing` is FROM's extra contract: the traversal must end on
+/// a table, not in the middle of a hop (3004).
+pub(crate) fn check_graph_idiom_at(
+    ctx: &mut AnalysisContext<'_>,
+    source_table: &str,
+    idiom: &ast::Idiom,
+    require_landing: bool,
+) {
+    // A traversal must start from records: a leading field prefix that
+    // resolves to a non-record kind cannot step anywhere (3009); a record
+    // link rebases the traversal onto the link's table.
+    let mut source_table = source_table.to_string();
+    if let Some((prefix, first_graph)) = leading_field_prefix(idiom) {
+        if !prefix.is_empty() {
+            if let Some(table) = ctx.schema().tables.get(&source_table) {
+                if let Some(kind) = crate::analyzer::data::select::kind_for_path(table, &prefix) {
+                    if kind != Kind::Any && !kind_is_recordish(&kind) {
+                        emit(
+                            ctx,
+                            first_graph,
+                            3009,
+                            format!(
+                                "cannot traverse from `{}`: `{kind}` holds no records",
+                                prefix.join(".")
+                            ),
+                        );
+                        return;
+                    }
+                    if let Some(target) = single_record_target(&kind) {
+                        source_table = target;
+                    }
+                }
+            }
+        }
+    }
+    let source_table = source_table.as_str();
+
     // `current` is the table the traversal stands on before each part;
     // `None` after a step that failed to resolve (stop checking — one
     // finding per broken chain, not a cascade).
@@ -82,11 +123,67 @@ pub(crate) fn check_graph_idiom(
                     check_filter(ctx, &table, cond);
                 }
             }
+            ast::IdiomPart::Recurse { bounded } if !bounded => {
+                emit(
+                    ctx,
+                    part.span,
+                    3011,
+                    "unbounded graph recursion; give the range an upper bound".to_string(),
+                );
+            }
             // A field hop after a graph step projects off the current
             // table; the projection resolvers own its kind. Later graph
             // parts continue from wherever the traversal stands.
             _ => {}
         }
+    }
+
+    if require_landing {
+        if let Some((edge, _)) = &pending_edge {
+            if let Some(last) = idiom.parts.last() {
+                emit(
+                    ctx,
+                    last.span,
+                    3004,
+                    format!("a FROM traversal must land on a table; it ends on the edge `{edge}`"),
+                );
+            }
+        }
+    }
+}
+
+/// The plain-field segments before the first graph part, with that graph
+/// part's span.
+fn leading_field_prefix(idiom: &ast::Idiom) -> Option<(Vec<String>, ByteRange)> {
+    let mut prefix = Vec::new();
+    for part in &idiom.parts {
+        match &part.node {
+            ast::IdiomPart::Field(name) => prefix.push(name.clone()),
+            ast::IdiomPart::Graph { .. } => return Some((prefix, part.span)),
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// The single table a record-ish kind links to, when unambiguous.
+fn single_record_target(kind: &Kind) -> Option<String> {
+    match kind {
+        Kind::Record(targets) => match targets.as_slice() {
+            [only] => Some(only.to_string()),
+            _ => None,
+        },
+        Kind::Array(element, _) | Kind::Set(element, _) => single_record_target(element),
+        _ => None,
+    }
+}
+
+fn kind_is_recordish(kind: &Kind) -> bool {
+    match kind {
+        Kind::Record(_) | Kind::Any => true,
+        Kind::Array(element, _) | Kind::Set(element, _) => kind_is_recordish(element),
+        Kind::Either(variants) => variants.iter().any(kind_is_recordish),
+        _ => false,
     }
 }
 

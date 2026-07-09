@@ -39,7 +39,7 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
         ast::Expr::RecordId { table, .. } => table.node.clone(),
         ast::Expr::Idiom(idiom) => {
             if let Some(leading) = leading_field_table(idiom) {
-                crate::analyzer::data::graph::check_graph_idiom(ctx, &leading, idiom);
+                crate::analyzer::data::graph::check_graph_idiom_at(ctx, &leading, idiom, true);
             }
             match graph_source_table(idiom, ctx.schema()) {
                 Some(table) => table,
@@ -748,7 +748,11 @@ fn project_expr(
             return;
         }
 
-        // Idioms with parts we don't project yet (Start/Index/Method/...).
+        // Idioms with parts we don't project yet (Start/Index/Method/...)
+        // still get their invariants checked.
+        ctx.with_row_table(ctx.schema().tables.get(&table.name), |ctx| {
+            crate::analyzer::expression::check::check_value_expression(ctx, expr);
+        });
         fields.insert(
             alias_name.unwrap_or_else(|| slice(ctx.source_text(), expr.span).to_string()),
             Kind::Any,

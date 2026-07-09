@@ -186,10 +186,10 @@ fn literal_fact(literal: &ast::Literal, span: SourceSpan) -> ExpressionFact {
         ast::Literal::Bool(_) => Kind::Bool,
         ast::Literal::None => Kind::None,
         ast::Literal::Null => Kind::Null,
-        ast::Literal::Duration => Kind::Duration,
-        ast::Literal::Datetime => Kind::Datetime,
-        ast::Literal::Uuid => Kind::Uuid,
-        ast::Literal::Regex => Kind::Regex,
+        ast::Literal::Duration(_) => Kind::Duration,
+        ast::Literal::Datetime(_) => Kind::Datetime,
+        ast::Literal::Uuid(_) => Kind::Uuid,
+        ast::Literal::Regex(_) => Kind::Regex,
     };
     let mut fact = scalar_fact(span, ExpressionValueClass::Literal, kind);
     fact.value = const_literal_value(literal);
@@ -199,6 +199,7 @@ fn literal_fact(literal: &ast::Literal, span: SourceSpan) -> ExpressionFact {
 /// The literal's static value, for the variants whose value the AST
 /// retains. (Duration/datetime/uuid literals keep only their kind.)
 fn const_literal_value(literal: &ast::Literal) -> Option<surrealdb_types::Value> {
+    use std::str::FromStr;
     use surrealdb_types::Value;
     let value = match literal {
         ast::Literal::String(value) => Value::String(value.clone()),
@@ -207,6 +208,13 @@ fn const_literal_value(literal: &ast::Literal) -> Option<surrealdb_types::Value>
         ast::Literal::Bool(value) => Value::Bool(*value),
         ast::Literal::None => Value::None,
         ast::Literal::Null => Value::Null,
+        ast::Literal::Datetime(text) => {
+            Value::Datetime(surrealdb_types::Datetime::from_str(text).ok()?)
+        }
+        ast::Literal::Duration(text) => {
+            Value::Duration(surrealdb_types::Duration::from_str(text).ok()?)
+        }
+        ast::Literal::Uuid(text) => Value::Uuid(surrealdb_types::Uuid::from_str(text).ok()?),
         _ => return None,
     };
     Some(value)
@@ -345,9 +353,10 @@ fn step_part_kind(
             }
             Some(Kind::Literal(KindLiteral::Object(fields)))
         }
-        ast::IdiomPart::Start(_) | ast::IdiomPart::Graph { .. } | ast::IdiomPart::Partial(_) => {
-            None
-        }
+        ast::IdiomPart::Start(_)
+        | ast::IdiomPart::Graph { .. }
+        | ast::IdiomPart::Recurse { .. }
+        | ast::IdiomPart::Partial(_) => None,
     }
 }
 
@@ -409,6 +418,7 @@ fn step_idiom_kind(idiom: &ast::Idiom, ctx: &mut AnalysisContext<'_>) -> Option<
             }
             ast::IdiomPart::Start(_)
             | ast::IdiomPart::Graph { .. }
+            | ast::IdiomPart::Recurse { .. }
             | ast::IdiomPart::Partial(_) => {
                 return None;
             }
@@ -607,6 +617,11 @@ fn cast_fact(ty: &ast::Spanned<ast::TypeExpr>, span: SourceSpan) -> ExpressionFa
         Some(kind) => fact.with_kind(kind),
         None => fact.with_partial(PartialReason::UnsupportedSyntax("TypeCast".into())),
     }
+}
+
+/// The kind a cast target names, shared with the checking side.
+pub(crate) fn cast_target_kind(ty: &ast::TypeExpr) -> Option<Kind> {
+    cast_kind(ty)
 }
 
 fn cast_kind(ty: &ast::TypeExpr) -> Option<Kind> {

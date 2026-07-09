@@ -681,7 +681,7 @@ INSERT INTO person { name: 'Ada' };
         assert!(output
             .diagnostics
             .iter()
-            .all(|finding| finding.code() != FindingCode::dynamic(6001)));
+            .all(|finding| finding.code() != FindingCode::param(6003)));
     }
 
     #[test]
@@ -703,7 +703,7 @@ INSERT INTO person { name: 'Ada' };
         let partial: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::dynamic(6001))
+            .filter(|finding| finding.code() == FindingCode::param(6003))
             .collect();
         assert_eq!(partial.len(), 1);
     }
@@ -2607,6 +2607,80 @@ INSERT INTO person { name: 'Ada' };
             assert!(
                 messages.iter().any(|(c, m)| c == code && m == message),
                 "missing {code}: {message}\nhave: {messages:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn analyze_workspace_full_coverage_batch_two() {
+        // Slice F: literal content (2032/2031), casts (2008), SINCE (2021),
+        // FOR iterables (2022 via params; literals are parser-rejected),
+        // PATCH shapes (2033), GeoJSON (2036), FROM landings (3004),
+        // non-record traversal starts (3009), index-backed operators
+        // (1027), duplicate indexes (1029), analyzer components
+        // (1032/2035), recursion bounds (3011), use-before-LET (6004).
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            concat!(
+                "DEFINE TABLE person SCHEMAFULL;\n",
+                "DEFINE FIELD name ON person TYPE string DEFAULT 'x';\n",
+                "DEFINE FIELD age ON person TYPE int DEFAULT 0;\n",
+                "DEFINE TABLE post;\n",
+                "DEFINE TABLE likes TYPE RELATION IN person OUT post;\n",
+                "DEFINE INDEX by_name ON person FIELDS name;\n",
+                "DEFINE INDEX by_name_too ON person FIELDS name;\n",
+                "DEFINE ANALYZER myan TOKENIZERS blank FILTERS snowball(klingon),edgengram(9,2);\n",
+                "RETURN d'2024-13-45T00:00:00Z';\n",
+                "RETURN 'a' ~ 'unclosed(';\n",
+                "RETURN <int> 'abc';\n",
+                "RETURN <duration> true;\n",
+                "SHOW CHANGES FOR TABLE person SINCE 'not-a-date';\n",
+                "LET $n = 42;\n",
+                "FOR $x IN $n { RETURN 1; };\n",
+                "UPDATE person PATCH [{ op: 'remvoe', path: 'name' }] WHERE name = 'x';\n",
+                "RETURN { type: 'Pointt', coordinates: [1, 2] };\n",
+                "SELECT * FROM person->likes;\n",
+                "SELECT age->likes->post FROM person;\n",
+                "SELECT * FROM person WHERE name @@ 'q';\n",
+                "SELECT ->likes.{..}->post FROM person;\n",
+                "RETURN $later;\n",
+                "LET $later = 1;\n",
+            )
+            .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        for (code, needle) in [
+            ("E2032", "not a valid datetime"),
+            ("E2031", "not a valid regex"),
+            ("E2008", "`abc` can never convert to `int`"),
+            ("E2008", "a `bool` can never convert to `duration`"),
+            ("E2021", "SINCE expects a versionstamp or datetime"),
+            ("E2022", "FOR expects a collection to iterate, found `int`"),
+            ("E2033", "`remvoe` is not a PATCH operation"),
+            ("E2033", "PATCH paths start with `/`"),
+            ("E2036", "`Pointt` is not a GeoJSON geometry type"),
+            ("E3004", "must land on a table"),
+            ("E3009", "cannot traverse from `age`"),
+            ("E1027", "needs a SEARCH ANALYZER index"),
+            ("E1029", "covers the same fields as `by_name`"),
+            ("E1032", "`klingon` is not a snowball language"),
+            ("E2035", "needs `(min, max)` with min <= max"),
+            ("E3011", "unbounded graph recursion"),
+            ("E6004", "read before its LET"),
+        ] {
+            assert!(
+                messages
+                    .iter()
+                    .any(|(c, m)| c == code && m.contains(needle)),
+                "missing {code}: {needle}\nhave: {messages:#?}"
             );
         }
     }

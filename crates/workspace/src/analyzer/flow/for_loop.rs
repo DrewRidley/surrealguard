@@ -11,10 +11,55 @@ use crate::expression::{ExpressionFact, ExpressionValueClass};
 
 pub fn analyze_for_loop(ctx: &mut AnalysisContext<'_>, stmt: &ast::ForStmt) -> Kind {
     let iterable = crate::analyzer::expression::expr_fact(ctx, &stmt.iterable);
-    let element_kind = match iterable.kind {
-        Some(Kind::Array(element, _)) | Some(Kind::Set(element, _)) => Some(*element),
+    let element_kind = match &iterable.kind {
+        Some(Kind::Array(element, _)) | Some(Kind::Set(element, _)) => Some((**element).clone()),
         _ => None,
     };
+
+    // FOR's contract: the iterable is a collection (or a range, once those
+    // are modeled). Definitely-scalar kinds are 2022.
+    if let Some(kind) = &iterable.kind {
+        let base = crate::semantic::literal_base_kind(kind).unwrap_or_else(|| kind.clone());
+        if matches!(
+            base,
+            Kind::Int
+                | Kind::Float
+                | Kind::Decimal
+                | Kind::Number
+                | Kind::Bool
+                | Kind::String
+                | Kind::Datetime
+                | Kind::Duration
+                | Kind::Uuid
+                | Kind::None
+                | Kind::Null
+        ) {
+            let span = surrealguard_syntax::span::SourceSpan::new(
+                ctx.source().clone(),
+                stmt.iterable.span,
+            );
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                span,
+                2022,
+                format!("FOR expects a collection to iterate, found `{kind}`"),
+            ));
+        }
+        // Constant empty collections never run their body (7004: control
+        // flow decided by a constant).
+        if let Some(surrealdb_types::Value::Array(values)) = &iterable.value {
+            if values.is_empty() {
+                let span = surrealguard_syntax::span::SourceSpan::new(
+                    ctx.source().clone(),
+                    stmt.iterable.span,
+                );
+                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                    span,
+                    7004,
+                    "this loop never runs: the collection is a constant empty array".to_string(),
+                ));
+            }
+        }
+    }
 
     ctx.with_child_env(|ctx| {
         let mut binding =

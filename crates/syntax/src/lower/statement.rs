@@ -81,9 +81,7 @@ pub fn lower_statement(node: Node<'_>, text: &str) -> Spanned<Statement> {
             table: table_after_keyword(node, text, "table")
                 .or_else(|| table_after_keyword(node, text, "tb")),
         }),
-        "ShowStatement" => Statement::Show(ShowStmt {
-            table: table_after_keyword(node, text, "table"),
-        }),
+        "ShowStatement" => Statement::Show(lower_show(node, text)),
         "RebuildStatement" => Statement::Rebuild(lower_rebuild(node, text)),
         "DefineStatement" => Statement::Define(lower_define(node, text)),
         // A bare expression in statement position (e.g. a block's trailing
@@ -839,6 +837,25 @@ fn table_after_keyword(node: Node<'_>, text: &str, keyword: &str) -> Option<Span
 
 /// The DEFINE kind is the second keyword; Tier 1 kinds are modeled, the
 /// long tail is an explicit `Other`.
+fn lower_show(node: Node<'_>, text: &str) -> ShowStmt {
+    let mut since = None;
+    let mut saw_since = false;
+    for child in named_children(node) {
+        if child.kind() == "Keyword" {
+            saw_since = text[child.byte_range()].eq_ignore_ascii_case("since");
+            continue;
+        }
+        if saw_since && matches!(child.kind(), "String" | "Number") {
+            since = Some(lower_expr(child, text));
+            saw_since = false;
+        }
+    }
+    ShowStmt {
+        table: table_after_keyword(node, text, "table"),
+        since,
+    }
+}
+
 fn lower_define(node: Node<'_>, text: &str) -> DefineStmt {
     let kind = named_children(node)
         .into_iter()
