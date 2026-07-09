@@ -101,8 +101,16 @@ const ENTRIES: &[(u16, &str, Severity)] = &[
     (3010, "FETCH alias that is not a record target", Severity::Warning),
     (3011, "unbounded graph recursion", Severity::Warning),
     (4001, "clause not valid on this statement", Severity::Error),
-    (4002, "SELECT VALUE with multiple projections", Severity::Error),
-    (4003, "ONLY on a multi-row target", Severity::Warning),
+    (
+        4002,
+        "SELECT VALUE with multiple projections",
+        Severity::Error,
+    ),
+    (
+        4003,
+        "ONLY on a table-wide target without LIMIT 1",
+        Severity::Error,
+    ),
     (4004, "INSERT tuple column/value count mismatch", Severity::Error),
     (4005, "BREAK/CONTINUE outside a loop", Severity::Error),
     (4006, "unreachable statements after RETURN/BREAK/THROW", Severity::Warning),
@@ -248,8 +256,8 @@ mod tests {
             SourceId::new("test"),
             ByteRange::new(0, 1).expect("valid range"),
         );
-        let finding = finding(span, 4003, "ONLY with a multi-row target");
+        let finding = finding(span, 4010, "duplicate SET target");
         assert_eq!(finding.severity(), Severity::Warning);
-        assert_eq!(finding.code().number(), 4003);
+        assert_eq!(finding.code().number(), 4010);
     }
 }

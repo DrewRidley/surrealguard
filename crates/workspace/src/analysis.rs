@@ -825,17 +825,16 @@ INSERT INTO person { name: 'Ada' };
         let endpoint_messages: Vec<_> = output
             .diagnostics
             .iter()
-            .filter(|finding| finding.message().contains("endpoint"))
+            .filter(|finding| finding.code() == FindingCode::graph(3006))
             .map(|finding| finding.message().to_string())
             .collect();
 
-        // The first RELATE (before OVERWRITE) violates both sides; the
-        // second (after) matches the overwritten relation and is clean.
+        // The first RELATE (before OVERWRITE) contradicts the declared
+        // shape; the second (after) matches the overwritten relation.
         assert_eq!(
             endpoint_messages,
             vec![
-                "relation `person` expects its `in` endpoint to be `user`; found `org`",
-                "relation `person` expects its `out` endpoint to be `org`; found `user`",
+                "relation `person` connects `user`->`person`->`org`, but this RELATE writes `org`->`person`->`user`",
             ]
         );
         let relation = output
@@ -2564,6 +2563,58 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_reports_statement_shape_misuse() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nSELECT * FROM ONLY person;\nSELECT * FROM ONLY person LIMIT 1;\nSELECT * FROM ONLY person:one;\nUPDATE ONLY person SET age = 1;\nUPDATE person SET age = 1, age = 2;\nSELECT age, age FROM person;\nLET $y = { LET $inner = 1; };".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let messages: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .filter(|finding| matches!(finding.code().number(), 4001..=4020))
+            .map(|finding| (finding.code().to_string(), finding.message().to_string()))
+            .collect();
+
+        let expect = [
+            (
+                "E4003",
+                "ONLY on a whole table needs LIMIT 1 (or a record id target)",
+            ),
+            ("E4003", "ONLY on a whole table needs a record id target"),
+            (
+                "W4010",
+                "`age` is assigned more than once; the last assignment wins",
+            ),
+            ("W4011", "duplicate projection key `age`"),
+            (
+                "W4017",
+                "block ends with LET, so its value is NONE — return the value instead",
+            ),
+        ];
+        for (code, message) in expect {
+            // Rendered test codes carry the category letter; severities are
+            // asserted through the severity() accessor below.
+            assert!(
+                messages
+                    .iter()
+                    .any(|(c, m)| c.trim_start_matches(char::is_alphabetic)
+                        == code.trim_start_matches(char::is_alphabetic)
+                        && m == message),
+                "missing {code}: {message} in {messages:?}"
+            );
+        }
+        // The guarded forms produce nothing: LIMIT 1 and record ids are
+        // exactly the escape hatches.
+        assert_eq!(
+            messages.iter().filter(|(_, m)| m.contains("ONLY")).count(),
+            2
+        );
+    }
+
+    #[test]
     fn analyze_workspace_type_checks_edge_filter_conditions() {
         // Both edge-filter forms get full expression checking with the
         // edge table as the row: operand misuse inside them is 2004.
@@ -2608,7 +2659,7 @@ INSERT INTO person { name: 'Ada' };
 
         assert_eq!(
             messages,
-            vec!["relation `likes` cannot reach `comment` (goes to `post`)"]
+            vec!["relation `likes` connects `person`->`likes`->`post`, so this hop cannot land on `comment`"]
         );
     }
 
@@ -2630,7 +2681,7 @@ INSERT INTO person { name: 'Ada' };
 
         assert_eq!(
             messages,
-            vec!["relation `likes` does not connect `post` as `in` (source of `->`)"]
+            vec!["relation `likes` connects `person`->`likes`->`post`, but this step traverses `->` from `post`"]
         );
     }
 
@@ -2669,16 +2720,15 @@ INSERT INTO person { name: 'Ada' };
             .iter()
             .map(|finding| finding.message().to_string())
             .collect();
-        // Both endpoints sit on the wrong side.
+        // One finding comparing the declared shape against the written one.
         assert_eq!(
             messages,
             vec![
-                "relation `likes` expects its `in` endpoint to be `person`; found `post`",
-                "relation `likes` expects its `out` endpoint to be `post`; found `person`",
+                "relation `likes` connects `person`->`likes`->`post`, but this RELATE writes `post`->`likes`->`person`",
             ]
         );
         assert_eq!(mismatches[0].span().source(), &source);
-        assert_eq!(output.sources[&source].diagnostics.len(), 2);
+        assert_eq!(output.sources[&source].diagnostics.len(), 1);
     }
 
     #[test]

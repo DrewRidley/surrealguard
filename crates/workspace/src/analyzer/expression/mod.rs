@@ -27,6 +27,31 @@ pub fn analyze_expr(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr
     expr_fact(ctx, expr).kind.unwrap_or(Kind::Any)
 }
 
+/// Shape check for a block used as a *value*: a block whose final
+/// statement is a `LET` evaluates to NONE — almost always a missing
+/// trailing expression (4017). Blocks in statement position are exempt
+/// (nothing consumes their value), and an empty `{}` in value position is
+/// an empty *object* literal, not a block.
+fn check_value_block(
+    ctx: &mut AnalysisContext<'_>,
+    block: &ast::Block,
+    span: surrealguard_syntax::span::ByteRange,
+) {
+    let _ = span;
+    match block.statements.last() {
+        None => {}
+        Some(last) if matches!(last.node, ast::Statement::Let(_)) => {
+            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), last.span);
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                span,
+                4017,
+                "block ends with LET, so its value is NONE — return the value instead".to_string(),
+            ));
+        }
+        Some(_) => {}
+    }
+}
+
 /// [`analyze_expr`], but returning the full fact.
 pub fn expr_fact(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) -> ExpressionFact {
     let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
@@ -34,6 +59,7 @@ pub fn expr_fact(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) 
     // Blocks thread an environment through their statements — that is the
     // dispatcher's job, so route through it rather than pure inference.
     if let ast::Expr::Block(block) = &expr.node {
+        check_value_block(ctx, block, expr.span);
         let kind =
             ctx.with_child_env(|ctx| crate::analyzer::flow::block::analyze_block(ctx, block));
         return ExpressionFact::new(span, crate::expression::ExpressionValueClass::Block)

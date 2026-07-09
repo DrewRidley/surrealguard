@@ -154,8 +154,8 @@ Detection status legend: ✅ inference already computes everything needed
 | Code | Finding | Example | Sev | Status |
 |---|---|---|---|---|
 | 4001 | clause not valid on this statement | `SELECT ... RETURN NONE`, `CREATE ... WHERE` | E | ✅ lowering already isolates them |
-| 4002 | SELECT VALUE with multiple projections | `SELECT VALUE a, b FROM t` | E | ✅ |
-| 4003 | ONLY on a multi-row target | `CREATE ONLY person` (whole table) | W | ✅ |
+| 4002 | SELECT VALUE with multiple projections | `SELECT VALUE a, b FROM t` — verified: both SurrealDB's parser *and* ours reject the syntax, so this is parse-level (0xxx); the code stays reserved, no analyzer emission | E | ☑ parser-covered |
+| 4003 | ONLY on a table-wide target without LIMIT 1 | `SELECT * FROM ONLY person`, `UPDATE ONLY person` — deterministic runtime error (`SingleOnlyOutput`); CREATE is exempt (always one row) | E | ✅ |
 | 4004 | INSERT tuple column/value count mismatch | `(a, b) VALUES (1)` | E | ✅ lowering counts |
 | 4005 | BREAK/CONTINUE outside a loop | top-level `BREAK` | E | 🔶 loop-depth flag on ctx |
 | 4006 | unreachable statements after RETURN/BREAK/THROW | `RETURN 1; SELECT ...` in a block | W | 🔶 block walk already sequential |
@@ -168,7 +168,7 @@ Detection status legend: ✅ inference already computes everything needed
 | 4013 | GROUP BY field not in projections | SurrealDB aggregate rules | W | 🔶 verify exact semantics first |
 | 4014 | RETURN outside a function/block context where invalid | | W | 🔶 |
 | 4015 | BEGIN never closed | `BEGIN;` with no COMMIT/CANCEL by script end | E | 🔨 transaction state (same walk as 4007/4008) |
-| 4016 | empty block | `IF x { }` | I | ✅ |
+| 4016 | empty block | verified unreachable: `{}` in value position is an empty *object* literal, and statement-position blocks don't have their value consumed — code reserved, no emission | I | ☑ unreachable |
 | 4017 | block ends with LET — its value is NONE | `{ LET $x = f(); }` consumed as a value | W | ✅ block value known |
 | 4018 | side-effecting subquery in read position | `SELECT (CREATE log) FROM t` | W | ✅ statement kinds known |
 | 4019 | CREATE/INSERT on a relation table without `in`/`out` | `CREATE likes SET strength = 1` | W | ✅ relation-ness known |

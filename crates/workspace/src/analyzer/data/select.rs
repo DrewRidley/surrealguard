@@ -27,6 +27,7 @@ pub fn analyze_select(ctx: &mut AnalysisContext<'_>, stmt: &ast::SelectStmt) -> 
 
 /// Pure core: infers the response type of a lowered `SELECT`.
 pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
+    check_select_statement_shape(stmt, ctx);
     if stmt.explain.is_some() {
         return explain_response_kind();
     }
@@ -169,6 +170,52 @@ fn walk_projections_for_findings(stmt: &ast::SelectStmt, ctx: &mut AnalysisConte
         crate::analyzer::expression::check::check_value_expression(ctx, cond);
     }
     Kind::Any
+}
+
+/// Statement-shape invariants that don't depend on the schema: ONLY
+/// without a single-row guarantee (4003 — a deterministic
+/// `SingleOnlyOutput` runtime error) and duplicate projection keys (4011).
+/// (VALUE's single-projection rule needs no finding: both SurrealDB's
+/// parser and ours reject the syntax.)
+fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
+    if stmt.only {
+        let table_target = stmt
+            .from
+            .first()
+            .filter(|from| matches!(from.node, ast::Expr::Table(_)));
+        let limited_to_one = literal_limit(stmt).is_some_and(|limit| limit <= 1);
+        if let Some(from) = table_target {
+            if !limited_to_one {
+                let span =
+                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from.span);
+                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                    span,
+                    4003,
+                    "ONLY on a whole table needs LIMIT 1 (or a record id target)".to_string(),
+                ));
+            }
+        }
+    }
+
+    let mut seen = std::collections::BTreeMap::new();
+    for projection in &stmt.projections {
+        let ast::Projection::Expr { expr, alias } = projection else {
+            continue;
+        };
+        let key = match alias {
+            Some(alias) => alias.node.clone(),
+            None => slice(ctx.source_text(), expr.span).to_string(),
+        };
+        let span = alias.as_ref().map(|a| a.span).unwrap_or(expr.span);
+        if seen.insert(key.clone(), span).is_some() {
+            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                span,
+                4011,
+                format!("duplicate projection key `{key}`"),
+            ));
+        }
+    }
 }
 
 fn object_literal(fields: BTreeMap<String, Kind>) -> Kind {

@@ -165,8 +165,9 @@ fn check_step(
             target.span,
             3002,
             format!(
-                "relation `{edge}` does not connect `{source}` {}",
-                direction_text(dir)
+                "relation `{edge}` connects {}, but this step traverses {} from `{source}`",
+                declared_shape(edge, &relation),
+                arrow_text(dir),
             ),
         );
         return StepOutcome {
@@ -229,9 +230,9 @@ pub(crate) fn check_hop_reachability(
         target.span,
         3003,
         format!(
-            "relation `{edge}` cannot reach `{}` (goes to {})",
+            "relation `{edge}` connects {}, so this hop cannot land on `{}`",
+            declared_shape(edge, &relation),
             target.node,
-            table_list(far)
         ),
     );
 }
@@ -270,20 +271,29 @@ fn check_filter_fields(
     crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1003);
 }
 
-fn direction_text(dir: ast::GraphDir) -> &'static str {
+fn arrow_text(dir: ast::GraphDir) -> &'static str {
     match dir {
-        ast::GraphDir::Out => "as `in` (source of `->`)",
-        ast::GraphDir::In => "as `out` (source of `<-`)",
-        ast::GraphDir::Both => "in either direction",
+        ast::GraphDir::Out => "`->`",
+        ast::GraphDir::In => "`<-`",
+        ast::GraphDir::Both => "`<->`",
     }
 }
 
-fn table_list(tables: &[String]) -> String {
+/// The relation's declared shape, reader-facing: `` `person`->`post` ``.
+pub(crate) fn declared_shape(edge: &str, relation: &crate::schema::RelationDef) -> String {
+    format!(
+        "{}->`{edge}`->{}",
+        table_list(&relation.in_tables),
+        table_list(&relation.out_tables)
+    )
+}
+
+pub(crate) fn table_list(tables: &[String]) -> String {
     tables
         .iter()
         .map(|t| format!("`{t}`"))
         .collect::<Vec<_>>()
-        .join(", ")
+        .join("|")
 }
 
 fn emit(ctx: &mut AnalysisContext<'_>, span: ByteRange, code: u16, message: String) {

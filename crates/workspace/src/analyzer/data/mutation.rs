@@ -42,6 +42,7 @@ pub(crate) fn analyze_expression_positions(
         }
         match data {
             Some(ast::DataClause::Set(assignments)) => {
+                check_duplicate_targets(ctx, assignments);
                 for assignment in assignments {
                     infer_expression_fact(&assignment.value, ctx);
                     crate::analyzer::expression::check::check_value_expression(
@@ -81,6 +82,55 @@ pub(crate) fn analyze_expression_positions(
             Some(ast::DataClause::Partial(_)) | None => {}
         }
     });
+}
+
+/// `SET age = 1, age = 2` — the later assignment silently wins (4010).
+fn check_duplicate_targets(ctx: &mut AnalysisContext<'_>, assignments: &[ast::Assignment]) {
+    let mut seen = std::collections::BTreeMap::new();
+    for assignment in assignments {
+        if !matches!(assignment.op.node, ast::AssignOp::Assign) {
+            continue;
+        }
+        let Some(segments) = plain_field_segments(&assignment.target.node) else {
+            continue;
+        };
+        let key = segments.join(".");
+        if seen.insert(key.clone(), assignment.target.span).is_some() {
+            let span = surrealguard_syntax::span::SourceSpan::new(
+                ctx.source().clone(),
+                assignment.target.span,
+            );
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                span,
+                4010,
+                format!("`{key}` is assigned more than once; the last assignment wins"),
+            ));
+        }
+    }
+}
+
+/// ONLY on a whole-table target is a deterministic runtime error for
+/// row-iterating mutations (4003); record ids and CREATE (always one row)
+/// are fine.
+pub(crate) fn check_only_on_table(
+    ctx: &mut AnalysisContext<'_>,
+    only: bool,
+    target: Option<&ast::Spanned<ast::Expr>>,
+) {
+    if !only {
+        return;
+    }
+    let Some(target) = target else {
+        return;
+    };
+    if matches!(target.node, ast::Expr::Table(_)) {
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), target.span);
+        ctx.emit(surrealguard_diagnostics::catalog::finding(
+            span,
+            4003,
+            "ONLY on a whole table needs a record id target".to_string(),
+        ));
+    }
 }
 
 /// `SET target = value`: a plainly-assigned value must be assignable to

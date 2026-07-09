@@ -68,32 +68,43 @@ fn check_relate_endpoints(ctx: &mut AnalysisContext<'_>, stmt: &ast::RelateStmt,
         return;
     };
 
-    for (endpoint, side, tables) in [
-        (stmt.from.as_ref(), "in", &relation.in_tables),
-        (stmt.to.as_ref(), "out", &relation.out_tables),
-    ] {
-        let Some(endpoint) = endpoint else {
-            continue;
-        };
-        let Some(endpoint_table) = endpoint_table_name(endpoint) else {
-            // Params and computed endpoints resolve at runtime.
-            continue;
-        };
-        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), endpoint.span);
-        if !ctx.schema().tables.contains_key(&endpoint_table) {
-            continue;
-        }
-        if !tables.contains(&endpoint_table) {
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
-                span,
-                3006,
-                format!(
-                    "relation `{edge_name}` expects its `{side}` endpoint to be {}; found `{endpoint_table}`",
-                    table_list(tables)
-                ),
-            ));
-        }
+    // Compare the written shape against the declared one; endpoints that
+    // are params/computed or unknown tables (3008 already fired) don't
+    // participate.
+    let known = |endpoint: Option<&ast::Spanned<ast::Expr>>| {
+        let name = endpoint_table_name(endpoint?)?;
+        ctx.schema().tables.contains_key(&name).then_some(name)
+    };
+    let from = known(stmt.from.as_ref());
+    let to = known(stmt.to.as_ref());
+
+    let from_ok = from
+        .as_ref()
+        .is_none_or(|name| relation.in_tables.contains(name));
+    let to_ok = to
+        .as_ref()
+        .is_none_or(|name| relation.out_tables.contains(name));
+    if from_ok && to_ok {
+        return;
     }
+
+    let Some(anchor) = stmt.edge.as_ref().or(stmt.from.as_ref()) else {
+        return;
+    };
+    let written = format!(
+        "`{}`->`{edge_name}`->`{}`",
+        from.as_deref().unwrap_or("?"),
+        to.as_deref().unwrap_or("?"),
+    );
+    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), anchor.span);
+    ctx.emit(surrealguard_diagnostics::catalog::finding(
+        span,
+        3006,
+        format!(
+            "relation `{edge_name}` connects {}, but this RELATE writes {written}",
+            crate::analyzer::data::graph::declared_shape(edge_name, &relation),
+        ),
+    ));
 }
 
 fn endpoint_table_name(endpoint: &ast::Spanned<ast::Expr>) -> Option<String> {
@@ -102,14 +113,6 @@ fn endpoint_table_name(endpoint: &ast::Spanned<ast::Expr>) -> Option<String> {
         ast::Expr::RecordId { table, .. } => Some(table.node.clone()),
         _ => None,
     }
-}
-
-fn table_list(tables: &[String]) -> String {
-    tables
-        .iter()
-        .map(|t| format!("`{t}`"))
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 #[cfg(test)]
