@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use surrealdb_types::Kind;
-use surrealguard_diagnostics::{Finding, FindingCode, Severity};
+use surrealguard_diagnostics::Finding;
 use surrealguard_syntax::parse::ParsedSource;
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
@@ -282,10 +282,9 @@ impl SchemaIndex {
         let mut findings = Vec::new();
         for tokenizer in &analyzer.tokenizers {
             if !TOKENIZERS.contains(&tokenizer.to_ascii_lowercase().as_str()) {
-                findings.push(Finding::new(
+                findings.push(surrealguard_diagnostics::catalog::finding(
                     analyzer.name_span.clone(),
-                    FindingCode::schema(1032),
-                    Severity::Error,
+                    1032,
                     format!("`{tokenizer}` is not a tokenizer"),
                 ));
             }
@@ -307,10 +306,9 @@ impl SchemaIndex {
                     if !args.first().is_some_and(|lang| {
                         SNOWBALL_LANGS.contains(&lang.to_ascii_lowercase().as_str())
                     }) {
-                        findings.push(Finding::new(
+                        findings.push(surrealguard_diagnostics::catalog::finding(
                             analyzer.name_span.clone(),
-                            FindingCode::schema(1032),
-                            Severity::Error,
+                            1032,
                             format!(
                                 "`{}` is not a snowball language",
                                 args.first().cloned().unwrap_or_default()
@@ -323,18 +321,16 @@ impl SchemaIndex {
                         args.iter().map(|arg| arg.parse::<u64>().ok()).collect();
                     match bounds.as_slice() {
                         [Some(min), Some(max)] if min <= max => {}
-                        _ => findings.push(Finding::new(
+                        _ => findings.push(surrealguard_diagnostics::catalog::finding(
                             analyzer.name_span.clone(),
-                            FindingCode::type_error(2035),
-                            Severity::Error,
+                            2035,
                             format!("`{filter}` needs `(min, max)` with min <= max"),
                         )),
                     }
                 }
-                _ => findings.push(Finding::new(
+                _ => findings.push(surrealguard_diagnostics::catalog::finding(
                     analyzer.name_span.clone(),
-                    FindingCode::schema(1032),
-                    Severity::Error,
+                    1032,
                     format!("`{name}` is not a filter"),
                 )),
             }
@@ -352,10 +348,9 @@ impl SchemaIndex {
                 let name = table.name.clone();
                 let span = table.name_span.clone();
                 self.tables.insert(existing.name.clone(), existing);
-                return Some(Finding::new(
+                return Some(surrealguard_diagnostics::catalog::finding(
                     span,
-                    FindingCode::schema(1022),
-                    Severity::Error,
+                    1022,
                     format!("duplicate table definition `{name}`"),
                 ));
             }
@@ -375,10 +370,9 @@ impl SchemaIndex {
         let table_name = field.table.clone();
         let table_span = field.table_span.clone();
         let Some(table) = self.tables.get_mut(&table_name) else {
-            return Some(Finding::new(
+            return Some(surrealguard_diagnostics::catalog::finding(
                 table_span,
-                FindingCode::schema(1001),
-                Severity::Error,
+                1001,
                 format!(
                     "field `{}` targets unknown table `{}`",
                     field_key, table_name
@@ -387,10 +381,9 @@ impl SchemaIndex {
         };
 
         if table.fields.contains_key(&field_key) && !overwrite {
-            return Some(Finding::new(
+            return Some(surrealguard_diagnostics::catalog::finding(
                 field.name_span,
-                FindingCode::schema(1022),
-                Severity::Error,
+                1022,
                 format!("duplicate field definition `{field_key}` on table `{table_name}`"),
             ));
         }
@@ -401,10 +394,9 @@ impl SchemaIndex {
 
     pub fn remove_table(&mut self, table: &str, span: SourceSpan) -> Option<Finding> {
         if self.tables.remove(table).is_none() {
-            return Some(Finding::new(
+            return Some(surrealguard_diagnostics::catalog::finding(
                 span,
-                FindingCode::schema(1021),
-                Severity::Error,
+                1021,
                 format!("REMOVE TABLE targets unknown table `{table}`"),
             ));
         }
@@ -420,20 +412,18 @@ impl SchemaIndex {
         table_span: SourceSpan,
     ) -> Option<Finding> {
         let Some(table_def) = self.tables.get_mut(table) else {
-            return Some(Finding::new(
+            return Some(surrealguard_diagnostics::catalog::finding(
                 table_span,
-                FindingCode::schema(1021),
-                Severity::Error,
+                1021,
                 format!("REMOVE FIELD `{field}` targets unknown table `{table}`"),
             ));
         };
 
         let key = path.join(".");
         if table_def.fields.remove(&key).is_none() {
-            return Some(Finding::new(
+            return Some(surrealguard_diagnostics::catalog::finding(
                 field_span,
-                FindingCode::schema(1021),
-                Severity::Error,
+                1021,
                 format!("REMOVE FIELD targets unknown field `{field}` on table `{table}`"),
             ));
         }
@@ -1021,10 +1011,9 @@ fn validate_indexes(
         }
         match seen_field_sets.entry((index.table.clone(), paths)) {
             std::collections::btree_map::Entry::Occupied(existing) => {
-                diagnostics.push(Finding::new(
+                diagnostics.push(surrealguard_diagnostics::catalog::finding(
                     index.name_span.clone(),
-                    FindingCode::schema(1029),
-                    Severity::Warning,
+                    1029,
                     format!(
                         "index `{}` covers the same fields as `{}`",
                         index.name,
@@ -1040,10 +1029,9 @@ fn validate_indexes(
 
     for index in indexes {
         let Some(table) = schema.tables.get_mut(&index.table) else {
-            diagnostics.push(Finding::new(
+            diagnostics.push(surrealguard_diagnostics::catalog::finding(
                 index.table_span.clone(),
-                FindingCode::schema(1001),
-                Severity::Error,
+                1001,
                 format!(
                     "index `{}` targets unknown table `{}`",
                     index.name, index.table
@@ -1054,10 +1042,9 @@ fn validate_indexes(
 
         for field in &index.fields {
             if !index_field_path_exists_on_table(table, &field.path) {
-                diagnostics.push(Finding::new(
+                diagnostics.push(surrealguard_diagnostics::catalog::finding(
                     field.span.clone(),
-                    FindingCode::schema(1002),
-                    Severity::Error,
+                    1002,
                     format!(
                         "index `{}` references unknown field `{}` on table `{}`",
                         index.name, field.text, index.table
@@ -1074,10 +1061,9 @@ fn validate_indexes(
                 other_paths.sort();
                 other.name != index.name && other_paths == paths
             }) {
-                diagnostics.push(Finding::new(
+                diagnostics.push(surrealguard_diagnostics::catalog::finding(
                     index.name_span.clone(),
-                    FindingCode::schema(1029),
-                    Severity::Warning,
+                    1029,
                     format!(
                         "index `{}` covers the same fields as `{}`",
                         index.name, existing.name
@@ -1185,10 +1171,9 @@ fn validate_index_targets(
 ) {
     for target in targets {
         let Some(table) = schema.tables.get(&target.table) else {
-            diagnostics.push(Finding::new(
+            diagnostics.push(surrealguard_diagnostics::catalog::finding(
                 target.table_span,
-                FindingCode::schema(1012),
-                Severity::Error,
+                1012,
                 format!(
                     "index `{}` targets unknown table `{}` in {} statement",
                     target.index, target.table, target.statement
@@ -1198,10 +1183,9 @@ fn validate_index_targets(
         };
 
         if !table.indexes.contains_key(&target.index) {
-            diagnostics.push(Finding::new(
+            diagnostics.push(surrealguard_diagnostics::catalog::finding(
                 target.index_span,
-                FindingCode::schema(1012),
-                Severity::Error,
+                1012,
                 format!(
                     "unknown index `{}` on table `{}` in {} statement",
                     target.index, target.table, target.statement
@@ -1377,10 +1361,9 @@ fn extract_remove_target_ref(node: Node<'_>, parsed: &ParsedSource) -> Option<Re
 fn validate_events(schema: &SchemaIndex, events: Vec<EventDef>, diagnostics: &mut Vec<Finding>) {
     for event in events {
         let Some(table) = schema.tables.get(&event.table) else {
-            diagnostics.push(Finding::new(
+            diagnostics.push(surrealguard_diagnostics::catalog::finding(
                 event.table_span,
-                FindingCode::schema(1001),
-                Severity::Error,
+                1001,
                 format!(
                     "event `{}` targets unknown table `{}`",
                     event.name, event.table
@@ -1391,10 +1374,9 @@ fn validate_events(schema: &SchemaIndex, events: Vec<EventDef>, diagnostics: &mu
 
         for field_ref in event.field_refs {
             if !index_field_path_exists_on_table(table, &field_ref.path) {
-                diagnostics.push(Finding::new(
+                diagnostics.push(surrealguard_diagnostics::catalog::finding(
                     field_ref.span,
-                    FindingCode::schema(1002),
-                    Severity::Error,
+                    1002,
                     format!(
                         "event `{}` references unknown field `{}` on table `{}`",
                         event.name, field_ref.text, event.table
@@ -1482,13 +1464,12 @@ fn unsupported_type_diagnostic(field: &FieldDef) -> Option<Finding> {
         PartialReason::Unresolved | PartialReason::DynamicExpression => None,
     })?;
 
-    Some(Finding::new(
+    Some(surrealguard_diagnostics::catalog::finding(
         field
             .type_span
             .clone()
             .unwrap_or_else(|| field.name_span.clone()),
-        FindingCode::param(6003),
-        Severity::Warning,
+        6003,
         format!(
             "unsupported field type syntax `{}` for field `{}`",
             type_text,

@@ -77,9 +77,9 @@ carried by the span and message, never by the code.
 |---|---|---|---|---|
 | 1001 | a table reference names a known table | FROM/targets, thin statements, RELATE endpoints, `record<t>` in DEFINE FIELD, relation IN/OUT tables, DEFINE ... ON table | E | ✅ emitting (endpoints/DDL variants pending) |
 | 1002 | a field reference names a declared field of its row's table (schemafull only; FLEXIBLE subtrees exempt) | projections, WHERE/expressions, SET/UNSET targets, payload keys, RETURN, OMIT, FETCH, SPLIT, GROUP/ORDER keys, INSERT columns, index/event fields in DEFINE, const PATCH paths | E | ✅ emitting (currently split across 1002-1011; renumbering to 1002) |
-| 1012 | a schema-object reference names a known object of that kind | REBUILD/REMOVE INDEX, REMOVE EVENT, SEARCH ANALYZER refs, WITH INDEX hints | E | 🔶 registries exist in extraction |
+| 1012 | a schema-object reference names a known object of that kind | REBUILD/REMOVE INDEX, REMOVE EVENT, SEARCH ANALYZER refs, WITH INDEX hints | E | ✅ index/event registries in extraction (WITH hints pending grammar support) |
 | 1021 | REMOVE removes something that exists | `REMOVE TABLE ghost` | W | ✅ (exists today) |
-| 1022 | a definition does not silently redefine (OVERWRITE states intent) | two `DEFINE TABLE person` | W | 🔶 |
+| 1022 | a definition does not silently redefine (OVERWRITE states intent) | two `DEFINE TABLE person` | W | ✅ |
 | 1023 | FETCH names something that can hold records | `FETCH age` (int); an alias of a computed non-record value | E | ✅ emitting |
 | 1024 | SPLIT names a collection field | `SPLIT age` | E | ✅ emitting |
 | 1025 | a subfield is declared under an object-shaped parent | `FIELD a TYPE int` then `FIELD a.b` | E | 🔶 |

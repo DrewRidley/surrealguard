@@ -7,6 +7,11 @@
 //! effects, transaction pairing (4007), parameter constraints and their
 //! source-order rules (6004), and `fn::` termination (5009).
 //!
+//! The schema index is shared across the whole run and accumulates in
+//! iteration order: a `DEFINE` in one source is visible to statements in
+//! sources that come after it, never before. Parameter environments and
+//! transaction state reset per source.
+//!
 //! Schema extraction still reads tree-sitter nodes; everything else here
 //! consumes the lowered AST. When extraction converts, `tree_sitter`
 //! leaves this crate.
