@@ -3231,4 +3231,170 @@ INSERT INTO person { name: 'Ada' };
             vec!["unknown field `missing_since` on table `likes`"]
         );
     }
+
+    /// A parsed fixture must reach semantic analysis: any `S`-category
+    /// finding means a syntax error short-circuited the pipeline, so a
+    /// semantic assertion below would be vacuous.
+    fn assert_no_syntax_findings(diagnostics: &[Finding]) {
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|finding| finding.code().to_string().starts_with('S')),
+            "fixture failed to parse: {:?}",
+            diagnostics
+                .iter()
+                .map(|f| (f.code().to_string(), f.message().to_string()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_reports_index_on_non_collection() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD age ON person TYPE int;\nSELECT age[0] FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let diagnostics = &output.sources[&source].diagnostics;
+        assert_no_syntax_findings(diagnostics);
+
+        let messages: Vec<_> = diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::type_error(2030))
+            .map(|finding| finding.message().to_string())
+            .collect();
+        assert_eq!(
+            messages,
+            vec!["cannot index or filter a value of type `int`"]
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_reports_graph_step_through_non_relation_table() {
+        let mut workspace = Workspace::default();
+        // A multi-target step `->(likes, post)` requires every named edge to
+        // be a relation table; `post` is a plain table, so it trips 3001.
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nSELECT ->(likes, post) FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let diagnostics = &output.sources[&source].diagnostics;
+        assert_no_syntax_findings(diagnostics);
+
+        let messages: Vec<_> = diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::graph(3001))
+            .map(|finding| finding.message().to_string())
+            .collect();
+        assert_eq!(messages, vec!["`post` is not a relation table"]);
+    }
+
+    #[test]
+    fn analyze_workspace_reports_schemaless_table_when_typed_tables_exist() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;\nDEFINE TABLE bare;\nSELECT * FROM bare;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let diagnostics = &output.sources[&source].diagnostics;
+        assert_no_syntax_findings(diagnostics);
+
+        let messages: Vec<_> = diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::lint(7008))
+            .map(|finding| finding.message().to_string())
+            .collect();
+        assert_eq!(
+            messages,
+            vec!["table `bare` has no declared fields; analysis is limited"]
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_reports_possibly_none_operand_in_arithmetic() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD nick ON person TYPE option<string>;\nSELECT nick + 'x' FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let diagnostics = &output.sources[&source].diagnostics;
+        assert_no_syntax_findings(diagnostics);
+
+        assert!(
+            diagnostics.iter().any(|finding| {
+                finding.code() == FindingCode::type_error(2015)
+                    && finding.message().contains("may be NONE at runtime")
+            }),
+            "expected 2015 for the option<string> operand, have: {:?}",
+            diagnostics
+                .iter()
+                .map(|f| (f.code().to_string(), f.message().to_string()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_exposes_group_by_collapsing_select_modifier_facts() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;\nSELECT name FROM person GROUP BY name;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        assert_no_syntax_findings(&output.sources[&source].diagnostics);
+        let select = output.sources[&source]
+            .statements
+            .iter()
+            .find(|statement| statement.kind == "select")
+            .expect("select statement exists");
+
+        // GROUP BY aggregates rows, so the fact is not row-preserving.
+        let group = select
+            .select_modifiers
+            .iter()
+            .find(|modifier| modifier.kind == "group")
+            .expect("group modifier fact exists");
+        assert!(!group.row_preserving);
+    }
+
+    #[test]
+    fn analyze_workspace_accepts_a_diamond_function_call_graph() {
+        let mut workspace = Workspace::default();
+        // fn::a fans out to b and c, both call d, d calls nothing. A DAG,
+        // not a cycle, so no non-termination (5009) finding.
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            concat!(
+                "DEFINE FUNCTION fn::a() { RETURN fn::b() + fn::c(); };\n",
+                "DEFINE FUNCTION fn::b() { RETURN fn::d(); };\n",
+                "DEFINE FUNCTION fn::c() { RETURN fn::d(); };\n",
+                "DEFINE FUNCTION fn::d() { RETURN 1; };\n",
+            )
+            .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        assert_no_syntax_findings(&output.sources[&source].diagnostics);
+        assert!(
+            !output
+                .diagnostics
+                .iter()
+                .any(|finding| finding.code().to_string().ends_with("5009")),
+            "diamond call graph must not report non-termination, have: {:?}",
+            output
+                .diagnostics
+                .iter()
+                .map(|f| (f.code().to_string(), f.message().to_string()))
+                .collect::<Vec<_>>()
+        );
+    }
 }

@@ -415,6 +415,64 @@ mod tests {
         assert!(Cli::try_parse_from(["surrealguard", "watch"]).is_err());
     }
 
+    #[test]
+    fn warnings_as_errors_config_fails_the_check_on_a_warning_finding() {
+        // A DROP table with a declared field yields only the 4022 warning
+        // (SELECT from a DROP table) with no lint noise.
+        let root = temp_project_dir("warn-as-error");
+        fs::write(
+            root.join("surrealguard.toml"),
+            "[diagnostics]\nwarnings_as_errors = true\n",
+        )
+        .expect("write config");
+        fs::write(
+            root.join("schema.surql"),
+            "DEFINE TABLE t DROP SCHEMAFULL;\nDEFINE FIELD x ON t TYPE int;\nSELECT * FROM t;",
+        )
+        .expect("write source");
+
+        let err = run_check(&root).expect_err("promoted warning should fail the check");
+
+        assert_eq!(err.summary.errors, 1);
+        assert!(err
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "E4022" && diagnostic.severity == "error"));
+    }
+
+    #[test]
+    fn warning_only_source_passes_without_warnings_as_errors() {
+        let root = temp_project_dir("warn-only-clean");
+        fs::write(root.join("surrealguard.toml"), "").expect("write config");
+        fs::write(
+            root.join("schema.surql"),
+            "DEFINE TABLE t DROP SCHEMAFULL;\nDEFINE FIELD x ON t TYPE int;\nSELECT * FROM t;",
+        )
+        .expect("write source");
+
+        // The 4022 warning is reported but keeps the check clean: it counts
+        // as a diagnostic, not an error.
+        let summary = run_check(&root).expect("warning-only source should pass");
+        assert_eq!(summary.diagnostics, 1);
+        assert_eq!(summary.errors, 0);
+    }
+
+    #[test]
+    fn error_finding_fails_the_check_without_any_policy() {
+        let root = temp_project_dir("error-fails");
+        fs::write(root.join("surrealguard.toml"), "").expect("write config");
+        // An unknown table is an error-class finding (E1001).
+        fs::write(root.join("query.surql"), "SELECT * FROM ghost;").expect("write source");
+
+        let err = run_check(&root).expect_err("error finding should fail the check");
+
+        assert!(err.summary.errors >= 1);
+        assert!(err
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "E1001" && diagnostic.severity == "error"));
+    }
+
     fn temp_project_dir(name: &str) -> std::path::PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)

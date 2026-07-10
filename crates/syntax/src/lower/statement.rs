@@ -1742,4 +1742,117 @@ mod tests {
         assert_eq!(index.node, "idx");
         assert_eq!(table.node, "person");
     }
+
+    #[test]
+    fn lowers_delete_with_where_and_return_none() {
+        let parsed = parse("DELETE person WHERE age > 18 RETURN NONE;");
+        let stmt = lower_kind(&parsed, "DeleteStatement", |s| match s {
+            Statement::Delete(stmt) => Some(stmt),
+            _ => None,
+        });
+
+        assert!(matches!(&stmt.targets[0].node, Expr::Table(t) if t.node == "person"));
+        let cond = stmt.where_clause.expect("where clause");
+        assert!(matches!(cond.node, Expr::Binary { .. }));
+        assert_eq!(stmt.ret.map(|r| r.node), Some(ReturnMode::None));
+    }
+
+    #[test]
+    fn lowers_upsert_with_set_data() {
+        let parsed = parse("UPSERT person:one SET name = 'Ada', age += 1;");
+        let stmt = lower_kind(&parsed, "UpsertStatement", |s| match s {
+            Statement::Upsert(stmt) => Some(stmt),
+            _ => None,
+        });
+
+        assert!(matches!(
+            &stmt.targets[0].node,
+            Expr::RecordId { table, .. } if table.node == "person"
+        ));
+        let Some(DataClause::Set(assignments)) = &stmt.data else {
+            panic!("expected SET data, got {:?}", stmt.data);
+        };
+        assert_eq!(assignments.len(), 2);
+        assert_eq!(assignments[0].op.node, AssignOp::Assign);
+        assert_eq!(assignments[1].op.node, AssignOp::Add);
+    }
+
+    #[test]
+    fn lowers_show_changes_with_since() {
+        let parsed = parse("SHOW CHANGES FOR TABLE person SINCE 100;");
+        let stmt = lower_kind(&parsed, "ShowStatement", |s| match s {
+            Statement::Show(stmt) => Some(stmt),
+            _ => None,
+        });
+
+        assert_eq!(stmt.table.as_ref().map(|t| t.node.as_str()), Some("person"));
+        let since = stmt.since.expect("since captured");
+        assert_eq!(since.node, Expr::Literal(Literal::Int(100)));
+    }
+
+    #[test]
+    fn lowers_define_event_with_when_and_then() {
+        let parsed =
+            parse("DEFINE EVENT audit ON person WHEN $event = 'CREATE' THEN { RETURN 1; };");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Event(def)) => Some(def),
+            _ => None,
+        });
+
+        assert_eq!(stmt.name.node, "audit");
+        assert_eq!(stmt.table.node, "person");
+        let when = stmt.when.expect("when clause");
+        assert!(matches!(when.node, Expr::Binary { .. }));
+        let then = stmt.then.expect("then clause");
+        assert!(matches!(then.node, Expr::Block(_)));
+    }
+
+    #[test]
+    fn lowers_define_param_with_name_and_value() {
+        let parsed = parse("DEFINE PARAM $threshold VALUE 5;");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Param(def)) => Some(def),
+            _ => None,
+        });
+
+        assert_eq!(stmt.name.node, "threshold");
+        let value = stmt.value.expect("value clause");
+        assert_eq!(value.node, Expr::Literal(Literal::Int(5)));
+    }
+
+    #[test]
+    fn lowers_define_function_with_typed_params_and_return_type() {
+        let parsed =
+            parse("DEFINE FUNCTION fn::greet($name: string) -> string { RETURN $name; };");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Function(def)) => Some(def),
+            _ => None,
+        });
+
+        assert_eq!(stmt.name.node, "fn::greet");
+        assert_eq!(stmt.params.len(), 1);
+        assert_eq!(stmt.params[0].0.node, "name");
+        assert!(matches!(
+            stmt.params[0].1.as_ref().map(|t| &t.node),
+            Some(crate::ast::TypeExpr::Name(n)) if n.node == "string"
+        ));
+        assert!(matches!(
+            stmt.return_ty.as_ref().map(|t| &t.node),
+            Some(crate::ast::TypeExpr::Name(n)) if n.node == "string"
+        ));
+        assert!(stmt.body.is_some());
+    }
+
+    #[test]
+    fn lowers_define_analyzer_with_tokenizers() {
+        let parsed = parse("DEFINE ANALYZER myan TOKENIZERS blank, class;");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Analyzer(def)) => Some(def),
+            _ => None,
+        });
+
+        assert_eq!(stmt.name.node, "myan");
+        let tokenizers: Vec<_> = stmt.tokenizers.iter().map(|t| t.node.as_str()).collect();
+        assert_eq!(tokenizers, vec!["blank", "class"]);
+    }
 }
