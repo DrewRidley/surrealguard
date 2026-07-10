@@ -1,8 +1,9 @@
 # Diagnostic catalog: categories, codes, and the parameter-constraint channel
 
-Status: contract audit complete (2026-07-09) — every code states the
-contract it enforces. This is the canonical registry the diagnostics phase
-implements against; codes are assigned here and only here; retired numbers
+Status: implemented (2026-07-10) — every code states the contract it
+enforces, and every contract not marked reserved/parser-covered/pending
+below is emitting from its analyzer. This is the canonical registry;
+codes are assigned here and only here; retired numbers
 are never reused.
 
 ## Principles (settled in prior rulings)
@@ -100,14 +101,14 @@ removed table unknown); 1028 → 1027.
 | 2005 | a condition position expects a boolean | IF conditions, ASSERT clauses, bare non-boolean WHERE | W | ✅ emitting (IF); ASSERT/WHERE 🔶 |
 | 2007 | a cast names a known type | `<ghost> x` | E | ✅ |
 | 2008 | a conversion can succeed | kind-proven (`<duration> true`) or value-proven (`<int> 'abc'`, `type::int('x')`) — the proof strength varies, the contract doesn't | E | ✅ emitting |
-| 2012 | a body returns what it declares | `fn::` `-> string { RETURN 1 }`; closures `\|$x\| -> string { RETURN 1 }` | E | 🔨 fn:: body-vs-declaration; closure half ✅ |
+| 2012 | a body returns what it declares | `fn::` `-> string { RETURN 1 }`; closures `\|$x\| -> string { RETURN 1 }` | E | ✅ both halves: fn:: bodies analyzed with params bound; closures |
 | 2015 | a value-requiring position gets a value that is always present | `option<int>` field in `x + 1` | W | 🔶 needs the operand rule |
 | 2017 | ORDER BY keys name fields available on the result rows (or RAND()) | non-field key; explicit projections not containing the key | E | ✅ emitting |
 | 2018 | LIMIT/START take a non-negative integer | wrong kind (via params; literals parse-rejected), negative constants | E | ✅ emitting |
 | 2019 | TIMEOUT takes a duration | parser-covered today; emission exists for when params are grammatical | E | ☑ parser-covered |
 | 2020 | KILL takes a live-query uuid | parser-covered; grammar-fork bug: `KILL $id` fails to parse | E | ☑ parser-covered |
 | 2021 | SHOW SINCE takes a versionstamp or datetime | | E | ✅ emitting |
-| 2022 | FOR iterates something iterable | `FOR $x IN 42` — ranges must be modeled first or this false-positives | E | 🔶 gated on Kind::Range |
+| 2022 | FOR iterates something iterable | `FOR $x IN 42` — ranges must be modeled first or this false-positives | E | ✅ definite-scalar params; constant-empty iterables → 7004 |
 | 2025 | READONLY fields are written only at creation | `UPDATE t SET created = ...` | E | ✅ emitting |
 | 2026 | computed (VALUE-clause) fields are not hand-assigned | the write is silently overwritten | W | ✅ emitting |
 | 2030 | index/filter/splat apply to collections | `age[0]`, `name[WHERE ..]`, `age.*` | E | ✅ emitting |
@@ -148,9 +149,9 @@ contract violation.
 | 4002 | SELECT VALUE with multiple projections | `SELECT VALUE a, b FROM t` — verified: both SurrealDB's parser *and* ours reject the syntax, so this is parse-level (0xxx); the code stays reserved, no analyzer emission | E | ☑ parser-covered |
 | 4003 | ONLY on a table-wide target without LIMIT 1 | `SELECT * FROM ONLY person`, `UPDATE ONLY person` — deterministic runtime error (`SingleOnlyOutput`); CREATE is exempt (always one row) | E | ✅ |
 | 4004 | INSERT tuple column/value count mismatch | `(a, b) VALUES (1)` | E | ✅ lowering counts |
-| 4005 | BREAK/CONTINUE outside a loop | top-level `BREAK` | E | 🔶 loop-depth flag on ctx |
-| 4006 | unreachable statements after RETURN/BREAK/THROW | `RETURN 1; SELECT ...` in a block | W | 🔶 block walk already sequential |
-| 4007 | transaction pairing contract: BEGIN opens exactly one transaction that COMMIT/CANCEL closes | unopened COMMIT/CANCEL, nested BEGIN, BEGIN never closed | E | 🔨 transaction state in script walk |
+| 4005 | BREAK/CONTINUE outside a loop | top-level `BREAK` | E | ✅ loop depth on ctx |
+| 4006 | unreachable statements after RETURN/BREAK/THROW | `RETURN 1; SELECT ...` in a block | W | ✅ |
+| 4007 | transaction pairing contract: BEGIN opens exactly one transaction that COMMIT/CANCEL closes | unopened COMMIT/CANCEL, nested BEGIN, BEGIN never closed | E | ✅ pipeline tracks the open transaction (nested/unpaired/unclosed variants) |
 | 4009 | LIVE SELECT with unsupported clause | `LIVE SELECT ... GROUP BY` | E | 🔶 LiveSelect lowering keeps clauses |
 | 4010 | duplicate SET target in one statement | `SET age = 1, age = 2` | W | ✅ assignments are structured |
 | 4011 | duplicate projection key/alias | `SELECT age, age FROM t`, two `AS x` | W | ✅ keys computed |
@@ -161,8 +162,8 @@ contract violation.
 | 4018 | side-effecting subquery in read position | `SELECT (CREATE log) FROM t` | W | ✅ statement kinds known |
 | 4019 | CREATE/INSERT on a relation table without `in`/`out` | `CREATE likes SET strength = 1` | W | ✅ relation-ness known |
 | 4020 | RETURN mode meaningless for the statement | `CREATE ... RETURN BEFORE` (always NONE) | W | ✅ (verify DELETE/AFTER semantics first) |
-| 4021 | SHOW CHANGES on a table without CHANGEFEED | | E | 🔶 changefeed flag in extraction |
-| 4022 | SELECT from a DROP table | rows are never retained | W | 🔶 drop flag in extraction |
+| 4021 | SHOW CHANGES on a table without CHANGEFEED | | E | ✅ |
+| 4022 | SELECT from a DROP table | rows are never retained | W | ✅ |
 
 Folded by the contract audit (2026-07-09): 4008, 4015 → 4007. Deleted:
 4014 — no statable contract (RETURN is legal at top level and in blocks).
@@ -174,7 +175,7 @@ Folded by the contract audit (2026-07-09): 4008, 4015 → 4007. Deleted:
 | 5001 | a call resolves to a function that exists | unknown builtins, undefined `fn::`, methods not available on the receiver's kind | E | ✅ emitting (fn:: renumbering from 1015; methods pending) |
 | 5002 | a call matches the function's signature | argument count, per-argument kinds (anchored per argument), `fn::` declared params, a closure declaring more parameters than its consumer binds | E | ✅ emitting (as 5002/5003/5004/5006; renumbering to 5002) |
 | 5005 | a const argument satisfies the function's value contract | `type::field('aeg')` naming no field, non-string paths (`type::field(42)`), `type::thing('ghost', ..)` naming no table, out-of-range constants (`math::fixed(x, -1)`) | E | ✅ emitting (path cases); table/range variants 🔶 |
-| 5009 | `fn::` definitions terminate (no direct/mutual recursion cycles) | `fn::f` calls `fn::f` | W | 🔨 call graph (bodies already lower) |
+| 5009 | `fn::` definitions terminate (no direct/mutual recursion cycles) | `fn::f` calls `fn::f` | W | ✅ three-color DFS over hoisted signatures |
 | 5010 | events do not trigger themselves (directly or in a cycle) | event on `person` THEN mutates `person`; A→B→A | W | 🔨 event-effect graph |
 
 Folded by the contract audit (2026-07-09): 5003, 5004, 5006 → 5002; 5007,
@@ -184,7 +185,7 @@ Folded by the contract audit (2026-07-09): 5003, 5004, 5006 → 5002; 5007,
 
 | Code | Finding | Example | Sev | Status |
 |---|---|---|---|---|
-| 6001 | conflicting constraints on one param | `WHERE $x > 3 AND $x = 'abc'` | E | 🔶 constraint unification |
+| 6001 | conflicting constraints on one param | `WHERE $x > 3 AND $x = 'abc'` | E | ✅ unify at constraint sites; conflict emits at the second site |
 | 6002 | param shadows a DEFINE PARAM with a different kind | `LET $min_age = 'x'` vs defined int | W | 🔶 |
 | 6003 | unresolvable dynamic construct (analyzer limitation) | current `dynamic(6001)` class | I | ✅ |
 | 6004 | param used before its LET in source order | `RETURN $x; LET $x = 1;` | W | ✅ env is source-ordered |
@@ -386,19 +387,23 @@ that parameter instead of a finding:
 | `FROM $tbl` | `$tbl: table \| record` (domain: known tables) |
 | `KILL $id` | `$id: uuid` |
 
+As implemented, the constraint set rides on the exported `ParamInference`
+(`crates/workspace/src/analysis.rs`) rather than a separate struct:
+
 ```rust
-pub struct ParamConstraint {
+pub struct ParamInference {
     pub name: String,
-    pub kind: Kind,                       // unified across uses
+    pub kind: Option<Kind>,               // unified across constraint sites
     pub domain: Option<ValueDomain>,      // beyond the kind, when known
-    pub origins: Vec<SourceSpan>,         // every contributing use
+    pub required: bool,                   // no DEFINE PARAM default
+    pub spans: Vec<SourceSpan>,           // every use site
 }
 
 pub enum ValueDomain {
     /// Enumerable values (field paths for `type::field`, table names).
     OneOf(Vec<Value>),
     /// Numeric range (`LIMIT $n` → int, `0..`).
-    Range { min: Option<Value>, max: Option<Value> },
+    Range { min: Option<i64>, max: Option<i64> },
 }
 ```
 
@@ -415,8 +420,9 @@ range.
   (Rust macro, TypeScript codegen) enforce them at the call site — `$age`
   must be a number at *the host's* compile time, and `$f` outside
   `{"name.first", "name.last", ...}` fails there too.
-- This subsumes today's `ParamInference` (kind-only, old engine); the
-  constraint collector is its AST-native replacement and retires it.
+- The old kind-only inference was not replaced but extended: constraint
+  sites feed `ParamInference.kind`/`.domain` directly, and plain uses
+  still record name + span so unconstrained params export too.
 
 ## Rollout order
 

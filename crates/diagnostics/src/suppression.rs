@@ -1,3 +1,7 @@
+//! In-source suppression directives: `-- surrealguard: allow(E1001)`
+//! comments parsed into [`Suppression`] targets matched by code or lint
+//! name.
+
 use serde::{Deserialize, Serialize};
 use surrealguard_syntax::span::SourceSpan;
 
@@ -218,10 +222,10 @@ mod tests {
 
     #[test]
     fn code_target_matches_finding_code_text() {
-        let parsed = parse_suppression_directive("surrealguard: allow(W6001)", span(0, 29))
+        let parsed = parse_suppression_directive("surrealguard: allow(E6001)", span(0, 29))
             .expect("directive should parse");
 
-        assert!(parsed.matches_finding_code(crate::FindingCode::dynamic(6001)));
+        assert!(parsed.matches_finding_code(crate::FindingCode::param(6001)));
         assert!(!parsed.matches_finding_code(crate::FindingCode::lint(7001)));
     }
 

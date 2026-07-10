@@ -1,6 +1,6 @@
 # Diagnostics architecture: analyzers self-emit at the point of detection
 
-Status: agreed in principle, amended per the inference-never-checks ruling
+Status: implemented (2026-07-10) — the catalog shipped and the old engine is deleted; kept for the architectural rules. Originally: agreed in principle, amended per the inference-never-checks ruling
 (2026-07-05). Implementation gated on the open questions at the end.
 
 ## Problem

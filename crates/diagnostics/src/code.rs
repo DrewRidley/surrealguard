@@ -1,3 +1,8 @@
+//! Finding codes: a category (thousand-block family) plus a number.
+//!
+//! Rendered strings like `E2001` are a stable public contract; retired
+//! numbers are never reused.
+
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -22,12 +27,10 @@ pub enum FindingCategory {
     Lint,
     /// 8xxx — SurrealDB version compatibility.
     Compat,
-    /// Legacy family used only by the frozen validators; dies with them.
-    Permission,
-    /// Legacy family used only by the frozen validators; dies with them.
-    Dynamic,
 }
 
+/// A catalog code: family category plus number (`E2001`). One code per
+/// contract; the rendered string is stable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FindingCode {
     category: FindingCategory,
@@ -53,14 +56,6 @@ impl FindingCode {
 
     pub fn graph(number: u16) -> Self {
         Self::new(FindingCategory::Graph, number)
-    }
-
-    pub fn permission(number: u16) -> Self {
-        Self::new(FindingCategory::Permission, number)
-    }
-
-    pub fn dynamic(number: u16) -> Self {
-        Self::new(FindingCategory::Dynamic, number)
     }
 
     pub fn lint(number: u16) -> Self {
@@ -116,7 +111,6 @@ impl FindingCode {
             | FindingCategory::Statement
             | FindingCategory::Function
             | FindingCategory::Compat => 'E',
-            FindingCategory::Permission | FindingCategory::Dynamic => 'W',
             FindingCategory::Lint => 'L',
         }
     }
@@ -146,13 +140,10 @@ mod tests {
 
     #[test]
     fn codes_report_their_category() {
+        assert_eq!(FindingCode::param(6001).category(), FindingCategory::Param);
         assert_eq!(
-            FindingCode::dynamic(6001).category(),
-            FindingCategory::Dynamic
-        );
-        assert_eq!(
-            FindingCode::permission(5001).category(),
-            FindingCategory::Permission
+            FindingCode::function(5001).category(),
+            FindingCategory::Function
         );
     }
 }

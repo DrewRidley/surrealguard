@@ -16,7 +16,7 @@ pub enum Projection {
     Partial(PartialNode),
 }
 
-/// A mutation's `RETURN` clause, parsed — replaces substring classification.
+/// A mutation's `RETURN` clause.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ReturnMode {
     None,

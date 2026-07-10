@@ -1,5 +1,7 @@
 # SELECT Semantics Implementation Plan
 
+> **Superseded (2026-07-10).** Pre-rewrite design (semantic IR, node-based walkers). The current architecture is the analyzer tree in `crates/workspace/src/analyzer/` — see `docs/DESIGN.md`. Kept for history.
+
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
 **Goal:** Build comprehensive SELECT semantic analysis for SurrealQL using tree-sitter CST nodes as the syntax authority and SurrealDB's own Rust types for value/kind facts. Do not invent a parallel `surrealguard-types` type system.

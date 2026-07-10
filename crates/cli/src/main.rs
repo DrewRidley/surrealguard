@@ -1,3 +1,8 @@
+//! The `surrealguard` CLI: analyzes a workspace of `.surql` sources and
+//! reports findings as text or JSON, resolving severity through the
+//! workspace's policy configuration (exit code reflects post-policy
+//! errors).
+
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 use std::env;

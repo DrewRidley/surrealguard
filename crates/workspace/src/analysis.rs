@@ -18,12 +18,18 @@ use crate::config::WorkspaceConfig;
 use crate::schema::SchemaIndex;
 use crate::source_registry::SourceRegistry;
 
+/// A set of registered `.surql` sources plus configuration — the unit
+/// analysis runs over.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Workspace {
     config: WorkspaceConfig,
     registry: SourceRegistry,
 }
 
+/// Everything analysis produced for one source: its findings, one record
+/// per top-level statement, the host-supplied parameters the source
+/// reads, and — when exactly one statement responds — the source's
+/// overall response kind.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AnalysisOutput {
     pub diagnostics: Vec<Finding>,
@@ -32,6 +38,8 @@ pub struct AnalysisOutput {
     pub response_kind: Option<Kind>,
 }
 
+/// The whole-workspace result: per-source outputs, every finding in one
+/// list, and the schema index built from all sources in order.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct WorkspaceAnalysis {
     pub sources: BTreeMap<SourceId, AnalysisOutput>,
@@ -39,6 +47,9 @@ pub struct WorkspaceAnalysis {
     pub schema: SchemaIndex,
 }
 
+/// One top-level statement as consumers see it: its span, a stable kind
+/// name (`"select"`, `"define_table"`, ...), the response kind when the
+/// statement responds, and SELECT's clause modifiers.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StatementAnalysis {
     pub span: SourceSpan,
@@ -47,6 +58,9 @@ pub struct StatementAnalysis {
     pub select_modifiers: Vec<SelectModifierAnalysis>,
 }
 
+/// A SELECT clause modifier fact: which clause, where, whether it
+/// preserves the row shape (WHERE/ORDER/LIMIT do; GROUP/SPLIT don't),
+/// and the literal LIMIT bound when known.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SelectModifierAnalysis {
     pub kind: String,
@@ -55,6 +69,10 @@ pub struct SelectModifierAnalysis {
     pub max_len: Option<u64>,
 }
 
+/// A host-supplied parameter the source reads: the kind and value domain
+/// its uses constrain it to, whether the host must provide it (no
+/// `DEFINE PARAM` default), and every use site. This is the contract a
+/// host adapter enforces at the call site.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ParamInference {
     pub name: String,
@@ -676,8 +694,8 @@ INSERT INTO person { name: 'Ada' };
 
     #[test]
     fn analyze_workspace_resolves_structured_field_types() {
-        // Step 6 acceptance: parameterized/union/option types resolve to
-        // real kinds instead of degrading to UnsupportedSyntax.
+        // Parameterized/union/option types resolve to real kinds instead
+        // of degrading to UnsupportedSyntax.
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(
             "schema".into(),

@@ -572,9 +572,8 @@ fn single_graph_target(part: &ast::IdiomPart) -> Option<(ast::GraphDir, &str)> {
     }
 }
 
-/// The relation-endpoint check shared by the AST path and the legacy
-/// `SelectIr` resolvers: does `edge`'s relation connect `source_table` to
-/// `target` in direction `dir`?
+/// Does `edge`'s relation connect `source_table` to `target` in
+/// direction `dir`?
 fn relation_step_target(
     source_table: &str,
     dir: ast::GraphDir,

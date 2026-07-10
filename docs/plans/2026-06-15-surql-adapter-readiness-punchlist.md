@@ -1,5 +1,7 @@
 # SurQL Adapter-Readiness Punchlist
 
+> **Superseded (2026-07-10).** Pre-rewrite punchlist; the readiness gate it describes has since passed in the rewritten engine — see `docs/DESIGN.md`. Kept for history.
+
 > **For Hermes:** Use test-driven-development for every implementation slice. Do not start Rust, TypeScript, or other host adapters until the acceptance gate in this document passes.
 
 **Goal:** Finish the plain `.surql` semantic engine so host adapters can pass query text and host param facts into one shared analyzer instead of reimplementing SurrealQL semantics.

@@ -519,8 +519,8 @@ pub fn extract_schema(parsed_sources: &[ParsedSource]) -> SchemaExtraction {
     }
 }
 
-// Node-based walker retained only for the remaining validators; not worth
-// a parameter-object refactor before it is replaced.
+// The parameter list mirrors the mutable extraction state threaded through
+// the recursive walk; a parameter object would just rename it.
 #[allow(clippy::too_many_arguments)]
 fn collect_definitions(
     node: Node<'_>,

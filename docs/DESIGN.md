@@ -28,7 +28,7 @@ It exposes the same analysis model through:
 
 1. CLI/CI via `surrealguard check`
 2. LSP diagnostics and editor intelligence
-3. MCP tools for agents
+3. MCP tools for agents (planned; not yet implemented)
 4. host-language adapters, starting with one embedded-query spike
 
 The core product is the analysis engine, not generated files or watch-mode codegen. Generated files can exist later as an optional adapter, but they do not define the architecture.
@@ -140,7 +140,7 @@ It must:
 - load `surrealguard.toml` from the current directory or a parent
 - discover configured `.surql` and `.surrealql` files
 - run workspace analysis
-- print human diagnostics by default
+- print a human summary by default (individual findings render when the run fails; a clean run prints counts only)
 - print stable JSON with `--json`
 - exit non-zero when any finding has effective severity `error`
 
@@ -178,17 +178,17 @@ The semantic engine analyzes embedded sources through the same parser and worksp
 
 ## Next implementation slice
 
-The typed AST layer is implemented (`docs/plans/2026-07-03-typed-ast-lowering.md`, including its completion-status table): all statement kinds lower to `surrealguard_syntax::ast` and type inference runs entirely on it, producing upstream `surrealdb_types::Kind` response types. The diagnostics phase is implemented: the catalog's contracts emit from the analyzers that own their statements, and the pre-AST engine (`semantic.rs`, `select_ir.rs`, node-based expression inference) is deleted — `analyzer::pipeline` is the only walk. Next: host adapters over the parameter-constraint export, and the grammar-conformance worklist. Historical plans: `docs/plans/2026-06-12-full-surql-semantics.md`, `2026-06-06-select-semantics.md`, `2026-06-11-surql-statement-coverage.md`, `analyzer-module-rewrite.md` (all superseded in part).
+The typed AST layer is implemented (`docs/plans/2026-07-03-typed-ast-lowering.md`, including its completion-status table): all statement kinds lower to `surrealguard_syntax::ast` and type inference runs entirely on it, producing upstream `surrealdb_types::Kind` response types. The diagnostics phase is implemented: the catalog's contracts emit from the analyzers that own their statements, and the pre-AST engine (`semantic.rs`, `select_ir.rs`, node-based expression inference) is deleted — `analyzer::pipeline` is the only walk. Next: host adapters over the parameter-constraint export, and the grammar-conformance worklist. Historical plans: `docs/plans/2026-06-12-full-surql-semantics.md`, `2026-06-06-select-semantics.md`, `2026-06-11-surql-statement-coverage.md`, `2026-06-15-surql-adapter-readiness-punchlist.md`, `2026-07-04-diagnostics-architecture.md`, `analyzer-module-rewrite.md` (all superseded in part).
 
 Immediate focus:
 
-1. introduce expression fact scaffolding without changing current behavior
-2. infer literal/path/variable/object/array expression facts
-3. validate assignability for mutation payloads and field assignments
-4. model mutation `RETURN <fields>` and `RETURN DIFF`
-5. expand SELECT expression projections, function signatures, block/LET/RETURN/IF/FOR semantics, graph traversal semantics, and remaining statement coverage
+1. host adapters over the parameter-constraint and response-kind exports, Rust proc-macro first
+2. grammar-conformance worklist (`docs/grammar-conformance.md`) down to zero failures, then wire the harness into CI
+3. convert schema extraction to the typed AST so tree-sitter leaves the workspace crate
+4. remaining catalog machinery: 5010 event-trigger cycles, the 8xxx version registry, and the researched-but-unruled rows (4009, 4013)
+5. CLI rustc-style rendering (source excerpts + carets) and populated `Finding.help`/`related` suggestions
 
-Host adapters may start only after the full core readiness gate passes.
+The core readiness gate below has passed; host adapters may start.
 
 Acceptance gates:
 

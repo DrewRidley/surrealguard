@@ -1,3 +1,10 @@
+//! Finding types and policy for SurrealGuard diagnostics.
+//!
+//! A [`Finding`] carries its intrinsic severity class only; consumers
+//! (CLI, LSP, host adapters) resolve the effective severity through
+//! [`PolicyConfig`] at their edge. Codes are allocated in the catalog
+//! ([`catalog`]), one code per contract.
+
 pub mod catalog;
 pub mod code;
 pub mod finding;

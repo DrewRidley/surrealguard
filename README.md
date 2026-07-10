@@ -1,138 +1,59 @@
 # SurrealGuard 🛡️
 
-SurrealGuard is a static analysis and type checking system for SurrealQL queries, providing compile-time safety and type inference for your SurrealDB applications.
+SurrealGuard is a static analyzer and type-inference engine for SurrealQL. It parses your `.surql` schema and queries with span-preserving syntax, infers the response type of every statement, and reports contract violations — unknown tables and fields, kind mismatches, invalid graph traversals, misused clauses, bad function calls — before anything reaches a running SurrealDB instance.
 
+## Why
 
-## Motivation
+SurrealDB tolerates a lot at runtime: cross-kind comparisons order by kind instead of failing, coercions succeed silently, misspelled fields return `NONE`. Those behaviors are exactly where bugs hide. SurrealGuard's premise is contract-first: every construct has a contract (what the author must mean for the statement to make sense), and the analyzer reports violations of that contract even when the engine would happily execute the query.
 
-Working with SurrealDB's query language (SurrealQL) in TypeScript/JavaScript applications can be challenging due to:
+SurrealDB's own parser discards spans before producing its AST, so it cannot power an analyzer or editor tooling. SurrealGuard parses with tree-sitter into a typed, span-carrying AST and runs all analysis on that.
 
-- Lack of compile-time type safety
-- No automated parameter type inference
-- Missing schema validation before runtime
-- Difficulty maintaining type definitions as schemas evolve
+## What it does today
 
-SurrealGuard aims to solve these problems by providing:
+- **Full statement coverage** — every SurrealQL statement kind lowers to a typed AST and is analyzed: SELECT (projections, graph traversals, FETCH/SPLIT/GROUP/OMIT), the six mutations, RELATE, LET/RETURN/IF/FOR/blocks, transactions, DEFINE/REMOVE/ALTER, LIVE SELECT/KILL, and the rest.
+- **Type inference** — response kinds as upstream `surrealdb_types::Kind` values: closed object literals for known rows, unions from IF/ELSE, record-link and graph-edge shapes, function return types (the full builtin table plus `fn::` declarations), closure and subquery inference, and constant-value evaluation.
+- **A contract catalog of ~80 diagnostics** — one code per contract, allocated in families (1xxx schema references, 2xxx types, 3xxx graph, 4xxx statement misuse, 5xxx functions, 6xxx parameters, 7xxx lints, 8xxx version compatibility). The registry lives in `docs/plans/2026-07-07-diagnostic-catalog.md`; severities are intrinsic to each finding, and consumers apply policy (warnings-as-errors, lint levels) at their edge, rustc-style.
+- **Parameter constraints for hosts** — every `$param` a source reads is exported with the kind and value domain its uses imply (`UPDATE user SET age = $age` → `age: int`; `LIMIT $n` → non-negative int; `type::field($f)` → one of the table's field paths). Host adapters enforce these at the call site.
+- **Byte-precise spans** on every finding, suitable for editor squiggles.
 
-- Static analysis of SurrealQL queries against your schema
-- Automatic type generation for query results
-- Parameter type inference
-- Early error detection for schema violations
+## Surfaces
 
-## Features
+- **CLI** — `surrealguard check` analyzes the workspace (`--json` for machine output; exit code reflects post-policy errors); `surrealguard init` writes a starter config.
+- **LSP** — `surrealguard-lsp` publishes diagnostics over stdio.
+- Host adapters (Rust macros, TypeScript, Python, Go) are the next phase, built on the parameter-constraint and response-kind exports. MCP tooling is planned.
 
-### Schema Analysis ✅
-- [x] DEFINE TABLE validation
-- [x] DEFINE FIELD type checking
-- [x] Nested object structures
-- [x] Array types
-- [x] Record links
-- [ ] Custom types
-- [ ] DEFINE ANALYZER
-- [ ] DEFINE FUNCTION
-- [ ] DEFINE INDEX
-- [ ] DEFINE SCOPE/TOKEN
-- [ ] DEFINE EVENT
-
-### Query Analysis ✅
-- [x] SELECT statements (including FETCH)
-- [x] CREATE/INSERT
-- [x] UPDATE/UPSERT
-- [x] DELETE
-- [x] RELATE
-- [x] Graph traversals
-- [ ] Nested queries
-- [ ] Functions and expressions
-- [ ] IF/ELSE conditions
-- [ ] RETURN statements
-- [ ] Transactions (BEGIN/COMMIT/CANCEL)
-- [ ] LET variables
-- [ ] INFO statements
-- [ ] LIVE queries
-
-### Type Generation 🏗️
-- [x] TypeScript output
-- [ ] JavaScript with JSDoc
-- [ ] Rust
-- [ ] Other languages (Go, Python, etc.)
-
-### Developer Experience 🛠️
-- [x] CLI tool with watch mode
-- [x] Project configuration
-- [ ] VS Code extension
-- [ ] Error messages with suggestions
-- [ ] Query formatting
-- [ ] Parameter Inference
-
-## Project Structure
+## Project structure
 
 ```
 surrealguard/
 ├── crates/
-│   ├── cli/          # Command line interface
-│   ├── core/         # Analysis engine
-│   ├── codegen/      # Code generation
-│   └── macros/       # Internal proc macros
-└── examples/         # Usage examples
+│   ├── syntax/        # tree-sitter parsing, typed AST, lowering
+│   ├── diagnostics/   # finding types, code catalog, severity policy
+│   ├── workspace/     # schema index, analyzers, analysis pipeline
+│   ├── cli/           # surrealguard binary
+│   └── lsp/           # surrealguard-lsp binary
+├── docs/
+│   ├── DESIGN.md      # maintained source of truth
+│   └── plans/2026-07-07-diagnostic-catalog.md  # the contract registry
+└── tree-sitter-surrealql/  # grammar (path dependency, forked)
 ```
 
-## Getting Started
+## Getting started
 
-1. Install the CLI:
 ```bash
-cargo install surrealguard
-```
+cargo install --path crates/cli
 
-2. Initialize a new project:
-```bash
+# in your project
 surrealguard init
+surrealguard check          # human output
+surrealguard check --json   # machine output
 ```
 
-3. Configure your schema and query paths in `surrealguard.toml`:
-```toml
-[schema]
-path = "schema/surrealql/"
+Point the config at your schema and query directories; the workspace analyzes every `.surql` source in order, so schema definitions are visible to the queries that follow them.
 
-[queries]
-path = "queries/surrealql/"
-```
+## Status
 
-4. Generate types:
-```bash
-surrealguard run
-```
-
-## Example
-
-```typescript
-// Your schema
-DEFINE TABLE user SCHEMAFULL;
-    DEFINE FIELD name ON user TYPE string;
-    DEFINE FIELD age ON user TYPE number;
-    DEFINE FIELD posts ON user TYPE array<record<post>>;
-
-// Your query
-const query = "SELECT name, age, posts.* FROM user FETCH posts";
-
-// Generated types
-interface User {
-    name: string;
-    age: number;
-    posts: Post[];
-}
-```
-
-## Current Limitations
-
-- Complex functions and expressions not yet supported
-- No transaction analysis
-- Limited to basic schema definitions
-- Missing support for some SurrealQL features
-- Type generation limited to TypeScript
-
-## Contributing
-
-Contributions are welcome! See our [Contributing Guide](CONTRIBUTING.md) for details.
+Under active development on the `redesign-v3-foundation` branch. The core engine (typed AST, full inference, contract diagnostics, parameter constraints) is complete; host adapters and grammar-conformance hardening are in progress. See `docs/DESIGN.md` for the current state and roadmap.
 
 ## License
 

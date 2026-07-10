@@ -1,8 +1,13 @@
+//! The [`Finding`] record: span, code, intrinsic severity, message, and
+//! optional help/related/data attachments.
+
 use serde::{Deserialize, Serialize};
 use surrealguard_syntax::span::SourceSpan;
 
 use crate::FindingCode;
 
+/// A finding's intrinsic class — how confidently the contract is
+/// violated, never how a surface chooses to report it (that is policy).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Severity {
     Error,
@@ -128,7 +133,7 @@ mod tests {
 
         let finding = Finding::new(
             span.clone(),
-            FindingCode::dynamic(6001),
+            FindingCode::param(6001),
             Severity::Warning,
             "dynamic table name cannot be fully analyzed",
         )
@@ -137,7 +142,7 @@ mod tests {
         });
 
         assert_eq!(finding.span(), &span);
-        assert_eq!(finding.code().to_string(), "W6001");
+        assert_eq!(finding.code().to_string(), "E6001");
         assert_eq!(finding.severity(), Severity::Warning);
         assert_eq!(
             finding.message(),

@@ -1,5 +1,7 @@
 # SurQL Statement Coverage Implementation Plan
 
+> **Superseded (2026-07-10).** Pre-rewrite plan; statement coverage now lives in the typed-AST analyzers — see `docs/DESIGN.md`. Kept for history.
+
 > **For Hermes:** Use test-driven-development skill for each implementation slice.
 
 **Goal:** Complete core `.surql` statement analysis before any host-language adapters, so Rust macros, TypeScript transformers, CLI, LSP, and MCP all consume the same statement, expression, diagnostic, parameter, and response-shape facts. This plan is now the narrower statement-coverage support plan; the broader adapter gate is `docs/plans/2026-06-12-full-surql-semantics.md`.

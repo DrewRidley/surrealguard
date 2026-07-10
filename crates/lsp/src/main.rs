@@ -1,3 +1,5 @@
+//! The `surrealguard-lsp` binary: serves the analyzer over stdio.
+
 use tower_lsp::{LspService, Server};
 
 mod backend;

@@ -1,5 +1,7 @@
 # Full SurQL Semantics Implementation Plan
 
+> **Superseded (2026-07-10).** Pre-rewrite plan; the semantics it describes were rebuilt on the typed AST — see `docs/DESIGN.md`. Kept for history.
+
 > **For Hermes:** Use test-driven-development skill for every code slice. Do not start host adapters until this plan's core gates pass.
 
 **Goal:** Model SurrealQL itself first: statement coverage, expression/value-kind inference, function signatures, block/variable environments, schema misuse diagnostics, graph semantics, mutation semantics, and response shapes should be stable in plain `.surql` before Rust proc macros, TypeScript transformers, or other host adapters are built.

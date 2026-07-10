@@ -1,9 +1,16 @@
+//! Severity policy, applied at consumption edges (rustc model): findings
+//! carry their intrinsic class; [`PolicyConfig`] maps that to what a
+//! surface reports — promoting warnings, adjusting lint levels, or
+//! suppressing them — without ever rewriting the finding itself.
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::{FindingCategory, FindingCode, Severity};
 
+/// How a surface treats one lint code: silenced, reported as a warning,
+/// or promoted to an error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LintLevel {
     Allow,
@@ -11,6 +18,8 @@ pub enum LintLevel {
     Deny,
 }
 
+/// A consumer's severity policy: warnings-as-errors plus per-code lint
+/// levels, resolved against each finding's intrinsic class at the edge.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicyConfig {
     warnings_as_errors: bool,
@@ -92,7 +101,7 @@ mod tests {
         config.set_warnings_as_errors(true);
 
         assert_eq!(
-            config.resolve_severity(FindingCode::dynamic(6001), Severity::Warning),
+            config.resolve_severity(FindingCode::param(6001), Severity::Warning),
             Some(Severity::Error)
         );
     }
