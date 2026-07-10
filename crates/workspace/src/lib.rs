@@ -10,6 +10,7 @@ pub mod kinds;
 pub mod schema;
 pub mod source_registry;
 pub mod statement_env;
+mod suggest;
 mod suppress;
 
 pub use analysis::{

@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 surrealguard-diagnostics = { path = "../diagnostics" }
+surrealguard-syntax = { path = "../syntax" }
 surrealguard-workspace = { path = "../workspace" }
 clap = { version = "4", features = ["derive"]}
 walkdir = "2.5.0"

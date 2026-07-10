@@ -1,5 +1,5 @@
 //! The [`Finding`] record: span, code, intrinsic severity, message, and
-//! optional help/related/data attachments.
+//! optional help/related/tag attachments.
 
 use serde::{Deserialize, Serialize};
 use surrealguard_syntax::span::SourceSpan;
@@ -29,7 +29,6 @@ pub struct Finding {
     help: Vec<Help>,
     related: Vec<RelatedInfo>,
     tags: Vec<FindingTag>,
-    data: FindingData,
 }
 
 impl Finding {
@@ -47,12 +46,31 @@ impl Finding {
             help: Vec::new(),
             related: Vec::new(),
             tags: Vec::new(),
-            data: FindingData::None,
         }
     }
 
-    pub fn with_data(mut self, data: FindingData) -> Self {
-        self.data = data;
+    /// Attach an actionable suggestion, rendered as `help:` by the CLI
+    /// and appended to the message by the LSP.
+    pub fn with_help(mut self, message: impl Into<String>) -> Self {
+        self.help.push(Help {
+            message: message.into(),
+            replacement: None,
+        });
+        self
+    }
+
+    /// Attach a secondary location that explains the finding (e.g. where
+    /// the violated declaration lives).
+    pub fn with_related(mut self, span: SourceSpan, message: impl Into<String>) -> Self {
+        self.related.push(RelatedInfo {
+            span,
+            message: message.into(),
+        });
+        self
+    }
+
+    pub fn with_tag(mut self, tag: FindingTag) -> Self {
+        self.tags.push(tag);
         self
     }
 
@@ -73,8 +91,16 @@ impl Finding {
         &self.message
     }
 
-    pub fn data(&self) -> &FindingData {
-        &self.data
+    pub fn help(&self) -> &[Help] {
+        &self.help
+    }
+
+    pub fn related(&self) -> &[RelatedInfo] {
+        &self.related
+    }
+
+    pub fn tags(&self) -> &[FindingTag] {
+        &self.tags
     }
 }
 
@@ -96,28 +122,6 @@ pub enum FindingTag {
     Deprecated,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FindingData {
-    None,
-    UnknownTable {
-        table: String,
-    },
-    UnknownField {
-        table: Option<String>,
-        field: String,
-    },
-    TypeMismatch {
-        expected: String,
-        found: String,
-    },
-    DynamicTableName {
-        expression: String,
-    },
-    Lint {
-        name: String,
-    },
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,11 +141,12 @@ mod tests {
             Severity::Warning,
             "dynamic table name cannot be fully analyzed",
         )
-        .with_data(FindingData::DynamicTableName {
-            expression: "${table}".into(),
-        });
+        .with_help("bind the table name with LET before the query")
+        .with_tag(FindingTag::Unnecessary);
 
         assert_eq!(finding.span(), &span);
+        assert_eq!(finding.help().len(), 1);
+        assert_eq!(finding.tags(), &[FindingTag::Unnecessary]);
         assert_eq!(finding.code().to_string(), "E6001");
         assert_eq!(finding.severity(), Severity::Warning);
         assert_eq!(

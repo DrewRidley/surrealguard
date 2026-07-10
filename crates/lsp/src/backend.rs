@@ -39,7 +39,12 @@ impl Backend {
             .diagnostics
             .iter()
             .filter_map(|d| {
-                diagnostics::workspace_finding_to_lsp_diagnostic(&result.source, d, &policy)
+                diagnostics::workspace_finding_to_lsp_diagnostic(
+                    &result.source,
+                    d,
+                    &policy,
+                    &result.texts,
+                )
             })
             .collect();
 

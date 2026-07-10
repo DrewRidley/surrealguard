@@ -2,9 +2,14 @@
 //!
 //! Handles span-to-range conversion and related information formatting.
 
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString};
+use std::collections::BTreeMap;
 
-use surrealguard_diagnostics::{Finding, PolicyConfig, Severity as WorkspaceSeverity};
+use tower_lsp::lsp_types::{
+    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, DiagnosticTag, Location,
+    NumberOrString, Url,
+};
+
+use surrealguard_diagnostics::{Finding, FindingTag, PolicyConfig, Severity as WorkspaceSeverity};
 
 use crate::text::byte_range_to_lsp;
 
@@ -15,6 +20,7 @@ pub fn workspace_finding_to_lsp_diagnostic(
     source: &str,
     finding: &Finding,
     policy: &PolicyConfig,
+    texts: &BTreeMap<String, (Url, String)>,
 ) -> Option<Diagnostic> {
     let resolved = policy.resolve_severity(finding.code(), finding.severity())?;
     let range = finding.span().range();
@@ -27,13 +33,46 @@ pub fn workspace_finding_to_lsp_diagnostic(
         WorkspaceSeverity::Hint => DiagnosticSeverity::HINT,
     };
 
+    // LSP diagnostics have no help slot; suggestions ride the message.
+    let mut message = finding.message().to_string();
+    for help in finding.help() {
+        message.push_str("\nhelp: ");
+        message.push_str(&help.message);
+    }
+
+    let related_information: Vec<DiagnosticRelatedInformation> = finding
+        .related()
+        .iter()
+        .filter_map(|related| {
+            let (uri, text) = texts.get(&related.span.source().to_string())?;
+            let range = related.span.range();
+            Some(DiagnosticRelatedInformation {
+                location: Location {
+                    uri: uri.clone(),
+                    range: byte_range_to_lsp(text, range.start() as usize, range.end() as usize),
+                },
+                message: related.message.clone(),
+            })
+        })
+        .collect();
+
+    let tags: Vec<DiagnosticTag> = finding
+        .tags()
+        .iter()
+        .map(|tag| match tag {
+            FindingTag::Unnecessary => DiagnosticTag::UNNECESSARY,
+            FindingTag::Deprecated => DiagnosticTag::DEPRECATED,
+        })
+        .collect();
+
     Some(Diagnostic {
         range,
         severity: Some(severity),
         code: Some(NumberOrString::String(code)),
         source: Some("surrealguard".to_string()),
-        message: finding.message().to_string(),
-        related_information: None,
+        message,
+        related_information: (!related_information.is_empty()).then_some(related_information),
+        tags: (!tags.is_empty()).then_some(tags),
         ..Diagnostic::default()
     })
 }
@@ -44,6 +83,51 @@ mod tests {
     use surrealguard_diagnostics::{Finding, FindingCode, Severity};
     use surrealguard_syntax::source::SourceId;
     use surrealguard_syntax::span::{ByteRange, SourceSpan};
+
+    #[test]
+    fn help_related_and_tags_reach_the_lsp_diagnostic() {
+        let schema_uri = Url::parse("file:///workspace/schema.surql").expect("valid url");
+        let schema_text = "DEFINE TABLE likes TYPE RELATION IN person OUT post;";
+        let texts = BTreeMap::from([(
+            "file:///workspace/schema.surql".to_string(),
+            (schema_uri.clone(), schema_text.to_string()),
+        )]);
+
+        let source = "SELECT * FROM persn;";
+        let finding = Finding::new(
+            SourceSpan::new(
+                SourceId::new("file:///workspace/query.surql"),
+                ByteRange::new(14, 19).expect("valid range"),
+            ),
+            FindingCode::schema(1001),
+            Severity::Error,
+            "unknown table `persn`",
+        )
+        .with_help("did you mean `person`?")
+        .with_related(
+            SourceSpan::new(
+                SourceId::new("file:///workspace/schema.surql"),
+                ByteRange::new(13, 18).expect("valid range"),
+            ),
+            "relation `likes` declared here",
+        )
+        .with_tag(FindingTag::Unnecessary);
+
+        let diagnostic =
+            workspace_finding_to_lsp_diagnostic(source, &finding, &PolicyConfig::default(), &texts)
+                .expect("passes default policy");
+
+        assert_eq!(
+            diagnostic.message,
+            "unknown table `persn`\nhelp: did you mean `person`?"
+        );
+        let related = diagnostic.related_information.expect("related present");
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].location.uri, schema_uri);
+        assert_eq!(related[0].location.range.start.character, 13);
+        assert_eq!(related[0].message, "relation `likes` declared here");
+        assert_eq!(diagnostic.tags, Some(vec![DiagnosticTag::UNNECESSARY]));
+    }
 
     #[test]
     fn workspace_finding_converts_to_lsp_diagnostic_contract() {
@@ -58,9 +142,13 @@ mod tests {
             "unexpected syntax",
         );
 
-        let diagnostic =
-            workspace_finding_to_lsp_diagnostic(source, &finding, &PolicyConfig::default())
-                .expect("non-lint findings pass default policy");
+        let diagnostic = workspace_finding_to_lsp_diagnostic(
+            source,
+            &finding,
+            &PolicyConfig::default(),
+            &BTreeMap::new(),
+        )
+        .expect("non-lint findings pass default policy");
 
         assert_eq!(
             diagnostic.code,

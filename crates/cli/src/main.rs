@@ -3,6 +3,8 @@
 //! workspace's policy configuration (exit code reflects post-policy
 //! errors).
 
+mod render;
+
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 use std::env;
@@ -61,12 +63,24 @@ struct CheckSummary {
 struct CheckFailed {
     summary: CheckSummary,
     diagnostics: Vec<CheckDiagnostic>,
+    /// rustc-style blocks for human output; empty when source text was
+    /// never loaded (config errors).
+    rendered: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 struct CheckDiagnostic {
     code: String,
     severity: &'static str,
+    source: String,
+    range: CheckRange,
+    message: String,
+    help: Vec<String>,
+    related: Vec<CheckRelated>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+struct CheckRelated {
     source: String,
     range: CheckRange,
     message: String,
@@ -98,23 +112,35 @@ impl CheckDiagnostic {
             source: "".into(),
             range: CheckRange { start: 0, end: 0 },
             message,
+            help: Vec::new(),
+            related: Vec::new(),
         }
     }
 }
 
 impl fmt::Display for CheckFailed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SurrealGuard check failed")?;
-        for diagnostic in &self.diagnostics {
-            write!(f, "\n{diagnostic}")?;
+        if self.rendered.is_empty() {
+            write!(f, "SurrealGuard check failed")?;
+            for diagnostic in &self.diagnostics {
+                write!(f, "\n{diagnostic}")?;
+            }
+            return Ok(());
         }
-        Ok(())
+        for block in &self.rendered {
+            writeln!(f, "{block}")?;
+        }
+        write!(
+            f,
+            "check failed: {} error(s), {} diagnostic(s)",
+            self.summary.errors, self.summary.diagnostics
+        )
     }
 }
 
 impl Error for CheckFailed {}
 
-fn run_check(start_dir: &Path) -> Result<CheckSummary, CheckFailed> {
+fn run_check(start_dir: &Path) -> Result<CheckPassed, CheckFailed> {
     let root = find_workspace_root(start_dir);
     let config = load_workspace_config(&root).map_err(|error| CheckFailed {
         summary: CheckSummary {
@@ -123,9 +149,12 @@ fn run_check(start_dir: &Path) -> Result<CheckSummary, CheckFailed> {
             errors: 1,
         },
         diagnostics: vec![CheckDiagnostic::from_message(error.to_string())],
+        rendered: Vec::new(),
     })?;
     let mut workspace = Workspace::new(config.clone());
 
+    let mut source_texts: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
     for path in discover_surrealql_sources(&root, &config) {
         let text = fs::read_to_string(&path).map_err(|error| CheckFailed {
             summary: CheckSummary {
@@ -137,8 +166,10 @@ fn run_check(start_dir: &Path) -> Result<CheckSummary, CheckFailed> {
                 "{}: {error}",
                 path.display()
             ))],
+            rendered: Vec::new(),
         })?;
-        workspace.add_file_source(path, text);
+        let source_id = workspace.add_file_source(path, text.clone());
+        source_texts.insert(source_id.to_string(), text);
     }
 
     let analysis = analyze_workspace(&workspace);
@@ -171,8 +202,29 @@ fn run_check(start_dir: &Path) -> Result<CheckSummary, CheckFailed> {
                     end: range.end(),
                 },
                 message: finding.message().to_string(),
+                help: finding
+                    .help()
+                    .iter()
+                    .map(|help| help.message.clone())
+                    .collect(),
+                related: finding
+                    .related()
+                    .iter()
+                    .map(|related| CheckRelated {
+                        source: related.span.source().to_string(),
+                        range: CheckRange {
+                            start: related.span.range().start(),
+                            end: related.span.range().end(),
+                        },
+                        message: related.message.clone(),
+                    })
+                    .collect(),
             }
         })
+        .collect();
+    let rendered: Vec<String> = resolved
+        .iter()
+        .map(|(finding, severity)| render::render_finding(finding, *severity, &source_texts))
         .collect();
     let errors = resolved
         .iter()
@@ -188,10 +240,18 @@ fn run_check(start_dir: &Path) -> Result<CheckSummary, CheckFailed> {
         Err(CheckFailed {
             summary,
             diagnostics,
+            rendered,
         })
     } else {
-        Ok(summary)
+        Ok(CheckPassed { summary, rendered })
     }
+}
+
+#[derive(Debug)]
+struct CheckPassed {
+    summary: CheckSummary,
+    /// Warning/hint blocks that survived policy on a clean run.
+    rendered: Vec<String>,
 }
 
 fn render_check_json(
@@ -296,17 +356,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                 println!("Checking SurrealQL sources...");
             }
             match run_check(&env::current_dir()?) {
-                Ok(summary) => {
+                Ok(passed) => {
                     if json {
                         println!(
                             "{}",
-                            render_check_json(&summary, &[])
+                            render_check_json(&passed.summary, &[])
                                 .expect("json serialization should not fail")
                         );
                     } else {
+                        for block in &passed.rendered {
+                            println!("{block}");
+                        }
                         println!(
                             "Checked {} source(s), found {} diagnostic(s)",
-                            summary.sources_checked, summary.diagnostics
+                            passed.summary.sources_checked, passed.summary.diagnostics
                         );
                         println!("All checks passed!");
                     }
@@ -343,9 +406,9 @@ mod tests {
 
         let summary = run_check(&root).expect("valid workspace should check");
 
-        assert_eq!(summary.sources_checked, 1);
-        assert_eq!(summary.diagnostics, 0);
-        assert_eq!(summary.errors, 0);
+        assert_eq!(summary.summary.sources_checked, 1);
+        assert_eq!(summary.summary.diagnostics, 0);
+        assert_eq!(summary.summary.errors, 0);
     }
 
     #[test]
@@ -371,7 +434,7 @@ mod tests {
 
         let summary = run_check(&child).expect("valid parent workspace should check");
 
-        assert_eq!(summary.sources_checked, 1);
+        assert_eq!(summary.summary.sources_checked, 1);
     }
 
     #[test]
@@ -453,8 +516,8 @@ mod tests {
         // The 4022 warning is reported but keeps the check clean: it counts
         // as a diagnostic, not an error.
         let summary = run_check(&root).expect("warning-only source should pass");
-        assert_eq!(summary.diagnostics, 1);
-        assert_eq!(summary.errors, 0);
+        assert_eq!(summary.summary.diagnostics, 1);
+        assert_eq!(summary.summary.errors, 0);
     }
 
     #[test]

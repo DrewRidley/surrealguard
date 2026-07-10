@@ -56,6 +56,7 @@ impl Workspace {
             return Some(DiagnosticAnalysisResult {
                 diagnostics: Vec::new(),
                 source: target.text.clone(),
+                texts: std::collections::BTreeMap::new(),
             });
         }
 
@@ -65,6 +66,7 @@ impl Workspace {
         let mut documents: Vec<_> = self.documents.values().collect();
         documents.sort_by(|left, right| left.uri.as_str().cmp(right.uri.as_str()));
 
+        let mut texts = std::collections::BTreeMap::new();
         for doc in documents {
             let source_id = match doc.uri.to_file_path() {
                 Ok(path) => analysis_workspace.add_file_source(path, doc.text.clone()),
@@ -72,6 +74,7 @@ impl Workspace {
                     analysis_workspace.add_virtual_source(doc.uri.to_string(), doc.text.clone())
                 }
             };
+            texts.insert(source_id.to_string(), (doc.uri.clone(), doc.text.clone()));
 
             if doc.uri == *uri {
                 target_source = Some(source_id);
@@ -89,6 +92,7 @@ impl Workspace {
         Some(DiagnosticAnalysisResult {
             diagnostics,
             source: target.text.clone(),
+            texts,
         })
     }
 
@@ -123,6 +127,9 @@ impl Workspace {
 pub struct DiagnosticAnalysisResult {
     pub diagnostics: Vec<Finding>,
     pub source: String,
+    /// Every analyzed document keyed by its analysis source id, for
+    /// resolving related-information spans that point at other files.
+    pub texts: std::collections::BTreeMap<String, (Url, String)>,
 }
 
 #[cfg(test)]

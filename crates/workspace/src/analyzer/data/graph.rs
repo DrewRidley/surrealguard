@@ -274,7 +274,7 @@ fn check_step(
         }
     };
     if !accepts {
-        emit(
+        emit_with_declaration(
             ctx,
             target.span,
             3002,
@@ -283,6 +283,7 @@ fn check_step(
                 declared_shape(edge, &relation),
                 arrow_text(dir),
             ),
+            edge,
         );
         return StepOutcome {
             edge_table: Some(edge.to_string()),
@@ -342,7 +343,7 @@ pub(crate) fn check_hop_reachability(
     if far.contains(&target.node) {
         return;
     }
-    emit(
+    emit_with_declaration(
         ctx,
         target.span,
         3002,
@@ -351,6 +352,7 @@ pub(crate) fn check_hop_reachability(
             declared_shape(edge, &relation),
             target.node,
         ),
+        edge,
     );
 }
 
@@ -418,4 +420,26 @@ fn emit(ctx: &mut AnalysisContext<'_>, span: ByteRange, code: u16, message: Stri
     ctx.emit(surrealguard_diagnostics::catalog::finding(
         span, code, message,
     ));
+}
+
+/// Like [`emit`], pointing back at the relation's `DEFINE TABLE` so the
+/// declared shape and the violating usage read side by side.
+fn emit_with_declaration(
+    ctx: &mut AnalysisContext<'_>,
+    span: ByteRange,
+    code: u16,
+    message: String,
+    edge: &str,
+) {
+    let declared_at = ctx
+        .schema()
+        .tables
+        .get(edge)
+        .map(|table| table.name_span.clone());
+    let span = SourceSpan::new(ctx.source().clone(), span);
+    let mut finding = surrealguard_diagnostics::catalog::finding(span, code, message);
+    if let Some(declared_at) = declared_at {
+        finding = finding.with_related(declared_at, format!("relation `{edge}` declared here"));
+    }
+    ctx.emit(finding);
 }

@@ -19,11 +19,14 @@ pub fn analyze_block(ctx: &mut AnalysisContext<'_>, block: &ast::Block) -> Kind 
             // (4006) — one finding at the first dead statement.
             let span =
                 surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), statement.span);
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
-                span,
-                4006,
-                "unreachable: the block already returned".to_string(),
-            ));
+            ctx.emit(
+                surrealguard_diagnostics::catalog::finding(
+                    span,
+                    4006,
+                    "unreachable: the block already returned".to_string(),
+                )
+                .with_tag(surrealguard_diagnostics::FindingTag::Unnecessary),
+            );
             break;
         }
         last = analyze_lowered_statement(ctx, statement);

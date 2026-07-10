@@ -87,11 +87,18 @@ pub fn analyze_builtin_function(
             None => {
                 if !is_synthetic(call) {
                     let span = SourceSpan::new(ctx.source().clone(), call.path.span);
-                    ctx.emit(surrealguard_diagnostics::catalog::finding(
+                    let mut finding = surrealguard_diagnostics::catalog::finding(
                         span,
                         5001,
                         format!("unknown function `{path}`"),
-                    ));
+                    );
+                    if let Some(nearest) = crate::suggest::closest(
+                        path,
+                        ctx.schema().functions.keys().map(String::as_str),
+                    ) {
+                        finding = finding.with_help(format!("did you mean `{nearest}`?"));
+                    }
+                    ctx.emit(finding);
                 }
                 Kind::Any
             }

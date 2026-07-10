@@ -102,15 +102,25 @@ fn check_relate_endpoints(ctx: &mut AnalysisContext<'_>, stmt: &ast::RelateStmt,
         from.as_deref().unwrap_or("?"),
         to.as_deref().unwrap_or("?"),
     );
+    let declared_at = ctx
+        .schema()
+        .tables
+        .get(edge_name)
+        .map(|table| table.name_span.clone());
     let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), anchor.span);
-    ctx.emit(surrealguard_diagnostics::catalog::finding(
+    let mut finding = surrealguard_diagnostics::catalog::finding(
         span,
         3002,
         format!(
             "relation `{edge_name}` connects {}, but this RELATE writes {written}",
             crate::analyzer::data::graph::declared_shape(edge_name, &relation),
         ),
-    ));
+    );
+    if let Some(declared_at) = declared_at {
+        finding =
+            finding.with_related(declared_at, format!("relation `{edge_name}` declared here"));
+    }
+    ctx.emit(finding);
 }
 
 fn endpoint_table_name(endpoint: &ast::Spanned<ast::Expr>) -> Option<String> {

@@ -140,7 +140,7 @@ It must:
 - load `surrealguard.toml` from the current directory or a parent
 - discover configured `.surql` and `.surrealql` files
 - run workspace analysis
-- print a human summary by default (individual findings render when the run fails; a clean run prints counts only)
+- print rustc-style human diagnostics by default (header, source excerpt with caret, `help:` suggestions, related locations); a clean run still prints surviving warnings, then the summary
 - print stable JSON with `--json`
 - exit non-zero when any finding has effective severity `error`
 
@@ -186,7 +186,7 @@ Immediate focus:
 2. grammar-conformance worklist (`docs/grammar-conformance.md`) down to zero failures, then wire the harness into CI
 3. convert schema extraction to the typed AST so tree-sitter leaves the workspace crate
 4. remaining catalog machinery: 5010 event-trigger cycles, the 8xxx version registry, and the researched-but-unruled rows (4009, 4013)
-5. CLI rustc-style rendering (source excerpts + carets) and populated `Finding.help`/`related` suggestions
+5. richer `Finding.help`/`related` coverage (did-you-mean and declared-here attachments exist for tables, fields, `fn::` names, and relation shapes; extend site by site)
 
 The core readiness gate below has passed; host adapters may start.
 

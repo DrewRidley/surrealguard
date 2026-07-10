@@ -26,11 +26,14 @@ pub(crate) fn check_table_reference(
         return true;
     }
     let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
-    ctx.emit(surrealguard_diagnostics::catalog::finding(
-        span,
-        1001,
-        format!("unknown table `{name}`"),
-    ));
+    let mut finding =
+        surrealguard_diagnostics::catalog::finding(span, 1001, format!("unknown table `{name}`"));
+    if let Some(nearest) =
+        crate::suggest::closest(name, ctx.schema().tables.keys().map(String::as_str))
+    {
+        finding = finding.with_help(format!("did you mean `{nearest}`?"));
+    }
+    ctx.emit(finding);
     false
 }
 
@@ -48,7 +51,7 @@ pub(crate) fn check_field_path(
         return;
     }
     let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
-    ctx.emit(surrealguard_diagnostics::catalog::finding(
+    let mut finding = surrealguard_diagnostics::catalog::finding(
         span,
         code,
         format!(
@@ -56,7 +59,13 @@ pub(crate) fn check_field_path(
             segments.join("."),
             table.name
         ),
-    ));
+    );
+    if let Some(nearest) =
+        crate::suggest::closest(&segments.join("."), table.fields.keys().map(String::as_str))
+    {
+        finding = finding.with_help(format!("did you mean `{nearest}`?"));
+    }
+    ctx.emit(finding);
 }
 
 /// Walks an expression for plain field-path references and checks each
