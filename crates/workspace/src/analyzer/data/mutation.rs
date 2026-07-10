@@ -6,9 +6,6 @@
 //! identical once a table is known — the parsed `RETURN` mode plus the
 //! `ONLY` wrapper. The result is a plain `Kind`; undeterminable cases are
 //! `Kind::Any` poison values.
-//!
-//! The section at the bottom holds node-based table-name dispatchers that
-//! exist only for the remaining validators in `crate::semantic`.
 
 use std::collections::BTreeMap;
 
@@ -498,7 +495,7 @@ fn check_assignment_value(
     let Some(value_kind) = infer_expression_fact(&assignment.value, ctx).kind else {
         return;
     };
-    if value_kind == Kind::Any || crate::semantic::kind_is_assignable_to(&value_kind, &field_kind) {
+    if value_kind == Kind::Any || crate::kinds::kind_is_assignable_to(&value_kind, &field_kind) {
         return;
     }
     let span =
@@ -574,7 +571,7 @@ pub(crate) fn check_payload_object_keys(
                 continue;
             };
             if value_kind != Kind::Any
-                && !crate::semantic::kind_is_assignable_to(&value_kind, &field_kind)
+                && !crate::kinds::kind_is_assignable_to(&value_kind, &field_kind)
             {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), value.span);
@@ -722,12 +719,6 @@ pub(crate) fn source_table_name(source: Option<&ast::Spanned<ast::Expr>>) -> Opt
 fn slice(text: &str, range: ByteRange) -> &str {
     text[range.start() as usize..range.end() as usize].trim()
 }
-
-// ---------------------------------------------------------------------------
-// Node-based table-name dispatchers, used only by the validators and param
-// inference in `crate::semantic`, which walk all six mutation kinds
-// generically.
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

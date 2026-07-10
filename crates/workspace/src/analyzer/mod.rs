@@ -9,16 +9,16 @@
 //! shared [`context::AnalysisContext`]; per-statement invariants belong to
 //! the analyzer that owns their statement.
 //!
-//! The node-based validators and param inference in `crate::semantic` (and
-//! `crate::expression`/`crate::select_ir`, which serve them) remain the
-//! source of the existing findings; each validator moves into its
-//! statement's analyzer as invariants are formalized with finding codes.
+//! [`pipeline`] is the entry point: it walks each source in statement
+//! order, dispatching every lowered statement to its analyzer against the
+//! schema built so far.
 
 pub mod context;
 pub mod data;
 pub mod expression;
 pub mod flow;
 pub mod function;
+pub mod pipeline;
 pub mod schema;
 pub mod statement;
 pub mod system;

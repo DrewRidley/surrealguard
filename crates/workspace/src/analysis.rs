@@ -13,9 +13,9 @@ use surrealguard_syntax::parse::{
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
+use crate::analyzer::pipeline;
 use crate::config::WorkspaceConfig;
 use crate::schema::SchemaIndex;
-use crate::semantic::{analyze_parsed_source, analyze_sources_in_source_order};
 use crate::source_registry::SourceRegistry;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -126,18 +126,22 @@ pub fn analyze_source(workspace: &Workspace, source: SourceId) -> AnalysisOutput
 
     match parse_source(source.clone(), text) {
         Ok(parsed) => {
-            let syntax_diagnostics: Vec<_> = parsed
-                .syntax_diagnostics()
-                .iter()
-                .map(syntax_diagnostic_to_finding)
-                .collect();
-            let semantic_output = analyze_parsed_source(&parsed);
-            AnalysisOutput {
-                diagnostics: syntax_diagnostics,
-                statements: semantic_output.statements,
-                inferred_params: semantic_output.inferred_params,
-                response_kind: None,
+            let mut output = AnalysisOutput {
+                diagnostics: parsed
+                    .syntax_diagnostics()
+                    .iter()
+                    .map(syntax_diagnostic_to_finding)
+                    .collect(),
+                ..AnalysisOutput::default()
+            };
+            let mut pipeline_output = pipeline::analyze_sources(std::slice::from_ref(&parsed));
+            output.diagnostics.extend(pipeline_output.diagnostics);
+            if let Some(analysis) = pipeline_output.sources.remove(&source) {
+                output.response_kind = single_response_kind(&analysis.statements);
+                output.statements = analysis.statements;
+                output.inferred_params = analysis.params;
             }
+            output
         }
         Err(error) => AnalysisOutput {
             diagnostics: vec![parse_error_to_finding(source, error)],
@@ -148,77 +152,74 @@ pub fn analyze_source(workspace: &Workspace, source: SourceId) -> AnalysisOutput
     }
 }
 
+/// A source's overall response kind is meaningful only when exactly one
+/// statement responds.
+fn single_response_kind(statements: &[StatementAnalysis]) -> Option<Kind> {
+    let mut responding = statements
+        .iter()
+        .filter_map(|statement| statement.response_kind.clone());
+    match (responding.next(), responding.next()) {
+        (Some(kind), None) => Some(kind),
+        _ => None,
+    }
+}
+
 pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
     let mut sources = BTreeMap::new();
     let mut diagnostics = Vec::new();
     let mut parsed_sources = Vec::new();
 
     for source in workspace.registry.source_ids() {
-        let output = analyze_source(workspace, source.clone());
-        diagnostics.extend(output.diagnostics.iter().cloned());
-        sources.insert(source.clone(), output);
-
-        if let Some(text) = workspace.registry.text(source) {
-            if let Ok(parsed) = parse_source(source.clone(), text) {
+        let Some(text) = workspace.registry.text(source) else {
+            continue;
+        };
+        match parse_source(source.clone(), text) {
+            Ok(parsed) => {
+                let output = AnalysisOutput {
+                    diagnostics: parsed
+                        .syntax_diagnostics()
+                        .iter()
+                        .map(syntax_diagnostic_to_finding)
+                        .collect(),
+                    ..AnalysisOutput::default()
+                };
+                diagnostics.extend(output.diagnostics.iter().cloned());
+                sources.insert(source.clone(), output);
                 parsed_sources.push(parsed);
+            }
+            Err(error) => {
+                let finding = parse_error_to_finding(source.clone(), error);
+                diagnostics.push(finding.clone());
+                sources.insert(
+                    source.clone(),
+                    AnalysisOutput {
+                        diagnostics: vec![finding],
+                        ..AnalysisOutput::default()
+                    },
+                );
             }
         }
     }
 
-    let source_ordered = analyze_sources_in_source_order(&parsed_sources);
-    for diagnostic in &source_ordered.diagnostics {
+    let pipeline_output = pipeline::analyze_sources(&parsed_sources);
+    for (source, analysis) in pipeline_output.sources {
+        if let Some(source_output) = sources.get_mut(&source) {
+            source_output.response_kind = single_response_kind(&analysis.statements);
+            source_output.statements = analysis.statements;
+            source_output.inferred_params = analysis.params;
+        }
+    }
+    for diagnostic in &pipeline_output.diagnostics {
         if let Some(source_output) = sources.get_mut(diagnostic.span().source()) {
             source_output.diagnostics.push(diagnostic.clone());
         }
     }
-    diagnostics.extend(source_ordered.diagnostics.iter().cloned());
-
-    for (source, constraint) in source_ordered.param_constraints {
-        if let Some(source_output) = sources.get_mut(&source) {
-            match source_output
-                .inferred_params
-                .iter_mut()
-                .find(|param| param.name == constraint.name)
-            {
-                Some(param) => {
-                    if param.kind.is_none() {
-                        param.kind = constraint.kind;
-                    }
-                    if param.domain.is_none() {
-                        param.domain = constraint.domain;
-                    }
-                }
-                None => source_output.inferred_params.push(constraint),
-            }
-        }
-    }
-
-    let response_kinds = source_ordered.response_kinds;
-    let mut response_kind_counts_by_source = BTreeMap::new();
-    for (span, _) in &response_kinds {
-        *response_kind_counts_by_source
-            .entry(span.source().clone())
-            .or_insert(0usize) += 1;
-    }
-    for (span, kind) in response_kinds {
-        if let Some(source_output) = sources.get_mut(span.source()) {
-            for statement in &mut source_output.statements {
-                if statement.span == span {
-                    statement.response_kind = Some(kind.clone());
-                }
-            }
-            if response_kind_counts_by_source[span.source()] == 1
-                && source_output.response_kind.is_none()
-            {
-                source_output.response_kind = Some(kind);
-            }
-        }
-    }
+    diagnostics.extend(pipeline_output.diagnostics);
 
     WorkspaceAnalysis {
         sources,
         diagnostics,
-        schema: source_ordered.schema,
+        schema: pipeline_output.schema,
     }
 }
 
@@ -263,7 +264,10 @@ mod tests {
 
         let output = analyze_query(&mut workspace, "SELECT * FROM person;");
 
-        assert!(output.diagnostics.is_empty());
+        // One-shot queries get the full pipeline: with no schema in the
+        // workspace, the unknown table is a real finding.
+        assert_eq!(output.diagnostics.len(), 1);
+        assert_eq!(output.diagnostics[0].code().to_string(), "E1001");
         assert_eq!(output.statements.len(), 1);
         assert_eq!(output.statements[0].kind, "select");
         assert_eq!(
@@ -272,9 +276,9 @@ mod tests {
         );
         assert_eq!(output.statements[0].span.range().start(), 0);
         assert_eq!(output.statements[0].span.range().end(), 20);
-        assert!(output.statements[0].response_kind.is_none());
+        assert_eq!(output.statements[0].response_kind, Some(Kind::Any));
         assert!(output.inferred_params.is_empty());
-        assert!(output.response_kind.is_none());
+        assert_eq!(output.response_kind, Some(Kind::Any));
     }
 
     #[test]
@@ -313,11 +317,9 @@ INSERT INTO person { name: 'Ada' };
 
         let output = analyze_query(&mut workspace, query);
 
-        assert!(
-            output.diagnostics.is_empty(),
-            "expected all statement fixtures to parse cleanly, got {:?}",
-            output.diagnostics
-        );
+        // The fixture deliberately trips contracts (bare BREAK, KILL with a
+        // string, tables used before definition); this test pins only the
+        // statement-kind vocabulary.
         let kinds: Vec<_> = output
             .statements
             .iter()
@@ -1419,7 +1421,11 @@ INSERT INTO person { name: 'Ada' };
         let output = analyze_workspace(&workspace);
         let params = &output.sources[&source].inferred_params;
 
-        assert_eq!(params.len(), 4);
+        // `$value` is context-bound (6005 territory), never a host param;
+        // the other three stay unknown because their call sites teach
+        // nothing (unknown function, wrong arity, count(any)).
+        let names: Vec<_> = params.iter().map(|param| param.name.as_str()).collect();
+        assert_eq!(names, vec!["bad", "first", "second"]);
         assert!(params.iter().all(|param| param.kind.is_none()));
     }
 

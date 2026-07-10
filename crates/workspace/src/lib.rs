@@ -6,9 +6,8 @@ pub mod analysis;
 pub mod analyzer;
 pub mod config;
 pub mod expression;
+pub mod kinds;
 pub mod schema;
-pub mod select_ir;
-pub mod semantic;
 pub mod source_registry;
 pub mod statement_env;
 

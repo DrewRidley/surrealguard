@@ -196,9 +196,9 @@ fn check_argument_kinds(
 /// Whether an argument of `kind` satisfies the expectation. Checking-side
 /// twin of nothing in inference: [`evaluate`] never consults it.
 fn param_matches(expected: &ParamKind, kind: &Kind) -> bool {
-    let base = crate::semantic::literal_base_kind(kind).unwrap_or_else(|| kind.clone());
+    let base = crate::kinds::literal_base_kind(kind).unwrap_or_else(|| kind.clone());
     match expected {
-        ParamKind::Exact(target) => crate::semantic::kind_is_assignable_to(kind, target),
+        ParamKind::Exact(target) => crate::kinds::kind_is_assignable_to(kind, target),
         ParamKind::Numeric => {
             matches!(base, Kind::Int | Kind::Float | Kind::Decimal | Kind::Number)
         }

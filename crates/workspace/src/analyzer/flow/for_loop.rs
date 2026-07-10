@@ -19,7 +19,7 @@ pub fn analyze_for_loop(ctx: &mut AnalysisContext<'_>, stmt: &ast::ForStmt) -> K
     // FOR's contract: the iterable is a collection (or a range, once those
     // are modeled). Definitely-scalar kinds are 2022.
     if let Some(kind) = &iterable.kind {
-        let base = crate::semantic::literal_base_kind(kind).unwrap_or_else(|| kind.clone());
+        let base = crate::kinds::literal_base_kind(kind).unwrap_or_else(|| kind.clone());
         if matches!(
             base,
             Kind::Int

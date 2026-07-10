@@ -60,6 +60,7 @@ impl StatementEnv {
             .param_default_fact(&name)
             .and_then(|fact| fact.kind.clone());
         let required = default_kind.is_none();
+        let key = name.clone();
         self.params
             .entry(name.clone())
             .or_insert_with(|| ParamInference {
@@ -68,9 +69,13 @@ impl StatementEnv {
                 domain: None,
                 required,
                 spans: Vec::new(),
-            })
-            .spans
-            .push(span);
+            });
+        // Inference and checking may both visit an expression; one use
+        // site is one span.
+        let spans = &mut self.params.get_mut(&key).expect("just inserted").spans;
+        if !spans.contains(&span) {
+            spans.push(span);
+        }
     }
 
     pub fn merge_param_uses_from(&mut self, child: StatementEnv) {
@@ -223,10 +228,14 @@ mod tests {
     #[test]
     fn statement_env_collects_external_params_without_duplicate_entries() {
         let mut env = StatementEnv::default();
-        let span = SourceSpan::new(SourceId::new("env-test"), ByteRange::new(0, 1).unwrap());
+        let first = SourceSpan::new(SourceId::new("env-test"), ByteRange::new(0, 1).unwrap());
+        let second = SourceSpan::new(SourceId::new("env-test"), ByteRange::new(5, 6).unwrap());
 
-        env.record_param_use("name".into(), span.clone());
-        env.record_param_use("name".into(), span);
+        // Inference and checking may both visit an expression: repeat
+        // records of the same span are one use; distinct spans accumulate.
+        env.record_param_use("name".into(), first.clone());
+        env.record_param_use("name".into(), first);
+        env.record_param_use("name".into(), second);
 
         let params: BTreeMap<_, _> = env
             .into_params()

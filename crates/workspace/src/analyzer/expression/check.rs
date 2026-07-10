@@ -146,7 +146,7 @@ fn check_cast(
     if kind == Kind::Any {
         return;
     }
-    let base = crate::semantic::literal_base_kind(&kind).unwrap_or_else(|| kind.clone());
+    let base = crate::kinds::literal_base_kind(&kind).unwrap_or_else(|| kind.clone());
     let possible = match &target {
         Kind::String | Kind::Any => true,
         Kind::Bool => matches!(base, Kind::Bool | Kind::String),
@@ -197,8 +197,7 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
         if receiver == Kind::Any {
             continue;
         }
-        let base =
-            crate::semantic::literal_base_kind(&receiver).unwrap_or_else(|| receiver.clone());
+        let base = crate::kinds::literal_base_kind(&receiver).unwrap_or_else(|| receiver.clone());
         match &part.node {
             ast::IdiomPart::Index(_)
             | ast::IdiomPart::Where(_)
@@ -472,8 +471,8 @@ fn comparable(left: &Kind, right: &Kind) -> bool {
             variants.iter().any(|variant| comparable(variant, other))
         }
         _ => {
-            let left = crate::semantic::literal_base_kind(left);
-            let right = crate::semantic::literal_base_kind(right);
+            let left = crate::kinds::literal_base_kind(left);
+            let right = crate::kinds::literal_base_kind(right);
             match (left, right) {
                 (None, None) => false,
                 (l, r) => {
@@ -498,7 +497,7 @@ fn check_mixed_array(
         let Some(kind) = known_kind(ctx, element) else {
             return;
         };
-        let base = crate::semantic::literal_base_kind(&kind).unwrap_or(kind);
+        let base = crate::kinds::literal_base_kind(&kind).unwrap_or(kind);
         if !kinds.contains(&base) {
             kinds.push(base);
         }

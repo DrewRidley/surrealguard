@@ -202,7 +202,7 @@ fn check_custom_call(
                 }
             }
         }
-        if *kind == Kind::Any || crate::semantic::kind_is_assignable_to(kind, expected) {
+        if *kind == Kind::Any || crate::kinds::kind_is_assignable_to(kind, expected) {
             continue;
         }
         let Some(arg_expr) = call.args.get(index) else {

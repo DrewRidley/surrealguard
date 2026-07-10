@@ -7,9 +7,6 @@
 //! only use of source text is *naming*: an unaliased computed projection is
 //! keyed by its own source text (`SELECT age >= 18 FROM ...` produces the
 //! field `"age >= 18"`).
-//!
-//! The section at the bottom holds `SelectIr`-typed resolvers that exist
-//! only for the remaining validators in `crate::semantic`.
 
 use std::collections::BTreeMap;
 
@@ -214,8 +211,7 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
             crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
             // SPLIT fans rows out over a collection field.
             if let Some(kind) = kind_for_path(table, &segments) {
-                let base =
-                    crate::semantic::literal_base_kind(&kind).unwrap_or_else(|| kind.clone());
+                let base = crate::kinds::literal_base_kind(&kind).unwrap_or_else(|| kind.clone());
                 if !matches!(base, Kind::Array(_, _) | Kind::Set(_, _) | Kind::Any) {
                     let span = surrealguard_syntax::span::SourceSpan::new(
                         ctx.source().clone(),
@@ -365,7 +361,7 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
         }
         let fact = infer_expression_fact(expr, ctx);
         if let Some(kind) = &fact.kind {
-            let base = crate::semantic::literal_base_kind(kind).unwrap_or_else(|| kind.clone());
+            let base = crate::kinds::literal_base_kind(kind).unwrap_or_else(|| kind.clone());
             if !matches!(base, Kind::Int | Kind::Number | Kind::Any) {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
@@ -1238,11 +1234,6 @@ fn explain_response_kind() -> Kind {
 
     Kind::Array(Box::new(object_literal(fields)), None)
 }
-
-// ---------------------------------------------------------------------------
-// SelectIr-typed resolvers, used only by the validators in
-// `crate::semantic`; they delegate to the shared relation core above.
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

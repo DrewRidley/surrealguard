@@ -32,7 +32,7 @@ pub fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineFie
             continue;
         }
         if let (Some(declared), Some(kind)) = (&declared, kind) {
-            if kind != Kind::Any && !crate::semantic::kind_is_assignable_to(&kind, declared) {
+            if kind != Kind::Any && !crate::kinds::kind_is_assignable_to(&kind, declared) {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
                 ctx.emit(surrealguard_diagnostics::catalog::finding(

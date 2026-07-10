@@ -76,7 +76,7 @@ pub(crate) fn insert_response_kind(stmt: &ast::InsertStmt, ctx: &mut AnalysisCon
                         continue;
                     };
                     if value_kind != Kind::Any
-                        && !crate::semantic::kind_is_assignable_to(&value_kind, &column_kind)
+                        && !crate::kinds::kind_is_assignable_to(&value_kind, &column_kind)
                     {
                         let span = surrealguard_syntax::span::SourceSpan::new(
                             ctx.source().clone(),

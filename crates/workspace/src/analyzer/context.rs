@@ -128,6 +128,10 @@ impl<'a> AnalysisContext<'a> {
         self.env.record_param_use(name, span);
     }
 
+    pub fn define_param_default(&mut self, name: String, fact: ExpressionFact) {
+        self.env.define_param_default(name, fact);
+    }
+
     /// Records a typed constraint on an unbound parameter; irreconcilable
     /// constraints mean no value can satisfy the query (6001).
     pub fn constrain_param(

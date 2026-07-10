@@ -1,9 +1,7 @@
 //! Expression fact inference over the typed AST.
 //!
 //! Pure fact inference over `ast::Expr` — no source-text reading for
-//! structure, no CST shapes. (`crate::expression` holds the node-based
-//! equivalent that the remaining validators in `crate::semantic` still
-//! use.)
+//! structure, no CST shapes. (`crate::expression` holds the fact types.)
 //!
 //! [`infer_expression_fact`] computes facts over the one
 //! [`AnalysisContext`]; it never emits findings itself (inference never
@@ -27,7 +25,17 @@ pub(crate) fn infer_expression_fact(
     let span = SourceSpan::new(ctx.source().clone(), expr.span);
     match &expr.node {
         ast::Expr::Literal(literal) => literal_fact(literal, span),
-        ast::Expr::Param(name) => param_fact(name, span, ctx.env()),
+        ast::Expr::Param(name) => {
+            // Host-facing parameter uses are recorded at their own site
+            // with their exact span — bound and context-only names are
+            // not host parameters.
+            if ctx.env().let_fact(name).is_none()
+                && !super::CONTEXT_ONLY_PARAMS.contains(&name.as_str())
+            {
+                ctx.record_param_use(name.clone(), span.clone());
+            }
+            param_fact(name, span, ctx.env())
+        }
         ast::Expr::Table(name) => scalar_fact(
             span,
             ExpressionValueClass::Literal,
@@ -456,7 +464,7 @@ fn method_return_kind(
     args: &[Kind],
     ctx: &mut AnalysisContext<'_>,
 ) -> Option<Kind> {
-    let base = crate::semantic::literal_base_kind(receiver).unwrap_or_else(|| receiver.clone());
+    let base = crate::kinds::literal_base_kind(receiver).unwrap_or_else(|| receiver.clone());
     let family = match base {
         Kind::Array(_, _) => "array",
         Kind::Set(_, _) => "set",

@@ -69,22 +69,20 @@ pub fn expr_fact(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) 
     let fact = infer::infer_expression_fact(expr, ctx);
     check::check_value_expression(ctx, expr);
     for param in &fact.dependencies.params {
-        // Context parameters exist only where their construct binds them
-        // (events, field clauses); loose uses are 6005. Host-facing
-        // parameters are constraint inputs, never findings.
-        const CONTEXT_ONLY: &[&str] = &["before", "after", "event", "value", "input"];
-        if CONTEXT_ONLY.contains(&param.as_str()) {
+        if CONTEXT_ONLY_PARAMS.contains(&param.as_str()) {
             ctx.emit(surrealguard_diagnostics::catalog::finding(
                 fact.span.clone(),
                 6005,
                 format!("`${param}` only exists inside the construct that binds it"),
             ));
-            continue;
         }
-        ctx.record_param_use(param.clone(), fact.span.clone());
     }
     fact
 }
+
+/// Context parameters exist only where their construct binds them (events,
+/// field clauses); loose uses are 6005, never host parameters.
+pub(crate) const CONTEXT_ONLY_PARAMS: &[&str] = &["before", "after", "event", "value", "input"];
 
 #[cfg(test)]
 mod tests {

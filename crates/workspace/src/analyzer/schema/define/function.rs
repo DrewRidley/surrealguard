@@ -34,8 +34,7 @@ pub fn analyze_define_function(ctx: &mut AnalysisContext<'_>, stmt: &ast::Define
         if let Some(declared) =
             crate::schema::kind_from_type_expr(&return_ty.node, ctx.source_text()).kind
         {
-            if body_kind != Kind::Any
-                && !crate::semantic::kind_is_assignable_to(&body_kind, &declared)
+            if body_kind != Kind::Any && !crate::kinds::kind_is_assignable_to(&body_kind, &declared)
             {
                 let span = surrealguard_syntax::span::SourceSpan::new(
                     ctx.source().clone(),
