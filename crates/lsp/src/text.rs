@@ -73,7 +73,10 @@ mod tests {
         let source = "ab\ncd";
 
         // Exactly at end-of-file: last line, past its final character.
-        assert_eq!(offset_to_position(source, source.len()), Position::new(1, 2));
+        assert_eq!(
+            offset_to_position(source, source.len()),
+            Position::new(1, 2)
+        );
         // Past end-of-file clamps to the same final position.
         assert_eq!(offset_to_position(source, 999), Position::new(1, 2));
     }

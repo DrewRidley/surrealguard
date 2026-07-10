@@ -105,6 +105,11 @@ const ENTRIES: &[(u16, &str, Severity)] = &[
     (7009, "whole-table UPDATE/DELETE without WHERE", Severity::Warning),
     (7011, "assignment to `id` in SET", Severity::Warning),
     (7012, "blocking or side-effecting call in a computed context", Severity::Warning),
+    (
+        7013,
+        "a suppression directive names a catalog code (with a reason when required)",
+        Severity::Warning,
+    ),
     (8001, "every function used exists in the configured target version", Severity::Error),
     (8003, "syntax requires a newer version", Severity::Error),
 ];

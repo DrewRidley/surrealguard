@@ -86,7 +86,7 @@ pub(crate) fn check_graph_idiom_at(
                 let Some(source) = current.clone() else {
                     return;
                 };
-                let step_result = check_step(ctx, &source, dir.node, step);
+                let step_result = check_step(ctx, &source, dir.node, step, pending_edge.is_some());
 
                 // A plain-table landing completes a hop: verify it is on
                 // the previous edge's far side.
@@ -204,6 +204,7 @@ fn check_step(
     source: &str,
     dir: ast::GraphDir,
     step: &ast::GraphStep,
+    after_edge: bool,
 ) -> StepOutcome {
     let [target] = step.targets.as_slice() else {
         // `->(a, b)` is valid — each named edge must still be a relation,
@@ -231,8 +232,22 @@ fn check_step(
 
     let Some(relation) = relation else {
         if ctx.schema().tables.contains_key(edge) {
-            // A plain table in step position: this is the landing half of
-            // a hop; reachability was checked by the edge before it.
+            // A plain table is a valid landing only right after an edge
+            // (`->likes->comment`). With nothing to land from, the step
+            // is a traversal — and a traversal must name a relation.
+            if !after_edge {
+                emit(
+                    ctx,
+                    target.span,
+                    3001,
+                    format!("`{edge}` is not a relation table"),
+                );
+                return StepOutcome {
+                    edge_table: None,
+                    landed_on: None,
+                    violated: true,
+                };
+            }
             return StepOutcome {
                 edge_table: None,
                 landed_on: Some(edge.to_string()),

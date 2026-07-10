@@ -45,6 +45,13 @@ pub struct SourceAnalysis {
 }
 
 pub fn analyze_sources(parsed_sources: &[ParsedSource]) -> PipelineOutput {
+    analyze_sources_with(parsed_sources, false)
+}
+
+pub fn analyze_sources_with(
+    parsed_sources: &[ParsedSource],
+    require_suppression_reasons: bool,
+) -> PipelineOutput {
     let mut output = PipelineOutput::default();
 
     for parsed in parsed_sources {
@@ -173,6 +180,19 @@ pub fn analyze_sources(parsed_sources: &[ParsedSource]) -> PipelineOutput {
     // fn:: definitions must terminate: direct or mutual recursion never
     // does (5009). Three-color DFS; each cycle reports once.
     check_function_cycles(&output.schema, &mut output.diagnostics);
+
+    // Suppression runs last so directives can silence every finding kind,
+    // including the cross-source passes above.
+    for parsed in parsed_sources {
+        if parsed.syntax_diagnostics().is_empty() {
+            crate::suppress::apply_suppressions(
+                parsed.source_id(),
+                parsed.text(),
+                require_suppression_reasons,
+                &mut output.diagnostics,
+            );
+        }
+    }
 
     output
 }

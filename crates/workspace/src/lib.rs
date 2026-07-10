@@ -10,6 +10,7 @@ pub mod kinds;
 pub mod schema;
 pub mod source_registry;
 pub mod statement_env;
+mod suppress;
 
 pub use analysis::{
     analyze_query, analyze_source, analyze_workspace, AnalysisOutput, ParamInference,

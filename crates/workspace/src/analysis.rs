@@ -152,7 +152,10 @@ pub fn analyze_source(workspace: &Workspace, source: SourceId) -> AnalysisOutput
                     .collect(),
                 ..AnalysisOutput::default()
             };
-            let mut pipeline_output = pipeline::analyze_sources(std::slice::from_ref(&parsed));
+            let mut pipeline_output = pipeline::analyze_sources_with(
+                std::slice::from_ref(&parsed),
+                workspace.config().diagnostics.require_suppression_reasons,
+            );
             output.diagnostics.extend(pipeline_output.diagnostics);
             if let Some(analysis) = pipeline_output.sources.remove(&source) {
                 output.response_kind = single_response_kind(&analysis.statements);
@@ -219,7 +222,10 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
         }
     }
 
-    let pipeline_output = pipeline::analyze_sources(&parsed_sources);
+    let pipeline_output = pipeline::analyze_sources_with(
+        &parsed_sources,
+        workspace.config().diagnostics.require_suppression_reasons,
+    );
     for (source, analysis) in pipeline_output.sources {
         if let Some(source_output) = sources.get_mut(&source) {
             source_output.response_kind = single_response_kind(&analysis.statements);
@@ -3279,6 +3285,116 @@ INSERT INTO person { name: 'Ada' };
         let source = workspace.add_virtual_source(
             "query".into(),
             "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nSELECT ->(likes, post) FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let diagnostics = &output.sources[&source].diagnostics;
+        assert_no_syntax_findings(diagnostics);
+
+        let messages: Vec<_> = diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::graph(3001))
+            .map(|finding| finding.message().to_string())
+            .collect();
+        assert_eq!(messages, vec!["`post` is not a relation table"]);
+    }
+
+    #[test]
+    fn suppression_directive_silences_next_line_and_trailing_findings() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "-- surrealguard: allow(E1001) reason=\"fixture table\"\nSELECT * FROM ghost;\nSELECT * FROM phantom; -- surrealguard: allow(E1001) reason=\"also fine\"\nSELECT * FROM spectre;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let diagnostics = &output.sources[&source].diagnostics;
+        assert_no_syntax_findings(diagnostics);
+
+        // ghost (next-line) and phantom (trailing) are suppressed;
+        // spectre still fires.
+        let unknown_tables: Vec<_> = diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1001))
+            .map(|finding| finding.message().to_string())
+            .collect();
+        assert_eq!(unknown_tables, vec!["unknown table `spectre`"]);
+    }
+
+    #[test]
+    fn suppression_directive_contract_violations_are_7013() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "-- surrealguard: allow(E9999)\n-- surrealguard: allow(lint.select_star)\n-- surrealguard: allow(*)\nSELECT * FROM person;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let diagnostics = &output.sources[&source].diagnostics;
+
+        let directive_findings: Vec<_> = diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::lint(7013))
+            .map(|finding| finding.message().to_string())
+            .collect();
+        assert_eq!(directive_findings.len(), 3, "{directive_findings:?}");
+        assert!(directive_findings[0].contains("`E9999` is not a catalog code"));
+        assert!(directive_findings[1].contains("suppress by catalog code, not name"));
+        assert!(directive_findings[2].contains("does not parse"));
+    }
+
+    #[test]
+    fn suppression_reasons_are_required_when_configured() {
+        let mut config = WorkspaceConfig::default();
+        config.diagnostics.require_suppression_reasons = true;
+        let mut workspace = Workspace::new(config);
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "-- surrealguard: allow(E1001)\nSELECT * FROM ghost;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let diagnostics = &output.sources[&source].diagnostics;
+
+        // Without a reason the directive is rejected: 7013 fires and the
+        // 1001 it tried to silence still reports.
+        assert!(diagnostics
+            .iter()
+            .any(|finding| finding.code() == FindingCode::lint(7013)));
+        assert!(diagnostics
+            .iter()
+            .any(|finding| finding.code() == FindingCode::schema(1001)));
+    }
+
+    #[test]
+    fn analyze_workspace_reports_casts_to_unknown_types() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "RETURN <ghost> 5;\nRETURN <int> '12';".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let diagnostics = &output.sources[&source].diagnostics;
+        assert_no_syntax_findings(diagnostics);
+
+        let messages: Vec<_> = diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::type_error(2007))
+            .map(|finding| finding.message().to_string())
+            .collect();
+        assert_eq!(messages, vec!["`ghost` is not a type"]);
+    }
+
+    #[test]
+    fn analyze_workspace_reports_single_step_traversal_through_plain_table() {
+        let mut workspace = Workspace::default();
+        // With no edge to land from, a plain table in step position is a
+        // traversal, and a traversal must name a relation. The valid hop
+        // form `->likes->post` stays quiet.
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE person;\nDEFINE TABLE post;\nDEFINE TABLE likes TYPE RELATION IN person OUT post;\nSELECT ->post FROM person;\nSELECT ->likes->post FROM person;".into(),
         );
 
         let output = analyze_workspace(&workspace);

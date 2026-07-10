@@ -1822,8 +1822,7 @@ mod tests {
 
     #[test]
     fn lowers_define_function_with_typed_params_and_return_type() {
-        let parsed =
-            parse("DEFINE FUNCTION fn::greet($name: string) -> string { RETURN $name; };");
+        let parsed = parse("DEFINE FUNCTION fn::greet($name: string) -> string { RETURN $name; };");
         let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
             Statement::Define(DefineStmt::Function(def)) => Some(def),
             _ => None,

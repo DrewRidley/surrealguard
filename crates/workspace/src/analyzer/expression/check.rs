@@ -108,6 +108,55 @@ fn check_cast(
     ty: &ast::Spanned<ast::TypeExpr>,
     inner: &ast::Spanned<ast::Expr>,
 ) {
+    // The named-type contract (2007): the cast target must be a type
+    // SurrealQL knows. Generous by design — every kind name the engine
+    // accepts is listed, so only genuine misspellings fire.
+    const TYPE_NAMES: &[&str] = &[
+        "any",
+        "array",
+        "bool",
+        "bytes",
+        "datetime",
+        "decimal",
+        "duration",
+        "either",
+        "file",
+        "float",
+        "function",
+        "future",
+        "geometry",
+        "int",
+        "literal",
+        "none",
+        "null",
+        "number",
+        "object",
+        "option",
+        "point",
+        "range",
+        "record",
+        "references",
+        "regex",
+        "set",
+        "string",
+        "uuid",
+    ];
+    let named = match &ty.node {
+        ast::TypeExpr::Name(name) => Some(name),
+        ast::TypeExpr::Parameterized { name, .. } => Some(name),
+        _ => None,
+    };
+    if let Some(name) = named {
+        if !TYPE_NAMES.contains(&name.node.to_ascii_lowercase().as_str()) {
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                SourceSpan::new(ctx.source().clone(), name.span),
+                2007,
+                format!("`{}` is not a type", name.node),
+            ));
+            return;
+        }
+    }
+
     let Some(target) = crate::analyzer::expression::infer::cast_target_kind(&ty.node) else {
         return;
     };

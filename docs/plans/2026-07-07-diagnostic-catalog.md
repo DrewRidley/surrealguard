@@ -54,11 +54,16 @@ limitation or style note.
 
 Severity is the finding's *intrinsic class*; it is data, not policy.
 Consumers apply policy at their edge through `PolicyConfig`
-(`warnings_as_errors` promotion, per-code allow/warn/deny for lints,
-suppression) — the CLI for exit codes, the LSP for editor severities, host
-adapters for build failures. Errors are never demotable; lints are fully
-configurable. (Ruled 2026-07-07; already implemented at the CLI and LSP
-edges.)
+(`warnings_as_errors` promotion, per-code allow/warn/deny for lints) —
+the CLI for exit codes, the LSP for editor severities, host adapters for
+build failures. Errors are never demotable; lints are fully configurable.
+(Ruled 2026-07-07; implemented at the CLI and LSP edges.)
+
+In-source suppression is different: a `-- surrealguard: allow(E1001)
+reason="why"` comment is source-authored intent, so it applies at
+analysis time, rustc-style — the directive covers the next line (or its
+own line when trailing a statement) and a suppressed finding never
+leaves the pipeline. Directives that violate their own contract are 7013.
 
 Detection status legend: ✅ inference already computes everything needed
 (emission is additive); 🔶 partial (needs modest new analysis at the site);
@@ -99,7 +104,7 @@ removed table unknown); 1028 → 1027.
 | 2001 | a value written to a field inhabits the field's declared type | SET values, CONTENT/MERGE/REPLACE payload values, INSERT tuple values and object payloads, DEFAULT and VALUE clauses in DEFINE, record-link targets (`record<a>` ⊄ `record<b>`), NONE into non-optional (message points at option<>) | E | ✅ emitting (SET/payload/tuple); DEFINE clauses 🔶 |
 | 2004 | the operands make sense together for the operator | binary and unary, arithmetic and comparison, compound assignment (`age += 'x'`); SurrealDB kind-ordering instead of throwing changes nothing | E | ✅ emitting |
 | 2005 | a condition position expects a boolean | IF conditions, ASSERT clauses, bare non-boolean WHERE | W | ✅ emitting (IF); ASSERT/WHERE 🔶 |
-| 2007 | a cast names a known type | `<ghost> x` | E | ✅ |
+| 2007 | a cast names a known type | `<ghost> x` | E | ✅ emitting (allowlist of engine kind names) |
 | 2008 | a conversion can succeed | kind-proven (`<duration> true`) or value-proven (`<int> 'abc'`, `type::int('x')`) — the proof strength varies, the contract doesn't | E | ✅ emitting |
 | 2012 | a body returns what it declares | `fn::` `-> string { RETURN 1 }`; closures `\|$x\| -> string { RETURN 1 }` | E | ✅ both halves: fn:: bodies analyzed with params bound; closures |
 | 2015 | a value-requiring position gets a value that is always present | `option<int>` field in `x + 1` | W | 🔶 needs the operand rule |
@@ -208,6 +213,7 @@ Folded by the contract audit (2026-07-09): 5003, 5004, 5006 → 5002; 5007,
 | 7009 | whole-table UPDATE/DELETE without WHERE | `DELETE person;` | W | ✅ (deliberate ones silence per-code) |
 | 7011 | assignment to `id` in SET | `SET id = ...` | W | ✅ |
 | 7012 | blocking or side-effecting call in a computed context | `http::get(...)` / `sleep()` in a field `VALUE` or event body | W | ✅ call paths known |
+| 7013 | a suppression directive names a catalog code (with a reason when required) | `-- surrealguard: allow(ghost)`; missing reason under `require_suppression_reasons` | W | ✅ |
 
 ## 8xxx — Version compatibility
 
