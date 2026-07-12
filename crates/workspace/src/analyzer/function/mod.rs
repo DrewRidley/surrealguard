@@ -278,7 +278,8 @@ mod tests {
     use surrealguard_syntax::parse::parse_source;
     use surrealguard_syntax::source::SourceId;
 
-    use super::analyze_builtin_function;
+    use super::{analyze_builtin_function, synthetic_call};
+    use surrealdb_types::Kind;
 
     use crate::analyzer::context::AnalysisContext;
     use crate::schema::SchemaIndex;
@@ -346,6 +347,70 @@ mod tests {
         );
 
         let _ = analyze_builtin_function(&mut ctx, call, &[]);
+    }
+
+    /// Sweeps every registered builtin through the dispatcher: each
+    /// dispatch arm (collected from the family dispatchers' own source)
+    /// must analyze a synthetic call at several arities without panicking.
+    /// This executes every signature-literal leaf file.
+    #[test]
+    fn every_registered_builtin_analyzes_synthetic_calls() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/analyzer/function");
+        let mut names = std::collections::BTreeSet::new();
+        collect_dispatch_arms(&root, &mut names);
+        assert!(
+            names.len() > 250,
+            "dispatch-arm scan looks broken: found only {} names",
+            names.len()
+        );
+
+        let arg_shapes: Vec<Vec<Kind>> = vec![
+            vec![],
+            vec![Kind::Any],
+            vec![Kind::Any, Kind::Any],
+            vec![Kind::Array(Box::new(Kind::Any), None), Kind::Any, Kind::Any],
+        ];
+
+        let schema = SchemaIndex::default();
+        let mut diagnostics: Vec<Finding> = Vec::new();
+        let mut ctx = AnalysisContext::new(
+            &schema,
+            surrealguard_syntax::source::SourceId::new("sweep"),
+            "",
+            &mut diagnostics,
+        );
+        for name in &names {
+            let call = synthetic_call(name);
+            for args in &arg_shapes {
+                let _ = analyze_builtin_function(&mut ctx, &call, args);
+            }
+        }
+    }
+
+    fn collect_dispatch_arms(
+        dir: &std::path::Path,
+        names: &mut std::collections::BTreeSet<String>,
+    ) {
+        for entry in std::fs::read_dir(dir).expect("function tree readable") {
+            let entry = entry.expect("dir entry");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_dispatch_arms(&path, names);
+            } else if path.file_name().is_some_and(|name| name == "mod.rs") {
+                let text = std::fs::read_to_string(&path).expect("dispatcher readable");
+                for line in text.lines() {
+                    let Some(rest) = line.trim().strip_prefix('"') else {
+                        continue;
+                    };
+                    let Some((name, tail)) = rest.split_once('"') else {
+                        continue;
+                    };
+                    if tail.trim_start().starts_with("=>") && name.contains("::") {
+                        names.insert(name.to_string());
+                    }
+                }
+            }
+        }
     }
 
     fn first_node_of_kind<'tree>(
