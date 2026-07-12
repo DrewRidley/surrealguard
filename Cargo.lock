@@ -1822,10 +1822,20 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
+ "surrealguard-codegen",
  "surrealguard-diagnostics",
+ "surrealguard-embed",
  "surrealguard-syntax",
  "surrealguard-workspace",
  "walkdir",
+]
+
+[[package]]
+name = "surrealguard-codegen"
+version = "0.1.0"
+dependencies = [
+ "surrealdb-types",
+ "surrealguard-workspace",
 ]
 
 [[package]]

@@ -35,6 +35,14 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Generate TypeScript declarations for embedded surql queries
+    Generate {
+        /// Output path for the generated .d.ts (default: surql.gen.d.ts
+        /// at the workspace root)
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
 }
 
 const EXAMPLE_CONFIG: &str = r#"version = "1.0"
@@ -254,6 +262,77 @@ struct CheckPassed {
     rendered: Vec<String>,
 }
 
+/// Scans host sources for embedded queries, analyzes them against the
+/// workspace schema, and writes the typed registry.
+fn run_generate(root: &Path, out: Option<&Path>) -> Result<std::path::PathBuf, Box<dyn Error>> {
+    let config = load_workspace_config(root)?;
+    let mut workspace = surrealguard_workspace::analysis::Workspace::new(config.clone());
+    for path in discover_surrealql_sources(root, &config) {
+        let text = fs::read_to_string(&path)?;
+        workspace.add_virtual_source(path.display().to_string(), text);
+    }
+
+    // Host files, honoring the same ignore patterns as .surql discovery.
+    let host_paths: Vec<PathBuf> = {
+        let mut paths: Vec<_> = WalkDir::new(root)
+            .into_iter()
+            .filter_entry(|entry| should_visit(entry, root, &config.sources.ignore))
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_file())
+            .map(DirEntry::into_path)
+            .filter(|path| {
+                matches!(
+                    path.extension().and_then(|e| e.to_str()),
+                    Some("ts" | "tsx" | "js" | "jsx" | "svelte" | "vue" | "astro")
+                )
+            })
+            .collect();
+        paths.sort();
+        paths
+    };
+
+    let mut queries = Vec::new();
+    for path in host_paths {
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        for (index, query) in surrealguard_embed::extract(&path.display().to_string(), &text)
+            .into_iter()
+            .enumerate()
+        {
+            let source_id = workspace.add_virtual_source(
+                format!("embedded://{}#{index}", path.display()),
+                query.text.clone(),
+            );
+            queries.push((source_id, query));
+        }
+    }
+
+    let analysis = analyze_workspace(&workspace);
+    let entries: Vec<surrealguard_codegen::QueryEntry> = queries
+        .iter()
+        .filter_map(|(source_id, query)| {
+            let output = analysis.sources.get(source_id)?;
+            let result_type = output
+                .response_kind
+                .as_ref()
+                .map(surrealguard_codegen::ts_type)
+                .unwrap_or_else(|| "unknown".into());
+            Some(surrealguard_codegen::QueryEntry {
+                parts: query.parts(),
+                result_type,
+                params: output.inferred_params.clone(),
+            })
+        })
+        .collect();
+
+    let out_path = out
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| root.join("surql.gen.d.ts"));
+    fs::write(&out_path, surrealguard_codegen::render_registry(&entries))?;
+    Ok(out_path)
+}
+
 fn render_check_json(
     summary: &CheckSummary,
     diagnostics: &[CheckDiagnostic],
@@ -349,6 +428,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             fs::write(&config_path, EXAMPLE_CONFIG)?;
             println!("Created surrealguard.toml");
+            Ok(())
+        }
+        Commands::Generate { out } => {
+            let root = find_workspace_root(&env::current_dir()?);
+            let written = run_generate(&root, out.as_deref())?;
+            println!("Generated {}", written.display());
             Ok(())
         }
         Commands::Check { json } => {

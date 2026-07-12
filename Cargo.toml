@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/cli",
+    "crates/codegen",
     "crates/diagnostics",
     "crates/embed",
     "crates/lsp",

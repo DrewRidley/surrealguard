@@ -4,7 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+surrealguard-codegen = { path = "../codegen" }
 surrealguard-diagnostics = { path = "../diagnostics" }
+surrealguard-embed = { path = "../embed" }
 surrealguard-syntax = { path = "../syntax" }
 surrealguard-workspace = { path = "../workspace" }
 clap = { version = "4", features = ["derive"]}

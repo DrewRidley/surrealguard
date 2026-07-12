@@ -66,6 +66,27 @@ impl EmbeddedQuery {
         }
     }
 
+    /// The template's static parts in order — the copied text runs
+    /// between substitutions. One part for substitution-free queries.
+    pub fn parts(&self) -> Vec<String> {
+        if self.substitutions.is_empty() {
+            return vec![self.text.clone()];
+        }
+        let mut parts = Vec::new();
+        let mut cursor = 0;
+        for substitution in &self.substitutions {
+            let marker = format!("${}", substitution.param);
+            let at = self.text[cursor..]
+                .find(&marker)
+                .map(|i| cursor + i)
+                .unwrap_or(self.text.len());
+            parts.push(self.text[cursor..at].to_string());
+            cursor = (at + marker.len()).min(self.text.len());
+        }
+        parts.push(self.text[cursor..].to_string());
+        parts
+    }
+
     /// Maps an embedded byte range to the smallest host range covering it.
     pub fn host_span(&self, range: std::ops::Range<usize>) -> std::ops::Range<usize> {
         let start = self.host_offset(range.start);

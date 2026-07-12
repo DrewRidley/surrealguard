@@ -31,8 +31,12 @@ fn collect(node: Node<'_>, text: &str, queries: &mut Vec<EmbeddedQuery>) {
             node.child_by_field_name("function"),
             node.child_by_field_name("arguments"),
         ) {
-            if is_surql_tag(function, text) && arguments.kind() == "template_string" {
-                if let Some(query) = template_to_query(arguments, text) {
+            if is_surql_tag(function, text) {
+                if arguments.kind() == "template_string" {
+                    if let Some(query) = template_to_query(arguments, text) {
+                        queries.push(query);
+                    }
+                } else if let Some(query) = call_string_to_query(arguments, text) {
                     queries.push(query);
                 }
             }
@@ -54,6 +58,40 @@ fn is_surql_tag(node: Node<'_>, text: &str) -> bool {
             .is_some_and(|property| &text[property.byte_range()] == "surql"),
         _ => false,
     }
+}
+
+/// The call form `surql("...")`: one plain string-literal argument. This
+/// is the *typed* form — string literals resolve through the generated
+/// registry, which tagged templates cannot (TypeScript never infers
+/// literal types for template string arrays).
+fn call_string_to_query(arguments: Node<'_>, text: &str) -> Option<EmbeddedQuery> {
+    if arguments.kind() != "arguments" {
+        return None;
+    }
+    let mut walker = arguments.walk();
+    let literals: Vec<Node<'_>> = arguments
+        .children(&mut walker)
+        .filter(|child| child.kind() == "string")
+        .collect();
+    let [string] = literals.as_slice() else {
+        return None;
+    };
+    // Content between the quotes; escape sequences pass through verbatim
+    // (SurrealQL strings share the common escapes).
+    let content_start = string.start_byte() + 1;
+    let content_end = string.end_byte().saturating_sub(1);
+    if content_end < content_start {
+        return None;
+    }
+    let mut query = String::new();
+    let mut segments = Vec::new();
+    push_fragment(text, content_start..content_end, &mut query, &mut segments);
+    Some(EmbeddedQuery {
+        text: query,
+        host_range: content_start..content_end,
+        segments,
+        substitutions: Vec::new(),
+    })
 }
 
 /// Rebuilds the template's contents as analyzable SurrealQL: string
@@ -182,6 +220,22 @@ const other = css`b { color: red }`;
         let embedded_param = query.text.find("$__host0").expect("param present");
         let host = query.host_offset(embedded_param + 3);
         assert_eq!(&source[host..host + 2], "${");
+    }
+
+    #[test]
+    fn call_form_string_literals_extract() {
+        let source = "const q = surql(\"SELECT name FROM person WHERE team = $team\");";
+        let queries = extract_typescript(source, false);
+
+        assert_eq!(queries.len(), 1);
+        assert_eq!(
+            queries[0].text,
+            "SELECT name FROM person WHERE team = $team"
+        );
+        assert!(queries[0].substitutions.is_empty());
+        let embedded_team = queries[0].text.find("team =").expect("team present");
+        let host = queries[0].host_offset(embedded_team);
+        assert_eq!(&source[host..host + 4], "team");
     }
 
     #[test]
