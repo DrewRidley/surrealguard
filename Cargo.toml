@@ -2,6 +2,7 @@
 members = [
     "crates/cli",
     "crates/diagnostics",
+    "crates/embed",
     "crates/lsp",
     "crates/syntax",
     "crates/workspace",

@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use tower_lsp::lsp_types::Url;
 
 use surrealguard_diagnostics::Finding;
+use surrealguard_syntax::span::{ByteRange, SourceSpan};
 use surrealguard_workspace::{analyze_workspace, Workspace as AnalysisWorkspace};
 
 /// A tracked document in the workspace.
@@ -48,7 +49,10 @@ impl Workspace {
         self.documents.values()
     }
 
-    /// Analyze a document through the shared `surrealguard-workspace` pipeline.
+    /// Analyze a document through the shared `surrealguard-workspace`
+    /// pipeline. Plain `.surql` documents analyze as themselves; host
+    /// documents (TypeScript, Svelte, ...) analyze their embedded `surql`
+    /// templates, with findings re-spanned onto the host file.
     pub fn diagnostic_analysis(&self, uri: &Url) -> Option<DiagnosticAnalysisResult> {
         let target = self.documents.get(uri)?;
 
@@ -63,7 +67,13 @@ impl Workspace {
         let mut analysis_workspace = AnalysisWorkspace::default();
         let mut target_source = None;
 
-        let mut documents: Vec<_> = self.documents.values().collect();
+        // `.surql` documents are the analysis workspace; host documents
+        // never enter it directly (they are not SurrealQL).
+        let mut documents: Vec<_> = self
+            .documents
+            .values()
+            .filter(|doc| is_surrealql_uri(&doc.uri))
+            .collect();
         documents.sort_by(|left, right| left.uri.as_str().cmp(right.uri.as_str()));
 
         let mut texts = std::collections::BTreeMap::new();
@@ -79,6 +89,43 @@ impl Workspace {
             if doc.uri == *uri {
                 target_source = Some(source_id);
             }
+        }
+
+        // Host target: each embedded query becomes a virtual source
+        // analyzed against the `.surql` schema loaded above.
+        if !is_surrealql_uri(uri) {
+            let embedded =
+                surrealguard_embed::extract(uri.path(), &target.text);
+            let mut queries = Vec::new();
+            for (index, query) in embedded.into_iter().enumerate() {
+                let source_id = analysis_workspace.add_virtual_source(
+                    format!("embedded://{}#{index}", uri.as_str()),
+                    query.text.clone(),
+                );
+                queries.push((source_id, query));
+            }
+            texts.insert(
+                uri.to_string(),
+                (uri.clone(), target.text.clone()),
+            );
+
+            let workspace_output = analyze_workspace(&analysis_workspace);
+            let host_source =
+                surrealguard_syntax::source::SourceId::new(uri.to_string());
+            let mut diagnostics = Vec::new();
+            for (source_id, query) in &queries {
+                let Some(source_output) = workspace_output.sources.get(source_id) else {
+                    continue;
+                };
+                for finding in &source_output.diagnostics {
+                    diagnostics.push(respan_to_host(finding, query, &host_source));
+                }
+            }
+            return Some(DiagnosticAnalysisResult {
+                diagnostics,
+                source: target.text.clone(),
+                texts,
+            });
         }
 
         let target_source = target_source?;
@@ -121,6 +168,39 @@ impl Workspace {
             }
         }
     }
+}
+
+fn is_surrealql_uri(uri: &Url) -> bool {
+    let path = uri.path();
+    path.ends_with(".surql") || path.ends_with(".surrealql")
+}
+
+/// Rebuilds a finding computed on an embedded query so its primary span
+/// points into the host file. Related spans (schema declarations) stay
+/// where they are.
+fn respan_to_host(
+    finding: &Finding,
+    query: &surrealguard_embed::EmbeddedQuery,
+    host_source: &surrealguard_syntax::source::SourceId,
+) -> Finding {
+    let embedded = finding.span().range();
+    let host = query.host_span(embedded.start() as usize..embedded.end() as usize);
+    let span = SourceSpan::new(
+        host_source.clone(),
+        ByteRange::new(host.start as u32, host.end as u32)
+            .expect("host spans are ordered"),
+    );
+    let mut rebuilt = Finding::new(span, finding.code(), finding.severity(), finding.message());
+    for help in finding.help() {
+        rebuilt = rebuilt.with_help(help.message.clone());
+    }
+    for related in finding.related() {
+        rebuilt = rebuilt.with_related(related.span.clone(), related.message.clone());
+    }
+    for tag in finding.tags() {
+        rebuilt = rebuilt.with_tag(*tag);
+    }
+    rebuilt
 }
 
 /// Diagnostics-only result from the shared workspace analysis facade.

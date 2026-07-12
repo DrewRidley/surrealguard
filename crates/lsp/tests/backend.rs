@@ -190,3 +190,51 @@ async fn schema_in_one_document_resolves_queries_in_another() {
         published.diagnostics
     );
 }
+
+#[tokio::test]
+async fn embedded_surql_in_svelte_publishes_findings_at_host_spans() {
+    let mut server = Server::started().await;
+    let schema_uri = Url::parse("file:///workspace/schema.surql").expect("valid url");
+    let svelte_uri = Url::parse("file:///workspace/App.svelte").expect("valid url");
+
+    server
+        .call(
+            "textDocument/didOpen",
+            None,
+            did_open(
+                &schema_uri,
+                "DEFINE TABLE person;\nDEFINE FIELD name ON person TYPE string;\n",
+            ),
+        )
+        .await;
+    let _ = server.next_publish().await;
+
+    let svelte = "<h1>People</h1>\n<script lang=\"ts\">\nconst rows = surql`SELECT * FROM persn WHERE name = ${filter}`;\n</script>\n";
+    server
+        .call(
+            "textDocument/didOpen",
+            None,
+            json!({
+                "textDocument": {
+                    "uri": svelte_uri, "languageId": "svelte", "version": 1, "text": svelte,
+                }
+            }),
+        )
+        .await;
+    let published = server.next_publish().await;
+    assert_eq!(published.uri, svelte_uri);
+
+    let error = published
+        .diagnostics
+        .iter()
+        .find(|d| d.code == Some(NumberOrString::String("E1001".into())))
+        .expect("unknown-table finding reaches the host file");
+    // The squiggle sits on `persn` inside the template, line 2 of the
+    // svelte file.
+    assert_eq!(error.range.start.line, 2);
+    let line = svelte.lines().nth(2).expect("line exists");
+    let start = error.range.start.character as usize;
+    let end = error.range.end.character as usize;
+    assert_eq!(&line[start..end], "persn");
+    assert!(error.message.contains("did you mean `person`?") || error.message.contains("help:"));
+}

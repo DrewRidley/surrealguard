@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 surrealguard-diagnostics = { path = "../diagnostics" }
+surrealguard-embed = { path = "../embed" }
 surrealguard-syntax = { path = "../syntax" }
 surrealguard-workspace = { path = "../workspace" }
 tower-lsp = "0.20"

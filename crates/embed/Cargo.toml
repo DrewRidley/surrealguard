@@ -1,0 +1,10 @@
+[package]
+name = "surrealguard-embed"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Embedded SurrealQL extraction from host-language sources (TypeScript, Svelte, Vue)"
+
+[dependencies]
+tree-sitter.workspace = true
+tree-sitter-typescript = "0.23"
