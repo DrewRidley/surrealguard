@@ -723,7 +723,6 @@ fn slice(text: &str, range: ByteRange) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_syntax::lower::lower_statement;
     use surrealguard_syntax::parse::parse_source;
     use surrealguard_syntax::source::SourceId;
 
@@ -736,15 +735,11 @@ mod tests {
             parse_source(SourceId::new("schema"), schema_src).expect("schema should parse");
         let schema = extract_schema(&[schema_parsed]).schema;
         let parsed = parse_source(SourceId::new("query"), query).expect("query should parse");
-        let node = crate::analyzer::test_support::find_first_node(
-            parsed.tree().root_node(),
-            statement_kind,
-        )
-        .unwrap_or_else(|| panic!("{statement_kind} node exists in {query:?}"));
         let table = schema.tables.get("person").expect("person table indexed");
         let env = crate::statement_env::StatementEnv::default();
 
-        let lowered = lower_statement(node, parsed.text());
+        let lowered = surrealguard_syntax::lower::lower_first_statement(&parsed, statement_kind)
+            .unwrap_or_else(|| panic!("{statement_kind} node exists in {query:?}"));
         let (only, ret) = match &lowered.node {
             ast::Statement::Create(s) => (s.only, s.ret.clone()),
             ast::Statement::Update(s) => (s.only, s.ret.clone()),

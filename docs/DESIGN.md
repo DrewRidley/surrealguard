@@ -127,7 +127,7 @@ Pipeline:
 7. apply policy and suppressions
 8. return structured `AnalysisOutput`
 
-The current implementation is the analyzer tree under `crates/workspace/src/analyzer/`: `analyzer::pipeline` walks each source in statement order, lowering every top-level statement to the typed AST and dispatching it to the analyzer that owns it, against the schema built from the statements before it (with `fn::` signatures hoisted). Each analyzer both infers its response `Kind` and enforces its contracts at the same site, per the diagnostic catalog (`docs/plans/2026-07-07-diagnostic-catalog.md`). Cross-statement contracts (transaction pairing, read-before-LET, `fn::` termination) live in the pipeline; parameter uses and typed constraints accumulate in the statement environment and are exported per source for host adapters. Schema extraction (`schema.rs`) is the one remaining node-based walk; converting it moves tree-sitter out of the workspace crate entirely.
+The current implementation is the analyzer tree under `crates/workspace/src/analyzer/`: `analyzer::pipeline` walks each source in statement order, lowering every top-level statement to the typed AST and dispatching it to the analyzer that owns it, against the schema built from the statements before it (with `fn::` signatures hoisted). Each analyzer both infers its response `Kind` and enforces its contracts at the same site, per the diagnostic catalog (`docs/plans/2026-07-07-diagnostic-catalog.md`). Cross-statement contracts (transaction pairing, read-before-LET, `fn::` termination) live in the pipeline; parameter uses and typed constraints accumulate in the statement environment and are exported per source for host adapters. Schema extraction consumes the typed AST like everything else; tree-sitter appears only in `surrealguard-syntax` (and the embed crate's host grammars). Extraction mutates the schema index; the DDL contracts emit from the DEFINE/REMOVE/REBUILD/ALTER analyzers.
 
 Each parsed statement should eventually infer a response schema: the statement span and kind, input parameter requirements, result shape/type, and any partial-analysis limitations. Diagnostics should be emitted from that shared semantic model so CLI, LSP, MCP, and host adapters all explain the same facts rather than reimplementing rules per surface.
 
@@ -184,7 +184,7 @@ Immediate focus:
 
 1. host adapters over the parameter-constraint and response-kind exports, Rust proc-macro first
 2. grammar-conformance worklist (`docs/grammar-conformance.md`) down to zero failures, then wire the harness into CI
-3. convert schema extraction to the typed AST so tree-sitter leaves the workspace crate
+3. TypeScript typegen: Kind-to-TS renderer and `surrealguard generate` over the embedded-query scan
 4. remaining catalog machinery: 5010 event-trigger cycles, the 8xxx version registry, and the researched-but-unruled rows (4009, 4013)
 5. richer `Finding.help`/`related` coverage (did-you-mean and declared-here attachments exist for tables, fields, `fn::` names, and relation shapes; extend site by site)
 

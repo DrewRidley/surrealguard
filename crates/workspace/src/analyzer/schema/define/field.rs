@@ -1,22 +1,32 @@
 //! `DEFINE FIELD` analysis.
 //!
-//! The definition's own contracts: a `DEFAULT` (or computed `VALUE`) must
-//! inhabit the declared type (2001); an `ASSERT` is a condition with
-//! `$value` in scope as the declared type (2005 when it can never be a
-//! bool, plus the usual expression checking); and computed contexts should
-//! not block or reach out (7012).
+//! The definition's own contracts: it must target a known table (1001) and
+//! not redefine a field without `OVERWRITE` (1022); its declared type must
+//! be expressible (6003); a `DEFAULT` (or computed `VALUE`) must inhabit the
+//! declared type (2001); an `ASSERT` is a condition with `$value` in scope
+//! as the declared type (2005 when it can never be a bool, plus the usual
+//! expression checking); and computed contexts should not block or reach out
+//! (7012).
 
 use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
-use crate::expression::{ExpressionFact, ExpressionValueClass};
+use crate::expression::{ExpressionFact, ExpressionValueClass, PartialReason};
 
 pub fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineField) -> Kind {
-    let declared = stmt
+    let parsed_type = stmt
         .ty
         .as_ref()
-        .and_then(|ty| crate::schema::kind_from_type_expr(&ty.node, ctx.source_text()).kind);
+        .map(|ty| crate::schema::kind_from_type_expr(&ty.node, ctx.source_text()));
+    let declared = parsed_type.as_ref().and_then(|parsed| parsed.kind.clone());
+
+    let no_partial = Vec::new();
+    let partial = parsed_type
+        .as_ref()
+        .map(|parsed| &parsed.partial)
+        .unwrap_or(&no_partial);
+    check_field_definition(ctx, stmt, partial);
 
     for (clause, checks_type) in [(&stmt.default, true), (&stmt.value, true)] {
         let Some(expr) = clause else {
@@ -68,6 +78,54 @@ pub fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineFie
     }
 
     Kind::None
+}
+
+/// The definition's catalog contracts: target a known table (1001), don't
+/// redefine an existing field without `OVERWRITE` (1022), and declare a type
+/// the analyzer can express (6003).
+fn check_field_definition(
+    ctx: &mut AnalysisContext<'_>,
+    stmt: &ast::DefineField,
+    partial: &[PartialReason],
+) {
+    let path = crate::schema::idiom_field_path(&stmt.path.node);
+    let field_key = path.join(".");
+
+    if let Some(reason) = partial.iter().find_map(|reason| match reason {
+        PartialReason::UnsupportedSyntax(text) => Some(text),
+        PartialReason::Unresolved | PartialReason::DynamicExpression => None,
+    }) {
+        let span = stmt.ty.as_ref().map(|ty| ty.span).unwrap_or(stmt.path.span);
+        ctx.emit(surrealguard_diagnostics::catalog::finding(
+            surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span),
+            6003,
+            format!("unsupported field type syntax `{reason}` for field `{field_key}`"),
+        ));
+    }
+
+    match ctx.schema().table(&stmt.table.node) {
+        None => {
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.table.span),
+                1001,
+                format!(
+                    "field `{field_key}` targets unknown table `{}`",
+                    stmt.table.node
+                ),
+            ));
+        }
+        Some(table) if !stmt.overwrite && table.fields.contains_key(&field_key) => {
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.path.span),
+                1022,
+                format!(
+                    "duplicate field definition `{field_key}` on table `{}`",
+                    stmt.table.node
+                ),
+            ));
+        }
+        Some(_) => {}
+    }
 }
 
 /// Runs `f` with `$value` (and `$input`) bound: `$value` carries the

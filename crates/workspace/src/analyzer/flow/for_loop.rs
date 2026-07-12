@@ -76,7 +76,6 @@ pub fn analyze_for_loop(ctx: &mut AnalysisContext<'_>, stmt: &ast::ForStmt) -> K
 mod tests {
     use super::*;
     use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::lower::lower_statement;
     use surrealguard_syntax::parse::parse_source;
     use surrealguard_syntax::source::SourceId;
 
@@ -89,9 +88,11 @@ mod tests {
             "FOR $item IN [1, 2] { RETURN $item; };",
         )
         .expect("query parses");
-        let node =
-            crate::analyzer::flow::tests::first_of_kind(parsed.tree().root_node(), "ForStatement");
-        let ast::Statement::For(stmt) = lower_statement(node, parsed.text()).node else {
+        let ast::Statement::For(stmt) =
+            surrealguard_syntax::lower::lower_first_statement(&parsed, "ForStatement")
+                .expect("no ForStatement node in tree")
+                .node
+        else {
             panic!("expected for statement");
         };
         let schema = SchemaIndex::default();

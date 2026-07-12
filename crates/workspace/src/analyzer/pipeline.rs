@@ -12,9 +12,9 @@
 //! sources that come after it, never before. Parameter environments and
 //! transaction state reset per source.
 //!
-//! Schema extraction still reads tree-sitter nodes; everything else here
-//! consumes the lowered AST. When extraction converts, `tree_sitter`
-//! leaves this crate.
+//! Every stage consumes the lowered AST: statements arrive from
+//! [`surrealguard_syntax::lower::lower_statements`], and schema effects apply
+//! to those same lowered values.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -23,7 +23,6 @@ use surrealguard_syntax::ast;
 use surrealguard_syntax::parse::ParsedSource;
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::SourceSpan;
-use tree_sitter::Node;
 
 use crate::analysis::{ParamInference, SelectModifierAnalysis, StatementAnalysis};
 use crate::analyzer::context::AnalysisContext;
@@ -59,13 +58,14 @@ pub fn analyze_sources_with(
             continue;
         }
 
-        let mut statements = Vec::new();
-        collect_statement_nodes(parsed.tree().root_node(), &mut statements);
+        let statements = surrealguard_syntax::lower::lower_statements(parsed);
 
         // fn:: signatures hoist: a body references functions at invocation
         // time, so definitions later in the source are legitimate targets.
         for statement in &statements {
-            if let Some(function) = crate::schema::extract_function_def(*statement, parsed) {
+            if let Some(function) =
+                crate::schema::extract_function_def(statement, parsed.source_id(), parsed.text())
+            {
                 output.schema.insert_function(function);
             }
         }
@@ -76,9 +76,7 @@ pub fn analyze_sources_with(
         // that COMMIT/CANCEL closes.
         let mut open_transaction: Option<surrealguard_syntax::span::ByteRange> = None;
 
-        for statement in statements {
-            let lowered = surrealguard_syntax::lower::lower_statement(statement, parsed.text());
-
+        for lowered in &statements {
             let kind = {
                 let mut ctx = AnalysisContext::scoped(
                     &output.schema,
@@ -88,15 +86,14 @@ pub fn analyze_sources_with(
                     analyzer_env,
                     None,
                 );
-                let kind =
-                    crate::analyzer::statement::analyze_lowered_statement(&mut ctx, &lowered);
+                let kind = crate::analyzer::statement::analyze_lowered_statement(&mut ctx, lowered);
                 analyzer_env = ctx.into_env();
                 kind
             };
 
             source_analysis
                 .statements
-                .push(statement_analysis(parsed.source_id(), &lowered, kind));
+                .push(statement_analysis(parsed.source_id(), lowered, kind));
 
             let span = || SourceSpan::new(parsed.source_id().clone(), lowered.span);
             match &lowered.node {
@@ -127,13 +124,12 @@ pub fn analyze_sources_with(
                 _ => {}
             }
 
-            output
-                .diagnostics
-                .extend(crate::schema::apply_schema_statement_effects(
-                    statement,
-                    parsed,
-                    &mut output.schema,
-                ));
+            crate::schema::apply_schema_statement_effects(
+                lowered,
+                parsed.source_id(),
+                parsed.text(),
+                &mut output.schema,
+            );
         }
 
         if let Some(open_span) = open_transaction {
@@ -316,17 +312,6 @@ fn select_modifiers(source: &SourceId, stmt: &ast::SelectStmt) -> Vec<SelectModi
         out.push(modifier("explain", explain, false, None));
     }
     out
-}
-
-fn collect_statement_nodes<'tree>(node: Node<'tree>, statements: &mut Vec<Node<'tree>>) {
-    if node.kind().ends_with("Statement") {
-        statements.push(node);
-        return;
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_statement_nodes(child, statements);
-    }
 }
 
 fn check_function_cycles(schema: &SchemaIndex, diagnostics: &mut Vec<Finding>) {

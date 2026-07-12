@@ -10,5 +10,4 @@ serde = { version = "1", features = ["derive"] }
 surrealguard-diagnostics = { path = "../diagnostics" }
 surrealguard-syntax = { path = "../syntax" }
 surrealdb-types.workspace = true
-tree-sitter.workspace = true
 toml = "0.8"

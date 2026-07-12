@@ -94,8 +94,7 @@ impl Workspace {
         // Host target: each embedded query becomes a virtual source
         // analyzed against the `.surql` schema loaded above.
         if !is_surrealql_uri(uri) {
-            let embedded =
-                surrealguard_embed::extract(uri.path(), &target.text);
+            let embedded = surrealguard_embed::extract(uri.path(), &target.text);
             let mut queries = Vec::new();
             for (index, query) in embedded.into_iter().enumerate() {
                 let source_id = analysis_workspace.add_virtual_source(
@@ -104,14 +103,10 @@ impl Workspace {
                 );
                 queries.push((source_id, query));
             }
-            texts.insert(
-                uri.to_string(),
-                (uri.clone(), target.text.clone()),
-            );
+            texts.insert(uri.to_string(), (uri.clone(), target.text.clone()));
 
             let workspace_output = analyze_workspace(&analysis_workspace);
-            let host_source =
-                surrealguard_syntax::source::SourceId::new(uri.to_string());
+            let host_source = surrealguard_syntax::source::SourceId::new(uri.to_string());
             let mut diagnostics = Vec::new();
             for (source_id, query) in &queries {
                 let Some(source_output) = workspace_output.sources.get(source_id) else {
@@ -187,8 +182,7 @@ fn respan_to_host(
     let host = query.host_span(embedded.start() as usize..embedded.end() as usize);
     let span = SourceSpan::new(
         host_source.clone(),
-        ByteRange::new(host.start as u32, host.end as u32)
-            .expect("host spans are ordered"),
+        ByteRange::new(host.start as u32, host.end as u32).expect("host spans are ordered"),
     );
     let mut rebuilt = Finding::new(span, finding.code(), finding.severity(), finding.message());
     for help in finding.help() {

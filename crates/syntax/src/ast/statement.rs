@@ -203,6 +203,10 @@ pub struct DefineTable {
     pub overwrite: bool,
     pub schemafull: bool,
     pub relation: Option<RelationDef>,
+    /// `DEFINE TABLE ... DROP` — rows are never retained.
+    pub drop: bool,
+    /// `DEFINE TABLE ... CHANGEFEED <duration>`.
+    pub changefeed: bool,
 }
 
 /// The `IN`/`OUT` endpoint tables of a relation table.
@@ -210,6 +214,8 @@ pub struct DefineTable {
 pub struct RelationDef {
     pub in_tables: Vec<Spanned<String>>,
     pub out_tables: Vec<Spanned<String>>,
+    /// The whole `TYPE RELATION ...` clause.
+    pub span: ByteRange,
 }
 
 /// `DEFINE FIELD` — a (possibly nested) field on a table, with its
@@ -236,7 +242,19 @@ pub struct DefineIndex {
     pub name: Spanned<String>,
     pub table: Spanned<String>,
     pub fields: Vec<Spanned<Idiom>>,
-    pub unique: bool,
+    pub kind: IndexKind,
+}
+
+/// What backs a `DEFINE INDEX`: full-text search, a vector structure, a
+/// uniqueness constraint, or a plain lookup.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndexKind {
+    Normal,
+    Unique,
+    /// `SEARCH ANALYZER ...` — full-text.
+    Search,
+    /// `MTREE`/`HNSW` — vector.
+    Vector,
 }
 
 /// `DEFINE EVENT` — a trigger with its condition and body.

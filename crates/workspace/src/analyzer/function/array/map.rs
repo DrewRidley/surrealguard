@@ -28,7 +28,6 @@ pub fn analyze_array_map(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: 
 mod tests {
     use surrealdb_types::Kind;
     use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::lower::lower_expr;
     use surrealguard_syntax::parse::parse_source;
     use surrealguard_syntax::source::SourceId;
 
@@ -37,12 +36,8 @@ mod tests {
 
     fn analyze(query: &str) -> Kind {
         let parsed = parse_source(SourceId::new("fn:test"), query).expect("query parses");
-        let node = crate::analyzer::test_support::find_first_node(
-            parsed.tree().root_node(),
-            "FunctionCall",
-        )
-        .expect("function call node");
-        let lowered = lower_expr(node, parsed.text());
+        let lowered = surrealguard_syntax::lower::lower_first_expr(&parsed, "FunctionCall")
+            .expect("function call node");
         let schema = SchemaIndex::default();
         let mut diagnostics: Vec<Finding> = Vec::new();
         let mut ctx = AnalysisContext::new(

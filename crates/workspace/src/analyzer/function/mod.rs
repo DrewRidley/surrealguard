@@ -274,7 +274,6 @@ pub(crate) fn closure_arg(call: &ast::Call, index: usize) -> Option<&ast::Closur
 mod tests {
     use surrealguard_diagnostics::Finding;
     use surrealguard_syntax::ast;
-    use surrealguard_syntax::lower::lower_expr;
     use surrealguard_syntax::parse::parse_source;
     use surrealguard_syntax::source::SourceId;
 
@@ -329,9 +328,8 @@ mod tests {
         // tests.
         let parsed = parse_source(SourceId::new(format!("query:{expected}")), query)
             .expect("query should parse");
-        let node = first_node_of_kind(parsed.tree().root_node(), "FunctionCall")
+        let lowered = surrealguard_syntax::lower::lower_first_expr(&parsed, "FunctionCall")
             .unwrap_or_else(|| panic!("no function call node found for {query}"));
-        let lowered = lower_expr(node, parsed.text());
         let ast::Expr::Call(call) = &lowered.node else {
             panic!("expected call lowering for {query}, got {:?}", lowered.node);
         };
@@ -411,20 +409,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    fn first_node_of_kind<'tree>(
-        node: tree_sitter::Node<'tree>,
-        kind: &str,
-    ) -> Option<tree_sitter::Node<'tree>> {
-        if node.kind() == kind {
-            return Some(node);
-        }
-
-        let mut cursor = node.walk();
-        let found = node
-            .children(&mut cursor)
-            .find_map(|child| first_node_of_kind(child, kind));
-        found
     }
 }

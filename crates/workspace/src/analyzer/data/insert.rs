@@ -159,7 +159,6 @@ mod tests {
     use super::*;
     use crate::schema::SchemaIndex;
     use crate::statement_env::StatementEnv;
-    use surrealguard_syntax::lower::lower_statement;
     use surrealguard_syntax::parse::parse_source;
     use surrealguard_syntax::source::SourceId;
 
@@ -167,12 +166,11 @@ mod tests {
 
     fn analyze(schema: &SchemaIndex, query: &str) -> Kind {
         let parsed = parse_source(SourceId::new("query"), query).expect("query should parse");
-        let node = crate::analyzer::test_support::find_first_node(
-            parsed.tree().root_node(),
-            "InsertStatement",
-        )
-        .expect("insert statement exists");
-        let ast::Statement::Insert(stmt) = lower_statement(node, parsed.text()).node else {
+        let ast::Statement::Insert(stmt) =
+            surrealguard_syntax::lower::lower_first_statement(&parsed, "InsertStatement")
+                .expect("insert statement exists")
+                .node
+        else {
             panic!("expected insert statement");
         };
         let env = StatementEnv::default();

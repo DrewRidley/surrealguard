@@ -71,7 +71,6 @@ pub(crate) fn definitely_not_bool(kind: &Kind) -> bool {
 mod tests {
     use super::*;
     use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::lower::lower_statement;
     use surrealguard_syntax::parse::parse_source;
     use surrealguard_syntax::source::SourceId;
 
@@ -84,11 +83,11 @@ mod tests {
             "IF true { LET $v = 1; RETURN $v; } ELSE { RETURN 's'; };",
         )
         .expect("query parses");
-        let node = crate::analyzer::flow::tests::first_of_kind(
-            parsed.tree().root_node(),
-            "IfElseStatement",
-        );
-        let ast::Statement::IfElse(stmt) = lower_statement(node, parsed.text()).node else {
+        let ast::Statement::IfElse(stmt) =
+            surrealguard_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
+                .expect("no IfElseStatement node in tree")
+                .node
+        else {
             panic!("expected if statement");
         };
         let schema = SchemaIndex::default();

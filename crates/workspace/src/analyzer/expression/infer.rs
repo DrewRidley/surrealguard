@@ -759,7 +759,6 @@ mod tests {
     use super::*;
     use crate::schema::TableDef;
     use crate::statement_env::StatementEnv;
-    use surrealguard_syntax::lower::lower_expr;
     use surrealguard_syntax::parse::{parse_source, ParsedSource};
     use surrealguard_syntax::source::SourceId;
 
@@ -785,9 +784,8 @@ mod tests {
         row_table: Option<&TableDef>,
         env: &StatementEnv,
     ) -> ExpressionFact {
-        let node = find_first(parsed.tree().root_node(), kind)
+        let expr = surrealguard_syntax::lower::lower_first_expr(parsed, kind)
             .unwrap_or_else(|| panic!("no {kind} in {:?}", parsed.text()));
-        let expr = lower_expr(node, parsed.text());
         let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
         let mut ctx = AnalysisContext::scoped(
             schema,
@@ -798,20 +796,6 @@ mod tests {
             row_table,
         );
         infer_expression_fact(&expr, &mut ctx)
-    }
-
-    fn find_first<'tree>(
-        node: tree_sitter::Node<'tree>,
-        kind: &str,
-    ) -> Option<tree_sitter::Node<'tree>> {
-        if node.kind() == kind {
-            return Some(node);
-        }
-        let mut cursor = node.walk();
-        let found = node
-            .children(&mut cursor)
-            .find_map(|child| find_first(child, kind));
-        found
     }
 
     fn person_schema() -> SchemaIndex {

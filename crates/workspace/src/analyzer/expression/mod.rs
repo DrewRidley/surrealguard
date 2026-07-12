@@ -88,31 +88,15 @@ pub(crate) const CONTEXT_ONLY_PARAMS: &[&str] = &["before", "after", "event", "v
 mod tests {
     use super::*;
     use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::lower::lower_expr;
     use surrealguard_syntax::parse::parse_source;
     use surrealguard_syntax::source::SourceId;
 
     use crate::schema::{extract_schema, SchemaIndex};
 
-    fn find_first<'tree>(
-        node: tree_sitter::Node<'tree>,
-        kind: &str,
-    ) -> Option<tree_sitter::Node<'tree>> {
-        if node.kind() == kind {
-            return Some(node);
-        }
-        let mut cursor = node.walk();
-        let found = node
-            .children(&mut cursor)
-            .find_map(|child| find_first(child, kind));
-        found
-    }
-
     fn analyze(schema: &SchemaIndex, query: &str, node_kind: &str) -> Kind {
         let parsed = parse_source(SourceId::new("expr:test"), query).expect("query parses");
-        let node = find_first(parsed.tree().root_node(), node_kind)
+        let lowered = surrealguard_syntax::lower::lower_first_expr(&parsed, node_kind)
             .unwrap_or_else(|| panic!("no {node_kind} in {query:?}"));
-        let lowered = lower_expr(node, parsed.text());
         let mut diagnostics: Vec<Finding> = Vec::new();
         let mut ctx = AnalysisContext::new(
             schema,
@@ -185,9 +169,8 @@ mod tests {
 
         let parsed = parse_source(SourceId::new("expr:test"), "RETURN string::len(name);")
             .expect("query parses");
-        let node =
-            find_first(parsed.tree().root_node(), "FunctionCall").expect("function call node");
-        let lowered = lower_expr(node, parsed.text());
+        let lowered = surrealguard_syntax::lower::lower_first_expr(&parsed, "FunctionCall")
+            .expect("function call node");
         let mut diagnostics: Vec<Finding> = Vec::new();
         let mut ctx = AnalysisContext::new(
             &schema,
@@ -221,8 +204,8 @@ mod tests {
         let schema = SchemaIndex::default();
         let parsed = parse_source(SourceId::new("expr:test"), "RETURN { LET $x = 1; $x + 1 };")
             .expect("query parses");
-        let node = find_first(parsed.tree().root_node(), "Block").expect("block node");
-        let lowered = lower_expr(node, parsed.text());
+        let lowered =
+            surrealguard_syntax::lower::lower_first_expr(&parsed, "Block").expect("block node");
         let mut diagnostics: Vec<Finding> = Vec::new();
         let mut ctx = AnalysisContext::new(
             &schema,
@@ -241,9 +224,8 @@ mod tests {
         let schema = SchemaIndex::default();
         let parsed =
             parse_source(SourceId::new("expr:test"), "RETURN $missing + 1;").expect("query parses");
-        let node = find_first(parsed.tree().root_node(), "BinaryExpression")
+        let lowered = surrealguard_syntax::lower::lower_first_expr(&parsed, "BinaryExpression")
             .expect("binary expression node");
-        let lowered = lower_expr(node, parsed.text());
         let mut diagnostics: Vec<Finding> = Vec::new();
         let mut ctx = AnalysisContext::new(
             &schema,

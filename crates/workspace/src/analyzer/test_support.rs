@@ -1,20 +1,5 @@
 //! Shared helpers for analyzer test modules.
 
-/// The first CST node of `kind`, depth-first.
-pub(crate) fn find_first_node<'tree>(
-    node: tree_sitter::Node<'tree>,
-    kind: &str,
-) -> Option<tree_sitter::Node<'tree>> {
-    if node.kind() == kind {
-        return Some(node);
-    }
-    let mut cursor = node.walk();
-    let found = node
-        .children(&mut cursor)
-        .find_map(|child| find_first_node(child, kind));
-    found
-}
-
 /// Runs `f` with a fresh empty-schema context — the boilerplate shared by
 /// leaf-analyzer tests.
 pub(crate) fn with_ctx<T>(

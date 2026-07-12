@@ -23,13 +23,12 @@ use crate::ast::{
     AlterStmt, AssignOp, Assignment, BeginStmt, BreakStmt, CancelStmt, CommitStmt, ContinueStmt,
     CreateStmt, DataClause, DefineAnalyzer, DefineEvent, DefineField, DefineFunction, DefineIndex,
     DefineParam, DefineStmt, DefineTable, DeleteStmt, ForStmt, GroupClause, Idiom, IfBranch,
-    IfElseStmt, InfoStmt, InsertData, InsertStmt, KillStmt, LetStmt, LiveSelectStmt, OptionStmt,
-    OrderClause, OrderKey, Projection, RebuildStmt, RelateStmt, RelationDef, RemoveStmt,
-    RemoveTarget, ReturnMode, ReturnStmt, SelectStmt, ShowStmt, SleepStmt, Spanned, Statement,
-    ThrowStmt, UpdateStmt, UpsertStmt, UseStmt,
+    IfElseStmt, IndexKind, InfoStmt, InsertData, InsertStmt, KillStmt, LetStmt, LiveSelectStmt,
+    OptionStmt, OrderClause, OrderKey, Projection, RebuildStmt, RelateStmt, RelationDef,
+    RemoveStmt, RemoveTarget, ReturnMode, ReturnStmt, SelectStmt, ShowStmt, SleepStmt, Spanned,
+    Statement, ThrowStmt, UpdateStmt, UpsertStmt, UseStmt,
 };
 use crate::ast::{Expr, Literal};
-use crate::span::ByteRange;
 
 /// Lowers one statement-position CST node.
 ///
@@ -39,6 +38,29 @@ use crate::span::ByteRange;
 /// and the parse-level diagnostics already report the breakage. Clauses
 /// that cannot affect the statement's response type are consumed without
 /// record.
+/// Lowers every top-level statement of a parsed source, in source order.
+/// This is the one place consumers get statements from — they never walk
+/// the CST themselves.
+pub fn lower_statements(parsed: &crate::parse::ParsedSource) -> Vec<Spanned<Statement>> {
+    let mut nodes = Vec::new();
+    collect_statement_nodes(parsed.tree().root_node(), &mut nodes);
+    nodes
+        .into_iter()
+        .map(|node| lower_statement(node, parsed.text()))
+        .collect()
+}
+
+fn collect_statement_nodes<'tree>(node: Node<'tree>, statements: &mut Vec<Node<'tree>>) {
+    if node.kind().ends_with("Statement") {
+        statements.push(node);
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_statement_nodes(child, statements);
+    }
+}
+
 pub fn lower_statement(node: Node<'_>, text: &str) -> Spanned<Statement> {
     if node.has_error() {
         return Spanned::new(Statement::Partial(partial(node)), node_range(node));
@@ -886,6 +908,8 @@ fn lower_define_table(node: Node<'_>, text: &str) -> DefineTable {
         overwrite: false,
         schemafull: false,
         relation: None,
+        drop: false,
+        changefeed: false,
     };
     let mut named = false;
 
@@ -896,10 +920,12 @@ fn lower_define_table(node: Node<'_>, text: &str) -> DefineTable {
                 match keyword.as_str() {
                     "schemafull" => def.schemafull = true,
                     "overwrite" => def.overwrite = true,
+                    "drop" => def.drop = true,
                     _ => {}
                 }
             }
             "OverwriteClause" => def.overwrite = true,
+            "ChangefeedClause" => def.changefeed = true,
             "Ident" if !named => {
                 def.name = spanned_text(child, text);
                 named = true;
@@ -907,7 +933,6 @@ fn lower_define_table(node: Node<'_>, text: &str) -> DefineTable {
             "TableTypeClause" => def.relation = lower_relation_def(child, text),
             "PermissionsBasicClause"
             | "PermissionsForClause"
-            | "ChangefeedClause"
             | "CommentClause"
             | "TableViewClause"
             | "IfNotExistsClause" => {
@@ -929,6 +954,7 @@ fn lower_relation_def(clause: Node<'_>, text: &str) -> Option<RelationDef> {
     let mut def = RelationDef {
         in_tables: Vec::new(),
         out_tables: Vec::new(),
+        span: node_range(clause),
     };
 
     for child in named_children(clause) {
@@ -1035,7 +1061,7 @@ fn lower_define_index(node: Node<'_>, text: &str) -> DefineIndex {
         name: Spanned::new(String::new(), span),
         table: Spanned::new(String::new(), span),
         fields: Vec::new(),
-        unique: false,
+        kind: IndexKind::Normal,
     };
     let mut named = false;
 
@@ -1052,20 +1078,28 @@ fn lower_define_index(node: Node<'_>, text: &str) -> DefineIndex {
                 }
             }
             "FieldsColumnsClause" => def.fields = clause_idioms(child, text),
-            "IndexClause"
-                if named_children(child)
-                    .iter()
-                    .any(|c| c.kind() == "UniqueClause") =>
-            {
-                def.unique = true;
-            }
-            "IndexClause" => {}
-            "UniqueClause" => def.unique = true,
+            "IndexClause" => def.kind = index_kind_from_clause(child),
+            "UniqueClause" => def.kind = IndexKind::Unique,
             _ => {}
         }
     }
 
     def
+}
+
+/// The backing structure named inside an `IndexClause`: `SEARCH ANALYZER`
+/// is full-text, `MTREE`/`HNSW` are vector, `UNIQUE` is a constraint, and a
+/// clause with none of these is a plain index.
+fn index_kind_from_clause(clause: Node<'_>) -> IndexKind {
+    for child in named_children(clause) {
+        match child.kind() {
+            "SearchAnalyzerClause" => return IndexKind::Search,
+            "MtreeClause" | "HnswClause" => return IndexKind::Vector,
+            "UniqueClause" => return IndexKind::Unique,
+            _ => {}
+        }
+    }
+    IndexKind::Normal
 }
 
 fn lower_define_event(node: Node<'_>, text: &str) -> DefineEvent {
@@ -1197,25 +1231,14 @@ fn lower_define_analyzer(node: Node<'_>, text: &str) -> DefineAnalyzer {
                     .collect();
             }
             "FiltersClause" => {
-                fn collect_filters(node: Node<'_>, text: &str, out: &mut Vec<Spanned<String>>) {
-                    for child in {
-                        let mut cursor = node.walk();
-                        node.children(&mut cursor)
-                            .filter(|c| c.is_named())
-                            .collect::<Vec<_>>()
-                    } {
-                        if child.kind() == "Filter" {
-                            out.push(Spanned::new(
-                                text[child.byte_range()].to_string(),
-                                ByteRange::new(child.start_byte() as u32, child.end_byte() as u32)
-                                    .expect("ordered"),
-                            ));
-                        } else {
-                            collect_filters(child, text, out);
-                        }
-                    }
-                }
-                collect_filters(child, text, &mut def.filters);
+                // Each `AnalyzerFilters` node is one whole filter with its
+                // arguments (`snowball(english)`); the inner `Filter` token
+                // drops the argument.
+                def.filters = named_children(child)
+                    .into_iter()
+                    .filter(|c| c.kind() == "AnalyzerFilters")
+                    .map(|c| spanned_text(c, text))
+                    .collect();
             }
             _ => {}
         }
@@ -1720,6 +1743,58 @@ mod tests {
     }
 
     #[test]
+    fn lowers_define_table_drop_and_changefeed_flags() {
+        let parsed = parse("DEFINE TABLE evt DROP CHANGEFEED 3d;");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Table(def)) => Some(def),
+            _ => None,
+        });
+        assert_eq!(stmt.name.node, "evt");
+        assert!(stmt.drop);
+        assert!(stmt.changefeed);
+
+        let parsed = parse("DEFINE TABLE plain;");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Table(def)) => Some(def),
+            _ => None,
+        });
+        assert!(!stmt.drop);
+        assert!(!stmt.changefeed);
+    }
+
+    #[test]
+    fn lowers_define_index_backing_kinds() {
+        use crate::ast::IndexKind;
+        let cases = [
+            ("DEFINE INDEX i ON person FIELDS name;", IndexKind::Normal),
+            (
+                "DEFINE INDEX i ON person FIELDS name UNIQUE;",
+                IndexKind::Unique,
+            ),
+            (
+                "DEFINE INDEX i ON person FIELDS body SEARCH ANALYZER ascii;",
+                IndexKind::Search,
+            ),
+            (
+                "DEFINE INDEX i ON person FIELDS vec MTREE DIMENSION 4;",
+                IndexKind::Vector,
+            ),
+            (
+                "DEFINE INDEX i ON person FIELDS vec HNSW DIMENSION 4;",
+                IndexKind::Vector,
+            ),
+        ];
+        for (query, expected) in cases {
+            let parsed = parse(query);
+            let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+                Statement::Define(DefineStmt::Index(def)) => Some(def),
+                _ => None,
+            });
+            assert_eq!(stmt.kind, expected, "query: {query}");
+        }
+    }
+
+    #[test]
     fn lowers_define_index_event_and_remove_targets() {
         let parsed = parse("DEFINE INDEX idx ON person FIELDS email, profile.name UNIQUE;");
         let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
@@ -1729,7 +1804,7 @@ mod tests {
         assert_eq!(stmt.name.node, "idx");
         assert_eq!(stmt.table.node, "person");
         assert_eq!(stmt.fields.len(), 2);
-        assert!(stmt.unique);
+        assert_eq!(stmt.kind, crate::ast::IndexKind::Unique);
 
         let parsed = parse("REMOVE INDEX idx ON person;");
         let stmt = lower_kind(&parsed, "RemoveStatement", |s| match s {

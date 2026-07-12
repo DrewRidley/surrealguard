@@ -27,9 +27,10 @@ pub fn extract_typescript(text: &str, tsx: bool) -> Vec<EmbeddedQuery> {
 
 fn collect(node: Node<'_>, text: &str, queries: &mut Vec<EmbeddedQuery>) {
     if node.kind() == "call_expression" {
-        if let (Some(function), Some(arguments)) =
-            (node.child_by_field_name("function"), node.child_by_field_name("arguments"))
-        {
+        if let (Some(function), Some(arguments)) = (
+            node.child_by_field_name("function"),
+            node.child_by_field_name("arguments"),
+        ) {
             if is_surql_tag(function, text) && arguments.kind() == "template_string" {
                 if let Some(query) = template_to_query(arguments, text) {
                     queries.push(query);
@@ -133,7 +134,10 @@ const other = css`b { color: red }`;
 
         assert_eq!(queries.len(), 1);
         assert_eq!(queries[0].text, "SELECT * FROM person");
-        assert_eq!(&source[queries[0].host_range.clone()], "SELECT * FROM person");
+        assert_eq!(
+            &source[queries[0].host_range.clone()],
+            "SELECT * FROM person"
+        );
         assert!(queries[0].substitutions.is_empty());
     }
 

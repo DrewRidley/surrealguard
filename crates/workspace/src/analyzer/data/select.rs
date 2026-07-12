@@ -1239,7 +1239,6 @@ mod tests {
     use super::*;
     use crate::schema::SchemaIndex;
     use crate::statement_env::StatementEnv;
-    use surrealguard_syntax::lower::lower_statement;
     use surrealguard_syntax::parse::{parse_source, ParsedSource};
     use surrealguard_syntax::source::SourceId;
     use surrealguard_syntax::span::{ByteRange, SourceSpan};
@@ -1257,12 +1256,10 @@ mod tests {
     }
 
     fn lower_select(parsed: &ParsedSource) -> ast::SelectStmt {
-        let node = crate::analyzer::test_support::find_first_node(
-            parsed.tree().root_node(),
-            "SelectStatement",
-        )
-        .expect("select statement exists");
-        match lower_statement(node, parsed.text()).node {
+        match surrealguard_syntax::lower::lower_first_statement(parsed, "SelectStatement")
+            .expect("select statement exists")
+            .node
+        {
             ast::Statement::Select(stmt) => stmt,
             other => panic!("expected select, got {other:?}"),
         }

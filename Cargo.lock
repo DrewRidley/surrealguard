@@ -1878,7 +1878,6 @@ dependencies = [
  "surrealguard-diagnostics",
  "surrealguard-syntax",
  "toml",
- "tree-sitter",
 ]
 
 [[package]]

@@ -45,7 +45,6 @@ pub fn analyze_block(ctx: &mut AnalysisContext<'_>, block: &ast::Block) -> Kind 
 mod tests {
     use super::*;
     use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::lower::lower_statement;
     use surrealguard_syntax::parse::parse_source;
     use surrealguard_syntax::source::SourceId;
 
@@ -58,8 +57,11 @@ mod tests {
             "RETURN { LET $x = 1; RETURN $x + 1; };",
         )
         .expect("query parses");
-        let node = crate::analyzer::flow::tests::first_of_kind(parsed.tree().root_node(), "Block");
-        let ast::Statement::Block(block) = lower_statement(node, parsed.text()).node else {
+        let ast::Statement::Block(block) =
+            surrealguard_syntax::lower::lower_first_statement(&parsed, "Block")
+                .expect("no Block node in tree")
+                .node
+        else {
             panic!("expected block");
         };
         let schema = SchemaIndex::default();

@@ -44,7 +44,6 @@ pub fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) -> Kind {
 mod tests {
     use super::*;
     use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::lower::lower_statement;
     use surrealguard_syntax::parse::parse_source;
     use surrealguard_syntax::source::SourceId;
 
@@ -54,9 +53,11 @@ mod tests {
     fn defines_the_binding_with_the_inferred_kind() {
         let parsed =
             parse_source(SourceId::new("flow:test"), "LET $age = 42;").expect("query parses");
-        let node =
-            crate::analyzer::flow::tests::first_of_kind(parsed.tree().root_node(), "LetStatement");
-        let ast::Statement::Let(stmt) = lower_statement(node, parsed.text()).node else {
+        let ast::Statement::Let(stmt) =
+            surrealguard_syntax::lower::lower_first_statement(&parsed, "LetStatement")
+                .expect("no LetStatement node in tree")
+                .node
+        else {
             panic!("expected let statement");
         };
         let schema = SchemaIndex::default();

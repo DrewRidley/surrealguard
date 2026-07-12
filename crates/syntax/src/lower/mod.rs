@@ -11,12 +11,39 @@ mod expr;
 mod statement;
 
 pub use expr::{lower_expr, lower_type_expr};
-pub use statement::lower_statement;
+pub use statement::{lower_statement, lower_statements};
 
-use crate::ast::{PartialNode, Script};
+use crate::ast::{Expr, PartialNode, Script, Spanned, Statement};
 use crate::parse::ParsedSource;
 use crate::span::ByteRange;
 use tree_sitter::Node;
+
+/// Lowers the first CST node of `cst_kind` (depth-first) as an expression.
+///
+/// The node-walking entry point for tests and tools that target a specific
+/// sub-expression (`FunctionCall`, `Block`, `BinaryExpression`, ...) without
+/// reaching for tree-sitter themselves.
+pub fn lower_first_expr(parsed: &ParsedSource, cst_kind: &str) -> Option<Spanned<Expr>> {
+    let node = find_first(parsed.tree().root_node(), cst_kind)?;
+    Some(lower_expr(node, parsed.text()))
+}
+
+/// Lowers the first CST node of `cst_kind` (depth-first) as a statement.
+pub fn lower_first_statement(parsed: &ParsedSource, cst_kind: &str) -> Option<Spanned<Statement>> {
+    let node = find_first(parsed.tree().root_node(), cst_kind)?;
+    Some(lower_statement(node, parsed.text()))
+}
+
+fn find_first<'tree>(node: Node<'tree>, cst_kind: &str) -> Option<Node<'tree>> {
+    if node.kind() == cst_kind {
+        return Some(node);
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node<'tree>> = node.children(&mut cursor).collect();
+    children
+        .into_iter()
+        .find_map(|child| find_first(child, cst_kind))
+}
 
 /// Lowers a parsed source to a [`Script`], statements in source order.
 pub fn lower(parsed: &ParsedSource) -> Script {
