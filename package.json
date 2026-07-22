@@ -2,6 +2,7 @@
   "name": "surrealguard-monorepo",
   "private": true,
   "version": "0.0.0",
+  "packageManager": "pnpm@10.29.3",
   "description": "TypeScript packages for SurrealGuard: typed client and framework adapters",
   "scripts": {
     "build": "pnpm -r --if-present run build",
