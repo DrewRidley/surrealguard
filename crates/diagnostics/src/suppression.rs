@@ -8,6 +8,8 @@ use surrealguard_syntax::span::SourceSpan;
 const DIRECTIVE_PREFIX: &str = "surrealguard:";
 const ALLOW_PREFIX: &str = "allow(";
 
+/// A parsed `allow(...)` directive: what it silences, an optional reason,
+/// and the source span of the directive itself.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Suppression {
     target: SuppressionTarget,
@@ -16,6 +18,7 @@ pub struct Suppression {
 }
 
 impl Suppression {
+    /// Builds a suppression from its parsed parts.
     pub fn new(target: SuppressionTarget, reason: Option<String>, span: SourceSpan) -> Self {
         Self {
             target,
@@ -24,18 +27,22 @@ impl Suppression {
         }
     }
 
+    /// What the directive silences — a code or a lint name.
     pub fn target(&self) -> &SuppressionTarget {
         &self.target
     }
 
+    /// The justification given in the directive, if any.
     pub fn reason(&self) -> Option<&str> {
         self.reason.as_deref()
     }
 
+    /// The location of the directive comment in source.
     pub fn span(&self) -> &SourceSpan {
         &self.span
     }
 
+    /// Whether this directive targets the given code (`allow(E1001)`).
     pub fn matches_finding_code(&self, code: crate::FindingCode) -> bool {
         match &self.target {
             SuppressionTarget::Code(target) => target == &code.to_string(),
@@ -43,6 +50,8 @@ impl Suppression {
         }
     }
 
+    /// Whether this directive targets the given lint name
+    /// (`allow(lint.select_star)`).
     pub fn matches_name(&self, name: &str) -> bool {
         match &self.target {
             SuppressionTarget::Code(_) => false,
@@ -51,20 +60,33 @@ impl Suppression {
     }
 }
 
+/// What an `allow(...)` directive names: a rendered code or a lint name.
+/// Blanket (`*`) targets are rejected at parse time.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SuppressionTarget {
+    /// A rendered finding code such as `E1001` or `L7001`.
     Code(String),
+    /// A dotted lint name such as `lint.select_star`.
     Name(String),
 }
 
+/// Why a suppression directive failed to parse. Each variant is a distinct
+/// contract violation the surface reports back at the directive's span.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SuppressionParseError {
+    /// The target was `*` — blanket suppression is not permitted.
     BlanketSuppression,
+    /// The `allow(...)` parentheses were empty.
     EmptyTarget,
+    /// The directive did not match the `allow(target)` grammar.
     MalformedDirective,
+    /// A `reason=` clause was present but not a valid quoted string.
     MalformedReason,
 }
 
+/// Parses a directive from a comment body, returning `Ok(None)` when the
+/// comment is not a `surrealguard:` directive at all. Use this when
+/// scanning ordinary comments; malformed directives still return `Err`.
 pub fn parse_optional_suppression_directive(
     text: &str,
     span: SourceSpan,
@@ -76,6 +98,9 @@ pub fn parse_optional_suppression_directive(
     parse_allow_body(body.trim(), span).map(Some)
 }
 
+/// Parses a comment body that is required to be a `surrealguard:`
+/// directive, erroring if the prefix is absent. Use this when the caller
+/// has already committed to the comment being a directive.
 pub fn parse_suppression_directive(
     text: &str,
     span: SourceSpan,

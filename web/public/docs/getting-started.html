@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Getting started — SurrealGuard Docs</title>
+<meta name="description" content="Install SurrealGuard, scaffold surrealguard.toml, point it at your .surql schema and query files, and run your first check." />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
+<link rel="stylesheet" href="/styles.css" />
+<link rel="stylesheet" href="/docs/docs.css" />
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+    <div class="nav-links">
+      <a href="/docs/">Docs</a>
+      <a href="/#agents">For agents</a>
+      <a href="/#install">Install</a>
+      <a class="nav-cta" href="https://github.com/DrewRidley/surrealguard">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<div class="docs-shell">
+  <aside class="docs-sidebar">
+    <div class="group">Overview</div>
+    <nav>
+      <a href="/docs/">Introduction</a>
+      <a href="/docs/getting-started.html" aria-current="page">Getting started</a>
+    </nav>
+    <div class="group">Reference</div>
+    <nav>
+      <a href="/docs/cli.html">CLI</a>
+      <a href="/docs/diagnostics.html">Diagnostics</a>
+    </nav>
+    <div class="group">Integrations</div>
+    <nav>
+      <a href="/docs/rust.html">Rust · surrealguard-rs</a>
+      <a href="/docs/typescript.html">TypeScript</a>
+      <a href="/docs/agents.html">Coding agents</a>
+    </nav>
+  </aside>
+
+  <main class="docs-main">
+    <span class="eyebrow-doc">// documentation</span>
+    <h1>Getting started</h1>
+    <p class="lead-p">Install the CLI, scaffold a config, and check your schema and queries in under a minute. SurrealGuard needs no running database — it analyzes your <code>.surql</code> files statically.</p>
+
+    <h2>Install</h2>
+    <p>The <code>surrealguard</code> CLI ships three ways. For CI and coding agents, zero-install <code>npx</code> is easiest; for local dev, a prebuilt binary or a source build.</p>
+    <pre class="code"><span class="cmt"># zero-install (Node) — ideal for CI & agents</span>
+npx surrealguard check
+
+<span class="cmt"># prebuilt binary, no compile</span>
+cargo binstall surrealguard
+
+<span class="cmt"># from crates.io</span>
+cargo install surrealguard</pre>
+    <div class="callout">
+      <strong>Preview note.</strong> The crates.io publish is gated on the tree-sitter SurrealQL grammar being published upstream. Until then you can build the CLI from source: <code>cargo install --path crates/cli</code>.
+    </div>
+
+    <h2>Scaffold a config</h2>
+    <p><code>surrealguard init</code> writes a starter <code>surrealguard.toml</code> in the current directory (it won't overwrite an existing one).</p>
+    <pre class="code"><span class="dollar">$</span> surrealguard init
+Created surrealguard.toml</pre>
+
+    <h2>Configure your sources</h2>
+    <p>The config classifies which <code>.surql</code> files are schema, which are queries, and which directories to skip. Point <code>[sources]</code> at your schema and query directories with glob patterns:</p>
+    <pre class="code"><span class="c"># surrealguard.toml</span>
+[sources]
+schema  = [<span class="s">"schema/**/*.surql"</span>, <span class="s">"migrations/**/*.surql"</span>]
+queries = [<span class="s">"queries/**/*.surql"</span>]
+ignore  = [<span class="s">"target/**"</span>, <span class="s">"node_modules/**"</span>, <span class="s">".git/**"</span>]
+
+[analysis]
+strict = <span class="k">false</span>
+surrealdb_version = <span class="s">"2"</span>
+
+[diagnostics]
+warnings_as_errors = <span class="k">false</span>
+require_suppression_reasons = <span class="k">false</span>
+
+[lints]
+select_star = <span class="s">"warn"</span>       <span class="c"># allow | warn | deny</span>
+dynamic_query = <span class="s">"warn"</span>
+permission_gated_field = <span class="s">"warn"</span></pre>
+    <p>Every key is optional; unset keys fall back to defaults. With no config at all, SurrealGuard analyzes <strong>every</strong> <code>.surql</code>/<code>.surrealql</code> file under the project root, skipping <code>target/</code>, <code>node_modules/</code>, and <code>.git/</code>.</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Section</th><th>Key</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td>[sources]</td><td>schema</td><td><code>**/*.surql</code></td><td>Globs whose <code>DEFINE</code>/<code>REMOVE</code> statements build the schema catalog.</td></tr>
+        <tr><td>[sources]</td><td>queries</td><td><code>**/*.surql</code></td><td>Globs analyzed as queries against that schema.</td></tr>
+        <tr><td>[sources]</td><td>ignore</td><td><code>target/**</code>, <code>node_modules/**</code>, <code>.git/**</code></td><td>Directories excluded from discovery.</td></tr>
+        <tr><td>[analysis]</td><td>strict</td><td><code>false</code></td><td>Tighten otherwise-advisory checks.</td></tr>
+        <tr><td>[analysis]</td><td>surrealdb_version</td><td><code>"2"</code></td><td>Target version for version-gated behavior.</td></tr>
+        <tr><td>[diagnostics]</td><td>warnings_as_errors</td><td><code>false</code></td><td>Promote every warning to an error (affects exit code).</td></tr>
+        <tr><td>[diagnostics]</td><td>require_suppression_reasons</td><td><code>false</code></td><td>Require a written reason on every inline suppression.</td></tr>
+        <tr><td>[lints]</td><td>select_star, dynamic_query, permission_gated_field</td><td>built-in</td><td>Per-lint level override: <code>allow</code>, <code>warn</code>, or <code>deny</code>.</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>SurrealGuard finds the workspace by walking up from the current directory to the nearest <code>surrealguard.toml</code>. Sources are analyzed in sorted path order, so schema definitions are visible to the queries that follow them.</p>
+
+    <h2>Write some SurrealQL</h2>
+    <pre class="code"><span class="c">-- schema/user.surql</span>
+<span class="k">DEFINE TABLE</span> user <span class="k">SCHEMAFULL</span>;
+<span class="k">DEFINE FIELD</span> name <span class="k">ON</span> user <span class="k">TYPE</span> <span class="t">string</span>;
+<span class="k">DEFINE FIELD</span> age  <span class="k">ON</span> user <span class="k">TYPE</span> <span class="t">int</span>;
+
+<span class="c">-- queries/users.surql</span>
+<span class="k">SELECT</span> name, age <span class="k">FROM</span> user <span class="k">WHERE</span> team = $team;
+<span class="err">--                                  ^^^^ E1002 unknown field `team` on table `user`</span></pre>
+
+    <h2>Check</h2>
+    <p>Run <code>surrealguard check</code> from anywhere inside the project. It prints rustc-style diagnostic blocks and a summary; the exit code is non-zero when any error-severity finding survives policy.</p>
+    <pre class="code"><span class="dollar">$</span> surrealguard check
+Checking SurrealQL sources...
+Checked 2 source(s), found 0 diagnostic(s)
+<span class="ok">All checks passed!</span></pre>
+
+    <h3>Machine-readable output</h3>
+    <p>Add <code>--json</code> for structured findings — code, severity, source, byte range, message, help, and related spans. This is the shape agents and CI consume.</p>
+    <pre class="code"><span class="dollar">$</span> surrealguard check --json
+{
+  <span class="t">"summary"</span>: { <span class="t">"sources_checked"</span>: <span class="n">2</span>, <span class="t">"diagnostics"</span>: <span class="n">1</span>, <span class="t">"errors"</span>: <span class="n">1</span> },
+  <span class="t">"diagnostics"</span>: [
+    {
+      <span class="t">"code"</span>: <span class="s">"E1002"</span>,
+      <span class="t">"severity"</span>: <span class="s">"error"</span>,
+      <span class="t">"source"</span>: <span class="s">"queries/users.surql"</span>,
+      <span class="t">"range"</span>: { <span class="t">"start"</span>: <span class="n">41</span>, <span class="t">"end"</span>: <span class="n">45</span> },
+      <span class="t">"message"</span>: <span class="s">"unknown field `team` on table `user`"</span>,
+      <span class="t">"help"</span>: [],
+      <span class="t">"related"</span>: []
+    }
+  ]
+}</pre>
+    <p>See the <a class="link" href="/docs/cli.html">CLI reference</a> for the full command surface and exit codes, and <a class="link" href="/docs/diagnostics.html">Diagnostics</a> for the code families.</p>
+
+    <div class="docs-pager">
+      <a href="/docs/">
+        <span class="dir">← Previous</span>
+        <span class="ttl">Introduction</span>
+      </a>
+      <a class="next" href="/docs/cli.html">
+        <span class="dir">Next →</span>
+        <span class="ttl">CLI</span>
+      </a>
+    </div>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+      <div class="tiny">Static analysis &amp; type inference for SurrealQL.</div>
+    </div>
+    <div class="cols">
+      <a href="/docs/">Docs</a>
+      <a href="/llms.txt">llms.txt</a>
+      <a href="/llms-full.txt">llms-full.txt</a>
+      <a href="https://github.com/DrewRidley/surrealguard">GitHub</a>
+      <a href="https://crates.io/crates/surrealguard">crates.io</a>
+      <a href="https://www.npmjs.com/org/surrealguard">npm</a>
+    </div>
+    <div class="tiny">MIT OR Apache-2.0</div>
+  </div>
+</footer>
+
+</body>
+</html>

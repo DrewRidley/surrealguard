@@ -37,13 +37,13 @@ pub fn lower_type_expr(node: Node<'_>, text: &str) -> Spanned<TypeExpr> {
 
 /// Lowers a `Block` node — used by statement lowering for IF/FOR bodies and
 /// statement-position blocks.
-pub(crate) fn lower_block_node(node: Node<'_>, text: &str) -> Block {
+pub fn lower_block_node(node: Node<'_>, text: &str) -> Block {
     Lowerer { text }.block(node)
 }
 
 /// Lowers a path-position node (`Path`, `Idiom`, or bare `Ident`) to an
 /// [`Idiom`] — used by statement lowering for clause paths.
-pub(crate) fn lower_idiom_node(node: Node<'_>, text: &str) -> Idiom {
+pub fn lower_idiom_node(node: Node<'_>, text: &str) -> Idiom {
     let lowerer = Lowerer { text };
     match node.kind() {
         "Ident" => Idiom {
@@ -122,16 +122,12 @@ impl Lowerer<'_> {
         // The Int/Float/Decimal child classifies; the Number node's own text
         // carries the sign.
         let text = self.node_text(node);
-        let literal = match named_children(node).first().map(|c| c.kind()) {
+        let literal = match named_children(node).first().map(tree_sitter::Node::kind) {
             Some("Float") => text
                 .parse::<f64>()
-                .map(Literal::Float)
-                .unwrap_or(Literal::Float(0.0)),
+                .map_or(Literal::Float(0.0), Literal::Float),
             Some("Decimal") => Literal::Decimal,
-            _ => text
-                .parse::<i64>()
-                .map(Literal::Int)
-                .unwrap_or(Literal::Int(0)),
+            _ => text.parse::<i64>().map_or(Literal::Int(0), Literal::Int),
         };
         Expr::Literal(literal)
     }
@@ -139,7 +135,7 @@ impl Lowerer<'_> {
     fn string_literal(&self, node: Node<'_>) -> Expr {
         let text = self.node_text(node);
         let bytes = text.as_bytes();
-        let prefixed = bytes.len() > 2 && matches!(bytes.get(1), Some(b'\'') | Some(b'"'));
+        let prefixed = bytes.len() > 2 && matches!(bytes.get(1), Some(b'\'' | b'"'));
         let inner = || text[1..].trim_matches(['\'', '"']).to_string();
         let literal = match bytes.first().map(u8::to_ascii_lowercase) {
             Some(b'd') if prefixed => Literal::Datetime(inner()),
@@ -591,7 +587,7 @@ fn named_children<'tree>(node: Node<'tree>) -> Vec<Node<'tree>> {
     let mut cursor = node.walk();
     let children = node
         .children(&mut cursor)
-        .filter(|child| child.is_named())
+        .filter(tree_sitter::Node::is_named)
         .collect();
     children
 }

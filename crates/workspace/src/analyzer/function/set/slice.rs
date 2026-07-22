@@ -8,7 +8,11 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{apply, ParamKind, ReturnKind, Signature};
 
-pub fn analyze_set_slice(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
+pub(crate) fn analyze_set_slice(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    args: &[Kind],
+) -> Kind {
     apply(
         ctx,
         call,

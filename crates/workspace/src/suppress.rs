@@ -9,7 +9,7 @@ use surrealguard_diagnostics::{parse_suppression_directive, Finding, Suppression
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
-pub(crate) fn apply_suppressions(
+pub fn apply_suppressions(
     source: &SourceId,
     text: &str,
     require_reasons: bool,

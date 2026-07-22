@@ -6,7 +6,7 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_info(ctx: &mut AnalysisContext<'_>, stmt: &ast::InfoStmt) -> Kind {
+pub(crate) fn analyze_info(ctx: &mut AnalysisContext<'_>, stmt: &ast::InfoStmt) -> Kind {
     if let Some(table) = &stmt.table {
         crate::analyzer::data::check_table_reference(ctx, &table.node, table.span);
     }

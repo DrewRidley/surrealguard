@@ -9,7 +9,7 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::data::mutation;
 
-pub fn analyze_upsert(ctx: &mut AnalysisContext<'_>, stmt: &ast::UpsertStmt) -> Kind {
+pub(crate) fn analyze_upsert(ctx: &mut AnalysisContext<'_>, stmt: &ast::UpsertStmt) -> Kind {
     upsert_response_kind(stmt, ctx)
 }
 

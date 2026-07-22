@@ -15,7 +15,7 @@ pub mod url_port;
 pub mod url_query;
 pub mod url_scheme;
 
-pub fn analyze_parse_function(
+pub(crate) fn analyze_parse_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

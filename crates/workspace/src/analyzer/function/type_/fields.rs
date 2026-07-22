@@ -11,14 +11,18 @@ use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::const_value_arg;
 use crate::analyzer::function::type_::field::field_kind_for_path;
 
-pub fn analyze_type_fields(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
+pub(crate) fn analyze_type_fields(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    args: &[Kind],
+) -> Kind {
     let _ = args;
     let Some(Value::Array(paths)) = const_value_arg(ctx, call, 0) else {
         return Kind::Any;
     };
 
     let mut kinds = Vec::new();
-    for path in paths.iter() {
+    for path in &paths {
         let Value::String(path) = path else {
             return Kind::Any;
         };
@@ -40,6 +44,6 @@ mod tests {
         test_support::with_ctx(|ctx| {
             let call = test_support::synthetic_call("type::fields");
             assert_eq!(analyze_type_fields(ctx, &call, &[Kind::Any]), Kind::Any);
-        })
+        });
     }
 }

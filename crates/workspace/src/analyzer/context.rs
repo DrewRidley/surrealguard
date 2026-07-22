@@ -24,6 +24,8 @@ pub struct AnalysisContext<'a> {
 }
 
 impl<'a> AnalysisContext<'a> {
+    /// A top-level context with an empty environment and no row table — the
+    /// starting point for analyzing a statement that opens its own scope.
     pub fn new(
         schema: &'a SchemaIndex,
         source: SourceId,
@@ -82,18 +84,22 @@ impl<'a> AnalysisContext<'a> {
         result
     }
 
+    /// The schema/catalog facts every analyzer checks its construct against.
     pub fn schema(&self) -> &'a SchemaIndex {
         self.schema
     }
 
+    /// The source the statement under analysis belongs to, for span construction.
     pub fn source(&self) -> &SourceId {
         &self.source
     }
 
+    /// The full text of the current source, for slicing spans back to code.
     pub fn source_text(&self) -> &'a str {
         self.source_text
     }
 
+    /// The findings accumulated so far this run.
     pub fn diagnostics(&self) -> &[Finding] {
         self.diagnostics
     }
@@ -108,26 +114,36 @@ impl<'a> AnalysisContext<'a> {
         self.diagnostics.push(finding);
     }
 
+    /// Emits an error-severity finding at `span` — a convenience over
+    /// building the [`Finding`] and calling [`Self::emit`].
     pub fn emit_error(&mut self, span: SourceSpan, code: FindingCode, message: impl Into<String>) {
         self.emit(Finding::new(span, code, Severity::Error, message));
     }
 
+    /// The environment holding this scope's `LET` bindings and parameter uses.
     pub fn env(&self) -> &StatementEnv {
         &self.env
     }
 
+    /// Binds a `LET` local `name` to `fact` in the current scope.
     pub fn define_local(&mut self, name: String, fact: ExpressionFact) {
         self.env.define_let(name, fact);
     }
 
+    /// Looks up the fact for `LET` local `name`, or `None` if it is not bound
+    /// in scope (in which case `$name` is a host parameter).
     pub fn local(&self, name: &str) -> Option<&ExpressionFact> {
         self.env.let_fact(name)
     }
 
+    /// Records a use of parameter `name` at `span`, feeding read-before-LET
+    /// (6004) ordering and host-parameter inference.
     pub fn record_param_use(&mut self, name: String, span: SourceSpan) {
         self.env.record_param_use(name, span);
     }
 
+    /// Records the fact a parameter's `DEFAULT` evaluates to, so later uses
+    /// can be checked against it.
     pub fn define_param_default(&mut self, name: String, fact: ExpressionFact) {
         self.env.define_param_default(name, fact);
     }
@@ -184,6 +200,9 @@ impl<'a> AnalysisContext<'a> {
         result
     }
 
+    /// Runs `f` in a forked child scope: child `LET` bindings stay local,
+    /// while parameter uses and the loop depth propagate back to the parent.
+    /// Used for constructs that open a nested block (e.g. an `IF` branch).
     pub fn with_child_env<T>(&mut self, f: impl FnOnce(&mut AnalysisContext<'_>) -> T) -> T {
         let child_env = self.env.fork_child_scope();
         let mut child = AnalysisContext {

@@ -8,7 +8,7 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_define_table(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineTable) -> Kind {
+pub(crate) fn analyze_define_table(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineTable) -> Kind {
     if !stmt.overwrite && ctx.schema().table(&stmt.name.node).is_some() {
         let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.name.span);
         ctx.emit(surrealguard_diagnostics::catalog::finding(

@@ -51,7 +51,7 @@ pub mod table;
 pub mod thing;
 pub mod uuid;
 
-pub fn analyze_type_function(
+pub(crate) fn analyze_type_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

@@ -10,8 +10,11 @@ use crate::FindingCode;
 /// violated, never how a surface chooses to report it (that is policy).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Severity {
+    /// The contract is definitely violated — the query cannot be trusted.
     Error,
+    /// The contract is probably violated, but analysis cannot be certain.
     Warning,
+    /// A stylistic or advisory note; the contract holds.
     Hint,
 }
 
@@ -32,6 +35,10 @@ pub struct Finding {
 }
 
 impl Finding {
+    /// Builds a bare finding at `span` for `code`, carrying its intrinsic
+    /// `severity`. Attachments (help/related/tags) are added with the
+    /// builder methods below. Prefer [`crate::catalog::finding`], which
+    /// fixes the severity from the catalog rather than trusting the caller.
     pub fn new(
         span: SourceSpan,
         code: FindingCode,
@@ -69,15 +76,19 @@ impl Finding {
         self
     }
 
+    /// Mark the finding with a rendering hint (unnecessary, deprecated)
+    /// that surfaces can act on — e.g. fade or strike-through in an editor.
     pub fn with_tag(mut self, tag: FindingTag) -> Self {
         self.tags.push(tag);
         self
     }
 
+    /// The primary source location the finding points at.
     pub fn span(&self) -> &SourceSpan {
         &self.span
     }
 
+    /// The catalog code identifying which contract was violated.
     pub fn code(&self) -> FindingCode {
         self.code
     }
@@ -87,38 +98,55 @@ impl Finding {
         self.severity
     }
 
+    /// The human-readable description composed at the emission site.
     pub fn message(&self) -> &str {
         &self.message
     }
 
+    /// Actionable suggestions attached to the finding.
     pub fn help(&self) -> &[Help] {
         &self.help
     }
 
+    /// Secondary locations that explain the finding.
     pub fn related(&self) -> &[RelatedInfo] {
         &self.related
     }
 
+    /// Rendering hints attached to the finding.
     pub fn tags(&self) -> &[FindingTag] {
         &self.tags
     }
 }
 
+/// An actionable suggestion, optionally carrying a replacement string for
+/// an automated fix.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Help {
+    /// The suggestion text shown to the user.
     pub message: String,
+    /// Replacement text for the finding's span, when a fix can be applied
+    /// mechanically.
     pub replacement: Option<String>,
 }
 
+/// A secondary location that gives context for a finding — for instance,
+/// where the violated declaration lives.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelatedInfo {
+    /// The source location this note points at.
     pub span: SourceSpan,
+    /// What the location contributes to the finding.
     pub message: String,
 }
 
+/// A rendering hint about the flagged code, mapping to editor tags (LSP
+/// `DiagnosticTag`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FindingTag {
+    /// The code is redundant and can be removed — rendered faded.
     Unnecessary,
+    /// The code uses a deprecated construct — rendered struck through.
     Deprecated,
 }
 

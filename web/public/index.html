@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SurrealGuard — Static analysis & type inference for SurrealQL</title>
+<meta name="description" content="Catch SurrealQL bugs before they run. Contract-first static analysis with fully typed results in Rust and TypeScript — compile-time checked queries, an LSP, and an agent-friendly CLI." />
+<meta property="og:title" content="SurrealGuard — Static analysis for SurrealQL" />
+<meta property="og:description" content="Catch SurrealQL bugs before they run. Typed results in Rust and TypeScript, a language server, and an agent-friendly CLI." />
+<meta property="og:type" content="website" />
+<meta name="theme-color" content="#0a0b0e" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="/">
+      <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="url(#g)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b9afff"/><stop offset="1" stop-color="#34d399"/></linearGradient></defs><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span>
+      SurrealGuard
+    </a>
+    <div class="nav-links">
+      <a href="/docs/">Docs</a>
+      <a href="#playground">Playground</a>
+      <a href="#install">Install</a>
+      <div class="ai" id="aiMenu">
+        <button class="ai-btn" id="aiBtn" aria-haspopup="true" aria-expanded="false">
+          <svg class="i" viewBox="0 0 24 24"><path d="M9 4l1.1 3 3 1.1-3 1.1L9 12.2 7.9 9.2l-3-1.1 3-1.1z"/><path d="M17 13l.7 1.9 1.9.7-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7z"/></svg>
+          For AI
+          <svg class="i" viewBox="0 0 24 24" style="width:13px"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div class="ai-menu" role="menu">
+          <button data-ai="copy"><svg class="i" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h10"/></svg><span>Copy page for AI<span class="mi-sub">llms.txt to your clipboard</span></span></button>
+          <a href="#" data-ai="chatgpt"><svg class="i" viewBox="0 0 24 24"><path d="M12 3a9 9 0 100 18 9 9 0 000-18z"/><path d="M9 10h6M9 14h4"/></svg><span>Open in ChatGPT<span class="mi-sub">with the docs as context</span></span></a>
+          <a href="#" data-ai="claude"><svg class="i" viewBox="0 0 24 24"><path d="M12 3a9 9 0 100 18 9 9 0 000-18z"/><path d="M8 13c1.5 2 6.5 2 8 0"/></svg><span>Open in Claude<span class="mi-sub">with the docs as context</span></span></a>
+          <div class="sep"></div>
+          <a href="/llms.txt"><svg class="i" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4"/></svg><span>llms.txt</span></a>
+          <a href="/llms-full.txt"><svg class="i" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 13h6M9 17h6"/></svg><span>llms-full.txt</span></a>
+          <a href="/AGENTS.md"><svg class="i" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 4v4M9 14h.01M15 14h.01"/></svg><span>AGENTS.md</span></a>
+        </div>
+      </div>
+      <a class="nav-cta" href="https://github.com/DrewRidley/surrealguard">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="aurora"><span></span><span></span><span></span></div>
+  <div class="wrap">
+    <span class="eyebrow reveal">Static analysis for SurrealQL</span>
+    <h1 class="reveal">Catch SurrealQL bugs<br /><span class="grad">before they run.</span></h1>
+    <p class="lead reveal">SurrealGuard infers the type of every SurrealQL statement and reports contract violations — unknown fields, kind mismatches, bad graph traversals — with fully typed results in Rust and TypeScript.</p>
+    <div class="hero-cta reveal">
+      <a class="btn btn-primary" href="/docs/">Get started</a>
+      <a class="btn btn-ghost" href="#playground">Try it live</a>
+    </div>
+    <div class="cmd reveal"><span class="dollar">$</span> npx surrealguard check <button data-copy="npx surrealguard check">Copy</button></div>
+  </div>
+</section>
+
+<section class="problem sec">
+  <div class="wrap">
+    <h2 class="reveal">SurrealDB says <em>yes</em> to almost anything.</h2>
+    <p class="reveal">Cross-kind comparisons order by kind instead of failing. Coercions succeed silently. A misspelled field just returns <code>NONE</code>. Those are exactly the places bugs hide — so SurrealGuard checks each construct's contract, statically.</p>
+  </div>
+</section>
+
+<!-- interactive playground -->
+<section class="sec grid-bg" id="playground">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">// try it</div>
+      <h2 class="reveal">See the analyzer think</h2>
+      <p class="reveal">Real diagnostics from the actual engine. Pick a query — SurrealGuard checks it against the schema.</p>
+    </div>
+    <div class="demo reveal">
+      <div class="demo-tabs" id="demoTabs">
+        <span style="color:var(--faint);font-family:var(--mono);font-size:12px;padding:6px 2px;align-self:center">presets</span>
+        <span class="demo-status" id="demoStatus">loading engine…</span>
+      </div>
+      <div class="demo-body">
+        <div class="demo-inputs">
+          <label class="io-label" for="schemaIn">Schema</label>
+          <textarea class="code-input schema-in" id="schemaIn" spellcheck="false"></textarea>
+          <label class="io-label" for="queryIn">Query</label>
+          <textarea class="code-input query-in" id="queryIn" spellcheck="false"></textarea>
+        </div>
+        <div class="demo-out">
+          <div class="muted-h">Diagnostics · <span class="live-dot">live</span></div>
+          <div id="demoDiag"></div>
+        </div>
+      </div>
+    </div>
+    <p style="text-align:center;color:var(--faint);font-size:13px;margin-top:16px">The real SurrealGuard engine, compiled to WebAssembly, running in your browser — edit anything.</p>
+  </div>
+</section>
+
+<section class="sec">
+  <div class="wrap showcase">
+    <div class="card card-split reveal">
+      <div class="card-copy">
+        <div class="tag">Rust · surrealguard-rs</div>
+        <h3>The compiler is the checker</h3>
+        <p><code>query!</code> runs the analyzer at compile time and generates the result type. A wrong table or field is a <code>cargo check</code> error — no codegen step, no language server, no runtime schema fetch.</p>
+      </div>
+      <div class="code"><span class="k">use</span> surrealguard_rs::query;
+
+<span class="k">let</span> users = <span class="fn">query!</span>(<span class="s">"SELECT name, age FROM user"</span>);
+<span class="c">//  users: Query&lt;Vec&lt;{ name: String, age: i64 }&gt;&gt;  ← inferred</span>
+
+<span class="k">let</span> bad = <span class="fn">query!</span>(<span class="s">"SELECT name, ssn FROM user"</span>);
+<span class="err">// error: SurrealGuard rejected this query:
+//   [E1002] unknown field `ssn` on table `user`</span></div>
+    </div>
+
+    <div class="card card-split reveal">
+      <div class="code"><span class="k">const</span> users = <span class="k">await</span> db.<span class="fn">query</span>(
+  <span class="s">"SELECT name FROM user WHERE team = $team"</span>,
+  { team: <span class="s">"red"</span> }
+);
+<span class="c">//    ^ Array&lt;{ name: string }&gt; — params typed from the text</span>
+
+<span class="k">await</span> db.<span class="fn">query</span>(<span class="s">"SELECT name FROM user WHERE team = $team"</span>);
+<span class="err">//    ✗ Expected 2 arguments, but got 1.</span></div>
+      <div class="card-copy">
+        <div class="tag">TypeScript · @surrealguard/client</div>
+        <h3>Typed queries, no wrapper</h3>
+        <p>Pass a literal to <code>db.query</code> and its result and parameters are inferred from the query text. Missing or wrong params are compile errors. Dynamic strings degrade to <code>unknown</code> and still run.</p>
+      </div>
+    </div>
+
+    <div class="card card-split reveal">
+      <div class="card-copy">
+        <div class="tag">SvelteKit · @surrealguard/svelte</div>
+        <h3>Live queries, zero lifecycle code</h3>
+        <p>Seed from SSR, subscribe on mount, reconcile change notifications by record id, and tear down on destroy — all handled. One shared subscription per query, refcounted. A <code>useLiveQuery</code> hook does the same for Next.js.</p>
+      </div>
+      <div class="code"><span class="k">const</span> users = <span class="fn">liveQuery</span>(qc, <span class="s">"LIVE SELECT * FROM user"</span>, {
+  initial: data.users,
+});
+
+<span class="c">// {#each $users.data as user (user.id)}</span>
+<span class="c">//   … reconciled live: CREATE / UPDATE / DELETE by id</span>
+<span class="c">// {/each}</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="agents">
+  <div class="wrap">
+    <div class="agent reveal">
+      <div class="agent-grid">
+        <div>
+          <h3>Built for coding agents</h3>
+          <p style="color:var(--muted);font-size:15.5px">Point Claude Code, Cursor, or any agent at your project and let it wire everything up — then it gets structured, machine-readable diagnostics on every run.</p>
+          <ul>
+            <li>Structured findings via <code>surrealguard check --json</code></li>
+            <li><a href="/llms.txt" style="color:var(--accent)">llms.txt</a>, <a href="/llms-full.txt" style="color:var(--accent)">llms-full.txt</a> &amp; <a href="/AGENTS.md" style="color:var(--accent)">AGENTS.md</a></li>
+            <li>Compile-time errors your agent can read and fix</li>
+            <li>Byte-precise spans for surgical inline edits</li>
+          </ul>
+        </div>
+        <div class="prompt-box">
+          <button class="copy-prompt" data-copy="Set up SurrealGuard in this project. Run `npx surrealguard init`, point surrealguard.toml at my .surql schema and query directories, then run `npx surrealguard check --json` and fix any reported findings. Where I write queries, use the Rust `query!` macro (surrealguard-rs) or the typed `@surrealguard/client` db.query so they're checked against my schema.">Copy prompt</button>
+Set up SurrealGuard in this project. Run <span style="color:#86efac">`npx surrealguard init`</span>, point surrealguard.toml at my .surql schema and query directories, then run <span style="color:#86efac">`npx surrealguard check --json`</span> and fix any reported findings.
+
+Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> macro or the typed <span style="color:#c4b5fd">`@surrealguard/client`</span> db.query so they're checked against my schema.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec grid-bg">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">// what it does</div>
+      <h2 class="reveal">One engine, every surface</h2>
+      <p class="reveal">The same analyzer powers a CLI, a language server, a Rust proc-macro, and a set of TypeScript packages.</p>
+    </div>
+    <div class="feat-grid">
+      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 16l9 5 9-5"/></svg></div><h4>Full statement coverage</h4><p>SELECT, the six mutations, RELATE, graph traversals, transactions, DEFINE/REMOVE/ALTER, LIVE/KILL — every statement lowers to a typed AST and is analyzed.</p></div>
+      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M8 4c-2 0-2 4-4 4 2 0 2 4 4 4"/><path d="M16 4c2 0 2 4 4 4-2 0-2 4-4 4"/><path d="M8 20c-2 0-2-4-4-4M16 20c2 0 2-4 4-4"/></svg></div><h4>Real type inference</h4><p>Response kinds as upstream <code>surrealdb_types::Kind</code>: object literals, IF/ELSE unions, record links, graph edges, function returns, closures, subqueries.</p></div>
+      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></svg></div><h4>~80 contract diagnostics</h4><p>One code per contract across eight families — schema refs, types, graph, statement misuse, functions, parameters, lints, version compat.</p></div>
+      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M9 15l6-6"/><path d="M10.5 6l1-1a4 4 0 016 6l-1 1"/><path d="M13.5 18l-1 1a4 4 0 01-6-6l1-1"/></svg></div><h4>Parameter constraints</h4><p>Every <code>$param</code> is exported with the kind and value domain its uses imply — <code>UPDATE user SET age = $age</code> → <code>age: int</code>.</p></div>
+      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="2"/></svg></div><h4>Byte-precise spans</h4><p>Every finding carries an exact byte range — squiggles land on the right token, even inside a query embedded in a host file.</p></div>
+      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M4 7l5 5-5 5"/><path d="M13 17h7"/></svg></div><h4>Editor LSP</h4><p>Diagnostics over stdio for <code>.surql</code> and for SurrealQL embedded in TypeScript, Svelte, Vue, and Astro.</p></div>
+      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg></div><h4>Rust <code>query!</code> macro</h4><p>Compile-time checked, typed SurrealQL. The compiler is the checker — no external step; results as nameless typed structs.</p></div>
+      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/><path d="M13 7h5M15.5 4.5v5"/></svg></div><h4>TypeScript packages</h4><p>A typed <code>db.query</code>, a reactive query core, and Next.js + SvelteKit adapters with live queries and SSR handled.</p></div>
+      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 4v4M8.5 14h.01M15.5 14h.01M9 18h6"/></svg></div><h4>Agent-friendly</h4><p>JSON diagnostics, <code>llms.txt</code>, <code>AGENTS.md</code>, and compile-time errors make SurrealGuard a first-class tool for AI agents and CI.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="install">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">// install</div>
+      <h2 class="reveal">Ships everywhere</h2>
+      <p class="reveal">Zero-install for CI and agents, a prebuilt binary, or from source.</p>
+    </div>
+    <div class="install-grid">
+      <div class="install-card reveal"><div class="label">Node / CI / agents <span class="pill">npx</span></div><pre><span class="mut"># zero-install, great for CI &amp; agents</span>
+npx surrealguard check --json</pre></div>
+      <div class="install-card reveal"><div class="label">Prebuilt binary <span class="pill">binstall</span></div><pre><span class="mut"># fast, no compile</span>
+cargo binstall surrealguard</pre></div>
+      <div class="install-card reveal"><div class="label">From crates.io <span class="pill">cargo</span></div><pre>cargo install surrealguard
+surrealguard init &amp;&amp; surrealguard check</pre></div>
+      <div class="install-card reveal"><div class="label">Libraries <span class="pill">rust · npm</span></div><pre>cargo add surrealguard-rs
+npm i @surrealguard/client</pre></div>
+    </div>
+  </div>
+</section>
+
+<section class="sec">
+  <div class="wrap">
+    <div class="sec-head"><div class="kicker">// faq</div><h2 class="reveal">Questions</h2></div>
+    <div class="faq">
+      <details class="q reveal"><summary>Doesn't SurrealDB already validate my queries?</summary><p>At runtime, and permissively — cross-kind comparisons order by kind, coercions succeed, missing fields return <code>NONE</code>. SurrealGuard checks each construct's <em>contract</em> statically, so those silent behaviors become errors you see before shipping.</p></details>
+      <details class="q reveal"><summary>Do I have to change how I write SurrealQL?</summary><p>No. You write normal SurrealQL. In Rust you wrap it in <code>query!("…")</code>; in TypeScript you pass a literal to <code>db.query("…")</code> (or run <code>surrealguard generate</code> for standalone types). Dynamic strings still work — they just aren't typed.</p></details>
+      <details class="q reveal"><summary>Does it need a running database?</summary><p>No. It analyzes your <code>.surql</code> schema and queries statically. The Rust macro reads your <code>schema/</code> or <code>migrations/</code> directory at compile time and checks against it.</p></details>
+      <details class="q reveal"><summary>How does it parse SurrealQL if the database's parser can't?</summary><p>SurrealDB discards spans before producing its AST, so it can't power tooling. SurrealGuard parses with tree-sitter into a typed, span-carrying AST and runs all analysis on that.</p></details>
+      <details class="q reveal"><summary>Is it production-ready?</summary><p>The engine, CLI, LSP, Rust macros, and TypeScript packages are built and tested. The first public release is in preparation — <a href="https://github.com/DrewRidley/surrealguard" style="color:var(--accent)">follow along on GitHub</a>.</p></details>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex">
+        <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span>
+        SurrealGuard
+      </a>
+      <div class="tiny">Static analysis &amp; type inference for SurrealQL.</div>
+    </div>
+    <div class="cols">
+      <a href="/docs/">Docs</a>
+      <a href="/llms.txt">llms.txt</a>
+      <a href="/AGENTS.md">AGENTS.md</a>
+      <a href="https://github.com/DrewRidley/surrealguard">GitHub</a>
+      <a href="https://crates.io/crates/surrealguard">crates.io</a>
+    </div>
+    <div class="tiny">MIT OR Apache-2.0</div>
+  </div>
+</footer>
+
+<script>
+  // copy buttons
+  document.querySelectorAll("[data-copy]").forEach((el) => {
+    el.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(el.getAttribute("data-copy"));
+        const t = el.textContent; el.textContent = "Copied ✓"; setTimeout(() => (el.textContent = t), 1400);
+      } catch (e) {}
+    });
+  });
+
+  // scroll reveal
+  const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } }), { threshold: 0.12 });
+  document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+
+  // For-AI menu
+  const ai = document.getElementById("aiMenu"), aiBtn = document.getElementById("aiBtn");
+  aiBtn.addEventListener("click", (e) => { e.stopPropagation(); const o = ai.classList.toggle("open"); aiBtn.setAttribute("aria-expanded", o); });
+  document.addEventListener("click", () => ai.classList.remove("open"));
+  ai.addEventListener("click", (e) => e.stopPropagation());
+  const AI_PROMPT = "I'm using SurrealGuard (static analysis & type inference for SurrealQL). Read https://surrealguard.dev/llms-full.txt and help me set it up and use it in my project.";
+  ai.querySelector('[data-ai="chatgpt"]').href = "https://chatgpt.com/?q=" + encodeURIComponent(AI_PROMPT);
+  ai.querySelector('[data-ai="claude"]').href = "https://claude.ai/new?q=" + encodeURIComponent(AI_PROMPT);
+  ai.querySelector('[data-ai="copy"]').addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    try { const txt = await (await fetch("/llms.txt")).text(); await navigator.clipboard.writeText(txt);
+      const s = btn.querySelector("span"); const h = s.innerHTML; s.innerHTML = "Copied llms.txt ✓"; setTimeout(() => (s.innerHTML = h), 1500);
+    } catch (err) {}
+  });
+
+  // interactive playground — the REAL SurrealGuard engine compiled to WASM,
+  // analyzing arbitrary schema + query live in the browser.
+  (function () {
+    const SCHEMA = "DEFINE TABLE user SCHEMAFULL;\nDEFINE FIELD name ON user TYPE string;\nDEFINE FIELD age ON user TYPE int;";
+    const PRESETS = [
+      { label: "Unknown field", schema: SCHEMA, query: "SELECT name, ssn FROM user;" },
+      { label: "Type mismatch", schema: SCHEMA, query: "UPDATE user SET age = 'old';" },
+      { label: "Bad comparison", schema: SCHEMA, query: "SELECT age > name FROM user;" },
+      { label: "Valid", schema: SCHEMA, query: "SELECT name, age FROM user WHERE age > 18;" },
+    ];
+    const tabs = document.getElementById("demoTabs"), status = document.getElementById("demoStatus"),
+          schemaIn = document.getElementById("schemaIn"), queryIn = document.getElementById("queryIn"),
+          diag = document.getElementById("demoDiag");
+    let analyzer = null;
+
+    PRESETS.forEach((p) => {
+      const b = document.createElement("button"); b.className = "demo-preset"; b.textContent = p.label;
+      b.addEventListener("click", () => { schemaIn.value = p.schema; queryIn.value = p.query; run(); });
+      tabs.insertBefore(b, status);
+    });
+    schemaIn.value = PRESETS[0].schema; queryIn.value = PRESETS[0].query;
+
+    function render(list) {
+      if (!Array.isArray(list) || list.length === 0) {
+        diag.innerHTML = `<div class="pass"><svg class="i" viewBox="0 0 24 24" style="color:var(--accent-2)"><path d="M20 6L9 17l-5-5"/></svg> No problems — this query type-checks.</div>`;
+        return;
+      }
+      diag.innerHTML = list.map((d) => {
+        const sev = d.severity || "error";
+        return `<div class="diag ${sev}"><div class="row1"><span class="code">${d.code}</span><span class="sev">${sev}</span></div><div class="msg">${String(d.message).replace(/[&<>]/g, (c)=>({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c])).replace(/`([^`]+)`/g, "<code>$1</code>")}</div></div>`;
+      }).join("");
+    }
+    let t; function run() { clearTimeout(t); t = setTimeout(() => {
+      if (!analyzer) return;
+      try { render(analyzer.analyze(schemaIn.value, queryIn.value)); }
+      catch (e) { diag.innerHTML = `<div class="diag error"><div class="msg">analysis error</div></div>`; }
+    }, 220); }
+    schemaIn.addEventListener("input", run); queryIn.addEventListener("input", run);
+
+    let loading = false;
+    async function load() {
+      if (loading || analyzer) return; loading = true;
+      try {
+        const [{ createAnalyzer }, bytes] = await Promise.all([
+          import("/playground/sg-analyzer.mjs"),
+          fetch("/playground/surrealguard_wasm.wasm").then((r) => r.arrayBuffer()),
+        ]);
+        analyzer = await createAnalyzer(bytes);
+        status.innerHTML = 'wasm ready';
+        run();
+      } catch (e) { status.textContent = "engine failed to load"; }
+    }
+    // lazy-load the ~4MB engine only when the playground scrolls into view
+    const lio = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { load(); lio.disconnect(); } }), { rootMargin: "300px" });
+    lio.observe(document.getElementById("playground"));
+  })();
+</script>
+</body>
+</html>

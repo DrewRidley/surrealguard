@@ -9,10 +9,14 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_array_group(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
+pub(crate) fn analyze_array_group(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    args: &[Kind],
+) -> Kind {
     let _ = (ctx, call);
     match args {
-        [Kind::Array(element, _)] | [Kind::Set(element, _)] => match element.as_ref() {
+        [Kind::Array(element, _) | Kind::Set(element, _)] => match element.as_ref() {
             Kind::Array(inner, _) | Kind::Set(inner, _) => {
                 Kind::Array(Box::new((**inner).clone()), None)
             }
@@ -46,6 +50,6 @@ mod tests {
                 analyze_array_group(ctx, &call, &[Kind::Array(Box::new(Kind::Bool), None)]),
                 Kind::Array(Box::new(Kind::Bool), None)
             );
-        })
+        });
     }
 }

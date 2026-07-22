@@ -10,7 +10,7 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_array_windows(
+pub(crate) fn analyze_array_windows(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     args: &[Kind],
@@ -38,6 +38,6 @@ mod tests {
                 analyze_array_windows(ctx, &call, &[input.clone(), Kind::Int]),
                 Kind::Array(Box::new(input), None)
             );
-        })
+        });
     }
 }

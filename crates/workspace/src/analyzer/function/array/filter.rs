@@ -9,7 +9,7 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_array_filter(
+pub(crate) fn analyze_array_filter(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     args: &[Kind],
@@ -38,6 +38,6 @@ mod tests {
                 ),
                 Kind::Array(Box::new(Kind::Int), None)
             );
-        })
+        });
     }
 }

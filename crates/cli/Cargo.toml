@@ -2,14 +2,43 @@
 name = "surrealguard"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Static analyzer and type-inference engine for SurrealQL — the surrealguard CLI"
+
+# cargo-binstall: fetch the prebuilt binary from the GitHub Release instead of
+# building from source. The asset naming scheme MUST stay identical to the npm
+# launcher (npm/surrealguard/bin/surrealguard.cjs) and the release workflow
+# (.github/workflows/release.yml):
+#
+#   tag:     v{version}
+#   archive: surrealguard-{version}-{target}.tar.gz   (unix)
+#            surrealguard-{version}-{target}.zip       (windows)
+#   binary:  surrealguard | surrealguard.exe           (at archive root)
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.{ archive-format }"
+pkg-fmt = "tgz"
+bin-dir = "{ bin }{ binary-ext }"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
 
 [dependencies]
-surrealguard-codegen = { path = "../codegen" }
-surrealguard-diagnostics = { path = "../diagnostics" }
-surrealguard-embed = { path = "../embed" }
-surrealguard-syntax = { path = "../syntax" }
-surrealguard-workspace = { path = "../workspace" }
+surrealguard-codegen = { path = "../codegen", version = "0.1.0" }
+surrealguard-diagnostics = { path = "../diagnostics", version = "0.1.0" }
+surrealguard-embed = { path = "../embed", version = "0.1.0" }
+surrealguard-syntax = { path = "../syntax", version = "0.1.0" }
+surrealguard-workspace = { path = "../workspace", version = "0.1.0" }
 clap = { version = "4", features = ["derive"]}
 walkdir = "2.5.0"
+glob = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+[lints]
+workspace = true

@@ -12,7 +12,7 @@ pub mod patch;
 pub mod post;
 pub mod put;
 
-pub fn analyze_http_function(
+pub(crate) fn analyze_http_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

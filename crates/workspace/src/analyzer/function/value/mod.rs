@@ -9,7 +9,7 @@ pub mod diff;
 pub mod expect;
 pub mod patch;
 
-pub fn analyze_value_function(
+pub(crate) fn analyze_value_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

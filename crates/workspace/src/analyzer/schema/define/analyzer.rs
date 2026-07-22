@@ -9,7 +9,10 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::schema::SchemaIndex;
 
-pub fn analyze_define_analyzer(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineAnalyzer) -> Kind {
+pub(crate) fn analyze_define_analyzer(
+    ctx: &mut AnalysisContext<'_>,
+    stmt: &ast::DefineAnalyzer,
+) -> Kind {
     let analyzer = crate::schema::analyzer_def_from_ast(stmt, ctx.source());
     for finding in SchemaIndex::validate_analyzer(&analyzer) {
         ctx.emit(finding);

@@ -15,58 +15,89 @@ use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
 use crate::expression::PartialReason;
 
+/// The catalog built from all `DEFINE`/`REMOVE`/`ALTER` statements: the
+/// tables, params, functions, and analyzers every contract check resolves
+/// against.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SchemaIndex {
+    /// Defined tables, keyed by name.
     pub tables: BTreeMap<String, TableDef>,
+    /// `DEFINE PARAM` globals, keyed by name (without `$`).
     pub params: BTreeMap<String, ParamDef>,
+    /// `DEFINE FUNCTION` definitions, keyed by `fn::` path.
     pub functions: BTreeMap<String, FunctionDef>,
+    /// `DEFINE ANALYZER` definitions, keyed by name.
     pub analyzers: BTreeMap<String, AnalyzerDef>,
 }
 
+/// A `DEFINE PARAM` global and where it was declared.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParamDef {
+    /// The parameter name, without the leading `$`.
     pub name: String,
+    /// The source the definition lives in.
     pub source: SourceId,
+    /// Span of the parameter name.
     pub name_span: SourceSpan,
+    /// Span of the `VALUE` expression, when present.
     pub value_span: Option<SourceSpan>,
 }
 
 /// One declared `fn::` parameter: `$name: string`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FunctionParam {
+    /// The parameter name, without the leading `$`.
     pub name: String,
+    /// The declared kind, when the parameter is typed.
     pub kind: Option<Kind>,
 }
 
+/// A `DEFINE FUNCTION` definition: its signature, callees, and location.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FunctionDef {
+    /// The `fn::` path.
     pub name: String,
+    /// Declared arguments, in order.
     pub args: Vec<FunctionParam>,
     /// `fn::` paths called from the body, for cycle detection.
     pub callees: Vec<String>,
+    /// The declared or inferred return kind, when known.
     pub return_kind: Option<Kind>,
+    /// The source the definition lives in.
     pub source: SourceId,
+    /// Span of the function name.
     pub name_span: SourceSpan,
+    /// Span of the return-type annotation, when present.
     pub return_span: Option<SourceSpan>,
 }
 
+/// A `DEFINE ANALYZER` definition: its tokenizer/filter pipeline.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalyzerDef {
+    /// The analyzer name.
     pub name: String,
+    /// Tokenizer names in the pipeline.
     pub tokenizers: Vec<String>,
+    /// Filter specifications in the pipeline (name plus any arguments).
     pub filters: Vec<String>,
+    /// The source the definition lives in.
     pub source: SourceId,
+    /// Span of the analyzer name.
     pub name_span: SourceSpan,
 }
 
+/// A field access path split into its dotted segments (`profile.name` →
+/// `["profile", "name"]`).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct FieldPath(Vec<String>);
 
 impl FieldPath {
+    /// A path from its already-split segments.
     pub fn new(parts: Vec<String>) -> Self {
         Self(parts)
     }
 
+    /// Splits a dotted path string into segments, dropping empty ones.
     pub fn parse(path: &str) -> Self {
         Self(
             path.split('.')
@@ -76,14 +107,18 @@ impl FieldPath {
         )
     }
 
+    /// The path's segments.
     pub fn parts(&self) -> &[String] {
         &self.0
     }
 
+    /// The path rejoined with `.` separators.
     pub fn dotted(&self) -> String {
         self.0.join(".")
     }
 
+    /// Whether this path is a (non-strict) prefix of `path` — the same
+    /// segments up to this path's length.
     pub fn is_prefix_of(&self, path: &[String]) -> bool {
         self.0.len() <= path.len()
             && self
@@ -94,13 +129,20 @@ impl FieldPath {
     }
 }
 
+/// A `DEFINE TABLE` definition with its attached fields and indexes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TableDef {
+    /// The table name.
     pub name: String,
+    /// The source the definition lives in.
     pub source: SourceId,
+    /// Span of the table name.
     pub name_span: SourceSpan,
+    /// Attached fields, keyed by dotted path.
     pub fields: BTreeMap<String, FieldDef>,
+    /// Attached indexes, keyed by index name.
     pub indexes: BTreeMap<String, IndexDef>,
+    /// The `TYPE RELATION` edge spec, when the table is a relation.
     pub relation: Option<RelationDef>,
     /// `DEFINE TABLE ... DROP` — rows are never retained.
     pub drop_table: bool,
@@ -108,13 +150,18 @@ pub struct TableDef {
     pub changefeed: bool,
 }
 
+/// A `TYPE RELATION` edge spec: the tables an edge may connect.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelationDef {
+    /// Allowed `in` (source) tables; empty means any.
     pub in_tables: Vec<String>,
+    /// Allowed `out` (destination) tables; empty means any.
     pub out_tables: Vec<String>,
+    /// Span of the relation clause.
     pub span: SourceSpan,
 }
 
+/// A `DEFINE FIELD` definition: its declared kind and write semantics.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldDef {
     /// The field has a `DEFAULT` clause (or `VALUE`, which supplies one).
@@ -124,23 +171,37 @@ pub struct FieldDef {
     /// `VALUE <expr>` — computed on write; hand-written values are
     /// overwritten.
     pub computed: bool,
+    /// The field's dotted path split into segments.
     pub path: Vec<String>,
+    /// The owning table's name.
     pub table: String,
+    /// The declared kind, when the field is typed.
     pub kind: Option<Kind>,
+    /// Why the kind is incomplete; empty when fully resolved.
     pub partial: Vec<PartialReason>,
+    /// The source the definition lives in.
     pub source: SourceId,
+    /// Span of the field name.
     pub name_span: SourceSpan,
+    /// Span of the `ON TABLE` name.
     pub table_span: SourceSpan,
+    /// Span of the `TYPE` annotation, when present.
     pub type_span: Option<SourceSpan>,
 }
 
+/// A `DEFINE INDEX` definition over one or more table fields.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexDef {
+    /// The index name.
     pub name: String,
+    /// The owning table's name.
     pub table: String,
     fields: Vec<IndexFieldDef>,
+    /// What backs the index.
     pub kind: IndexKind,
+    /// Span of the index name.
     pub name_span: SourceSpan,
+    /// Span of the `ON TABLE` name.
     pub table_span: SourceSpan,
 }
 
@@ -162,9 +223,13 @@ impl IndexDef {
 /// What backs the index: full-text search, a vector structure, or plain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IndexKind {
+    /// A plain (non-unique) index.
     Normal,
+    /// A `UNIQUE` index.
     Unique,
+    /// A full-text `SEARCH` index.
     Search,
+    /// An `MTREE`/`HNSW` vector index.
     Vector,
 }
 
@@ -175,41 +240,53 @@ struct IndexFieldDef {
     span: SourceSpan,
 }
 
+/// The result of building a schema from a batch of sources: the index plus
+/// any findings raised while defining it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaExtraction {
+    /// The assembled catalog.
     pub schema: SchemaIndex,
+    /// Findings raised during extraction.
     pub diagnostics: Vec<surrealguard_diagnostics::Finding>,
 }
 
 impl SchemaIndex {
+    /// The table definition named `name`, if defined.
     pub fn table(&self, name: &str) -> Option<&TableDef> {
         self.tables.get(name)
     }
 
+    /// The field at `path` on `table`, if both are defined.
     pub fn field(&self, table: &str, path: &FieldPath) -> Option<&FieldDef> {
         self.table(table)?.field(path)
     }
 
+    /// The global param `name`, accepting either a leading `$` or none.
     pub fn param(&self, name: &str) -> Option<&ParamDef> {
         self.params.get(name.strip_prefix('$').unwrap_or(name))
     }
 
+    /// The function defined at the `fn::` path `name`, if defined.
     pub fn function(&self, name: &str) -> Option<&FunctionDef> {
         self.functions.get(name)
     }
 
+    /// The analyzer named `name`, if defined.
     pub fn analyzer(&self, name: &str) -> Option<&AnalyzerDef> {
         self.analyzers.get(name)
     }
 
+    /// Inserts a global param, replacing any of the same name.
     pub fn insert_param(&mut self, param: ParamDef) {
         self.params.insert(param.name.clone(), param);
     }
 
+    /// Inserts a function, replacing any of the same `fn::` path.
     pub fn insert_function(&mut self, function: FunctionDef) {
         self.functions.insert(function.name.clone(), function);
     }
 
+    /// Inserts an analyzer, replacing any of the same name.
     pub fn insert_analyzer(&mut self, analyzer: AnalyzerDef) {
         self.analyzers.insert(analyzer.name.clone(), analyzer);
     }
@@ -326,10 +403,12 @@ impl SchemaIndex {
         table.fields.insert(field_key, field);
     }
 
+    /// Drops a table and everything attached to it.
     pub fn remove_table(&mut self, table: &str) {
         self.tables.remove(table);
     }
 
+    /// Drops a field from its table, if both exist.
     pub fn remove_field(&mut self, table: &str, path: &[String]) {
         if let Some(table_def) = self.tables.get_mut(table) {
             table_def.fields.remove(&path.join("."));
@@ -338,10 +417,13 @@ impl SchemaIndex {
 }
 
 impl TableDef {
+    /// The field at `path` on this table, if defined.
     pub fn field(&self, path: &FieldPath) -> Option<&FieldDef> {
         self.fields.get(&path.dotted())
     }
 
+    /// Every field whose path lies under `prefix`, for expanding a nested
+    /// object selection.
     pub fn fields_under<'a>(
         &'a self,
         prefix: &'a FieldPath,
@@ -655,8 +737,7 @@ pub(crate) fn kind_from_type_expr(
                     .get(start..end)
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| partial.cst_kind.clone());
+                    .map_or_else(|| partial.cst_kind.clone(), str::to_string);
                 Err(PartialReason::UnsupportedSyntax(source))
             }
         }

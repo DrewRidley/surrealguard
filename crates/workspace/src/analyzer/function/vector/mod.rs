@@ -17,7 +17,7 @@ pub mod project;
 pub mod scale;
 pub mod subtract;
 
-pub fn analyze_vector_function(
+pub(crate) fn analyze_vector_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

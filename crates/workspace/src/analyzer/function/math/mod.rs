@@ -48,7 +48,7 @@ pub mod top;
 pub mod trimean;
 pub mod variance;
 
-pub fn analyze_math_function(
+pub(crate) fn analyze_math_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

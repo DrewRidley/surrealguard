@@ -9,10 +9,10 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::expression::{ExpressionFact, ExpressionValueClass};
 
-pub fn analyze_for_loop(ctx: &mut AnalysisContext<'_>, stmt: &ast::ForStmt) -> Kind {
+pub(crate) fn analyze_for_loop(ctx: &mut AnalysisContext<'_>, stmt: &ast::ForStmt) -> Kind {
     let iterable = crate::analyzer::expression::expr_fact(ctx, &stmt.iterable);
     let element_kind = match &iterable.kind {
-        Some(Kind::Array(element, _)) | Some(Kind::Set(element, _)) => Some((**element).clone()),
+        Some(Kind::Array(element, _) | Kind::Set(element, _)) => Some((**element).clone()),
         _ => None,
     };
 

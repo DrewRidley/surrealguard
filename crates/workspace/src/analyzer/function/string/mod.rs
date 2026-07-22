@@ -42,7 +42,7 @@ pub mod trim;
 pub mod uppercase;
 pub mod words;
 
-pub fn analyze_string_function(
+pub(crate) fn analyze_string_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

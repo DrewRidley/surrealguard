@@ -15,6 +15,7 @@ use crate::span::ByteRange;
 /// A lowered source file: statements in source order.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Script {
+    /// Top-level statements, in source order.
     pub statements: Vec<Spanned<Statement>>,
 }
 
@@ -25,38 +26,68 @@ pub struct Script {
 /// One SurrealQL statement, dispatched on by the analyzers.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Statement {
+    /// `SELECT`.
     Select(SelectStmt),
+    /// `CREATE`.
     Create(CreateStmt),
+    /// `UPDATE`.
     Update(UpdateStmt),
+    /// `UPSERT`.
     Upsert(UpsertStmt),
+    /// `DELETE`.
     Delete(DeleteStmt),
+    /// `INSERT`.
     Insert(InsertStmt),
+    /// `RELATE`.
     Relate(RelateStmt),
+    /// `DEFINE ...`.
     Define(DefineStmt),
+    /// `REMOVE ...`.
     Remove(RemoveStmt),
+    /// `ALTER ...`.
     Alter(AlterStmt),
+    /// `LET`.
     Let(LetStmt),
+    /// `RETURN`.
     Return(ReturnStmt),
+    /// `IF`/`ELSE`.
     IfElse(IfElseStmt),
+    /// `FOR`.
     For(ForStmt),
+    /// A bare `{ ...; ... }` block in statement position.
     Block(Block),
+    /// `LIVE SELECT`.
     LiveSelect(LiveSelectStmt),
+    /// `KILL`.
     Kill(KillStmt),
+    /// `USE`.
     Use(UseStmt),
+    /// `INFO FOR ...`.
     Info(InfoStmt),
+    /// `SHOW CHANGES`.
     Show(ShowStmt),
+    /// `REBUILD INDEX`.
     Rebuild(RebuildStmt),
+    /// `THROW`.
     Throw(ThrowStmt),
+    /// `BREAK`.
     Break(BreakStmt),
+    /// `CONTINUE`.
     Continue(ContinueStmt),
+    /// `BEGIN`.
     Begin(BeginStmt),
+    /// `CANCEL`.
     Cancel(CancelStmt),
+    /// `COMMIT`.
     Commit(CommitStmt),
+    /// `SLEEP`.
     Sleep(SleepStmt),
+    /// `OPTION`.
     Option(OptionStmt),
     /// A bare expression in statement position — most commonly the trailing
     /// value of a block (`{ LET $x = 1; $x + 1 }`).
     Expr(Spanned<Expr>),
+    /// A statement that failed to lower.
     Partial(PartialNode),
 }
 
@@ -66,6 +97,7 @@ pub enum Statement {
 /// per-statement invariants stay attached to their own statement kind.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Block {
+    /// The block's statements, in source order.
     pub statements: Vec<Spanned<Statement>>,
 }
 
@@ -73,22 +105,36 @@ pub struct Block {
 /// clauses.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SelectStmt {
+    /// `SELECT ... FROM ONLY ...` — single-object result, not an array.
     pub only: bool,
     /// `SELECT VALUE <expr>`.
     pub value: bool,
+    /// The projection list (output columns).
     pub projections: Vec<Projection>,
+    /// `FROM` sources.
     pub from: Vec<Spanned<Expr>>,
+    /// `OMIT <fields>` — fields excluded from the result.
     pub omit: Vec<Spanned<Idiom>>,
+    /// `FETCH <fields>` — record links to expand.
     pub fetch: Vec<Spanned<Idiom>>,
+    /// `SPLIT <fields>` — array fields to fan out into separate rows.
     pub split: Vec<Spanned<Idiom>>,
+    /// `WHERE <expr>` filter.
     pub where_clause: Option<Spanned<Expr>>,
+    /// `GROUP BY`/`GROUP ALL`.
     pub group: Option<GroupClause>,
+    /// `ORDER BY`.
     pub order: Option<OrderClause>,
-    /// Literal-ness is the analyzer's judgment (`LIMIT 5` vs `LIMIT $n`).
+    /// `LIMIT <expr>`. Literal-ness is the analyzer's judgment
+    /// (`LIMIT 5` vs `LIMIT $n`).
     pub limit: Option<Spanned<Expr>>,
+    /// `START <expr>` — result offset.
     pub start: Option<Spanned<Expr>>,
+    /// `EXPLAIN` — the clause's span, when present.
     pub explain: Option<ByteRange>,
+    /// `TIMEOUT <duration>`.
     pub timeout: Option<Spanned<Expr>>,
+    /// `PARALLEL` — the clause's span, when present.
     pub parallel: Option<ByteRange>,
 }
 
@@ -97,8 +143,11 @@ pub struct SelectStmt {
 pub struct CreateStmt {
     /// `CREATE ONLY person:one` — single object result, not an array.
     pub only: bool,
+    /// The tables or record ids to create.
     pub targets: Vec<Spanned<Expr>>,
+    /// The payload clause (`SET`/`CONTENT`/...), if any.
     pub data: Option<DataClause>,
+    /// `RETURN` mode, if specified.
     pub ret: Option<Spanned<ReturnMode>>,
 }
 
@@ -107,9 +156,13 @@ pub struct CreateStmt {
 pub struct UpdateStmt {
     /// `UPDATE ONLY person:one` — single object result, not an array.
     pub only: bool,
+    /// The tables or record ids to update.
     pub targets: Vec<Spanned<Expr>>,
+    /// The payload clause (`SET`/`CONTENT`/...), if any.
     pub data: Option<DataClause>,
+    /// `WHERE <expr>` filter selecting which rows to update.
     pub where_clause: Option<Spanned<Expr>>,
+    /// `RETURN` mode, if specified.
     pub ret: Option<Spanned<ReturnMode>>,
 }
 
@@ -118,9 +171,13 @@ pub struct UpdateStmt {
 pub struct UpsertStmt {
     /// `UPSERT ONLY person:one` — single object result, not an array.
     pub only: bool,
+    /// The tables or record ids to upsert.
     pub targets: Vec<Spanned<Expr>>,
+    /// The payload clause (`SET`/`CONTENT`/...), if any.
     pub data: Option<DataClause>,
+    /// `WHERE <expr>` filter selecting which rows to update.
     pub where_clause: Option<Spanned<Expr>>,
+    /// `RETURN` mode, if specified.
     pub ret: Option<Spanned<ReturnMode>>,
 }
 
@@ -129,8 +186,11 @@ pub struct UpsertStmt {
 pub struct DeleteStmt {
     /// `DELETE ONLY person:one` — single object result, not an array.
     pub only: bool,
+    /// The tables or record ids to delete from.
     pub targets: Vec<Spanned<Expr>>,
+    /// `WHERE <expr>` filter selecting which rows to delete.
     pub where_clause: Option<Spanned<Expr>>,
+    /// `RETURN` mode, if specified.
     pub ret: Option<Spanned<ReturnMode>>,
 }
 
@@ -143,7 +203,9 @@ pub struct InsertStmt {
     pub relation: bool,
     /// `INTO <target>`.
     pub target: Option<Spanned<Expr>>,
+    /// The rows/values to insert.
     pub data: InsertData,
+    /// `RETURN` mode, if specified.
     pub ret: Option<Spanned<ReturnMode>>,
 }
 
@@ -162,11 +224,15 @@ pub enum InsertData {
     /// be paired: `misaligned` carries the raw `(values, columns)` counts
     /// with the statement's span for the arity finding.
     Rows {
+        /// One vector of `(column, value)` pairs per input row.
         rows: Vec<Vec<(Spanned<Idiom>, Spanned<Expr>)>>,
+        /// Raw `(values, columns)` counts when the flattened values don't
+        /// divide evenly by the column count; carries the statement span.
         misaligned: Option<Spanned<(usize, usize)>>,
     },
     /// `INSERT ... SET`-style field assignments.
     Assignments(Vec<(Spanned<Idiom>, Spanned<Expr>)>),
+    /// A payload that failed to lower.
     Partial(PartialNode),
 }
 
@@ -174,11 +240,17 @@ pub enum InsertData {
 /// edge-endpoint diagnostics will point at each independently.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RelateStmt {
+    /// `RELATE ONLY ...` — single-object result, not an array.
     pub only: bool,
+    /// The `from` endpoint (the edge's `in`).
     pub from: Option<Spanned<Expr>>,
+    /// The edge table or record being created.
     pub edge: Option<Spanned<Expr>>,
+    /// The `to` endpoint (the edge's `out`).
     pub to: Option<Spanned<Expr>>,
+    /// The payload clause (`SET`/`CONTENT`/...), if any.
     pub data: Option<DataClause>,
+    /// `RETURN` mode, if specified.
     pub ret: Option<Spanned<ReturnMode>>,
 }
 
@@ -186,22 +258,34 @@ pub struct RelateStmt {
 /// (ACCESS/API/BUCKET/CONFIG/...) is `Other` until an analyzer needs it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DefineStmt {
+    /// `DEFINE TABLE`.
     Table(DefineTable),
+    /// `DEFINE FIELD`.
     Field(DefineField),
+    /// `DEFINE INDEX`.
     Index(DefineIndex),
+    /// `DEFINE EVENT`.
     Event(DefineEvent),
+    /// `DEFINE PARAM`.
     Param(DefineParam),
+    /// `DEFINE FUNCTION`.
     Function(DefineFunction),
+    /// `DEFINE ANALYZER`.
     Analyzer(DefineAnalyzer),
+    /// An unmodeled `DEFINE` kind (ACCESS/API/BUCKET/CONFIG/...).
     Other(PartialNode),
 }
 
 /// `DEFINE TABLE`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DefineTable {
+    /// The table name.
     pub name: Spanned<String>,
+    /// `OVERWRITE` — redefine an existing table.
     pub overwrite: bool,
+    /// `SCHEMAFULL` (vs `SCHEMALESS`).
     pub schemafull: bool,
+    /// `TYPE RELATION ...` — present when the table is an edge table.
     pub relation: Option<RelationDef>,
     /// `DEFINE TABLE ... DROP` — rows are never retained.
     pub drop: bool,
@@ -212,7 +296,9 @@ pub struct DefineTable {
 /// The `IN`/`OUT` endpoint tables of a relation table.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RelationDef {
+    /// Allowed `in` endpoint tables.
     pub in_tables: Vec<Spanned<String>>,
+    /// Allowed `out` endpoint tables.
     pub out_tables: Vec<Spanned<String>>,
     /// The whole `TYPE RELATION ...` clause.
     pub span: ByteRange,
@@ -222,9 +308,13 @@ pub struct RelationDef {
 /// declared type.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DefineField {
+    /// The (possibly nested) field path.
     pub path: Spanned<Idiom>,
+    /// The table the field belongs to.
     pub table: Spanned<String>,
+    /// `TYPE <type>` — the declared field type, if any.
     pub ty: Option<Spanned<TypeExpr>>,
+    /// `OVERWRITE` — redefine an existing field.
     pub overwrite: bool,
     /// `DEFAULT <expr>` — supplied when a row is created without the field.
     pub default: Option<Spanned<Expr>>,
@@ -239,9 +329,13 @@ pub struct DefineField {
 /// `DEFINE INDEX`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DefineIndex {
+    /// The index name.
     pub name: Spanned<String>,
+    /// The table the index is defined on.
     pub table: Spanned<String>,
+    /// The indexed field paths.
     pub fields: Vec<Spanned<Idiom>>,
+    /// What backs the index.
     pub kind: IndexKind,
 }
 
@@ -249,7 +343,9 @@ pub struct DefineIndex {
 /// uniqueness constraint, or a plain lookup.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IndexKind {
+    /// A plain lookup index.
     Normal,
+    /// `UNIQUE` — a uniqueness constraint.
     Unique,
     /// `SEARCH ANALYZER ...` — full-text.
     Search,
@@ -260,8 +356,11 @@ pub enum IndexKind {
 /// `DEFINE EVENT` — a trigger with its condition and body.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DefineEvent {
+    /// The event name.
     pub name: Spanned<String>,
+    /// The table the event fires on.
     pub table: Spanned<String>,
+    /// `WHEN <expr>` — the trigger condition.
     pub when: Option<Spanned<Expr>>,
     /// `THEN { ... }` / `THEN <expr>` — a block lowers to `Expr::Block`.
     pub then: Option<Spanned<Expr>>,
@@ -270,51 +369,70 @@ pub struct DefineEvent {
 /// `DEFINE PARAM` — a database-level parameter with a default value.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DefineParam {
+    /// The parameter name (without `$`).
     pub name: Spanned<String>,
+    /// `VALUE <expr>` — the parameter's value.
     pub value: Option<Spanned<Expr>>,
 }
 
 /// `DEFINE FUNCTION fn::name(...)`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DefineFunction {
+    /// The function name including the `fn::` path.
     pub name: Spanned<String>,
+    /// Parameters with their declared types, if any.
     pub params: Vec<(Spanned<String>, Option<Spanned<TypeExpr>>)>,
+    /// The function body.
     pub body: Option<Block>,
+    /// The declared return type, if any.
     pub return_ty: Option<Spanned<TypeExpr>>,
 }
 
 /// `DEFINE ANALYZER` — a full-text analyzer pipeline.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DefineAnalyzer {
+    /// The analyzer name.
     pub name: Spanned<String>,
+    /// `TOKENIZERS ...` — the tokenizers in the pipeline.
     pub tokenizers: Vec<Spanned<String>>,
+    /// `FILTERS ...` — the token filters in the pipeline.
     pub filters: Vec<Spanned<String>>,
 }
 
 /// `REMOVE` — drops a schema object.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RemoveStmt {
+    /// The schema object being dropped.
     pub target: RemoveTarget,
 }
 
 /// What a `REMOVE` statement drops.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RemoveTarget {
+    /// `REMOVE TABLE <name>`.
     Table(Spanned<String>),
+    /// `REMOVE FIELD <field> ON <table>`.
     Field {
+        /// The field path being removed.
         field: Spanned<Idiom>,
+        /// The table the field is on.
         table: Spanned<String>,
     },
+    /// `REMOVE INDEX <index> ON <table>`.
     Index {
+        /// The index name being removed.
         index: Spanned<String>,
+        /// The table the index is on.
         table: Spanned<String>,
     },
+    /// An unmodeled `REMOVE` target.
     Other(PartialNode),
 }
 
 /// `ALTER TABLE`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AlterStmt {
+    /// The table being altered.
     pub table: Option<Spanned<String>>,
 }
 
@@ -323,12 +441,14 @@ pub struct AlterStmt {
 pub struct LetStmt {
     /// Binding name without `$`.
     pub name: Spanned<String>,
+    /// The bound value expression.
     pub value: Spanned<Expr>,
 }
 
 /// `RETURN` — yields a value from the enclosing scope.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReturnStmt {
+    /// The returned value expression, if any.
     pub value: Option<Spanned<Expr>>,
 }
 
@@ -337,13 +457,16 @@ pub struct ReturnStmt {
 pub struct IfElseStmt {
     /// `IF cond body` plus any `ELSE IF` arms, in source order.
     pub branches: Vec<IfBranch>,
+    /// The trailing `ELSE` block, if any.
     pub else_branch: Option<Block>,
 }
 
 /// One `IF`/`ELSE IF` arm: a condition and its body.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IfBranch {
+    /// The branch condition.
     pub condition: Spanned<Expr>,
+    /// The block run when the condition holds.
     pub body: Block,
 }
 
@@ -352,38 +475,46 @@ pub struct IfBranch {
 pub struct ForStmt {
     /// Loop binding name without `$`.
     pub binding: Spanned<String>,
+    /// The expression iterated over.
     pub iterable: Spanned<Expr>,
+    /// The loop body.
     pub body: Block,
 }
 
 /// `LIVE SELECT` — subscribes to changes on a table.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LiveSelectStmt {
+    /// The table subscribed to.
     pub table: Option<Spanned<String>>,
 }
 
 /// `KILL` — terminates a live query by id.
 #[derive(Clone, Debug, PartialEq)]
 pub struct KillStmt {
+    /// The live-query id to terminate.
     pub id: Option<Spanned<Expr>>,
 }
 
 /// `USE NS ... DB ...` — selects the active namespace/database.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UseStmt {
+    /// `NS <name>` — the namespace to switch to.
     pub namespace: Option<Spanned<String>>,
+    /// `DB <name>` — the database to switch to.
     pub database: Option<Spanned<String>>,
 }
 
 /// `INFO FOR ...` — describes a catalog level.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InfoStmt {
+    /// `INFO FOR TABLE <name>` — the table, when scoped to one.
     pub table: Option<Spanned<String>>,
 }
 
 /// `SHOW CHANGES FOR TABLE ...` — reads a change feed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShowStmt {
+    /// The table whose change feed is read.
     pub table: Option<Spanned<String>>,
     /// `SINCE <versionstamp|datetime>` — the raw expression.
     pub since: Option<Spanned<Expr>>,
@@ -392,19 +523,23 @@ pub struct ShowStmt {
 /// `REBUILD INDEX ... ON ...`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RebuildStmt {
+    /// The index being rebuilt.
     pub index: Option<Spanned<String>>,
+    /// The table the index is on.
     pub table: Option<Spanned<String>>,
 }
 
 /// `THROW` — raises an error value.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThrowStmt {
+    /// The error value expression.
     pub value: Option<Spanned<Expr>>,
 }
 
 /// `SLEEP <duration>`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SleepStmt {
+    /// The sleep duration expression.
     pub duration: Option<Spanned<Expr>>,
 }
 

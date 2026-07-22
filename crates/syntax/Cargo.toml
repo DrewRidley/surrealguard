@@ -2,10 +2,19 @@
 name = "surrealguard-syntax"
 version.workspace = true
 edition.workspace = true
-publish = false
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Tree-sitter syntax facade and source span primitives for SurrealGuard"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 tree-sitter.workspace = true
 tree-sitter-surrealql.workspace = true
+
+[lints]
+workspace = true

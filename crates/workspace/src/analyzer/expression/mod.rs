@@ -1,6 +1,6 @@
 //! Expression analyzers.
 //!
-//! [`infer`] holds the AST-native fact-inference engine; [`analyze_expr`] is
+//! `infer` holds the AST-native fact-inference engine; `analyze_expr` is
 //! the context-carrying entry that adds what pure inference can't do:
 //! dispatching builtin function calls (with evaluated argument kinds)
 //! through `analyzer::function`, and recording external parameter uses.

@@ -1,60 +1,147 @@
 # SurrealGuard 🛡️
 
-SurrealGuard is a static analyzer and type-inference engine for SurrealQL. It parses your `.surql` schema and queries with span-preserving syntax, infers the response type of every statement, and reports contract violations — unknown tables and fields, kind mismatches, invalid graph traversals, misused clauses, bad function calls — before anything reaches a running SurrealDB instance.
+**Static analysis and type inference for SurrealQL** — catch unknown tables and
+fields, kind mismatches, invalid graph traversals, misused clauses, and bad
+function calls *before* a query ever reaches SurrealDB, and get fully typed
+results in Rust and TypeScript.
+
+SurrealGuard parses your `.surql` schema and queries into a typed, span-carrying
+AST, infers the response type of every statement, and reports violations of each
+construct's contract. That same engine powers a CLI, a language server, a Rust
+proc-macro, and a set of TypeScript packages.
 
 ## Why
 
-SurrealDB tolerates a lot at runtime: cross-kind comparisons order by kind instead of failing, coercions succeed silently, misspelled fields return `NONE`. Those behaviors are exactly where bugs hide. SurrealGuard's premise is contract-first: every construct has a contract (what the author must mean for the statement to make sense), and the analyzer reports violations of that contract even when the engine would happily execute the query.
+SurrealDB is permissive at runtime: cross-kind comparisons order by kind instead
+of failing, coercions succeed silently, and a misspelled field just returns
+`NONE`. That's exactly where bugs hide. SurrealGuard is **contract-first** —
+every construct has a contract (what the author must mean for the statement to
+make sense), and the analyzer reports violations of that contract even when the
+engine would happily execute the query.
 
-SurrealDB's own parser discards spans before producing its AST, so it cannot power an analyzer or editor tooling. SurrealGuard parses with tree-sitter into a typed, span-carrying AST and runs all analysis on that.
+SurrealDB's own parser discards spans before producing its AST, so it can't power
+an analyzer or editor tooling. SurrealGuard parses with tree-sitter into a typed,
+span-carrying AST and runs all analysis on that.
 
-## What it does today
+## The compiler is the checker (Rust)
 
-- **Full statement coverage** — every SurrealQL statement kind lowers to a typed AST and is analyzed: SELECT (projections, graph traversals, FETCH/SPLIT/GROUP/OMIT), the six mutations, RELATE, LET/RETURN/IF/FOR/blocks, transactions, DEFINE/REMOVE/ALTER, LIVE SELECT/KILL, and the rest.
-- **Type inference** — response kinds as upstream `surrealdb_types::Kind` values: closed object literals for known rows, unions from IF/ELSE, record-link and graph-edge shapes, function return types (the full builtin table plus `fn::` declarations), closure and subquery inference, and constant-value evaluation.
-- **A contract catalog of ~80 diagnostics** — one code per contract, allocated in families (1xxx schema references, 2xxx types, 3xxx graph, 4xxx statement misuse, 5xxx functions, 6xxx parameters, 7xxx lints, 8xxx version compatibility). The registry lives in `docs/plans/2026-07-07-diagnostic-catalog.md`; severities are intrinsic to each finding, and consumers apply policy (warnings-as-errors, lint levels) at their edge, rustc-style.
-- **Parameter constraints for hosts** — every `$param` a source reads is exported with the kind and value domain its uses imply (`UPDATE user SET age = $age` → `age: int`; `LIMIT $n` → non-negative int; `type::field($f)` → one of the table's field paths). Host adapters enforce these at the call site.
-- **Byte-precise spans** on every finding, suitable for editor squiggles.
+```rust
+use surrealguard_rs::query;
 
-## Surfaces
+// Checked against your schema at compile time. A wrong table, unknown field,
+// bad arity, or kind mismatch is a `cargo check` error — no external step.
+let users = query!("SELECT name, age FROM user");
+//  users: Query<Vec<{ name: String, age: i64 }>>  ← nameless, inferred
+```
 
-- **CLI** — `surrealguard check` analyzes the workspace (`--json` for machine output; exit code reflects post-policy errors); `surrealguard init` writes a starter config.
-- **LSP** — `surrealguard-lsp` publishes diagnostics over stdio.
-- Host adapters (Rust macros, TypeScript, Python, Go) are the next phase, built on the parameter-constraint and response-kind exports. MCP tooling is planned.
+`query!` runs the real analyzer during compilation and turns findings into
+spanned `compile_error!`s, then generates the result type from the inferred
+response kind — no codegen step, no language server, no runtime schema fetch.
+Point it at a `schema/` or `migrations/` directory (applied in order) and it
+resolves real tables and fields. `surql!` is the lighter form: check a query,
+expand to its text.
 
-## Project structure
+## Typed queries, no wrapper (TypeScript)
+
+```ts
+import { SurrealGuardClient, fromSurreal } from "@surrealguard/client";
+// import "./surrealguard.generated"; // from `surrealguard generate`
+
+const db = new SurrealGuardClient(fromSurreal(surreal));
+
+const users = await db.query("SELECT name FROM user WHERE team = $team", { team: "red" });
+//    ^ result typed from the query text; params required + typed; wrong/missing params
+//      are compile errors. Dynamic strings degrade to `unknown` and still run.
+```
+
+Framework adapters build on a reactive core (`@surrealguard/query`) that hides
+SSR hydration and live-query lifetimes:
+
+```svelte
+<script>
+  import { liveQuery } from "@surrealguard/svelte";
+  const users = liveQuery(qc, "LIVE SELECT * FROM user", { initial: data.users });
+</script>
+{#each $users.data as user (user.id)}<li>{user.name}</li>{/each}
+```
+
+`LIVE SELECT` opens one shared, reference-counted subscription and reconciles
+change notifications by record id; `@surrealguard/next` offers the same via a
+`useLiveQuery` hook.
+
+## What it analyzes
+
+- **Full statement coverage** — SELECT (projections, graph traversals,
+  FETCH/SPLIT/GROUP/OMIT), the six mutations, RELATE, LET/RETURN/IF/FOR/blocks,
+  transactions, DEFINE/REMOVE/ALTER, LIVE SELECT/KILL, and the rest.
+- **Type inference** — response kinds as upstream `surrealdb_types::Kind`: closed
+  object literals for known rows, unions from IF/ELSE, record-link and graph-edge
+  shapes, the full builtin function table plus `fn::` declarations, closure and
+  subquery inference, and constant-value evaluation.
+- **A contract catalog of ~80 diagnostics** in families (1xxx schema references,
+  2xxx types, 3xxx graph, 4xxx statement misuse, 5xxx functions, 6xxx parameters,
+  7xxx lints, 8xxx version compatibility). Severities are intrinsic to each
+  finding; consumers apply policy (warnings-as-errors, lint levels) at their edge,
+  rustc-style.
+- **Parameter constraints** — every `$param` a source reads is exported with the
+  kind and value domain its uses imply (`UPDATE user SET age = $age` → `age: int`;
+  `LIMIT $n` → non-negative int).
+- **Byte-precise spans** on every finding, for editor squiggles.
+
+## Ways to use it
+
+- **CLI** — `surrealguard check` analyzes a workspace (`--json` for machine
+  output; exit code reflects post-policy errors); `surrealguard generate` emits
+  the TypeScript types; `surrealguard init` writes a starter config.
+- **Editors (LSP)** — `surrealguard-lsp` publishes diagnostics over stdio for
+  `.surql` files *and* for SurrealQL embedded in host files (TypeScript, Svelte,
+  Vue, Astro) — squiggles land on the exact token inside your inline query.
+- **Rust** — the `surrealguard-rs` crate re-exports the `query!` / `surql!` macros.
+- **TypeScript** — `@surrealguard/client`, `@surrealguard/query`,
+  `@surrealguard/next`, `@surrealguard/svelte`.
+
+## Project layout
 
 ```
 surrealguard/
 ├── crates/
-│   ├── syntax/        # tree-sitter parsing, typed AST, lowering
-│   ├── diagnostics/   # finding types, code catalog, severity policy
-│   ├── workspace/     # schema index, analyzers, analysis pipeline
-│   ├── cli/           # surrealguard binary
-│   └── lsp/           # surrealguard-lsp binary
-├── docs/
-│   ├── DESIGN.md      # maintained source of truth
-│   └── plans/2026-07-07-diagnostic-catalog.md  # the contract registry
-└── tree-sitter-surrealql/  # grammar (path dependency, forked)
+│   ├── syntax/        # tree-sitter parsing, typed span-carrying AST, lowering
+│   ├── diagnostics/   # finding types, code catalog, severity/lint policy
+│   ├── workspace/     # schema index, analyzers, inference, analysis pipeline
+│   ├── codegen/       # Kind → TypeScript generation
+│   ├── embed/         # embedded-SurrealQL extraction from host files
+│   ├── macros/        # the surql! / query! proc-macros
+│   ├── rs/            # surrealguard-rs runtime (typed results)
+│   ├── cli/           # the `surrealguard` binary
+│   └── lsp/           # the `surrealguard-lsp` binary
+├── packages/          # @surrealguard/{client,query,next,svelte} (pnpm workspace)
+└── docs/              # DESIGN.md + design plans (incl. the diagnostic catalog)
 ```
 
-## Getting started
+## Install
 
 ```bash
+# CLI (from source until the crates.io release)
 cargo install --path crates/cli
-
-# in your project
-surrealguard init
-surrealguard check          # human output
-surrealguard check --json   # machine output
+surrealguard init && surrealguard check
 ```
 
-Point the config at your schema and query directories; the workspace analyzes every `.surql` source in order, so schema definitions are visible to the queries that follow them.
+The workspace analyzes every `.surql` source in order, so schema definitions are
+visible to the queries that follow them.
 
 ## Status
 
-Under active development on the `redesign-v3-foundation` branch. The core engine (typed AST, full inference, contract diagnostics, parameter constraints) is complete; host adapters and grammar-conformance hardening are in progress. See `docs/DESIGN.md` for the current state and roadmap.
+The engine (typed AST, full inference, ~80 contract diagnostics, parameter
+constraints), the CLI, the LSP, the Rust `surql!` / `query!` macros, and the
+TypeScript packages are all built and tested. First release is in preparation:
+the crates.io publish is gated on the tree-sitter SurrealQL grammar being
+published upstream; the npm packages have no such dependency. See `docs/DESIGN.md`
+for architecture and roadmap.
 
 ## License
 
-MIT
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option. Unless you explicitly state otherwise,
+any contribution intentionally submitted for inclusion in this project by you, as
+defined in the Apache-2.0 license, shall be dual licensed as above, without any
+additional terms or conditions.

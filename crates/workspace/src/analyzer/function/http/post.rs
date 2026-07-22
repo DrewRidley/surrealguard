@@ -20,7 +20,11 @@ fn http_body_kind() -> Kind {
     Kind::either(variants)
 }
 
-pub fn analyze_http_post(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
+pub(crate) fn analyze_http_post(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    args: &[Kind],
+) -> Kind {
     apply(
         ctx,
         call,

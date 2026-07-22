@@ -7,7 +7,7 @@ use surrealguard_syntax::span::ByteRange;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_continue(
+pub(crate) fn analyze_continue(
     ctx: &mut AnalysisContext<'_>,
     stmt: &ast::ContinueStmt,
     span: ByteRange,

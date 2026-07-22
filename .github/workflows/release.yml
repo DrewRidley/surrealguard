@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# The release job uploads archives to the GitHub Release for the tag.
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+# ASSET NAMING SCHEME (must stay identical to the npm launcher
+# npm/surrealguard/bin/surrealguard.cjs and crates/cli Cargo.toml
+# [package.metadata.binstall]):
+#
+#   tag:     v{version}
+#   archive: surrealguard-{version}-{target}.tar.gz   (unix)
+#            surrealguard-{version}-{target}.zip       (windows)
+#   binary:  surrealguard | surrealguard.exe           (at archive root)
+
+jobs:
+  build:
+    name: build · ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            # aarch64 Linux is cross-compiled natively with the gnu cross
+            # toolchain (not `cross`), because the tree-sitter grammar is a
+            # path dependency at the sibling `../tree-sitter-surrealql` — a
+            # docker-based `cross` build would not see that path, whereas a
+            # native cross build shares the runner filesystem.
+            gcc-cross: aarch64-linux-gnu
+          - target: x86_64-apple-darwin
+            os: macos-13
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    steps:
+      # surrealguard-syntax depends on the tree-sitter-surrealql grammar via a
+      # path dependency (`../tree-sitter-surrealql`). Until that grammar is
+      # published to crates.io, the release build checks it out at the expected
+      # sibling path — mirroring .github/workflows/ci.yml.
+      - name: Check out surrealguard
+        uses: actions/checkout@v4
+        with:
+          path: surrealguard
+
+      - name: Check out grammar
+        uses: actions/checkout@v4
+        with:
+          repository: DrewRidley/tree-sitter-surrealql-1
+          path: tree-sitter-surrealql
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: surrealguard
+          key: ${{ matrix.target }}
+
+      - name: Install gnu cross toolchain
+        if: matrix.gcc-cross != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-${{ matrix.gcc-cross }}
+          # Point cargo's linker and the `cc` crate (grammar build script) at
+          # the cross compiler for the target.
+          triple_env=$(echo "${{ matrix.target }}" | tr 'a-z-' 'A-Z_')
+          echo "CARGO_TARGET_${triple_env}_LINKER=${{ matrix.gcc-cross }}-gcc" >> "$GITHUB_ENV"
+          echo "CC_${{ matrix.target }}=${{ matrix.gcc-cross }}-gcc" >> "$GITHUB_ENV"
+          echo "CXX_${{ matrix.target }}=${{ matrix.gcc-cross }}-g++" >> "$GITHUB_ENV"
+
+      - name: Build
+        working-directory: surrealguard
+        run: cargo build --release -p surrealguard --target ${{ matrix.target }}
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        working-directory: surrealguard
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          asset="surrealguard-${version}-${{ matrix.target }}.tar.gz"
+          tar -czf "$asset" -C "target/${{ matrix.target }}/release" surrealguard
+          echo "ASSET=surrealguard/${asset}" >> "$GITHUB_ENV"
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        working-directory: surrealguard
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $asset = "surrealguard-$version-${{ matrix.target }}.zip"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/surrealguard.exe" -DestinationPath $asset -Force
+          "ASSET=surrealguard/$asset" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ASSET }}
+          fail_on_unmatched_files: true

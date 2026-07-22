@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLI — SurrealGuard Docs</title>
+<meta name="description" content="The surrealguard CLI: init, check (with --json output shape), generate, and exit codes." />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
+<link rel="stylesheet" href="/styles.css" />
+<link rel="stylesheet" href="/docs/docs.css" />
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+    <div class="nav-links">
+      <a href="/docs/">Docs</a>
+      <a href="/#agents">For agents</a>
+      <a href="/#install">Install</a>
+      <a class="nav-cta" href="https://github.com/DrewRidley/surrealguard">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<div class="docs-shell">
+  <aside class="docs-sidebar">
+    <div class="group">Overview</div>
+    <nav>
+      <a href="/docs/">Introduction</a>
+      <a href="/docs/getting-started.html">Getting started</a>
+    </nav>
+    <div class="group">Reference</div>
+    <nav>
+      <a href="/docs/cli.html" aria-current="page">CLI</a>
+      <a href="/docs/diagnostics.html">Diagnostics</a>
+    </nav>
+    <div class="group">Integrations</div>
+    <nav>
+      <a href="/docs/rust.html">Rust · surrealguard-rs</a>
+      <a href="/docs/typescript.html">TypeScript</a>
+      <a href="/docs/agents.html">Coding agents</a>
+    </nav>
+  </aside>
+
+  <main class="docs-main">
+    <span class="eyebrow-doc">// reference</span>
+    <h1>CLI</h1>
+    <p class="lead-p">The <code>surrealguard</code> binary analyzes a workspace of <code>.surql</code> sources and reports findings as text or JSON. It has three subcommands: <code>init</code>, <code>check</code>, and <code>generate</code>.</p>
+
+    <div class="pill-row">
+      <span class="p">surrealguard init</span>
+      <span class="p">surrealguard check [--json]</span>
+      <span class="p">surrealguard generate [--out &lt;path&gt;]</span>
+    </div>
+
+    <h2>init</h2>
+    <p>Writes a starter <code>surrealguard.toml</code> in the current directory. If one already exists, it is left untouched.</p>
+    <pre class="code"><span class="dollar">$</span> surrealguard init
+Created surrealguard.toml</pre>
+
+    <h2>check</h2>
+    <p>Discovers every <code>.surql</code>/<code>.surrealql</code> file under the workspace root (the nearest ancestor directory containing <code>surrealguard.toml</code>), analyzes them in sorted path order against the schema they define, and reports findings. Severity is resolved through the workspace policy — <code>warnings_as_errors</code> promotion and per-lint levels apply here, at the consumption edge.</p>
+    <pre class="code"><span class="dollar">$</span> surrealguard check
+Checking SurrealQL sources...
+<span class="err">error[E1002]: unknown field `team` on table `user`</span>
+ --&gt; queries/users.surql
+  ...
+check failed: 1 error(s), 1 diagnostic(s)</pre>
+
+    <h3 id="--json">--json</h3>
+    <p>Emits machine-readable diagnostics instead of the text renderer. The document has two top-level keys, <code>summary</code> and <code>diagnostics</code>:</p>
+    <pre class="code">{
+  <span class="t">"summary"</span>: {
+    <span class="t">"sources_checked"</span>: <span class="n">2</span>,
+    <span class="t">"diagnostics"</span>: <span class="n">1</span>,
+    <span class="t">"errors"</span>: <span class="n">1</span>
+  },
+  <span class="t">"diagnostics"</span>: [
+    {
+      <span class="t">"code"</span>: <span class="s">"E1002"</span>,
+      <span class="t">"severity"</span>: <span class="s">"error"</span>,
+      <span class="t">"source"</span>: <span class="s">"queries/users.surql"</span>,
+      <span class="t">"range"</span>: { <span class="t">"start"</span>: <span class="n">41</span>, <span class="t">"end"</span>: <span class="n">45</span> },
+      <span class="t">"message"</span>: <span class="s">"unknown field `team` on table `user`"</span>,
+      <span class="t">"help"</span>: [<span class="s">"did you mean `name`?"</span>],
+      <span class="t">"related"</span>: [
+        {
+          <span class="t">"source"</span>: <span class="s">"schema/user.surql"</span>,
+          <span class="t">"range"</span>: { <span class="t">"start"</span>: <span class="n">0</span>, <span class="t">"end"</span>: <span class="n">26</span> },
+          <span class="t">"message"</span>: <span class="s">"table `user` defined here"</span>
+        }
+      ]
+    }
+  ]
+}</pre>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>summary.sources_checked</td><td>number</td><td>Count of analyzed sources.</td></tr>
+        <tr><td>summary.diagnostics</td><td>number</td><td>Findings that survived policy (errors + warnings + hints).</td></tr>
+        <tr><td>summary.errors</td><td>number</td><td>Error-severity findings; non-zero fails the check.</td></tr>
+        <tr><td>code</td><td>string</td><td>Severity-prefixed code — <code>E</code> error, <code>W</code> warning, <code>I</code> hint, <code>S</code> syntax (e.g. <code>E1002</code>, <code>W4022</code>, <code>I7007</code>, <code>S0001</code>). The prefix reflects the <em>resolved</em> severity, so a promoted warning renders as <code>E…</code>.</td></tr>
+        <tr><td>severity</td><td>string</td><td><code>"error"</code>, <code>"warning"</code>, or <code>"hint"</code>.</td></tr>
+        <tr><td>source</td><td>string</td><td>The source path/id the span belongs to.</td></tr>
+        <tr><td>range</td><td>{ start, end }</td><td>Byte offsets into that source — precise enough for surgical inline edits.</td></tr>
+        <tr><td>message</td><td>string</td><td>The finding message.</td></tr>
+        <tr><td>help</td><td>string[]</td><td>Zero or more help lines.</td></tr>
+        <tr><td>related</td><td>object[]</td><td>Related spans, each <code>{ source, range, message }</code> — e.g. where a table was defined.</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="callout">
+      <strong>On a clean run</strong> the <code>diagnostics</code> array is empty and only the <code>summary</code> is populated; the <code>diagnostics</code> array is filled when the check fails. The <code>help</code> and <code>related</code> arrays are always present, often empty.
+    </div>
+
+    <h2 id="generate">generate</h2>
+    <p>Scans host-language files for embedded SurrealQL, analyzes each query against the workspace schema, and writes a typed query registry as a TypeScript declaration file. Host files are discovered by extension — <code>.ts</code>, <code>.tsx</code>, <code>.js</code>, <code>.jsx</code>, <code>.svelte</code>, <code>.vue</code>, <code>.astro</code> — honoring the same ignore patterns as <code>.surql</code> discovery.</p>
+    <pre class="code"><span class="dollar">$</span> surrealguard generate
+Generated surql.gen.d.ts
+
+<span class="cmt"># custom output path</span>
+<span class="dollar">$</span> surrealguard generate --out src/surql.gen.d.ts</pre>
+    <p>The default output is <code>surql.gen.d.ts</code> at the workspace root. The emitted file is a <strong>module augmentation of <code>@surrealguard/client</code></strong> — importing it makes <code>db.query("…")</code> resolve the result and params of each analyzed query from its exact text. See the <a class="link" href="/docs/typescript.html">TypeScript</a> page.</p>
+
+    <h2>Exit codes</h2>
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>Success — no error-severity findings survived policy (warnings and hints do not fail the check unless <code>warnings_as_errors</code> promotes them).</td></tr>
+        <tr><td>1</td><td>The check found one or more error-severity findings, or a command failed (missing/invalid config, unreadable source, I/O error).</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>In JSON mode the process still exits <code>1</code> on a failing check, but the diagnostics are printed to stdout as JSON rather than to stderr as text — so a wrapper can parse findings on failure and read the exit code as a pass/fail signal.</p>
+
+    <div class="docs-pager">
+      <a href="/docs/getting-started.html">
+        <span class="dir">← Previous</span>
+        <span class="ttl">Getting started</span>
+      </a>
+      <a class="next" href="/docs/diagnostics.html">
+        <span class="dir">Next →</span>
+        <span class="ttl">Diagnostics</span>
+      </a>
+    </div>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+      <div class="tiny">Static analysis &amp; type inference for SurrealQL.</div>
+    </div>
+    <div class="cols">
+      <a href="/docs/">Docs</a>
+      <a href="/llms.txt">llms.txt</a>
+      <a href="/llms-full.txt">llms-full.txt</a>
+      <a href="https://github.com/DrewRidley/surrealguard">GitHub</a>
+      <a href="https://crates.io/crates/surrealguard">crates.io</a>
+      <a href="https://www.npmjs.com/org/surrealguard">npm</a>
+    </div>
+    <div class="tiny">MIT OR Apache-2.0</div>
+  </div>
+</footer>
+
+</body>
+</html>

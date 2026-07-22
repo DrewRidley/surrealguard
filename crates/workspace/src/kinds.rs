@@ -29,8 +29,7 @@ pub(crate) fn kind_is_assignable_to(actual: &Kind, expected: &Kind) -> bool {
         (
             Kind::Int | Kind::Float | Kind::Decimal | Kind::Number,
             Kind::Number
-        ) | (Kind::Int, Kind::Float)
-            | (Kind::Int, Kind::Decimal)
+        ) | (Kind::Int, Kind::Float | Kind::Decimal)
     )
 }
 

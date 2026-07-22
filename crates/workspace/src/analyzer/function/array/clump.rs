@@ -10,7 +10,11 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_array_clump(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
+pub(crate) fn analyze_array_clump(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    args: &[Kind],
+) -> Kind {
     let _ = (ctx, call);
     match args {
         [input @ (Kind::Array(_, _) | Kind::Set(_, _)), Kind::Int | Kind::Float | Kind::Decimal | Kind::Number] => {
@@ -34,6 +38,6 @@ mod tests {
                 analyze_array_clump(ctx, &call, &[input.clone(), Kind::Int]),
                 Kind::Array(Box::new(input), None)
             );
-        })
+        });
     }
 }

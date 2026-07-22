@@ -12,13 +12,18 @@ use surrealguard_syntax::span::SourceSpan;
 /// `Kind::Any` poison value.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PartialReason {
+    /// A referenced binding, field, or definition could not be resolved.
     Unresolved,
+    /// The value is only known at runtime, so it cannot be inferred.
     DynamicExpression,
+    /// Syntax the inference engine does not model, carrying a description.
     UnsupportedSyntax(String),
 }
 
+/// What inference proved about a single expression.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExpressionFact {
+    /// Where the expression sits in its source.
     pub span: SourceSpan,
     /// Best-effort inferred kind; `None` when undeterminable. Closed
     /// objects and tuples are expressed as `Kind::Literal`.
@@ -28,34 +33,56 @@ pub struct ExpressionFact {
     /// Lets value-dependent builtins (`type::field('name.first')`) resolve
     /// through `LET` indirection.
     pub value: Option<surrealdb_types::Value>,
+    /// The syntactic shape the value came from — what kind of expression
+    /// this fact describes.
     pub value_class: ExpressionValueClass,
+    /// Every reason the fact is incomplete; empty when fully determined.
     pub partial: Vec<PartialReason>,
+    /// The fields, variables, params, and function this expression reads.
     pub dependencies: ExpressionDependencies,
 }
 
+/// The syntactic category of the expression a fact describes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExpressionValueClass {
+    /// A literal constant.
     Literal,
+    /// A field access idiom (`profile.name`).
     FieldPath,
+    /// A `LET` binding reference.
     Variable,
+    /// A function or method call.
     FunctionCall,
+    /// A parenthesized subquery.
     Subquery,
+    /// An object constructor.
     Object,
+    /// An array constructor.
     Array,
+    /// A graph traversal (`->edge->node`).
     GraphPath,
+    /// A `{ ... }` statement block.
     Block,
+    /// A shape inference does not classify.
     Unknown,
 }
 
+/// The named symbols an expression depends on, tracked so downstream
+/// consumers can trace values through `LET` and param indirection.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExpressionDependencies {
+    /// Field paths read by the expression.
     pub field_paths: Vec<String>,
+    /// `LET` variable names read by the expression.
     pub variables: Vec<String>,
+    /// Parameter names (`$name`) read by the expression.
     pub params: Vec<String>,
+    /// The function called, when the expression is a call.
     pub function: Option<String>,
 }
 
 impl ExpressionFact {
+    /// A fresh fact for `span` with the given class and nothing yet known.
     pub fn new(span: SourceSpan, value_class: ExpressionValueClass) -> Self {
         Self {
             span,
@@ -67,11 +94,13 @@ impl ExpressionFact {
         }
     }
 
+    /// Sets the inferred kind, consuming and returning the fact.
     pub fn with_kind(mut self, kind: Kind) -> Self {
         self.kind = Some(kind);
         self
     }
 
+    /// Records one reason the fact is partial, consuming and returning it.
     pub fn with_partial(mut self, reason: PartialReason) -> Self {
         self.partial.push(reason);
         self

@@ -175,8 +175,7 @@ fn param_value_type(param: &ParamInference) -> String {
     param
         .kind
         .as_ref()
-        .map(ts_type)
-        .unwrap_or_else(|| "unknown".into())
+        .map_or_else(|| "unknown".into(), ts_type)
 }
 
 fn ts_value_fallback(value: &surrealdb_types::Value) -> String {

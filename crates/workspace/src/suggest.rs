@@ -4,7 +4,7 @@
 /// The candidate closest to `name`, when its distance is small relative
 /// to the name's length (a quarter of it, minimum one edit — the rustc
 /// heuristic neighborhood).
-pub(crate) fn closest<'a, I>(name: &str, candidates: I) -> Option<&'a str>
+pub fn closest<'a, I>(name: &str, candidates: I) -> Option<&'a str>
 where
     I: IntoIterator<Item = &'a str>,
 {

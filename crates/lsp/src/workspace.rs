@@ -15,7 +15,9 @@ use surrealguard_workspace::{analyze_workspace, Workspace as AnalysisWorkspace};
 /// A tracked document in the workspace.
 #[derive(Debug, Clone)]
 pub struct Document {
+    /// The document's URI, its identity in the workspace.
     pub uri: Url,
+    /// The document's current full text.
     pub text: String,
 }
 
@@ -30,6 +32,7 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    /// Creates an empty workspace with no tracked documents or roots.
     pub fn new() -> Self {
         Self::default()
     }
@@ -143,13 +146,12 @@ impl Workspace {
         for root in &self.roots.clone() {
             for entry in walkdir::WalkDir::new(root)
                 .into_iter()
-                .filter_map(|entry| entry.ok())
+                .filter_map(std::result::Result::ok)
             {
                 let path = entry.path();
                 let is_surrealql = path
                     .extension()
-                    .map(|extension| extension == "surql" || extension == "surrealql")
-                    .unwrap_or(false);
+                    .is_some_and(|extension| extension == "surql" || extension == "surrealql");
 
                 if !is_surrealql {
                     continue;
@@ -199,7 +201,9 @@ fn respan_to_host(
 
 /// Diagnostics-only result from the shared workspace analysis facade.
 pub struct DiagnosticAnalysisResult {
+    /// Findings for the target document, spanned into its own file.
     pub diagnostics: Vec<Finding>,
+    /// The target document's full text, for rendering diagnostics.
     pub source: String,
     /// Every analyzed document keyed by its analysis source id, for
     /// resolving related-information spans that point at other files.

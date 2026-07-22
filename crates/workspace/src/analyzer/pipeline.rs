@@ -31,23 +31,23 @@ use crate::statement_env::StatementEnv;
 use surrealguard_diagnostics::Finding;
 
 #[derive(Debug, Default)]
-pub struct PipelineOutput {
+pub(crate) struct PipelineOutput {
     pub schema: SchemaIndex,
     pub diagnostics: Vec<Finding>,
     pub sources: BTreeMap<SourceId, SourceAnalysis>,
 }
 
 #[derive(Debug, Default)]
-pub struct SourceAnalysis {
+pub(crate) struct SourceAnalysis {
     pub statements: Vec<StatementAnalysis>,
     pub params: Vec<ParamInference>,
 }
 
-pub fn analyze_sources(parsed_sources: &[ParsedSource]) -> PipelineOutput {
+pub(crate) fn analyze_sources(parsed_sources: &[ParsedSource]) -> PipelineOutput {
     analyze_sources_with(parsed_sources, false)
 }
 
-pub fn analyze_sources_with(
+pub(crate) fn analyze_sources_with(
     parsed_sources: &[ParsedSource],
     require_suppression_reasons: bool,
 ) -> PipelineOutput {
@@ -298,11 +298,10 @@ fn select_modifiers(source: &SourceId, stmt: &ast::SelectStmt) -> Vec<SelectModi
         out.push(modifier("parallel", parallel, true, None));
     }
     if let Some(group) = &stmt.group {
-        let range = group
-            .keys
-            .first()
-            .map(|key| key.span)
-            .unwrap_or(surrealguard_syntax::span::ByteRange::new(0, 0).expect("ordered"));
+        let range = group.keys.first().map_or(
+            surrealguard_syntax::span::ByteRange::new(0, 0).expect("ordered"),
+            |key| key.span,
+        );
         out.push(modifier("group", range, false, None));
     }
     if let Some(first) = stmt.split.first() {

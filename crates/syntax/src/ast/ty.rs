@@ -7,13 +7,16 @@
 
 use super::{PartialNode, Spanned};
 
+/// A syntactic type expression, kept independent of `surrealdb_types::Kind`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TypeExpr {
     /// `string`, `int`, `record`, ...
     Name(Spanned<String>),
     /// `array<string>`, `record<user>`, `set<int, 5>`, ...
     Parameterized {
+        /// The base type constructor (`array`, `record`, `set`, ...).
         name: Spanned<String>,
+        /// The type arguments inside `<...>`.
         args: Vec<Spanned<TypeExpr>>,
     },
     /// `int | string`

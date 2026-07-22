@@ -62,7 +62,7 @@ pub mod transpose;
 pub mod union;
 pub mod windows;
 
-pub fn analyze_array_function(
+pub(crate) fn analyze_array_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

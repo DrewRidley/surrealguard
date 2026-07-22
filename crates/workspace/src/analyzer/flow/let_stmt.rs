@@ -9,7 +9,7 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) -> Kind {
+pub(crate) fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) -> Kind {
     // SurrealDB rejects assignment to its context parameters at runtime.
     const PROTECTED: &[&str] = &[
         "auth", "session", "token", "access", "this", "parent", "event", "value", "before",

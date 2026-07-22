@@ -8,7 +8,7 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_object_values(
+pub(crate) fn analyze_object_values(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     args: &[Kind],

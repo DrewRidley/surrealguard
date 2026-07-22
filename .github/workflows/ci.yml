@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [master, redesign-v3-foundation]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: build · test · lint
+    runs-on: ubuntu-latest
+    steps:
+      # surrealguard-syntax depends on the tree-sitter-surrealql grammar via a
+      # path dependency (`../tree-sitter-surrealql`). Until that grammar is
+      # published to crates.io, CI checks it out at the expected sibling path.
+      # Once the fork is upstreamed and released, drop this step and switch the
+      # workspace dependency from `path` to a crates.io `version`.
+      - name: Check out surrealguard
+        uses: actions/checkout@v4
+        with:
+          path: surrealguard
+
+      - name: Check out grammar
+        uses: actions/checkout@v4
+        with:
+          repository: DrewRidley/tree-sitter-surrealql-1
+          path: tree-sitter-surrealql
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: surrealguard
+
+      - name: Format check
+        working-directory: surrealguard
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        working-directory: surrealguard
+        run: cargo clippy --workspace --all-targets
+
+      - name: Test
+        working-directory: surrealguard
+        run: cargo test --workspace
+
+  packages:
+    name: js packages · build · typecheck · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r run build
+      - run: pnpm -r run typecheck
+      - run: pnpm -r --if-present run test

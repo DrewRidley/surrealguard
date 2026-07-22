@@ -58,10 +58,7 @@ fn push_snippet(out: &mut String, span: &SourceSpan, texts: &BTreeMap<String, St
     // Caret width: the span's portion of this line (multi-line spans
     // underline to the line's end).
     let line_remaining = line_text.chars().count().saturating_sub(col).max(1);
-    let span_chars = text
-        .get(start..end)
-        .map(|s| s.chars().count().max(1))
-        .unwrap_or(1);
+    let span_chars = text.get(start..end).map_or(1, |s| s.chars().count().max(1));
     let carets = "^".repeat(span_chars.min(line_remaining));
     out.push_str(&format!("{pad} | {}{carets}\n", " ".repeat(col)));
 }
@@ -70,12 +67,11 @@ fn push_snippet(out: &mut String, span: &SourceSpan, texts: &BTreeMap<String, St
 /// byte offset.
 fn locate(text: &str, offset: usize) -> (usize, usize, String) {
     let clamped = offset.min(text.len());
-    let line_start = text[..clamped].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let line_start = text[..clamped].rfind('\n').map_or(0, |i| i + 1);
     let line_no = text[..line_start].matches('\n').count();
     let line_end = text[line_start..]
         .find('\n')
-        .map(|i| line_start + i)
-        .unwrap_or(text.len());
+        .map_or(text.len(), |i| line_start + i);
     let col = text[line_start..clamped].chars().count();
     (line_no, col, text[line_start..line_end].to_string())
 }
@@ -85,10 +81,10 @@ fn locate(text: &str, offset: usize) -> (usize, usize, String) {
 fn display_source(source: &str) -> String {
     let path = source.strip_prefix("file://").unwrap_or(source);
     match std::env::current_dir() {
-        Ok(cwd) => std::path::Path::new(path)
-            .strip_prefix(&cwd)
-            .map(|relative| relative.display().to_string())
-            .unwrap_or_else(|_| path.to_string()),
+        Ok(cwd) => std::path::Path::new(path).strip_prefix(&cwd).map_or_else(
+            |_| path.to_string(),
+            |relative| relative.display().to_string(),
+        ),
         Err(_) => path.to_string(),
     }
 }

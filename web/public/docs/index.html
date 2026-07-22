@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Introduction — SurrealGuard Docs</title>
+<meta name="description" content="SurrealGuard is contract-first static analysis and type inference for SurrealQL — one engine behind a CLI, an LSP, a Rust proc-macro, and TypeScript packages." />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
+<link rel="stylesheet" href="/styles.css" />
+<link rel="stylesheet" href="/docs/docs.css" />
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+    <div class="nav-links">
+      <a href="/docs/">Docs</a>
+      <a href="/#agents">For agents</a>
+      <a href="/#install">Install</a>
+      <a class="nav-cta" href="https://github.com/DrewRidley/surrealguard">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<div class="docs-shell">
+  <aside class="docs-sidebar">
+    <div class="group">Overview</div>
+    <nav>
+      <a href="/docs/" aria-current="page">Introduction</a>
+      <a href="/docs/getting-started.html">Getting started</a>
+    </nav>
+    <div class="group">Reference</div>
+    <nav>
+      <a href="/docs/cli.html">CLI</a>
+      <a href="/docs/diagnostics.html">Diagnostics</a>
+    </nav>
+    <div class="group">Integrations</div>
+    <nav>
+      <a href="/docs/rust.html">Rust · surrealguard-rs</a>
+      <a href="/docs/typescript.html">TypeScript</a>
+      <a href="/docs/agents.html">Coding agents</a>
+    </nav>
+  </aside>
+
+  <main class="docs-main">
+    <span class="eyebrow-doc">// documentation</span>
+    <h1>Introduction</h1>
+    <p class="lead-p">SurrealGuard is static analysis and type inference for SurrealQL. It parses your <code>.surql</code> schema and queries into a typed, span-carrying AST, infers the response type of every statement, and reports violations of each construct's contract — before a query ever reaches SurrealDB.</p>
+
+    <p>The same engine powers four surfaces: a <a class="link" href="/docs/cli.html">CLI</a> for CI and agents, a language server, a Rust <a class="link" href="/docs/rust.html">proc-macro</a>, and a set of <a class="link" href="/docs/typescript.html">TypeScript packages</a>. You write ordinary SurrealQL; SurrealGuard checks it and hands back a fully typed result.</p>
+
+    <h2>Why contract-first</h2>
+    <p>SurrealDB is permissive at runtime. Cross-kind comparisons order by kind instead of failing, coercions succeed silently, and a misspelled field just returns <code>NONE</code>. That is exactly where bugs hide — the database accepts them.</p>
+    <p>SurrealGuard is <strong>contract-first</strong>: every construct has a contract (what the author must mean for the statement to make sense), and the analyzer reports violations of that contract <em>even when the engine would happily execute the query</em>. Severity is intrinsic to each finding; whether SurrealDB throws, tolerates, or coerces is irrelevant to whether the contract was broken.</p>
+
+    <div class="callout">
+      <strong>Why tree-sitter, not SurrealDB's parser?</strong> SurrealDB's own parser discards spans before producing its AST (true in 2.x and 3.0), so it can't power an analyzer or editor tooling. SurrealGuard parses with tree-sitter into a typed, span-carrying AST and runs all analysis on that.
+    </div>
+
+    <h2>What it analyzes</h2>
+    <ul>
+      <li><strong>Full statement coverage</strong> — SELECT (projections, graph traversals, FETCH/SPLIT/GROUP/OMIT), the six mutations, RELATE, LET/RETURN/IF/FOR/blocks, transactions, DEFINE/REMOVE/ALTER, LIVE SELECT/KILL, and the rest.</li>
+      <li><strong>Real type inference</strong> — response kinds as upstream <code>surrealdb_types::Kind</code>: closed object literals for known rows, IF/ELSE unions, record-link and graph-edge shapes, the full builtin function table plus <code>fn::</code> declarations, closure and subquery inference, and constant-value evaluation.</li>
+      <li><strong>~80 contract diagnostics</strong> across <a class="link" href="/docs/diagnostics.html">eight families</a> — schema references, types, graph, statement misuse, functions, parameters, lints, and version compatibility.</li>
+      <li><strong>Parameter constraints</strong> — every <code>$param</code> a source reads is exported with the kind and value domain its uses imply (<code>UPDATE user SET age = $age</code> → <code>age: int</code>).</li>
+      <li><strong>Byte-precise spans</strong> on every finding, so editor squiggles and inline edits land on the exact token — even inside a query embedded in a host file.</li>
+    </ul>
+
+    <h2>The compiler is the checker (Rust)</h2>
+    <p>In Rust, the <code>query!</code> macro runs the real analyzer during compilation and generates the result type. A wrong table, unknown field, bad arity, or kind mismatch is a <code>cargo check</code> error — no codegen step, no language server, no runtime schema fetch.</p>
+    <pre class="code"><span class="k">use</span> surrealguard_rs::query;
+
+<span class="k">let</span> users = <span class="fn">query!</span>(<span class="s">"SELECT name, age FROM user"</span>);
+<span class="c">//  users: Query&lt;Vec&lt;{ name: String, age: i64 }&gt;&gt;  ← nameless, inferred</span>
+
+<span class="k">let</span> bad = <span class="fn">query!</span>(<span class="s">"SELECT name, ssn FROM user"</span>);
+<span class="err">// error: SurrealGuard rejected this query:
+//   [E1002] unknown field `ssn` on table `user`</span></pre>
+
+    <h2>Typed queries, no wrapper (TypeScript)</h2>
+    <p>Pass a string literal to <code>db.query</code> and its result and parameters are inferred from the query text. Missing or wrong params are compile errors; dynamic strings degrade to <code>unknown</code> and still run.</p>
+    <pre class="code"><span class="k">import</span> { SurrealGuardClient, fromSurreal } <span class="k">from</span> <span class="s">"@surrealguard/client"</span>;
+
+<span class="k">const</span> db = <span class="k">new</span> <span class="fn">SurrealGuardClient</span>(<span class="fn">fromSurreal</span>(surreal));
+
+<span class="k">const</span> users = <span class="k">await</span> db.<span class="fn">query</span>(<span class="s">"SELECT name FROM user WHERE team = $team"</span>, { team: <span class="s">"red"</span> });
+<span class="c">//    ^ Array&lt;{ name: string }&gt; — params required + typed from the text</span></pre>
+
+    <h2>Install</h2>
+    <pre class="code"><span class="cmt"># zero-install, great for CI & agents</span>
+npx surrealguard check --json
+
+<span class="cmt"># prebuilt binary</span>
+cargo binstall surrealguard
+
+<span class="cmt"># from crates.io</span>
+cargo install surrealguard
+
+<span class="cmt"># libraries</span>
+cargo add surrealguard-rs
+npm i @surrealguard/client</pre>
+    <p>See <a class="link" href="/docs/getting-started.html">Getting started</a> for a full walkthrough — <code>init</code>, <code>surrealguard.toml</code>, and your first check.</p>
+
+    <div class="docs-pager">
+      <a class="next" href="/docs/getting-started.html">
+        <span class="dir">Next →</span>
+        <span class="ttl">Getting started</span>
+      </a>
+    </div>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+      <div class="tiny">Static analysis &amp; type inference for SurrealQL.</div>
+    </div>
+    <div class="cols">
+      <a href="/docs/">Docs</a>
+      <a href="/llms.txt">llms.txt</a>
+      <a href="/llms-full.txt">llms-full.txt</a>
+      <a href="https://github.com/DrewRidley/surrealguard">GitHub</a>
+      <a href="https://crates.io/crates/surrealguard">crates.io</a>
+      <a href="https://www.npmjs.com/org/surrealguard">npm</a>
+    </div>
+    <div class="tiny">MIT OR Apache-2.0</div>
+  </div>
+</footer>
+
+</body>
+</html>

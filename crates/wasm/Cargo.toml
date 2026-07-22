@@ -1,0 +1,26 @@
+[package]
+name = "surrealguard-wasm"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "WebAssembly (wasm32-wasip1) bindings exposing the SurrealGuard analyzer to the browser playground"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+surrealguard-workspace = { path = "../workspace" }
+surrealguard-diagnostics = { path = "../diagnostics" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# This crate is deliberately NOT wired into the workspace lint config; the
+# native `cargo build --workspace` still builds it (as a host cdylib) but the
+# real target is wasm32-wasip1. See crates/wasm/README.md for the build.
+
+[lints]
+workspace = true

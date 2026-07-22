@@ -8,7 +8,7 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_kill(ctx: &mut AnalysisContext<'_>, stmt: &ast::KillStmt) -> Kind {
+pub(crate) fn analyze_kill(ctx: &mut AnalysisContext<'_>, stmt: &ast::KillStmt) -> Kind {
     if let Some(id) = &stmt.id {
         let kind = crate::analyzer::expression::infer::infer_expression_fact(id, ctx).kind;
         if let Some(kind) = kind {

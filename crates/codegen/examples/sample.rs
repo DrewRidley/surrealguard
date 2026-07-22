@@ -1,3 +1,7 @@
+//! Prints a sample generated declaration file: builds a couple of
+//! [`QueryEntry`] values by hand and renders the query registry, so the
+//! `Kind` → TypeScript mapping and the augmentation output can be eyeballed.
+
 use surrealdb_types::{Kind, KindLiteral};
 use surrealguard_codegen::{render_registry, ts_type, QueryEntry};
 use surrealguard_workspace::analysis::ParamInference;

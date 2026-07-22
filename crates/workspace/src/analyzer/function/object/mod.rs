@@ -14,7 +14,7 @@ pub mod len;
 pub mod remove;
 pub mod values;
 
-pub fn analyze_object_function(
+pub(crate) fn analyze_object_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

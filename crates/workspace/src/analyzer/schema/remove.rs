@@ -11,7 +11,7 @@ use surrealguard_syntax::span::SourceSpan;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_remove(ctx: &mut AnalysisContext<'_>, stmt: &ast::RemoveStmt) -> Kind {
+pub(crate) fn analyze_remove(ctx: &mut AnalysisContext<'_>, stmt: &ast::RemoveStmt) -> Kind {
     match &stmt.target {
         ast::RemoveTarget::Table(table) => {
             if !ctx.schema().tables.contains_key(&table.node) {

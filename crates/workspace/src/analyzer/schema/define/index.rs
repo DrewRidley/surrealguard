@@ -11,7 +11,7 @@ use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_define_index(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineIndex) -> Kind {
+pub(crate) fn analyze_define_index(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineIndex) -> Kind {
     let refs = crate::schema::index_field_refs(stmt, ctx.source());
     let source = ctx.source().clone();
 

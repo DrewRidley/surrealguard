@@ -1,0 +1,25 @@
+# SurrealGuard
+
+> Static analysis and type inference for SurrealQL. SurrealGuard parses your `.surql` schema and queries into a typed, span-carrying AST, infers the response type of every statement, and reports violations of each construct's contract — before a query reaches SurrealDB. The same engine powers a CLI, a language server, a Rust proc-macro, and TypeScript packages.
+
+SurrealDB is permissive at runtime (cross-kind comparisons order by kind, coercions succeed silently, missing fields return NONE), so bugs hide in behavior the database accepts. SurrealGuard is contract-first: every construct has a contract, and violations are reported statically even when the engine would run the query.
+
+## Using it with an agent
+
+- Run `npx surrealguard init` to create `surrealguard.toml`, point it at your `.surql` schema and query directories.
+- Run `npx surrealguard check --json` for machine-readable diagnostics (code, severity, message, byte span, help). Exit code reflects post-policy errors.
+- Run `npx surrealguard generate` to emit TypeScript types (a module augmentation of `@surrealguard/client`).
+- In Rust, wrap queries in the `query!` macro (crate `surrealguard-rs`) — they are checked against your schema at compile time and fail `cargo check` on any violation.
+- In TypeScript, pass a string literal to `SurrealGuardClient.query("…")` — result and params are typed from the query text.
+
+## Diagnostics
+
+Findings use codes in eight families: 1xxx schema references, 2xxx types, 3xxx graph, 4xxx statement misuse, 5xxx functions, 6xxx parameters, 7xxx lints, 8xxx version compatibility. Severity is intrinsic to each finding; consumers apply policy (warnings-as-errors, lint levels) at their edge.
+
+## Links
+
+- Docs: https://surrealguard.dev/docs/
+- Full LLM context: https://surrealguard.dev/llms-full.txt
+- GitHub: https://github.com/DrewRidley/surrealguard
+- Rust crate: surrealguard-rs (re-exports the `query!` / `surql!` macros)
+- npm: @surrealguard/client, @surrealguard/query, @surrealguard/next, @surrealguard/svelte

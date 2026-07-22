@@ -1,0 +1,20 @@
+# Function-size thresholds (enforced via clippy::too_many_lines / too_many_arguments).
+too-many-lines-threshold = 120
+too-many-arguments-threshold = 8
+
+# Domain identifiers that are correct as-is in docs; extend clippy's defaults
+# (".." keeps the built-in list) so clippy::doc_markdown does not flag them.
+doc-valid-idents = [
+    "..",
+    "SurrealQL",
+    "SurrealDB",
+    "SurrealGuard",
+    "TypeScript",
+    "JavaScript",
+    "GeoJSON",
+    "SvelteKit",
+    "tree-sitter",
+    "MTREE",
+    "HNSW",
+    "KNN",
+]

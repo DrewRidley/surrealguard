@@ -23,7 +23,7 @@ pub mod secs;
 pub mod weeks;
 pub mod years;
 
-pub fn analyze_duration_function(
+pub(crate) fn analyze_duration_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

@@ -18,7 +18,7 @@ use crate::expression::{ExpressionFact, ExpressionValueClass, PartialReason};
 use crate::schema::SchemaIndex;
 use crate::statement_env::StatementEnv;
 
-pub(crate) fn infer_expression_fact(
+pub fn infer_expression_fact(
     expr: &ast::Spanned<ast::Expr>,
     ctx: &mut AnalysisContext<'_>,
 ) -> ExpressionFact {
@@ -76,7 +76,7 @@ pub(crate) fn infer_expression_fact(
 /// The response kind of a statement used as a value (subqueries,
 /// `FROM (SELECT ...)` sources). Covers the statement kinds whose response
 /// typing is pure; environment-threading statements need the ctx path.
-pub(crate) fn statement_value_kind(
+pub fn statement_value_kind(
     stmt: &ast::Spanned<ast::Statement>,
     ctx: &mut AnalysisContext<'_>,
 ) -> Option<Kind> {
@@ -129,7 +129,7 @@ fn declared_kind(
 /// return type when present, otherwise the body inferred with each
 /// parameter bound to its argument kind (falling back to the declared
 /// parameter type, then `Any`).
-pub(crate) fn closure_return_kind(
+pub fn closure_return_kind(
     closure: &ast::Closure,
     arg_kinds: &[Kind],
     ctx: &mut AnalysisContext<'_>,
@@ -284,7 +284,7 @@ fn idiom_fact(
 }
 
 /// The segments of an idiom made purely of `Field` parts, if it is one.
-pub(crate) fn plain_field_segments(idiom: &ast::Idiom) -> Option<Vec<String>> {
+pub fn plain_field_segments(idiom: &ast::Idiom) -> Option<Vec<String>> {
     idiom
         .parts
         .iter()
@@ -302,7 +302,7 @@ pub(crate) fn plain_field_segments(idiom: &ast::Idiom) -> Option<Vec<String>> {
 /// The receiver kind standing before each idiom part, for the
 /// checking-side position contracts: `(part, kind-before-part)` pairs.
 /// `None` receivers mean the prefix didn't resolve; checking skips them.
-pub(crate) fn idiom_prefix_kinds<'i>(
+pub fn idiom_prefix_kinds<'i>(
     idiom: &'i ast::Idiom,
     ctx: &mut AnalysisContext<'_>,
 ) -> Vec<(&'i ast::Spanned<ast::IdiomPart>, Option<Kind>)> {
@@ -370,7 +370,7 @@ fn step_part_kind(
 
 /// Checking-side view of method dispatch: the resolved return kind, or
 /// `None` when the receiver's kind family has no such method.
-pub(crate) fn method_result(
+pub fn method_result(
     receiver: &Kind,
     method: &str,
     args: &[Kind],
@@ -628,7 +628,7 @@ fn cast_fact(ty: &ast::Spanned<ast::TypeExpr>, span: SourceSpan) -> ExpressionFa
 }
 
 /// The kind a cast target names, shared with the checking side.
-pub(crate) fn cast_target_kind(ty: &ast::TypeExpr) -> Option<Kind> {
+pub fn cast_target_kind(ty: &ast::TypeExpr) -> Option<Kind> {
     cast_kind(ty)
 }
 
@@ -656,7 +656,7 @@ fn cast_kind(ty: &ast::TypeExpr) -> Option<Kind> {
 /// arithmetic, string/collection concatenation, and temporal arithmetic
 /// (`datetime ± duration`, `datetime - datetime`, `duration ± duration`,
 /// `duration * int`).
-pub(crate) fn binary_result_kind(op: &ast::BinaryOp, lhs: &Kind, rhs: &Kind) -> Option<Kind> {
+pub fn binary_result_kind(op: &ast::BinaryOp, lhs: &Kind, rhs: &Kind) -> Option<Kind> {
     use ast::BinaryOp as Op;
     match op {
         Op::Add if matches!(lhs, Kind::String) && matches!(rhs, Kind::String) => Some(Kind::String),
@@ -731,7 +731,7 @@ fn merged_element(a: &Kind, b: &Kind) -> Kind {
     }
 }
 
-pub(crate) fn is_numeric(kind: &Kind) -> bool {
+pub fn is_numeric(kind: &Kind) -> bool {
     matches!(kind, Kind::Int | Kind::Float | Kind::Decimal | Kind::Number)
 }
 

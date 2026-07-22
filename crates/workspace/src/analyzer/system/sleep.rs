@@ -5,7 +5,7 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_sleep(ctx: &mut AnalysisContext<'_>, stmt: &ast::SleepStmt) -> Kind {
+pub(crate) fn analyze_sleep(ctx: &mut AnalysisContext<'_>, stmt: &ast::SleepStmt) -> Kind {
     let _ = (ctx, stmt);
     Kind::None
 }

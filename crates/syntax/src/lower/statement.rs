@@ -61,7 +61,13 @@ fn collect_statement_nodes<'tree>(node: Node<'tree>, statements: &mut Vec<Node<'
     }
 }
 
-pub fn lower_statement(node: Node<'_>, text: &str) -> Spanned<Statement> {
+/// Lowers one statement-position CST node to a [`Statement`].
+///
+/// A node containing broken syntax anywhere in its subtree lowers to
+/// [`Statement::Partial`] so analyzers never see a half-parsed structure.
+/// Internal to the crate; consumers reach statements through
+/// [`lower_statements`] or [`crate::lower::lower_first_statement`].
+pub(crate) fn lower_statement(node: Node<'_>, text: &str) -> Spanned<Statement> {
     if node.has_error() {
         return Spanned::new(Statement::Partial(partial(node)), node_range(node));
     }
@@ -338,7 +344,7 @@ fn named_children<'tree>(node: Node<'tree>) -> Vec<Node<'tree>> {
     let mut cursor = node.walk();
     let children = node
         .children(&mut cursor)
-        .filter(|child| child.is_named())
+        .filter(tree_sitter::Node::is_named)
         .collect();
     children
 }

@@ -45,19 +45,34 @@ enum Commands {
     },
 }
 
-const EXAMPLE_CONFIG: &str = r#"version = "1.0"
-language = "typescript"
+const EXAMPLE_CONFIG: &str = r#"# surrealguard.toml — SurrealGuard workspace configuration.
+# Docs: https://surrealguard.dev/docs/getting-started
 
-[schema]
-path = "schema/"
+[sources]
+# Globs whose matches define the schema (DEFINE/REMOVE catalog effects).
+schema = ["schema/**/*.surql", "migrations/**/*.surql"]
+# Globs analyzed as queries against that schema.
+queries = ["queries/**/*.surql", "src/**/*.surql"]
+# Excluded from both sets.
+ignore = ["target/**", "node_modules/**", ".git/**"]
 
-[queries]
-path = "queries/"
-src = ["src/"]
+[analysis]
+# Tighten otherwise-advisory checks.
+strict = false
+# Target SurrealDB version for version-gated behavior.
+surrealdb_version = "2"
 
-[output]
-path = "src/queries.ts"
-format = true
+[diagnostics]
+# Promote every warning to an error (useful in CI).
+warnings_as_errors = false
+# Require a written reason on every inline suppression.
+require_suppression_reasons = false
+
+# Per-lint level overrides: "allow" | "warn" | "deny". Unset keeps the default.
+[lints]
+# select_star = "warn"
+# dynamic_query = "warn"
+# permission_gated_field = "warn"
 "#;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -316,8 +331,7 @@ fn run_generate(root: &Path, out: Option<&Path>) -> Result<std::path::PathBuf, B
             let result_type = output
                 .response_kind
                 .as_ref()
-                .map(surrealguard_codegen::ts_type)
-                .unwrap_or_else(|| "unknown".into());
+                .map_or_else(|| "unknown".into(), surrealguard_codegen::ts_type);
             Some(surrealguard_codegen::QueryEntry {
                 parts: query.parts(),
                 result_type,
@@ -326,9 +340,7 @@ fn run_generate(root: &Path, out: Option<&Path>) -> Result<std::path::PathBuf, B
         })
         .collect();
 
-    let out_path = out
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| root.join("surql.gen.d.ts"));
+    let out_path = out.map_or_else(|| root.join("surql.gen.d.ts"), Path::to_path_buf);
     fs::write(&out_path, surrealguard_codegen::render_registry(&entries))?;
     Ok(out_path)
 }
@@ -383,7 +395,25 @@ fn discover_surrealql_sources(root: &Path, config: &WorkspaceConfig) -> Vec<Path
         .filter(|path| is_surrealql_source(path))
         .collect();
     paths.sort();
-    paths
+
+    // Schema sources are analyzed before query sources so their `DEFINE`s are
+    // in scope for the queries that reference them. A file matching a `schema`
+    // glob is schema; everything else is a query. Ties (a file matching both,
+    // e.g. the default globs) resolve to schema — analyzing a definition early
+    // is always safe.
+    let (mut schema, mut queries): (Vec<PathBuf>, Vec<PathBuf>) = paths
+        .into_iter()
+        .partition(|path| matches_any_glob(root, path, &config.sources.schema));
+    schema.append(&mut queries);
+    schema
+}
+
+/// Whether `path` matches any of `globs`, evaluated relative to `root`.
+fn matches_any_glob(root: &Path, path: &Path, globs: &[String]) -> bool {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    globs
+        .iter()
+        .any(|glob| glob::Pattern::new(glob).is_ok_and(|pattern| pattern.matches_path(relative)))
 }
 
 fn should_visit(entry: &DirEntry, root: &Path, ignore_patterns: &[String]) -> bool {
@@ -403,8 +433,7 @@ fn matches_simple_ignore(relative: &Path, pattern: &str) -> bool {
         component
             .as_os_str()
             .to_str()
-            .map(|name| name == trimmed)
-            .unwrap_or(false)
+            .is_some_and(|name| name == trimmed)
     })
 }
 
@@ -481,6 +510,59 @@ fn main() -> Result<(), Box<dyn Error>> {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn example_config_matches_the_parsed_schema() {
+        // The `init` template must parse against the real config schema, and
+        // its sections must be the ones the parser actually reads — otherwise
+        // `surrealguard init` would write a config the CLI silently ignores.
+        let config =
+            WorkspaceConfig::from_toml_str(EXAMPLE_CONFIG).expect("example config must parse");
+        assert!(config
+            .sources
+            .schema
+            .iter()
+            .any(|glob| glob.contains("schema")));
+        assert!(config
+            .sources
+            .queries
+            .iter()
+            .any(|glob| glob.contains("queries")));
+        assert_eq!(config.analysis.surrealdb_version, "2");
+    }
+
+    #[test]
+    fn schema_sources_are_analyzed_before_query_sources() {
+        // A `schema/` file and a `queries/` file: the query must see the
+        // schema even though "queries" sorts before "schema" by path. A
+        // reference to a real table must NOT report `unknown table`, and a
+        // bad field must report the precise `unknown field`.
+        let root = temp_project_dir("schema-order");
+        fs::create_dir_all(root.join("schema")).expect("schema dir");
+        fs::create_dir_all(root.join("queries")).expect("queries dir");
+        fs::write(
+            root.join("surrealguard.toml"),
+            "[sources]\nschema = [\"schema/**/*.surql\"]\nqueries = [\"queries/**/*.surql\"]\n",
+        )
+        .expect("write config");
+        fs::write(
+            root.join("schema/user.surql"),
+            "DEFINE TABLE user SCHEMAFULL;\nDEFINE FIELD name ON user TYPE string;",
+        )
+        .expect("write schema");
+        fs::write(root.join("queries/bad.surql"), "SELECT nope FROM user;").expect("write query");
+
+        let failed = run_check(&root).expect_err("the unknown field should fail the check");
+        let codes: Vec<&str> = failed.diagnostics.iter().map(|d| d.code.as_str()).collect();
+        assert!(
+            codes.iter().any(|c| c.starts_with("E1002")),
+            "expected unknown-field E1002, got {codes:?}"
+        );
+        assert!(
+            !codes.iter().any(|c| c.starts_with("E1001")),
+            "schema was not applied before the query — spurious unknown-table: {codes:?}"
+        );
+    }
 
     #[test]
     fn check_loads_surrealql_files_through_workspace_analysis() {

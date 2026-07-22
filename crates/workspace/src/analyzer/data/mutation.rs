@@ -27,7 +27,7 @@ pub(crate) fn analyze_expression_positions(
     where_clause: Option<&ast::Spanned<ast::Expr>>,
     table: Option<&str>,
 ) {
-    analyze_expression_positions_for(ctx, data, where_clause, table, false)
+    analyze_expression_positions_for(ctx, data, where_clause, table, false);
 }
 
 /// `creating` distinguishes CREATE/INSERT/RELATE (where READONLY fields
@@ -99,7 +99,7 @@ pub(crate) fn analyze_expression_positions_for(
 
 /// A required field (non-optional declared type, no DEFAULT) must be
 /// provided when a row is created (2034).
-pub(crate) fn check_required_fields(
+pub fn check_required_fields(
     ctx: &mut AnalysisContext<'_>,
     table: &TableDef,
     provided: &[String],
@@ -134,7 +134,7 @@ pub(crate) fn check_required_fields(
 }
 
 /// The top-level field names a data clause provides.
-pub(crate) fn provided_field_names(data: Option<&ast::DataClause>) -> Vec<String> {
+pub fn provided_field_names(data: Option<&ast::DataClause>) -> Vec<String> {
     match data {
         Some(ast::DataClause::Set(assignments)) => assignments
             .iter()
@@ -152,7 +152,7 @@ pub(crate) fn provided_field_names(data: Option<&ast::DataClause>) -> Vec<String
     }
 }
 
-pub(crate) fn object_keys(expr: &ast::Spanned<ast::Expr>) -> Vec<String> {
+pub fn object_keys(expr: &ast::Spanned<ast::Expr>) -> Vec<String> {
     match &expr.node {
         ast::Expr::Object(fields) => fields.iter().map(|(key, _)| key.node.clone()).collect(),
         _ => Vec::new(),
@@ -161,7 +161,7 @@ pub(crate) fn object_keys(expr: &ast::Spanned<ast::Expr>) -> Vec<String> {
 
 /// A write to a whole table with no WHERE touches every row — legal, and
 /// occasionally intended, but worth a deliberate look (7009).
-pub(crate) fn check_whole_table_write(
+pub fn check_whole_table_write(
     ctx: &mut AnalysisContext<'_>,
     target: Option<&ast::Spanned<ast::Expr>>,
     where_clause: Option<&ast::Spanned<ast::Expr>>,
@@ -187,7 +187,7 @@ pub(crate) fn check_whole_table_write(
 
 /// Relation rows need `in` and `out`; creating one without them makes an
 /// edge connected to nothing (4019).
-pub(crate) fn check_relation_write(
+pub fn check_relation_write(
     ctx: &mut AnalysisContext<'_>,
     target: Option<&ast::Spanned<ast::Expr>>,
     data: Option<&ast::DataClause>,
@@ -228,7 +228,7 @@ pub(crate) fn check_relation_write(
 }
 
 /// INSERT's variant of the relation contract (4019).
-pub(crate) fn check_relation_insert(
+pub fn check_relation_insert(
     ctx: &mut AnalysisContext<'_>,
     target: Option<&ast::Spanned<ast::Expr>>,
     data: &ast::InsertData,
@@ -278,7 +278,7 @@ pub(crate) fn check_relation_insert(
 
 /// `CREATE ... RETURN BEFORE` always returns NONE — there is no before
 /// state at creation (4020).
-pub(crate) fn check_return_before_on_create(
+pub fn check_return_before_on_create(
     ctx: &mut AnalysisContext<'_>,
     ret: Option<&ast::Spanned<ast::ReturnMode>>,
 ) {
@@ -395,7 +395,7 @@ fn check_duplicate_targets(ctx: &mut AnalysisContext<'_>, assignments: &[ast::As
 /// ONLY on a whole-table target is a deterministic runtime error for
 /// row-iterating mutations (4003); record ids and CREATE (always one row)
 /// are fine.
-pub(crate) fn check_only_on_table(
+pub fn check_only_on_table(
     ctx: &mut AnalysisContext<'_>,
     only: bool,
     target: Option<&ast::Spanned<ast::Expr>>,
@@ -527,7 +527,7 @@ fn check_assignment_target(
 /// `CONTENT`/`MERGE`/`REPLACE` object literals (and INSERT object
 /// payloads): each key path must be a declared field (1005). Nested
 /// objects check their dotted paths.
-pub(crate) fn check_payload_object_keys(
+pub fn check_payload_object_keys(
     ctx: &mut AnalysisContext<'_>,
     table: &TableDef,
     expr: &ast::Spanned<ast::Expr>,
@@ -592,7 +592,7 @@ pub(crate) fn check_payload_object_keys(
 /// Builds the response type for a mutation once its target `table` is
 /// resolved: `RETURN` mode decides the row type, `ONLY` decides whether the
 /// row is wrapped in an array.
-pub(crate) fn response_kind_for_target(
+pub fn response_kind_for_target(
     only: bool,
     ret: Option<&ast::Spanned<ast::ReturnMode>>,
     table: &TableDef,
@@ -614,7 +614,7 @@ pub(crate) fn response_kind_for_target(
         // arguably `none` — statement-specific refinement is tracked with
         // the DELETE default-shape question, pending verification against
         // real SurrealDB behavior.)
-        Some(ast::ReturnMode::Before) | Some(ast::ReturnMode::After) | None => {
+        Some(ast::ReturnMode::Before | ast::ReturnMode::After) | None => {
             if table.fields.is_empty() {
                 return Kind::Any;
             }
@@ -708,7 +708,7 @@ fn fields_row_kind(
 }
 
 /// The table a mutation target names (`person` / `person:one`).
-pub(crate) fn source_table_name(source: Option<&ast::Spanned<ast::Expr>>) -> Option<String> {
+pub fn source_table_name(source: Option<&ast::Spanned<ast::Expr>>) -> Option<String> {
     match source.map(|s| &s.node)? {
         ast::Expr::Table(name) => Some(name.node.clone()),
         ast::Expr::RecordId { table, .. } => Some(table.node.clone()),

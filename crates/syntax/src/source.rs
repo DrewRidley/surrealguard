@@ -12,10 +12,12 @@ use serde::{Deserialize, Serialize};
 pub struct SourceId(String);
 
 impl SourceId {
+    /// Wraps an identifier string as a source id.
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
 
+    /// The underlying identifier string.
     pub fn as_str(&self) -> &str {
         &self.0
     }

@@ -15,10 +15,7 @@ use crate::analyzer::expression::infer::{binary_result_kind, infer_expression_fa
 /// Recursively checks operator invariants in a value expression:
 /// incompatible operands (2004) and negation of non-numerics (2014).
 /// Unknown kinds are never violations.
-pub(crate) fn check_value_expression(
-    ctx: &mut AnalysisContext<'_>,
-    expr: &ast::Spanned<ast::Expr>,
-) {
+pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) {
     match &expr.node {
         ast::Expr::Binary { lhs, op, rhs } => {
             check_value_expression(ctx, lhs);
@@ -296,134 +293,22 @@ fn check_binary(
     rhs: &ast::Spanned<ast::Expr>,
 ) {
     use ast::BinaryOp as Op;
-    // Index-backed operators need their supporting index (1027).
-    if let Op::Other(name) = op {
-        let needs = if name == "@@" || name.to_ascii_uppercase().starts_with("@") {
-            Some(crate::schema::IndexKind::Search)
-        } else if name.starts_with("<|") {
-            Some(crate::schema::IndexKind::Vector)
-        } else {
-            None
-        };
-        if let Some(required) = needs {
-            if let ast::Expr::Idiom(idiom) = &lhs.node {
-                if let Some(segments) =
-                    crate::analyzer::expression::infer::plain_field_segments(idiom)
-                {
-                    if let Some(table) = ctx.row_table() {
-                        let path = segments.join(".");
-                        let covered = table
-                            .indexes
-                            .values()
-                            .any(|index| index.kind == required && index.covers(&path));
-                        if !covered {
-                            let what = match required {
-                                crate::schema::IndexKind::Search => "a SEARCH ANALYZER index",
-                                _ => "an MTREE or HNSW index",
-                            };
-                            emit(
-                                ctx,
-                                whole.span,
-                                1027,
-                                format!("`{}` on `{path}` needs {what} on that field", name),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // A comparison against an unbound parameter constrains it to the
-    // other side's kind.
-    if matches!(
-        op,
-        Op::Eq | Op::NotEq | Op::Lt | Op::LtEq | Op::Gt | Op::GtEq
-    ) {
-        let sides = [(lhs, rhs), (rhs, lhs)];
-        for (param_side, typed_side) in sides {
-            if let ast::Expr::Param(param) = &param_side.node {
-                if let Some(kind) = known_kind(ctx, typed_side) {
-                    let span = SourceSpan::new(ctx.source().clone(), param_side.span);
-                    ctx.constrain_param(param, span, kind, None);
-                }
-            }
-        }
-    }
+    check_index_backed_operator(ctx, whole, lhs, op);
+    constrain_comparison_params(ctx, op, lhs, rhs);
 
     let (Some(left), Some(right)) = (known_kind(ctx, lhs), known_kind(ctx, rhs)) else {
         return;
     };
 
-    // A `~` pattern must compile (2031) — the pattern side is a plain
-    // string.
+    // Custom operators carry their own contracts (regex patterns,
+    // membership) and never reach the arithmetic/comparison checks below.
     if let Op::Other(name) = op {
-        if matches!(name.as_str(), "~" | "!~") {
-            if let Some(surrealdb_types::Value::String(pattern)) =
-                infer_expression_fact(rhs, ctx).value
-            {
-                use std::str::FromStr;
-                if surrealdb_types::Regex::from_str(&pattern).is_err() {
-                    emit(
-                        ctx,
-                        rhs.span,
-                        2031,
-                        format!("`{pattern}` is not a valid regex"),
-                    );
-                }
-            }
-        }
-    }
-
-    // Membership against a provably empty collection never matches (7006).
-    if let Op::Other(name) = op {
-        if matches!(
-            name.to_ascii_uppercase().as_str(),
-            "IN" | "INSIDE" | "CONTAINS"
-        ) {
-            let collection = if name.eq_ignore_ascii_case("contains") {
-                lhs
-            } else {
-                rhs
-            };
-            if let Some(surrealdb_types::Value::Array(values)) =
-                infer_expression_fact(collection, ctx).value
-            {
-                if values.is_empty() {
-                    emit(
-                        ctx,
-                        whole.span,
-                        7006,
-                        "membership test against an empty collection is always false".to_string(),
-                    );
-                }
-            }
-        }
+        check_regex_pattern_operand(ctx, name, rhs);
+        check_empty_membership(ctx, whole, name, lhs, rhs);
         return;
     }
 
-    // Arithmetic on a possibly-NONE value fails whenever the NONE side
-    // shows up (2015).
-    if matches!(op, Op::Add | Op::Sub | Op::Mul | Op::Div) {
-        for (side, kind) in [(lhs, &left), (rhs, &right)] {
-            if let Kind::Either(variants) = kind {
-                if variants
-                    .iter()
-                    .any(|v| matches!(v, Kind::None | Kind::Null))
-                    && variants
-                        .iter()
-                        .any(|v| !matches!(v, Kind::None | Kind::Null))
-                {
-                    emit(
-                        ctx,
-                        side.span,
-                        2015,
-                        format!("this value may be NONE at runtime (`{kind}`)"),
-                    );
-                }
-            }
-        }
-    }
+    check_none_arithmetic(ctx, op, lhs, &left, rhs, &right);
 
     // One contract, one code: the operands must make sense together for
     // the operator (2004). Whether SurrealDB throws (arithmetic) or
@@ -469,6 +354,172 @@ fn check_binary(
                 op_text(op)
             ),
         );
+    }
+}
+
+/// Index-backed operators (`@@`/`@...` full-text, `<|...>` vector) require a
+/// supporting index on the left-hand field (1027).
+fn check_index_backed_operator(
+    ctx: &mut AnalysisContext<'_>,
+    whole: &ast::Spanned<ast::Expr>,
+    lhs: &ast::Spanned<ast::Expr>,
+    op: &ast::BinaryOp,
+) {
+    let ast::BinaryOp::Other(name) = op else {
+        return;
+    };
+    let needs = if name == "@@" || name.to_ascii_uppercase().starts_with("@") {
+        Some(crate::schema::IndexKind::Search)
+    } else if name.starts_with("<|") {
+        Some(crate::schema::IndexKind::Vector)
+    } else {
+        None
+    };
+    let Some(required) = needs else {
+        return;
+    };
+    let ast::Expr::Idiom(idiom) = &lhs.node else {
+        return;
+    };
+    let Some(segments) = crate::analyzer::expression::infer::plain_field_segments(idiom) else {
+        return;
+    };
+    let Some(table) = ctx.row_table() else {
+        return;
+    };
+    let path = segments.join(".");
+    let covered = table
+        .indexes
+        .values()
+        .any(|index| index.kind == required && index.covers(&path));
+    if !covered {
+        let what = match required {
+            crate::schema::IndexKind::Search => "a SEARCH ANALYZER index",
+            _ => "an MTREE or HNSW index",
+        };
+        emit(
+            ctx,
+            whole.span,
+            1027,
+            format!("`{name}` on `{path}` needs {what} on that field"),
+        );
+    }
+}
+
+/// A comparison against an unbound parameter constrains it to the other
+/// side's kind.
+fn constrain_comparison_params(
+    ctx: &mut AnalysisContext<'_>,
+    op: &ast::BinaryOp,
+    lhs: &ast::Spanned<ast::Expr>,
+    rhs: &ast::Spanned<ast::Expr>,
+) {
+    use ast::BinaryOp as Op;
+    if !matches!(
+        op,
+        Op::Eq | Op::NotEq | Op::Lt | Op::LtEq | Op::Gt | Op::GtEq
+    ) {
+        return;
+    }
+    let sides = [(lhs, rhs), (rhs, lhs)];
+    for (param_side, typed_side) in sides {
+        if let ast::Expr::Param(param) = &param_side.node {
+            if let Some(kind) = known_kind(ctx, typed_side) {
+                let span = SourceSpan::new(ctx.source().clone(), param_side.span);
+                ctx.constrain_param(param, span, kind, None);
+            }
+        }
+    }
+}
+
+/// A `~`/`!~` pattern operand is a plain string and must compile as a
+/// regex (2031).
+fn check_regex_pattern_operand(
+    ctx: &mut AnalysisContext<'_>,
+    name: &str,
+    rhs: &ast::Spanned<ast::Expr>,
+) {
+    if !matches!(name, "~" | "!~") {
+        return;
+    }
+    if let Some(surrealdb_types::Value::String(pattern)) = infer_expression_fact(rhs, ctx).value {
+        use std::str::FromStr;
+        if surrealdb_types::Regex::from_str(&pattern).is_err() {
+            emit(
+                ctx,
+                rhs.span,
+                2031,
+                format!("`{pattern}` is not a valid regex"),
+            );
+        }
+    }
+}
+
+/// Membership (`IN`/`INSIDE`/`CONTAINS`) against a provably empty collection
+/// never matches (7006).
+fn check_empty_membership(
+    ctx: &mut AnalysisContext<'_>,
+    whole: &ast::Spanned<ast::Expr>,
+    name: &str,
+    lhs: &ast::Spanned<ast::Expr>,
+    rhs: &ast::Spanned<ast::Expr>,
+) {
+    if !matches!(
+        name.to_ascii_uppercase().as_str(),
+        "IN" | "INSIDE" | "CONTAINS"
+    ) {
+        return;
+    }
+    let collection = if name.eq_ignore_ascii_case("contains") {
+        lhs
+    } else {
+        rhs
+    };
+    if let Some(surrealdb_types::Value::Array(values)) =
+        infer_expression_fact(collection, ctx).value
+    {
+        if values.is_empty() {
+            emit(
+                ctx,
+                whole.span,
+                7006,
+                "membership test against an empty collection is always false".to_string(),
+            );
+        }
+    }
+}
+
+/// Arithmetic on a possibly-NONE value fails whenever the NONE side shows up
+/// at runtime (2015).
+fn check_none_arithmetic(
+    ctx: &mut AnalysisContext<'_>,
+    op: &ast::BinaryOp,
+    lhs: &ast::Spanned<ast::Expr>,
+    left: &Kind,
+    rhs: &ast::Spanned<ast::Expr>,
+    right: &Kind,
+) {
+    use ast::BinaryOp as Op;
+    if !matches!(op, Op::Add | Op::Sub | Op::Mul | Op::Div) {
+        return;
+    }
+    for (side, kind) in [(lhs, left), (rhs, right)] {
+        if let Kind::Either(variants) = kind {
+            if variants
+                .iter()
+                .any(|v| matches!(v, Kind::None | Kind::Null))
+                && variants
+                    .iter()
+                    .any(|v| !matches!(v, Kind::None | Kind::Null))
+            {
+                emit(
+                    ctx,
+                    side.span,
+                    2015,
+                    format!("this value may be NONE at runtime (`{kind}`)"),
+                );
+            }
+        }
     }
 }
 

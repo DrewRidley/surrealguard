@@ -30,7 +30,7 @@ pub mod remove;
 pub mod slice;
 pub mod union;
 
-pub fn analyze_set_function(
+pub(crate) fn analyze_set_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

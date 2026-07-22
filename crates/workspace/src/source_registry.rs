@@ -5,13 +5,22 @@ use std::path::PathBuf;
 
 use surrealguard_syntax::source::SourceId;
 
+/// The set of sources analysis runs over, keyed by [`SourceId`]. File
+/// sources keep a stable id across edits; virtual sources get a fresh id
+/// each time.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SourceRegistry {
     sources: BTreeMap<SourceId, RegisteredSource>,
     file_ids: BTreeMap<PathBuf, SourceId>,
     next_virtual_id: u64,
+    /// Sources in the order they were added. Analysis walks sources in this
+    /// order and accumulates the schema as it goes, so a caller can make
+    /// schema sources visible to later query sources by adding them first —
+    /// insertion order, not id-sort order, is what analysis honors.
+    order: Vec<SourceId>,
 }
 
+/// One registered source: its id, full text, and a precomputed line index.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegisteredSource {
     id: SourceId,
@@ -20,31 +29,40 @@ pub struct RegisteredSource {
 }
 
 impl RegisteredSource {
+    /// The source's stable identifier.
     pub fn id(&self) -> &SourceId {
         &self.id
     }
 
+    /// The full source text.
     pub fn text(&self) -> &str {
         &self.text
     }
 
+    /// The line index for mapping byte offsets to line/column.
     pub fn line_index(&self) -> &LineIndex {
         &self.line_index
     }
 }
 
+/// Byte offsets of each line start, for resolving spans to line/column.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LineIndex {
     line_starts: Vec<u32>,
 }
 
+/// A zero-based line and column position within a source.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LineColumn {
+    /// Zero-based line number.
     pub line: u32,
+    /// Zero-based column, counted in bytes from the line start.
     pub column: u32,
 }
 
 impl SourceRegistry {
+    /// Registers or updates a file source. A path already registered keeps
+    /// its [`SourceId`] and has its text replaced.
     pub fn add_file(&mut self, path: PathBuf, text: String) -> SourceId {
         if let Some(source_id) = self.file_ids.get(&path).cloned() {
             self.sources.insert(
@@ -60,9 +78,12 @@ impl SourceRegistry {
             source_id.clone(),
             RegisteredSource::new(source_id.clone(), text),
         );
+        self.order.push(source_id.clone());
         source_id
     }
 
+    /// Registers a virtual (non-file) source under a fresh, unique
+    /// [`SourceId`] derived from `name`.
     pub fn add_virtual(&mut self, name: String, text: String) -> SourceId {
         let source_id = SourceId::new(format!("virtual://{}#{}", name, self.next_virtual_id));
         self.next_virtual_id += 1;
@@ -70,23 +91,30 @@ impl SourceRegistry {
             source_id.clone(),
             RegisteredSource::new(source_id.clone(), text),
         );
+        self.order.push(source_id.clone());
         source_id
     }
 
+    /// The registered source for `source`, if any.
     pub fn source(&self, source: &SourceId) -> Option<&RegisteredSource> {
         self.sources.get(source)
     }
 
+    /// The text of `source`, if registered.
     pub fn text(&self, source: &SourceId) -> Option<&str> {
         self.source(source).map(RegisteredSource::text)
     }
 
+    /// The line index of `source`, if registered.
     pub fn line_index(&self, source: &SourceId) -> Option<&LineIndex> {
         self.source(source).map(RegisteredSource::line_index)
     }
 
+    /// Every registered source id, in the order sources were added. Analysis
+    /// walks sources in this order, so schema sources added before query
+    /// sources are visible to them.
     pub fn source_ids(&self) -> impl Iterator<Item = &SourceId> {
-        self.sources.keys()
+        self.order.iter()
     }
 }
 
@@ -102,6 +130,7 @@ impl RegisteredSource {
 }
 
 impl LineIndex {
+    /// Builds the index by scanning `text` for line breaks.
     pub fn new(text: &str) -> Self {
         let mut line_starts = vec![0];
 
@@ -114,6 +143,7 @@ impl LineIndex {
         Self { line_starts }
     }
 
+    /// Resolves a byte offset to its zero-based line and column.
     pub fn line_column(&self, byte_offset: u32) -> LineColumn {
         let line_index = match self.line_starts.binary_search(&byte_offset) {
             Ok(index) => index,

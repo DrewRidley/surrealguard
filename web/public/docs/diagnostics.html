@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Diagnostics — SurrealGuard Docs</title>
+<meta name="description" content="The contract-first diagnostic model and the eight code families: schema refs, types, graph, statement misuse, functions, parameters, lints, and version compatibility." />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
+<link rel="stylesheet" href="/styles.css" />
+<link rel="stylesheet" href="/docs/docs.css" />
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+    <div class="nav-links">
+      <a href="/docs/">Docs</a>
+      <a href="/#agents">For agents</a>
+      <a href="/#install">Install</a>
+      <a class="nav-cta" href="https://github.com/DrewRidley/surrealguard">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<div class="docs-shell">
+  <aside class="docs-sidebar">
+    <div class="group">Overview</div>
+    <nav>
+      <a href="/docs/">Introduction</a>
+      <a href="/docs/getting-started.html">Getting started</a>
+    </nav>
+    <div class="group">Reference</div>
+    <nav>
+      <a href="/docs/cli.html">CLI</a>
+      <a href="/docs/diagnostics.html" aria-current="page">Diagnostics</a>
+    </nav>
+    <div class="group">Integrations</div>
+    <nav>
+      <a href="/docs/rust.html">Rust · surrealguard-rs</a>
+      <a href="/docs/typescript.html">TypeScript</a>
+      <a href="/docs/agents.html">Coding agents</a>
+    </nav>
+  </aside>
+
+  <main class="docs-main">
+    <span class="eyebrow-doc">// reference</span>
+    <h1>Diagnostics</h1>
+    <p class="lead-p">Every construct in SurrealQL has a <strong>contract</strong> — what the author must mean for the statement to make sense. A diagnostic exists when that contract is provably violated, whether or not SurrealDB would run the query.</p>
+
+    <h2>The contract-first model</h2>
+    <ul>
+      <li><strong>Contracts, not engine behavior.</strong> Whether SurrealDB throws, silently tolerates (kind-ordered comparisons), or coerces is irrelevant to severity — tolerated misuse is the reason this tool exists. One code per contract; variations of the same violation are message variants, never new codes.</li>
+      <li><strong>Inference is never affected.</strong> A finding never changes an inferred type. <code>UPDATE person SET age = 'x'</code> still types as <code>person</code> rows; poison (<code>any</code>) appears only where the type is genuinely unknowable.</li>
+      <li><strong>Detection site = emission site.</strong> The analyzer that owns a statement emits its findings; composite analyzers learn about inner findings by span overlap.</li>
+      <li><strong>Statically provable only.</strong> Every code is checkable from source + schema. When a value is a host <em>parameter</em>, the check is exported as a <a class="link" href="#params">constraint</a> instead of emitted as a finding.</li>
+    </ul>
+
+    <h2>Severity is intrinsic; policy at the edge</h2>
+    <p>Each finding carries an intrinsic severity — <strong>error</strong> (provably fails or misbehaves), <strong>warning</strong> (provably suspicious but executable), or <strong>hint</strong> (analyzer limitation or style note). Severity is <em>data</em>, not policy.</p>
+    <p>Consumers apply policy at their edge through the workspace config: <code>warnings_as_errors</code> promotion, per-lint <code>allow</code>/<code>warn</code>/<code>deny</code> levels. The CLI uses it for exit codes, the LSP for editor severities, host adapters for build failures. Errors are never demotable; lints are fully configurable.</p>
+    <p>In rendered output the code's letter reflects the <em>resolved</em> severity — <code>E</code>, <code>W</code>, or <code>I</code> — while parse-level findings keep an <code>S</code> prefix (e.g. <code>S0001</code>). A promoted warning renders as <code>E…</code>.</p>
+
+    <h3>In-source suppression</h3>
+    <p>A suppression comment is source-authored intent, so it applies at analysis time, rustc-style — the directive covers the next line (or its own line when trailing a statement), and a suppressed finding never leaves the pipeline. Blanket suppressions are rejected; a directive that violates its own contract is <code>7013</code>.</p>
+    <pre class="code"><span class="c">-- surrealguard: allow(E1001) reason="table created by a migration tool at runtime"</span>
+<span class="k">SELECT</span> * <span class="k">FROM</span> external_table;</pre>
+
+    <h2>The code scheme</h2>
+    <p>Codes are <code>&lt;family&gt;&lt;3 digits&gt;</code>, families numbered by category. The <code>E</code>/<code>W</code>/<code>I</code> prefix comes from severity at render time, not the code itself.</p>
+    <div class="pill-row">
+      <span class="p">0xxx syntax</span>
+      <span class="p">1xxx schema</span>
+      <span class="p">2xxx types</span>
+      <span class="p">3xxx graph</span>
+      <span class="p">4xxx statement</span>
+      <span class="p">5xxx functions</span>
+      <span class="p">6xxx parameters</span>
+      <span class="p">7xxx lints</span>
+      <span class="p">8xxx compat</span>
+    </div>
+    <p>Roughly 80 contracts span eight families (0xxx syntax is emitted by the parser). Representative codes below — the catalog folds message variants into one code per contract, so numbers you don't see are usually variants, not gaps.</p>
+
+    <h2>1xxx — Schema references</h2>
+    <p>Contract: every name a query uses must resolve against the schema, wherever the schema constrains it.</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
+      <tbody>
+        <tr><td>1001</td><td>E</td><td>A table reference names a known table (FROM/targets, RELATE endpoints, <code>record&lt;t&gt;</code>, <code>DEFINE … ON</code>).</td></tr>
+        <tr><td>1002</td><td>E</td><td>A field reference names a declared field of its row's table (schemafull only; FLEXIBLE subtrees exempt).</td></tr>
+        <tr><td>1012</td><td>E</td><td>A schema-object reference names a known object of that kind (REMOVE/REBUILD INDEX, REMOVE EVENT, analyzers).</td></tr>
+        <tr><td>1021</td><td>W</td><td>REMOVE removes something that exists.</td></tr>
+        <tr><td>1022</td><td>W</td><td>A definition does not silently redefine (use OVERWRITE to state intent).</td></tr>
+        <tr><td>1023</td><td>E</td><td>FETCH names something that can hold records.</td></tr>
+        <tr><td>1027</td><td>E</td><td>An index-backed operator has its supporting index (<code>@@</code>/search needs a SEARCH index; <code>&lt;|k|&gt;</code> needs MTREE/HNSW).</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2>2xxx — Types and nullability</h2>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
+      <tbody>
+        <tr><td>2001</td><td>E</td><td>A value written to a field inhabits the field's declared type (SET, CONTENT/MERGE/REPLACE, INSERT, DEFAULT/VALUE, record links, NONE into non-optional).</td></tr>
+        <tr><td>2004</td><td>E</td><td>The operands make sense together for the operator (binary/unary, arithmetic/comparison, compound assignment).</td></tr>
+        <tr><td>2005</td><td>W</td><td>A condition position expects a boolean (IF, ASSERT, bare WHERE).</td></tr>
+        <tr><td>2007</td><td>E</td><td>A cast names a known type (<code>&lt;ghost&gt; x</code>).</td></tr>
+        <tr><td>2008</td><td>E</td><td>A conversion can succeed (<code>&lt;int&gt; 'abc'</code>, <code>type::int('x')</code>).</td></tr>
+        <tr><td>2018</td><td>E</td><td>LIMIT/START take a non-negative integer.</td></tr>
+        <tr><td>2025</td><td>E</td><td>READONLY fields are written only at creation.</td></tr>
+        <tr><td>2034</td><td>E</td><td>Required fields are provided at creation (<code>CREATE person;</code> with a non-optional, no-DEFAULT field).</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2>3xxx — Graph and relations</h2>
+    <p>Contract: a traversal or RELATE must use relations as declared (<code>in</code>-&gt;edge-&gt;<code>out</code>).</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
+      <tbody>
+        <tr><td>3001</td><td>E</td><td>A step traverses a relation table (not a plain table).</td></tr>
+        <tr><td>3002</td><td>E</td><td>The usage matches the relation's declared shape — wrong direction, hop landing off the far side, RELATE writing endpoints on the wrong sides.</td></tr>
+        <tr><td>3004</td><td>E</td><td>A FROM-position chain is complete (edge-&gt;target pairs).</td></tr>
+        <tr><td>3009</td><td>E</td><td>A traversal starts from records.</td></tr>
+        <tr><td>3011</td><td>W</td><td>Graph recursion is bounded (<code>@{..}</code> with no upper bound).</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2>4xxx — Statement and clause misuse</h2>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
+      <tbody>
+        <tr><td>4001</td><td>E</td><td>Clause is valid on this statement (<code>SELECT … RETURN NONE</code>, <code>CREATE … WHERE</code>).</td></tr>
+        <tr><td>4003</td><td>E</td><td>ONLY on a table-wide target needs LIMIT 1 (deterministic <code>SingleOnlyOutput</code> error).</td></tr>
+        <tr><td>4005</td><td>E</td><td>BREAK/CONTINUE only inside a loop.</td></tr>
+        <tr><td>4007</td><td>E</td><td>Transaction pairing: BEGIN opens exactly one transaction that COMMIT/CANCEL closes.</td></tr>
+        <tr><td>4010</td><td>W</td><td>No duplicate SET target in one statement.</td></tr>
+        <tr><td>4022</td><td>W</td><td>SELECT from a DROP table (rows are never retained).</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2>5xxx — Functions and closures</h2>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
+      <tbody>
+        <tr><td>5001</td><td>E</td><td>A call resolves to a function that exists (unknown builtins, undefined <code>fn::</code>, methods unavailable on the receiver's kind).</td></tr>
+        <tr><td>5002</td><td>E</td><td>A call matches the function's signature (arity, per-argument kinds, <code>fn::</code> declared params, closure arity).</td></tr>
+        <tr><td>5005</td><td>E</td><td>A const argument satisfies the function's value contract (<code>type::field('aeg')</code> naming no field, <code>type::thing('ghost', …)</code>).</td></tr>
+        <tr><td>5009</td><td>W</td><td><code>fn::</code> definitions terminate (no direct/mutual recursion cycles).</td></tr>
+        <tr><td>5010</td><td>W</td><td>Events do not trigger themselves, directly or in a cycle.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="params">6xxx — Parameters</h2>
+    <p>A <code>$param</code> used in a checkable position produces a <strong>constraint</strong> that host adapters discharge, not a finding. Findings here fire only on contradictions and misuse.</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
+      <tbody>
+        <tr><td>6001</td><td>E</td><td>Constraints on one param unify — <code>WHERE $x &gt; 3 AND $x = 'abc'</code> has no satisfying value.</td></tr>
+        <tr><td>6004</td><td>W</td><td>A param is not used before its LET in source order.</td></tr>
+        <tr><td>6005</td><td>E</td><td>A context param is used inside its context (<code>$before</code> outside an event, <code>$parent</code> outside a subquery).</td></tr>
+        <tr><td>6007</td><td>E</td><td>No assignment to a protected parameter (<code>$auth</code>, <code>$session</code>, <code>$token</code>, <code>$this</code>, …).</td></tr>
+      </tbody>
+    </table></div>
+    <p>Every use of an unbound <code>$param</code> exports the kind and value domain its uses imply — <code>SET age = $age</code> → <code>$age: int</code>; <code>string::len($s)</code> → <code>$s: string</code>; <code>LIMIT $n</code> → <code>$n: int</code> and <code>n &gt;= 0</code>; <code>type::field($f)</code> → <code>$f: string</code> and the value must be one of the table's field paths. Constraints from multiple uses intersect; an empty intersection is <code>6001</code>. Host adapters (the <a class="link" href="/docs/rust.html">Rust macro</a> and <a class="link" href="/docs/typescript.html">TS codegen</a>) enforce them at the call site.</p>
+
+    <h3>Context parameters</h3>
+    <p>SurrealQL injects parameters by context; the analyzer models them as implicitly bound, with kinds where the context defines them — so their bodies type-check and using one outside its context is <code>6005</code>.</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Param</th><th>Context</th><th>Kind</th></tr></thead>
+      <tbody>
+        <tr><td>$this</td><td>any row scope</td><td>current row (table's object type)</td></tr>
+        <tr><td>$parent</td><td>subquery</td><td>enclosing row</td></tr>
+        <tr><td>$event</td><td>DEFINE EVENT</td><td><code>'CREATE' | 'UPDATE' | 'DELETE'</code></td></tr>
+        <tr><td>$before, $after</td><td>DEFINE EVENT</td><td>the table's row type</td></tr>
+        <tr><td>$value, $input</td><td>EVENT / FIELD VALUE·ASSERT</td><td>event row / the field's declared type</td></tr>
+        <tr><td>$auth, $session, $token, $scope</td><td>permissions / anywhere</td><td>session-shaped objects (open)</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2>7xxx — Lints</h2>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
+      <tbody>
+        <tr><td>7001</td><td>W</td><td>Unused LET binding.</td></tr>
+        <tr><td>7004</td><td>W</td><td>Control flow decided by a constant (<code>IF true</code>, <code>WHERE 1 = 1</code>, <code>FOR $x IN []</code>).</td></tr>
+        <tr><td>7005</td><td>W</td><td>A comparison against a closed literal set can never match (<code>WHEN $event = 'CRATE'</code>).</td></tr>
+        <tr><td>7007</td><td>I</td><td><code>SELECT *</code> alongside explicit fields.</td></tr>
+        <tr><td>7009</td><td>W</td><td>Whole-table UPDATE/DELETE without WHERE.</td></tr>
+        <tr><td>7013</td><td>W</td><td>A suppression directive names a catalog code (with a reason when required).</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2>8xxx — Version compatibility</h2>
+    <p>Gated on <code>[analysis] surrealdb_version</code>. Checks resolve against a per-version registry of function availability and syntax support.</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
+      <tbody>
+        <tr><td>8001</td><td>E</td><td>Every function used exists in the configured target version (unavailable or renamed — the message suggests the new name).</td></tr>
+        <tr><td>8003</td><td>E</td><td>Syntax requires a newer version (closures, <code>??</code> on old targets).</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="docs-pager">
+      <a href="/docs/cli.html">
+        <span class="dir">← Previous</span>
+        <span class="ttl">CLI</span>
+      </a>
+      <a class="next" href="/docs/rust.html">
+        <span class="dir">Next →</span>
+        <span class="ttl">Rust · surrealguard-rs</span>
+      </a>
+    </div>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+      <div class="tiny">Static analysis &amp; type inference for SurrealQL.</div>
+    </div>
+    <div class="cols">
+      <a href="/docs/">Docs</a>
+      <a href="/llms.txt">llms.txt</a>
+      <a href="/llms-full.txt">llms-full.txt</a>
+      <a href="https://github.com/DrewRidley/surrealguard">GitHub</a>
+      <a href="https://crates.io/crates/surrealguard">crates.io</a>
+      <a href="https://www.npmjs.com/org/surrealguard">npm</a>
+    </div>
+    <div class="tiny">MIT OR Apache-2.0</div>
+  </div>
+</footer>
+
+</body>
+</html>

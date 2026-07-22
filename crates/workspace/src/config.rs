@@ -3,46 +3,71 @@
 use serde::Deserialize;
 use surrealguard_diagnostics::LintLevel;
 
+/// Resolved `surrealguard.toml`: the source globs, analysis settings,
+/// diagnostic policy, and per-lint overrides, with every unset key already
+/// filled from the defaults.
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct WorkspaceConfig {
+    /// Which files are schema, which are queries, and which to ignore.
     pub sources: SourceConfig,
+    /// Strictness and the target SurrealDB version.
     pub analysis: AnalysisConfig,
+    /// How findings are escalated and what suppressions must carry.
     pub diagnostics: DiagnosticConfig,
+    /// Per-lint level overrides; `None` leaves the lint at its default.
     pub lints: LintConfig,
 }
 
+/// The glob sets that classify a workspace's `.surql` files.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceConfig {
+    /// Globs whose matches contribute `DEFINE`/`REMOVE` catalog effects.
     pub schema: Vec<String>,
+    /// Globs whose matches are analyzed as queries against the schema.
     pub queries: Vec<String>,
+    /// Globs excluded from both sets — dependency and build directories.
     pub ignore: Vec<String>,
 }
 
+/// Settings that steer inference and checking.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AnalysisConfig {
+    /// Run in strict mode, tightening otherwise-advisory checks.
     pub strict: bool,
+    /// Target SurrealDB version (e.g. `"2"`, `"2.1"`); selects
+    /// version-gated behavior.
     pub surrealdb_version: String,
 }
 
+/// How findings are surfaced: escalation policy and suppression rules.
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct DiagnosticConfig {
+    /// Promote every warning-level finding to an error.
     pub warnings_as_errors: bool,
+    /// Require a written reason on every inline suppression.
     pub require_suppression_reasons: bool,
 }
 
+/// Per-lint level overrides read from `[lints]`; `None` keeps the lint's
+/// built-in default.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LintConfig {
+    /// Level override for `SELECT *`.
     pub select_star: Option<LintLevel>,
+    /// Level override for dynamically-built queries.
     pub dynamic_query: Option<LintLevel>,
+    /// Level override for selecting a permission-gated field.
     pub permission_gated_field: Option<LintLevel>,
 }
 
+/// A `surrealguard.toml` that failed to parse or carried an invalid value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfigError {
     message: String,
 }
 
 impl ConfigError {
+    /// The human-readable failure description.
     pub fn message(&self) -> &str {
         &self.message
     }
@@ -57,6 +82,8 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 impl WorkspaceConfig {
+    /// Parses a `surrealguard.toml` document, filling every unset key from
+    /// [`WorkspaceConfig::default`].
     pub fn from_toml_str(input: &str) -> Result<Self, ConfigError> {
         let raw: RawWorkspaceConfig = toml::from_str(input).map_err(|error| ConfigError {
             message: error.to_string(),

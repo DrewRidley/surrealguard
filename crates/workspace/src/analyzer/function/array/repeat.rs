@@ -9,7 +9,7 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_array_repeat(
+pub(crate) fn analyze_array_repeat(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     args: &[Kind],
@@ -36,6 +36,6 @@ mod tests {
                 analyze_array_repeat(ctx, &call, &[Kind::String, Kind::Int]),
                 Kind::Array(Box::new(Kind::String), None)
             );
-        })
+        });
     }
 }

@@ -12,6 +12,7 @@ pub struct ByteRange {
 }
 
 impl ByteRange {
+    /// Builds a range, rejecting `start > end`.
     pub fn new(start: u32, end: u32) -> Result<Self, InvalidByteRange> {
         if start <= end {
             Ok(Self { start, end })
@@ -20,18 +21,22 @@ impl ByteRange {
         }
     }
 
+    /// Inclusive start byte offset.
     pub fn start(self) -> u32 {
         self.start
     }
 
+    /// Exclusive end byte offset.
     pub fn end(self) -> u32 {
         self.end
     }
 
+    /// Number of bytes covered.
     pub fn len(self) -> u32 {
         self.end - self.start
     }
 
+    /// Whether the range covers zero bytes.
     pub fn is_empty(self) -> bool {
         self.start == self.end
     }
@@ -45,10 +50,12 @@ pub struct InvalidByteRange {
 }
 
 impl InvalidByteRange {
+    /// The rejected start offset.
     pub fn start(self) -> u32 {
         self.start
     }
 
+    /// The rejected end offset.
     pub fn end(self) -> u32 {
         self.end
     }
@@ -62,14 +69,17 @@ pub struct SourceSpan {
 }
 
 impl SourceSpan {
+    /// Pairs a byte range with the source it belongs to.
     pub fn new(source: SourceId, range: ByteRange) -> Self {
         Self { source, range }
     }
 
+    /// The source this span points into.
     pub fn source(&self) -> &SourceId {
         &self.source
     }
 
+    /// The byte range within the source.
     pub fn range(&self) -> ByteRange {
         self.range
     }

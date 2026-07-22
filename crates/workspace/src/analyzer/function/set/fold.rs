@@ -11,9 +11,13 @@ use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::expression::infer::closure_return_kind;
 use crate::analyzer::function::{check_closure_arity, closure_arg};
 
-pub fn analyze_set_fold(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
+pub(crate) fn analyze_set_fold(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    args: &[Kind],
+) -> Kind {
     let element = match args.first() {
-        Some(Kind::Array(element, _)) | Some(Kind::Set(element, _)) => (**element).clone(),
+        Some(Kind::Array(element, _) | Kind::Set(element, _)) => (**element).clone(),
         _ => return Kind::Any,
     };
     let (accumulator, closure) = (
@@ -43,6 +47,6 @@ mod tests {
                 analyze_set_fold(ctx, &call, &[Kind::Set(Box::new(Kind::Int), None)]),
                 Kind::Any
             );
-        })
+        });
     }
 }

@@ -10,7 +10,7 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::statement::analyze_lowered_statement;
 
-pub fn analyze_block(ctx: &mut AnalysisContext<'_>, block: &ast::Block) -> Kind {
+pub(crate) fn analyze_block(ctx: &mut AnalysisContext<'_>, block: &ast::Block) -> Kind {
     let mut last = Kind::None;
     let mut terminated = false;
     for statement in &block.statements {

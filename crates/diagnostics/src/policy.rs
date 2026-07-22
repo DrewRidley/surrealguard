@@ -13,8 +13,11 @@ use crate::{FindingCategory, FindingCode, Severity};
 /// or promoted to an error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LintLevel {
+    /// Silence the lint entirely — it is never reported.
     Allow,
+    /// Report the lint as a warning (the default).
     Warn,
+    /// Promote the lint to an error.
     Deny,
 }
 
@@ -27,10 +30,12 @@ pub struct PolicyConfig {
 }
 
 impl PolicyConfig {
+    /// Enable promotion of every non-lint warning to an error.
     pub fn set_warnings_as_errors(&mut self, enabled: bool) {
         self.warnings_as_errors = enabled;
     }
 
+    /// Override the level for one lint code, replacing its default `Warn`.
     pub fn set_lint_level(&mut self, code: FindingCode, level: LintLevel) {
         self.lint_levels.insert(code, level);
     }
@@ -43,6 +48,10 @@ impl PolicyConfig {
             .unwrap_or(LintLevel::Warn)
     }
 
+    /// Resolves a finding's effective severity for this surface, or `None`
+    /// when policy silences it. Lint codes follow their [`LintLevel`];
+    /// other codes are promoted per `warnings_as_errors` and otherwise keep
+    /// their intrinsic `default_severity`.
     pub fn resolve_severity(
         &self,
         code: FindingCode,

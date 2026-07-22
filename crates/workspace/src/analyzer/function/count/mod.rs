@@ -11,7 +11,7 @@ use crate::analyzer::context::AnalysisContext;
 
 pub mod count;
 
-pub fn analyze_count_function(
+pub(crate) fn analyze_count_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

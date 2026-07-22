@@ -11,6 +11,7 @@ use super::{Block, PartialNode, Spanned, Statement, TypeExpr};
 /// A value-producing expression.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
+    /// A literal value.
     Literal(Literal),
     /// A field path / graph traversal, rooted in the current row context or
     /// in a leading value (see [`IdiomPart::Start`]).
@@ -25,28 +26,47 @@ pub enum Expr {
     /// A record id literal: `person:one`. The id's internal structure is
     /// kept opaque (ids can be composite; nothing consumes their shape).
     RecordId {
+        /// The table portion (`person` in `person:one`).
         table: Spanned<String>,
+        /// The id portion, kept as an opaque span.
         id: crate::span::ByteRange,
     },
+    /// A binary operation: `a + b`, `a AND b`.
     Binary {
+        /// Left operand.
         lhs: Box<Spanned<Expr>>,
+        /// The operator.
         op: Spanned<BinaryOp>,
+        /// Right operand.
         rhs: Box<Spanned<Expr>>,
     },
+    /// A prefix operation: `!x`, `-x`.
     Prefix {
+        /// The operator.
         op: Spanned<PrefixOp>,
+        /// The operand.
         expr: Box<Spanned<Expr>>,
     },
+    /// A function call.
     Call(Call),
+    /// An object literal: `{ a: 1, b: 2 }`.
     Object(Vec<(Spanned<String>, Spanned<Expr>)>),
+    /// An array literal: `[1, 2, 3]`.
     Array(Vec<Spanned<Expr>>),
+    /// A parenthesized statement used as a value: `(SELECT ...)`.
     Subquery(Box<Spanned<Statement>>),
+    /// A `{ ...; ... }` block used as a value.
     Block(Block),
+    /// A type cast: `<int> $x`.
     Cast {
+        /// The target type.
         ty: Spanned<TypeExpr>,
+        /// The expression being cast.
         expr: Box<Spanned<Expr>>,
     },
+    /// A closure value.
     Closure(Closure),
+    /// An expression that failed to lower.
     Partial(PartialNode),
 }
 
@@ -67,12 +87,19 @@ pub struct Closure {
 /// normalized during lowering.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Literal {
+    /// An integer literal; its value feeds `LIMIT`/array-length facts.
     Int(i64),
+    /// A floating-point literal.
     Float(f64),
+    /// A `decimal` literal — only its kind matters, so no value is kept.
     Decimal,
+    /// A string literal's contents.
     String(String),
+    /// A boolean literal.
     Bool(bool),
+    /// The `NONE` literal.
     None,
+    /// The `NULL` literal.
     Null,
     /// A duration literal, carrying its raw text (`1w2d`).
     Duration(String),
@@ -90,9 +117,11 @@ pub enum Literal {
 /// or one field.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Idiom {
+    /// The path segments, in order; each is individually spanned.
     pub parts: Vec<Spanned<IdiomPart>>,
 }
 
+/// One segment of an [`Idiom`] path.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IdiomPart {
     /// A leading value the rest of the path is applied to: `$user.name`,
@@ -111,6 +140,7 @@ pub enum IdiomPart {
     Graph {
         /// Direction, spanned to the arrow token itself.
         dir: Spanned<GraphDir>,
+        /// The edge selection reached by the step.
         step: GraphStep,
     },
     /// Brace selection: `.{name, age}` — real sub-idioms, not comma-split text.
@@ -119,23 +149,31 @@ pub enum IdiomPart {
     Where(Box<Spanned<Expr>>),
     /// Method call as a path part: `foo.len()`.
     Method {
+        /// The method name.
         name: Spanned<String>,
+        /// The call arguments.
         args: Vec<Spanned<Expr>>,
     },
     /// Graph recursion: `.{1..3}` / `.{..}` — `bounded` is whether an
     /// upper bound was written.
     Recurse {
+        /// Whether an upper recursion bound was written.
         bounded: bool,
     },
     /// Optional chaining marker: `foo?.bar`.
     Optional,
+    /// A path segment that failed to lower.
     Partial(PartialNode),
 }
 
+/// Direction of a graph traversal step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GraphDir {
+    /// `->` — outgoing edges.
     Out,
+    /// `<-` — incoming edges.
     In,
+    /// `<->` — edges in either direction.
     Both,
 }
 
@@ -155,7 +193,9 @@ pub struct GraphStep {
 /// own spans so per-argument diagnostics need no re-derivation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Call {
+    /// The canonicalized function path (`type::is_record`).
     pub path: Spanned<String>,
+    /// The argument expressions, each retaining its own span.
     pub args: Vec<Spanned<Expr>>,
 }
 
@@ -163,26 +203,45 @@ pub struct Call {
 /// for everything else — an unknown operator is a fact, not a guess.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BinaryOp {
+    /// `+`
     Add,
+    /// `-`
     Sub,
+    /// `*`
     Mul,
+    /// `/`
     Div,
+    /// `=` / `==`
     Eq,
+    /// `!=`
     NotEq,
+    /// `<`
     Lt,
+    /// `<=`
     LtEq,
+    /// `>`
     Gt,
+    /// `>=`
     GtEq,
+    /// `AND` / `&&`
     And,
+    /// `OR` / `||`
     Or,
+    /// `??` — null coalescing.
     NullCoalesce,
+    /// Any operator not modeled above, kept as raw text.
     Other(String),
 }
 
+/// Prefix operators, with an explicit escape hatch for the unmodeled.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PrefixOp {
+    /// `!` — logical negation.
     Not,
+    /// `-` — arithmetic negation.
     Neg,
+    /// `+` — unary plus.
     Pos,
+    /// Any operator not modeled above, kept as raw text.
     Other(String),
 }

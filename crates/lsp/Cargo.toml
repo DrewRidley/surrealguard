@@ -2,7 +2,13 @@
 name = "surrealguard-lsp"
 version.workspace = true
 edition.workspace = true
-publish = false
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Language Server Protocol implementation for SurrealQL powered by SurrealGuard"
 
 [[bin]]
@@ -10,10 +16,10 @@ name = "surrealguard-lsp"
 path = "src/main.rs"
 
 [dependencies]
-surrealguard-diagnostics = { path = "../diagnostics" }
-surrealguard-embed = { path = "../embed" }
-surrealguard-syntax = { path = "../syntax" }
-surrealguard-workspace = { path = "../workspace" }
+surrealguard-diagnostics = { path = "../diagnostics", version = "0.1.0" }
+surrealguard-embed = { path = "../embed", version = "0.1.0" }
+surrealguard-syntax = { path = "../syntax", version = "0.1.0" }
+surrealguard-workspace = { path = "../workspace", version = "0.1.0" }
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync"] }
 walkdir = "2"
@@ -22,3 +28,6 @@ walkdir = "2"
 futures = "0.3"
 serde_json = "1"
 tower = { version = "0.4", features = ["util"] }
+
+[lints]
+workspace = true

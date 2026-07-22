@@ -11,7 +11,8 @@ mod expr;
 mod statement;
 
 pub use expr::{lower_expr, lower_type_expr};
-pub use statement::{lower_statement, lower_statements};
+pub(crate) use statement::lower_statement;
+pub use statement::lower_statements;
 
 use crate::ast::{Expr, PartialNode, Script, Spanned, Statement};
 use crate::parse::ParsedSource;

@@ -17,7 +17,7 @@ use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::expression::infer::{infer_expression_fact, plain_field_segments};
 use crate::schema::{SchemaIndex, TableDef};
 
-pub fn analyze_select(ctx: &mut AnalysisContext<'_>, stmt: &ast::SelectStmt) -> Kind {
+pub(crate) fn analyze_select(ctx: &mut AnalysisContext<'_>, stmt: &ast::SelectStmt) -> Kind {
     select_response_kind(stmt, ctx)
 }
 
@@ -30,16 +30,79 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     let Some(from) = stmt.from.first() else {
         return Kind::Any;
     };
-    let table_name = match &from.node {
-        ast::Expr::Table(name) => name.node.clone(),
-        ast::Expr::RecordId { table, .. } => table.node.clone(),
+    let table_name = match resolve_from_table(stmt, from, ctx) {
+        Ok(table_name) => table_name,
+        Err(kind) => return kind,
+    };
+    let Some(table) = ctx.schema().tables.get(&table_name) else {
+        crate::analyzer::data::check_table_reference(ctx, &table_name, from.span);
+        return walk_projections_for_findings(stmt, ctx);
+    };
+    if let Some(kind) = check_source_table_shape(stmt, &table_name, table, from.span, ctx) {
+        return kind;
+    }
+
+    check_where_clause(stmt, table, ctx);
+
+    // Row-context clauses reference fields by name; each position has its
+    // own code so hosts can configure them independently.
+    for idiom in &stmt.omit {
+        if let Some(segments) = plain_field_segments(&idiom.node) {
+            crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
+        }
+    }
+    check_fetch_clauses(stmt, table, ctx);
+    check_split_clauses(stmt, table, ctx);
+    if let Some(group) = &stmt.group {
+        for idiom in &group.keys {
+            if let Some(segments) = plain_field_segments(&idiom.node) {
+                crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
+            }
+        }
+    }
+    check_order_clause(stmt, table, ctx);
+
+    let row_kind = if stmt
+        .projections
+        .iter()
+        .any(|projection| matches!(projection, ast::Projection::Wildcard(_)))
+    {
+        object_kind_for_all_fields(table)
+    } else if let Some(value_kind) = value_projection_kind(stmt, &table_name, table, ctx) {
+        value_kind
+    } else {
+        projected_object_kind(stmt, &table_name, table, ctx)
+    };
+    let row_kind = apply_omit(row_kind, &stmt.omit);
+    let row_kind = apply_fetch(row_kind, &stmt.fetch, ctx.schema());
+    let row_kind = apply_split(row_kind, &stmt.split);
+
+    if stmt.only {
+        row_kind
+    } else {
+        Kind::Array(Box::new(row_kind), literal_limit(stmt))
+    }
+}
+
+/// Resolves the `FROM` source into the table whose schema types the rows.
+/// `Ok(table_name)` continues with schema-typed inference; `Err(kind)` is a
+/// fully-resolved response for sources that need no source table (subquery,
+/// parameter, dynamic) or that cannot resolve to one.
+fn resolve_from_table(
+    stmt: &ast::SelectStmt,
+    from: &ast::Spanned<ast::Expr>,
+    ctx: &mut AnalysisContext<'_>,
+) -> Result<String, Kind> {
+    match &from.node {
+        ast::Expr::Table(name) => Ok(name.node.clone()),
+        ast::Expr::RecordId { table, .. } => Ok(table.node.clone()),
         ast::Expr::Idiom(idiom) => {
             if let Some(leading) = leading_field_table(idiom) {
                 crate::analyzer::data::graph::check_graph_idiom_at(ctx, &leading, idiom, true);
             }
             match graph_source_table(idiom, ctx.schema()) {
-                Some(table) => table,
-                None => return Kind::Any,
+                Some(table) => Ok(table),
+                None => Err(Kind::Any),
             }
         }
         // A subquery source iterates the inner response's rows: with a
@@ -52,7 +115,7 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
                 .iter()
                 .all(|projection| matches!(projection, ast::Projection::Wildcard(_)));
             if !all_wildcards {
-                return Kind::Any;
+                return Err(Kind::Any);
             }
             let inner_kind = ctx.with_row_table(None, |ctx| {
                 crate::analyzer::expression::infer::statement_value_kind(inner, ctx)
@@ -60,13 +123,13 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
             let row_kind = match inner_kind {
                 Some(Kind::Array(element, _)) => *element,
                 Some(other) => other,
-                None => return Kind::Any,
+                None => return Err(Kind::Any),
             };
-            return if stmt.only {
+            Err(if stmt.only {
                 row_kind
             } else {
                 Kind::Array(Box::new(row_kind), literal_limit(stmt))
-            };
+            })
         }
         // A parameter source is constrained to the known table names.
         ast::Expr::Param(param) => {
@@ -83,17 +146,26 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
                 Kind::Any,
                 (!tables.is_empty()).then_some(crate::analysis::ValueDomain::OneOf(tables)),
             );
-            return walk_projections_for_findings(stmt, ctx);
+            Err(walk_projections_for_findings(stmt, ctx))
         }
         // Dynamic sources and anything else stay undetermined.
-        _ => return walk_projections_for_findings(stmt, ctx),
-    };
-    let Some(table) = ctx.schema().tables.get(&table_name) else {
-        crate::analyzer::data::check_table_reference(ctx, &table_name, from.span);
-        return walk_projections_for_findings(stmt, ctx);
-    };
+        _ => Err(walk_projections_for_findings(stmt, ctx)),
+    }
+}
+
+/// Schema-shape gates on the resolved source: DROP tables never retain rows
+/// (4022, non-fatal) and a fieldless table (with no graph projection to type)
+/// limits analysis (7008). `Some(kind)` short-circuits to a projection-only
+/// walk; `None` continues with schema-typed inference.
+fn check_source_table_shape(
+    stmt: &ast::SelectStmt,
+    table_name: &str,
+    table: &TableDef,
+    from_span: surrealguard_syntax::span::ByteRange,
+    ctx: &mut AnalysisContext<'_>,
+) -> Option<Kind> {
     if table.drop_table {
-        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from.span);
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from_span);
         ctx.emit(surrealguard_diagnostics::catalog::finding(
             span,
             4022,
@@ -101,46 +173,53 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
         ));
     }
     if table.fields.is_empty() && !stmt.projections.iter().any(is_graph_projection) {
-        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from.span);
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from_span);
         ctx.emit(surrealguard_diagnostics::catalog::finding(
             span,
             7008,
             format!("table `{table_name}` has no declared fields; analysis is limited"),
         ));
-        return walk_projections_for_findings(stmt, ctx);
+        return Some(walk_projections_for_findings(stmt, ctx));
     }
+    None
+}
 
-    if let Some(cond) = &stmt.where_clause {
-        // The WHERE kind is irrelevant to the response; the walk emits
-        // findings inside the condition, with row fields resolvable.
-        let cond_kind = ctx.with_row_table(Some(table), |ctx| {
-            let fact = infer_expression_fact(cond, ctx);
-            crate::analyzer::expression::check::check_value_expression(ctx, cond);
-            fact.kind
-        });
-        crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1002);
-        // The condition contract covers WHERE too: a kind that can never
-        // be truthy-tested meaningfully is a warning-grade violation.
-        if let Some(kind) = cond_kind {
-            if crate::analyzer::flow::if_else::definitely_not_bool(&kind) {
-                let span =
-                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), cond.span);
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
-                    span,
-                    2005,
-                    format!("WHERE condition has type `{kind}`, expected `bool`"),
-                ));
-            }
+/// The WHERE clause: findings are emitted inside the condition (with row
+/// fields resolvable), and the condition contract (2005) flags a kind that
+/// can never be truthy-tested. The condition's own kind never affects the
+/// response.
+fn check_where_clause<'a>(
+    stmt: &ast::SelectStmt,
+    table: &'a TableDef,
+    ctx: &mut AnalysisContext<'a>,
+) {
+    let Some(cond) = &stmt.where_clause else {
+        return;
+    };
+    // The WHERE kind is irrelevant to the response; the walk emits
+    // findings inside the condition, with row fields resolvable.
+    let cond_kind = ctx.with_row_table(Some(table), |ctx| {
+        let fact = infer_expression_fact(cond, ctx);
+        crate::analyzer::expression::check::check_value_expression(ctx, cond);
+        fact.kind
+    });
+    crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1002);
+    if let Some(kind) = cond_kind {
+        if crate::analyzer::flow::if_else::definitely_not_bool(&kind) {
+            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), cond.span);
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                span,
+                2005,
+                format!("WHERE condition has type `{kind}`, expected `bool`"),
+            ));
         }
     }
+}
 
-    // Row-context clauses reference fields by name; each position has its
-    // own code so hosts can configure them independently.
-    for idiom in &stmt.omit {
-        if let Some(segments) = plain_field_segments(&idiom.node) {
-            crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
-        }
-    }
+/// FETCH clauses: bare field names and aliased projections must name
+/// something that can hold records — otherwise the FETCH does nothing
+/// (1023). Field paths are also checked against the schema (1002).
+fn check_fetch_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut AnalysisContext<'_>) {
     for idiom in &stmt.fetch {
         // FETCH also accepts projection aliases; only bare field names are
         // checkable here.
@@ -206,6 +285,11 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
             }
         }
     }
+}
+
+/// SPLIT clauses: each key must name a collection field to fan rows out over
+/// (1024). Field paths are also checked against the schema (1002).
+fn check_split_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut AnalysisContext<'_>) {
     for idiom in &stmt.split {
         if let Some(segments) = plain_field_segments(&idiom.node) {
             crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
@@ -229,93 +313,67 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
             }
         }
     }
-    if let Some(group) = &stmt.group {
-        for idiom in &group.keys {
-            if let Some(segments) = plain_field_segments(&idiom.node) {
-                crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
-            }
-        }
-    }
-    if let Some(order) = &stmt.order {
-        // ORDER BY's contract: each key names a field available on the
-        // result rows — a field of the source (checked against the schema),
-        // and, when the projection list is explicit, one of the projected
-        // names. SurrealDB's own parser enforces both; our grammar is more
-        // permissive, so the contract is enforced here (2017).
-        let explicit_keys: Option<Vec<String>> = if stmt
-            .projections
-            .iter()
-            .any(|projection| matches!(projection, ast::Projection::Wildcard(_)))
-        {
-            None
-        } else {
-            Some(
-                stmt.projections
-                    .iter()
-                    .filter_map(|projection| match projection {
-                        ast::Projection::Expr { expr, alias } => Some(match alias {
-                            Some(alias) => alias.node.clone(),
-                            None => slice(ctx.source_text(), expr.span).to_string(),
-                        }),
-                        _ => None,
-                    })
-                    .collect(),
-            )
+}
+
+/// ORDER BY's contract (2017): each key names a field available on the
+/// result rows — a field of the source (checked against the schema), and,
+/// when the projection list is explicit, one of the projected names.
+/// SurrealDB's own parser enforces both; our grammar is more permissive, so
+/// the contract is enforced here. `ORDER BY RAND()` is the one non-field form.
+fn check_order_clause(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut AnalysisContext<'_>) {
+    let Some(order) = &stmt.order else {
+        return;
+    };
+    let explicit_keys: Option<Vec<String>> = if stmt
+        .projections
+        .iter()
+        .any(|projection| matches!(projection, ast::Projection::Wildcard(_)))
+    {
+        None
+    } else {
+        Some(
+            stmt.projections
+                .iter()
+                .filter_map(|projection| match projection {
+                    ast::Projection::Expr { expr, alias } => Some(match alias {
+                        Some(alias) => alias.node.clone(),
+                        None => slice(ctx.source_text(), expr.span).to_string(),
+                    }),
+                    _ => None,
+                })
+                .collect(),
+        )
+    };
+    for key in &order.keys {
+        let field = match &key.expr.node {
+            ast::Expr::Idiom(idiom) => plain_field_segments(idiom),
+            // ORDER BY RAND() is the one non-field form.
+            ast::Expr::Call(call) if call.path.node == "rand" => continue,
+            _ => None,
         };
-        for key in &order.keys {
-            let field = match &key.expr.node {
-                ast::Expr::Idiom(idiom) => plain_field_segments(idiom),
-                // ORDER BY RAND() is the one non-field form.
-                ast::Expr::Call(call) if call.path.node == "rand" => continue,
-                _ => None,
-            };
-            let Some(segments) = field else {
+        let Some(segments) = field else {
+            let span =
+                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), key.expr.span);
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                span,
+                2017,
+                "ORDER BY expects a field of the query source (or RAND())".to_string(),
+            ));
+            continue;
+        };
+        crate::analyzer::data::check_field_path(ctx, table, &segments, key.expr.span, 1002);
+        if let Some(keys) = &explicit_keys {
+            let name = segments.join(".");
+            if !keys.contains(&name) {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), key.expr.span);
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
                     span,
                     2017,
-                    "ORDER BY expects a field of the query source (or RAND())".to_string(),
+                    format!("ORDER BY `{name}` does not name a field selected by this query"),
                 ));
-                continue;
-            };
-            crate::analyzer::data::check_field_path(ctx, table, &segments, key.expr.span, 1002);
-            if let Some(keys) = &explicit_keys {
-                let name = segments.join(".");
-                if !keys.contains(&name) {
-                    let span = surrealguard_syntax::span::SourceSpan::new(
-                        ctx.source().clone(),
-                        key.expr.span,
-                    );
-                    ctx.emit(surrealguard_diagnostics::catalog::finding(
-                        span,
-                        2017,
-                        format!("ORDER BY `{name}` does not name a field selected by this query"),
-                    ));
-                }
             }
         }
-    }
-
-    let row_kind = if stmt
-        .projections
-        .iter()
-        .any(|projection| matches!(projection, ast::Projection::Wildcard(_)))
-    {
-        object_kind_for_all_fields(table)
-    } else if let Some(value_kind) = value_projection_kind(stmt, &table_name, table, ctx) {
-        value_kind
-    } else {
-        projected_object_kind(stmt, &table_name, table, ctx)
-    };
-    let row_kind = apply_omit(row_kind, &stmt.omit);
-    let row_kind = apply_fetch(row_kind, &stmt.fetch, ctx.schema());
-    let row_kind = apply_split(row_kind, &stmt.split);
-
-    if stmt.only {
-        row_kind
-    } else {
-        Kind::Array(Box::new(row_kind), literal_limit(stmt))
     }
 }
 
@@ -474,7 +532,7 @@ fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContex
             Some(alias) => alias.node.clone(),
             None => slice(ctx.source_text(), expr.span).to_string(),
         };
-        let span = alias.as_ref().map(|a| a.span).unwrap_or(expr.span);
+        let span = alias.as_ref().map_or(expr.span, |a| a.span);
         if seen.insert(key.clone(), span).is_some() {
             let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
             ctx.emit(surrealguard_diagnostics::catalog::finding(

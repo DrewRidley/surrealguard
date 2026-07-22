@@ -15,7 +15,7 @@ use surrealguard_syntax::span::{ByteRange, SourceSpan};
 use crate::analyzer::context::AnalysisContext;
 use crate::expression::{ExpressionFact, ExpressionValueClass};
 
-pub fn analyze_define_event(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineEvent) -> Kind {
+pub(crate) fn analyze_define_event(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineEvent) -> Kind {
     let row_kind = ctx
         .schema()
         .tables

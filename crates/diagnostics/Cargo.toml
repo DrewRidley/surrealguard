@@ -2,9 +2,18 @@
 name = "surrealguard-diagnostics"
 version.workspace = true
 edition.workspace = true
-publish = false
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Structured findings, severities, lint policy, and suppressions for SurrealGuard"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-surrealguard-syntax.path = "../syntax"
+surrealguard-syntax = { path = "../syntax", version = "0.1.0" }
+
+[lints]
+workspace = true

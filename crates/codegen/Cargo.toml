@@ -2,9 +2,18 @@
 name = "surrealguard-codegen"
 version.workspace = true
 edition.workspace = true
-publish = false
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "TypeScript type generation from SurrealGuard analysis results"
 
 [dependencies]
 surrealdb-types.workspace = true
-surrealguard-workspace = { path = "../workspace" }
+surrealguard-workspace = { path = "../workspace", version = "0.1.0" }
+
+[lints]
+workspace = true

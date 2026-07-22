@@ -1,0 +1,2 @@
+# Downloaded binaries are cached here at runtime; never publish them.
+binaries/

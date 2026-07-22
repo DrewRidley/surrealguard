@@ -35,7 +35,7 @@ use crate::analyzer::context::AnalysisContext;
 /// allocates — that made `&[...]` literals fail to compile for those
 /// variants while working by accident for simple ones like `Kind::String`.
 /// `vec![...]` sidesteps the whole class of lifetime issues.
-pub(crate) struct Signature {
+pub struct Signature {
     pub(crate) min_args: usize,
     /// `None` means unbounded (variadic past `arg_kinds.last()`).
     pub(crate) max_args: Option<usize>,
@@ -46,7 +46,7 @@ pub(crate) struct Signature {
     pub(crate) return_kind: ReturnKind,
 }
 
-pub(crate) enum ParamKind {
+pub enum ParamKind {
     /// Must be assignable to this exact kind (numeric widening allowed,
     /// same rule mutation field assignability already uses).
     Exact(Kind),
@@ -60,7 +60,7 @@ pub(crate) enum ParamKind {
     Any,
 }
 
-pub(crate) enum ReturnKind {
+pub enum ReturnKind {
     /// Always this kind, regardless of arguments.
     Fixed(Kind),
     /// Same kind as `args[index]` (e.g. `array::first` returns the array's
@@ -81,7 +81,7 @@ pub(crate) enum ReturnKind {
 /// Synthetic calls (method-call sugar dispatching by name, carrying no
 /// argument expressions or spans) are inference-only: nothing to anchor a
 /// finding to, and the receiver-kind probe intentionally tries families.
-pub(crate) fn apply(
+pub fn apply(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     signature: &Signature,
@@ -242,12 +242,12 @@ fn plural(word: &str, count: usize) -> String {
 /// Never rejects: argument mistakes are invariant violations, not type
 /// ambiguity. `Kind::Any` means the return depends on an argument that is
 /// missing or whose element kind can't be read.
-pub(crate) fn evaluate(signature: &Signature, args: &[Kind]) -> Kind {
+pub fn evaluate(signature: &Signature, args: &[Kind]) -> Kind {
     match &signature.return_kind {
         ReturnKind::Fixed(kind) => kind.clone(),
         ReturnKind::SameAsArg(index) => args.get(*index).cloned().unwrap_or(Kind::Any),
         ReturnKind::ArrayElement(index) => match args.get(*index) {
-            Some(Kind::Array(element, _)) | Some(Kind::Set(element, _)) => (**element).clone(),
+            Some(Kind::Array(element, _) | Kind::Set(element, _)) => (**element).clone(),
             _ => Kind::Any,
         },
     }

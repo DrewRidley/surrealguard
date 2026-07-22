@@ -14,7 +14,7 @@ pub mod origin;
 pub mod rd;
 pub mod token;
 
-pub fn analyze_session_function(
+pub(crate) fn analyze_session_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

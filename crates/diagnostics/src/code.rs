@@ -7,6 +7,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+/// The thousand-block family a code belongs to. The family fixes the code
+/// number range and the display prefix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FindingCategory {
     /// 0xxx — parse-level breakage.
@@ -38,38 +40,47 @@ pub struct FindingCode {
 }
 
 impl FindingCode {
+    /// A code in the syntax family (0xxx).
     pub fn syntax(number: u16) -> Self {
         Self::new(FindingCategory::Syntax, number)
     }
 
+    /// A code in the schema family (1xxx).
     pub fn schema(number: u16) -> Self {
         Self::new(FindingCategory::Schema, number)
     }
 
+    /// A code in the type family (2xxx).
     pub fn type_error(number: u16) -> Self {
         Self::new(FindingCategory::Type, number)
     }
 
+    /// A code in the parameter family (6xxx).
     pub fn param(number: u16) -> Self {
         Self::new(FindingCategory::Param, number)
     }
 
+    /// A code in the graph family (3xxx).
     pub fn graph(number: u16) -> Self {
         Self::new(FindingCategory::Graph, number)
     }
 
+    /// A code in the lint family (7xxx).
     pub fn lint(number: u16) -> Self {
         Self::new(FindingCategory::Lint, number)
     }
 
+    /// A code in the statement family (4xxx).
     pub fn statement(number: u16) -> Self {
         Self::new(FindingCategory::Statement, number)
     }
 
+    /// A code in the function family (5xxx).
     pub fn function(number: u16) -> Self {
         Self::new(FindingCategory::Function, number)
     }
 
+    /// A code in the compatibility family (8xxx).
     pub fn compat(number: u16) -> Self {
         Self::new(FindingCategory::Compat, number)
     }
@@ -90,10 +101,12 @@ impl FindingCode {
         Self::new(category, number)
     }
 
+    /// The family this code belongs to.
     pub fn category(self) -> FindingCategory {
         self.category
     }
 
+    /// The raw code number (e.g. `2001`), without prefix or family.
     pub fn number(self) -> u16 {
         self.number
     }

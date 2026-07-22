@@ -1,0 +1,46 @@
+{
+  "name": "@surrealguard/next",
+  "version": "0.1.0",
+  "description": "Next.js / React bindings for SurrealGuard: typed queries, live subscriptions, SSR hydration.",
+  "type": "module",
+  "license": "MIT OR Apache-2.0",
+  "author": "Drew Ridley",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DrewRidley/surrealguard",
+    "directory": "packages/next"
+  },
+  "keywords": ["surrealdb", "surrealql", "next", "react", "live-query"],
+  "sideEffects": false,
+  "files": ["dist", "LICENSE-MIT", "LICENSE-APACHE"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@surrealguard/client": "workspace:*",
+    "@surrealguard/query": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^14",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "jsdom": "^25",
+    "react": "^18",
+    "react-dom": "^18"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean --external react",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  }
+}

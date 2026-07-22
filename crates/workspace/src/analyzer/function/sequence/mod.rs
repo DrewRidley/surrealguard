@@ -8,7 +8,7 @@ use crate::analyzer::context::AnalysisContext;
 pub mod next;
 pub mod nextval;
 
-pub fn analyze_sequence_function(
+pub(crate) fn analyze_sequence_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

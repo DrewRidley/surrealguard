@@ -10,7 +10,7 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{apply, ParamKind, ReturnKind, Signature};
 
-pub fn analyze_file_rename_if_not_exists(
+pub(crate) fn analyze_file_rename_if_not_exists(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     args: &[Kind],

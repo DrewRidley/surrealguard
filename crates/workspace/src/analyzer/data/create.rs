@@ -10,7 +10,7 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::data::mutation;
 
-pub fn analyze_create(ctx: &mut AnalysisContext<'_>, stmt: &ast::CreateStmt) -> Kind {
+pub(crate) fn analyze_create(ctx: &mut AnalysisContext<'_>, stmt: &ast::CreateStmt) -> Kind {
     create_response_kind(stmt, ctx)
 }
 

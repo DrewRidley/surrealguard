@@ -14,7 +14,7 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::expression::{ExpressionFact, ExpressionValueClass, PartialReason};
 
-pub fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineField) -> Kind {
+pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineField) -> Kind {
     let parsed_type = stmt
         .ty
         .as_ref()
@@ -24,8 +24,7 @@ pub fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineFie
     let no_partial = Vec::new();
     let partial = parsed_type
         .as_ref()
-        .map(|parsed| &parsed.partial)
-        .unwrap_or(&no_partial);
+        .map_or(&no_partial, |parsed| &parsed.partial);
     check_field_definition(ctx, stmt, partial);
 
     for (clause, checks_type) in [(&stmt.default, true), (&stmt.value, true)] {
@@ -95,7 +94,7 @@ fn check_field_definition(
         PartialReason::UnsupportedSyntax(text) => Some(text),
         PartialReason::Unresolved | PartialReason::DynamicExpression => None,
     }) {
-        let span = stmt.ty.as_ref().map(|ty| ty.span).unwrap_or(stmt.path.span);
+        let span = stmt.ty.as_ref().map_or(stmt.path.span, |ty| ty.span);
         ctx.emit(surrealguard_diagnostics::catalog::finding(
             surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span),
             6003,

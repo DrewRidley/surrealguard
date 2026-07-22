@@ -2,9 +2,7 @@
 
 /// Runs `f` with a fresh empty-schema context — the boilerplate shared by
 /// leaf-analyzer tests.
-pub(crate) fn with_ctx<T>(
-    f: impl FnOnce(&mut crate::analyzer::context::AnalysisContext<'_>) -> T,
-) -> T {
+pub fn with_ctx<T>(f: impl FnOnce(&mut crate::analyzer::context::AnalysisContext<'_>) -> T) -> T {
     let schema = crate::schema::SchemaIndex::default();
     let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
     let mut ctx = crate::analyzer::context::AnalysisContext::new(
@@ -17,7 +15,7 @@ pub(crate) fn with_ctx<T>(
 }
 
 /// A synthetic call for analyzers that only read the argument kinds.
-pub(crate) fn synthetic_call(path: &str) -> surrealguard_syntax::ast::Call {
+pub fn synthetic_call(path: &str) -> surrealguard_syntax::ast::Call {
     surrealguard_syntax::ast::Call {
         path: surrealguard_syntax::ast::Spanned::new(
             path.to_string(),

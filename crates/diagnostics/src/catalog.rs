@@ -12,8 +12,11 @@ use crate::{Finding, FindingCode, Severity};
 /// label names the *kind* of problem.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CatalogEntry {
+    /// The code number within its thousand-block family.
     pub number: u16,
+    /// A short phrase naming the contract this code enforces.
     pub label: &'static str,
+    /// The intrinsic severity every finding for this code carries.
     pub severity: Severity,
 }
 

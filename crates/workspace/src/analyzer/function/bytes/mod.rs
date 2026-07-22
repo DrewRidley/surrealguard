@@ -7,7 +7,7 @@ use crate::analyzer::context::AnalysisContext;
 
 pub mod len;
 
-pub fn analyze_bytes_function(
+pub(crate) fn analyze_bytes_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

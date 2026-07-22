@@ -39,7 +39,7 @@ pub mod type_;
 pub mod value;
 pub mod vector;
 
-pub fn analyze_builtin_function(
+pub(crate) fn analyze_builtin_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     args: &[Kind],

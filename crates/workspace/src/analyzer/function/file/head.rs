@@ -9,7 +9,11 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{evaluate, ParamKind, ReturnKind, Signature};
 
-pub fn analyze_file_head(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
+pub(crate) fn analyze_file_head(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    args: &[Kind],
+) -> Kind {
     let _ = (ctx, call);
     // File-pointer argument left `Any`; see `file::bucket` for why.
     evaluate(

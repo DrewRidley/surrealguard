@@ -29,7 +29,7 @@ pub(crate) fn check_graph_idiom(
     source_table: &str,
     idiom: &ast::Idiom,
 ) {
-    check_graph_idiom_at(ctx, source_table, idiom, false)
+    check_graph_idiom_at(ctx, source_table, idiom, false);
 }
 
 /// `require_landing` is FROM's extra contract: the traversal must end on

@@ -10,10 +10,14 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_set_flatten(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
+pub(crate) fn analyze_set_flatten(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    args: &[Kind],
+) -> Kind {
     let _ = (ctx, call);
     match args {
-        [Kind::Array(element, _)] | [Kind::Set(element, _)] => match element.as_ref() {
+        [Kind::Array(element, _) | Kind::Set(element, _)] => match element.as_ref() {
             Kind::Array(inner, _) | Kind::Set(inner, _) => {
                 Kind::Set(Box::new((**inner).clone()), None)
             }
@@ -43,6 +47,6 @@ mod tests {
                 ),
                 Kind::Set(Box::new(Kind::Int), None)
             );
-        })
+        });
     }
 }

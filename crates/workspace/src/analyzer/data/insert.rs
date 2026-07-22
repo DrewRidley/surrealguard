@@ -8,8 +8,9 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::data::mutation;
+use crate::schema::TableDef;
 
-pub fn analyze_insert(ctx: &mut AnalysisContext<'_>, stmt: &ast::InsertStmt) -> Kind {
+pub(crate) fn analyze_insert(ctx: &mut AnalysisContext<'_>, stmt: &ast::InsertStmt) -> Kind {
     insert_response_kind(stmt, ctx)
 }
 
@@ -17,7 +18,33 @@ pub(crate) fn insert_response_kind(stmt: &ast::InsertStmt, ctx: &mut AnalysisCon
     mutation::check_relation_insert(ctx, stmt.target.as_ref(), &stmt.data);
     let row_table = mutation::source_table_name(stmt.target.as_ref())
         .and_then(|name| ctx.schema().tables.get(&name));
-    match &stmt.data {
+    check_insert_payload(ctx, &stmt.data, row_table);
+
+    let Some(table_name) = mutation::source_table_name(stmt.target.as_ref()) else {
+        return Kind::Any;
+    };
+    let Some(table) = ctx.schema().tables.get(&table_name) else {
+        if let Some(target) = stmt.target.as_ref() {
+            crate::analyzer::data::check_table_reference(ctx, &table_name, target.span);
+        }
+        return Kind::Any;
+    };
+
+    check_insert_required_fields(ctx, stmt, table);
+
+    // INSERT has no ONLY modifier — the result is always an array.
+    mutation::response_kind_for_target(false, stmt.ret.as_ref(), table, ctx)
+}
+
+/// Checks the INSERT payload against the (optional) target table: per-form
+/// inference, payload-object keys, and column/value kind agreement (2001,
+/// 4004). `row_table` is absent for unknown or dynamic targets.
+fn check_insert_payload(
+    ctx: &mut AnalysisContext<'_>,
+    data: &ast::InsertData,
+    row_table: Option<&TableDef>,
+) {
+    match data {
         ast::InsertData::Values(values) => {
             for value in values {
                 crate::analyzer::expression::infer::infer_expression_fact(value, ctx);
@@ -114,44 +141,42 @@ pub(crate) fn insert_response_kind(stmt: &ast::InsertStmt, ctx: &mut AnalysisCon
         }
         ast::InsertData::Partial(_) => {}
     }
-    let Some(table_name) = mutation::source_table_name(stmt.target.as_ref()) else {
-        return Kind::Any;
-    };
-    let Some(table) = ctx.schema().tables.get(&table_name) else {
-        if let Some(target) = stmt.target.as_ref() {
-            crate::analyzer::data::check_table_reference(ctx, &table_name, target.span);
-        }
-        return Kind::Any;
-    };
+}
 
-    if let Some(target) = stmt.target.as_ref() {
-        match &stmt.data {
-            ast::InsertData::Values(values) => {
-                for value in values {
-                    let keys = mutation::object_keys(value);
-                    if !keys.is_empty() {
-                        mutation::check_required_fields(ctx, table, &keys, target.span);
-                    }
-                }
-            }
-            ast::InsertData::Rows { rows, .. } => {
-                for row in rows {
-                    let keys: Vec<String> = row
-                        .iter()
-                        .filter_map(|(column, _)| {
-                            crate::analyzer::expression::infer::plain_field_segments(&column.node)
-                                .and_then(|segments| segments.first().cloned())
-                        })
-                        .collect();
+/// Enforces required-field presence once the target table resolves: every
+/// VALUES object and every VALUES-with-columns row must supply the table's
+/// mandatory fields.
+fn check_insert_required_fields(
+    ctx: &mut AnalysisContext<'_>,
+    stmt: &ast::InsertStmt,
+    table: &TableDef,
+) {
+    let Some(target) = stmt.target.as_ref() else {
+        return;
+    };
+    match &stmt.data {
+        ast::InsertData::Values(values) => {
+            for value in values {
+                let keys = mutation::object_keys(value);
+                if !keys.is_empty() {
                     mutation::check_required_fields(ctx, table, &keys, target.span);
                 }
             }
-            _ => {}
         }
+        ast::InsertData::Rows { rows, .. } => {
+            for row in rows {
+                let keys: Vec<String> = row
+                    .iter()
+                    .filter_map(|(column, _)| {
+                        crate::analyzer::expression::infer::plain_field_segments(&column.node)
+                            .and_then(|segments| segments.first().cloned())
+                    })
+                    .collect();
+                mutation::check_required_fields(ctx, table, &keys, target.span);
+            }
+        }
+        _ => {}
     }
-
-    // INSERT has no ONLY modifier — the result is always an array.
-    mutation::response_kind_for_target(false, stmt.ret.as_ref(), table, ctx)
 }
 
 #[cfg(test)]

@@ -16,7 +16,7 @@ pub mod time;
 pub mod ulid;
 pub mod uuid;
 
-pub fn analyze_rand_function(
+pub(crate) fn analyze_rand_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

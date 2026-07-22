@@ -43,7 +43,7 @@ pub mod week;
 pub mod yday;
 pub mod year;
 
-pub fn analyze_time_function(
+pub(crate) fn analyze_time_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

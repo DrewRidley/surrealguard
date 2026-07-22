@@ -11,7 +11,11 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::const_value_arg;
 
-pub fn analyze_type_field(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
+pub(crate) fn analyze_type_field(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    args: &[Kind],
+) -> Kind {
     let _ = args;
     let path = match const_value_arg(ctx, call, 0) {
         Some(surrealdb_types::Value::String(path)) => path,

@@ -6,7 +6,7 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_show(ctx: &mut AnalysisContext<'_>, stmt: &ast::ShowStmt) -> Kind {
+pub(crate) fn analyze_show(ctx: &mut AnalysisContext<'_>, stmt: &ast::ShowStmt) -> Kind {
     if let Some(table) = &stmt.table {
         if crate::analyzer::data::check_table_reference(ctx, &table.node, table.span) {
             let has_changefeed = ctx

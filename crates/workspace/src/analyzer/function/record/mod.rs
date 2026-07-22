@@ -12,7 +12,7 @@ pub mod refs;
 pub mod table;
 pub mod tb;
 
-pub fn analyze_record_function(
+pub(crate) fn analyze_record_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rust · surrealguard-rs — SurrealGuard Docs</title>
+<meta name="description" content="The surrealguard-rs crate: the query! and surql! macros, compile-time checking, schema resolution, nameless typed Query<T> results, and the Kind→Rust type mapping." />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
+<link rel="stylesheet" href="/styles.css" />
+<link rel="stylesheet" href="/docs/docs.css" />
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+    <div class="nav-links">
+      <a href="/docs/">Docs</a>
+      <a href="/#agents">For agents</a>
+      <a href="/#install">Install</a>
+      <a class="nav-cta" href="https://github.com/DrewRidley/surrealguard">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<div class="docs-shell">
+  <aside class="docs-sidebar">
+    <div class="group">Overview</div>
+    <nav>
+      <a href="/docs/">Introduction</a>
+      <a href="/docs/getting-started.html">Getting started</a>
+    </nav>
+    <div class="group">Reference</div>
+    <nav>
+      <a href="/docs/cli.html">CLI</a>
+      <a href="/docs/diagnostics.html">Diagnostics</a>
+    </nav>
+    <div class="group">Integrations</div>
+    <nav>
+      <a href="/docs/rust.html" aria-current="page">Rust · surrealguard-rs</a>
+      <a href="/docs/typescript.html">TypeScript</a>
+      <a href="/docs/agents.html">Coding agents</a>
+    </nav>
+  </aside>
+
+  <main class="docs-main">
+    <span class="eyebrow-doc">// integration</span>
+    <h1>Rust · surrealguard-rs</h1>
+    <p class="lead-p">Compile-time-checked, typed SurrealQL for Rust. The <code>query!</code> macro runs the SurrealGuard analyzer against your schema <em>during compilation</em> — a wrong table, unknown field, bad arity, or kind mismatch is a <code>cargo check</code> error, and the result type is generated from the inferred response. No build script, no language server, no runtime schema fetch.</p>
+
+    <pre class="code"><span class="dollar">$</span> cargo add surrealguard-rs</pre>
+
+    <h2>The macros</h2>
+    <p><code>surrealguard-rs</code> re-exports two proc-macros; a crate using them only needs <code>surrealguard-rs</code> in scope (it re-exports every dependency the expansion references).</p>
+    <ul>
+      <li><code>query!("…")</code> — check <em>and</em> return a typed <code>Query&lt;T&gt;</code> whose <code>T</code> is the inferred, nameless result type.</li>
+      <li><code>surql!("…")</code> — check and expand to the query text as a <code>&amp;'static str</code> (the lighter form when you only want validation).</li>
+    </ul>
+    <pre class="code"><span class="k">use</span> surrealguard_rs::{query, surql};
+
+<span class="k">let</span> users = <span class="fn">query!</span>(<span class="s">"SELECT name, age FROM user"</span>);
+<span class="c">//  users: Query&lt;Vec&lt;{ name: String, age: i64 }&gt;&gt;  ← nameless struct, inferred</span>
+
+<span class="k">let</span> sql = <span class="fn">surql!</span>(<span class="s">"UPDATE user SET age = 30"</span>);
+<span class="c">//  sql: &'static str — validated, unchanged text</span></pre>
+
+    <h2>The compiler is the checker</h2>
+    <p>The macro runs the real analyzer at compile time and turns each error-severity finding into a spanned <code>compile_error!</code>. On stable Rust the span covers the whole literal; the message carries every finding's code and text.</p>
+    <pre class="code"><span class="k">let</span> bad = <span class="fn">query!</span>(<span class="s">"SELECT name, ssn FROM user"</span>);</pre>
+    <pre class="code"><span class="err">error: SurrealGuard rejected this query:
+  [E1002] unknown field `ssn` on table `user`</span>
+ --&gt; src/main.rs:7:15
+  |
+7 |     let bad = query!("SELECT name, ssn FROM user");
+  |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</pre>
+    <div class="callout">
+      With no schema configured, queries are still checked for everything that doesn't depend on one — syntax, function arity, operators, and so on.
+    </div>
+
+    <h2>Schema resolution</h2>
+    <p>The macro resolves your schema at compile time from, in order:</p>
+    <ol>
+      <li>the <code>SURREALGUARD_SCHEMA</code> environment variable — a <code>.surql</code> file or a directory, taken relative to <code>CARGO_MANIFEST_DIR</code> unless absolute;</li>
+      <li>otherwise a convention path under the crate root, first match wins: <code>schema/</code>, <code>migrations/</code>, then <code>schema.surql</code>.</li>
+    </ol>
+    <pre class="code"><span class="cmt"># point the macro at an explicit schema for one build</span>
+SURREALGUARD_SCHEMA=db/schema.surql cargo check</pre>
+    <p>A directory contributes every <code>.surql</code>/<code>.surrealql</code> file it contains, <strong>sorted by path</strong> — so zero-padded migrations (<code>0001_*.surql</code>, <code>0002_*.surql</code>) apply in order. The macro emits an <code>include_bytes!</code> per schema file, so editing a schema forces the query's crate to recompile.</p>
+
+    <h2>Nameless typed results</h2>
+    <p><code>query!</code> expands to a <code>Query&lt;T&gt;</code> whose <code>T</code> is rendered from the inferred response kind. Object shapes become <code>struct</code>s defined <em>inside the macro's own block scope</em> — so the type escapes as a value but its name never does. You get nested field access without ever writing a type, the same way sqlx's <code>query!</code> returns an anonymous record.</p>
+    <pre class="code"><span class="k">let</span> rows = <span class="fn">query!</span>(<span class="s">"SELECT name, address.city AS city FROM user"</span>);
+<span class="k">for</span> row <span class="k">in</span> rows.<span class="fn">from_json</span>(json)? {
+    <span class="fn">println!</span>(<span class="s">"{} — {}"</span>, row.name, row.city);   <span class="c">// fields, no type written</span>
+}</pre>
+    <p>Generated result types derive <code>serde::Deserialize</code>. A statement that produces no response (e.g. a bare <code>LET</code>) yields <code>()</code>.</p>
+
+    <div class="callout ok">
+      <strong>Execution.</strong> The shipped crate <em>checks and types</em> your queries; it does not itself run them. <code>Query&lt;T&gt;</code> carries the validated text (<code>.text</code>) and can decode a JSON encoding of the rows (<code>.from_json</code>). Running a query against a live database uses the official <code>surrealdb</code> Rust SDK — the execution layer is the next layer on top.
+    </div>
+
+    <h2>Kind → Rust type mapping</h2>
+    <p>The inferred <code>surrealdb_types::Kind</code> renders to Rust as follows.</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>SurrealQL kind</th><th>Rust type</th></tr></thead>
+      <tbody>
+        <tr><td>bool</td><td><code>bool</code></td></tr>
+        <tr><td>int</td><td><code>i64</code></td></tr>
+        <tr><td>float · number · decimal</td><td><code>f64</code></td></tr>
+        <tr><td>string · regex</td><td><code>String</code></td></tr>
+        <tr><td>datetime</td><td><code>chrono::DateTime&lt;Utc&gt;</code></td></tr>
+        <tr><td>uuid</td><td><code>uuid::Uuid</code></td></tr>
+        <tr><td>duration</td><td><code>String</code> (serialized as <code>1h30m</code>)</td></tr>
+        <tr><td>bytes</td><td><code>Vec&lt;u8&gt;</code></td></tr>
+        <tr><td>none · null</td><td><code>()</code></td></tr>
+        <tr><td>array&lt;T&gt; · set&lt;T&gt;</td><td><code>Vec&lt;T&gt;</code></td></tr>
+        <tr><td>option&lt;T&gt;</td><td><code>Option&lt;T&gt;</code></td></tr>
+        <tr><td>record&lt;t&gt;</td><td><code>String</code> (the id decodes as a string)</td></tr>
+        <tr><td>closed object</td><td>a nested block-local <code>struct</code></td></tr>
+        <tr><td>open object · geometry · range · file · any</td><td><code>serde_json::Value</code></td></tr>
+      </tbody>
+    </table></div>
+    <p>Literal kinds follow their base — a literal string is <code>String</code>, a literal integer is <code>i64</code>, a literal array becomes a tuple, and a literal object becomes a struct. Record links also surface as a typed <code>RecordLink&lt;T&gt;</code> in the runtime, distinguishing a <code>record&lt;post&gt;</code> field from a plain string as the execution layer lands.</p>
+
+    <div class="docs-pager">
+      <a href="/docs/diagnostics.html">
+        <span class="dir">← Previous</span>
+        <span class="ttl">Diagnostics</span>
+      </a>
+      <a class="next" href="/docs/typescript.html">
+        <span class="dir">Next →</span>
+        <span class="ttl">TypeScript</span>
+      </a>
+    </div>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+      <div class="tiny">Static analysis &amp; type inference for SurrealQL.</div>
+    </div>
+    <div class="cols">
+      <a href="/docs/">Docs</a>
+      <a href="/llms.txt">llms.txt</a>
+      <a href="/llms-full.txt">llms-full.txt</a>
+      <a href="https://github.com/DrewRidley/surrealguard">GitHub</a>
+      <a href="https://crates.io/crates/surrealguard">crates.io</a>
+      <a href="https://www.npmjs.com/org/surrealguard">npm</a>
+    </div>
+    <div class="tiny">MIT OR Apache-2.0</div>
+  </div>
+</footer>
+
+</body>
+</html>

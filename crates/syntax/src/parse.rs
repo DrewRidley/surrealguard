@@ -20,26 +20,32 @@ pub struct ParsedSource {
 }
 
 impl ParsedSource {
+    /// The identity of the parsed source.
     pub fn source_id(&self) -> &SourceId {
         &self.source_id
     }
 
+    /// The original source text.
     pub fn text(&self) -> &str {
         &self.text
     }
 
+    /// The tree-sitter parse tree.
     pub fn tree(&self) -> &Tree {
         &self.tree
     }
 
+    /// Kind of the root CST node (`"SurrealQL"` for a well-formed parse).
     pub fn root_kind(&self) -> &str {
         self.tree.root_node().kind()
     }
 
+    /// Whether the tree contains any error or missing nodes.
     pub fn has_error(&self) -> bool {
         self.tree.root_node().has_error()
     }
 
+    /// The recoverable syntax problems collected during parsing.
     pub fn syntax_diagnostics(&self) -> &[SyntaxDiagnostic] {
         &self.syntax_diagnostics
     }
@@ -54,6 +60,7 @@ pub struct SyntaxDiagnostic {
 }
 
 impl SyntaxDiagnostic {
+    /// Builds a syntax diagnostic from its kind, span, and message.
     pub fn new(kind: SyntaxDiagnosticKind, span: SourceSpan, message: impl Into<String>) -> Self {
         Self {
             kind,
@@ -62,14 +69,17 @@ impl SyntaxDiagnostic {
         }
     }
 
+    /// How the parser recovered at this location.
     pub fn kind(&self) -> SyntaxDiagnosticKind {
         self.kind
     }
 
+    /// Where the problem is in the source.
     pub fn span(&self) -> &SourceSpan {
         &self.span
     }
 
+    /// The human-readable description of the problem.
     pub fn message(&self) -> &str {
         &self.message
     }
@@ -79,7 +89,9 @@ impl SyntaxDiagnostic {
 /// Whether the parser recovered by skipping input or by inserting a
 /// missing token.
 pub enum SyntaxDiagnosticKind {
+    /// The parser recovered by skipping input it could not match.
     ErrorNode,
+    /// The parser recovered by inserting a token the grammar required.
     MissingNode,
 }
 
@@ -87,7 +99,9 @@ pub enum SyntaxDiagnosticKind {
 /// Failure to produce a tree at all (as opposed to a recoverable
 /// [`SyntaxDiagnostic`]).
 pub enum ParseError {
+    /// The SurrealQL tree-sitter language failed to load.
     LanguageError,
+    /// tree-sitter returned no tree for the input.
     ParseFailed,
 }
 

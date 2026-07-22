@@ -11,7 +11,7 @@ pub mod centroid;
 pub mod distance;
 pub mod is_valid;
 
-pub fn analyze_geo_function(
+pub(crate) fn analyze_geo_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

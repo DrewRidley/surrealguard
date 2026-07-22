@@ -19,7 +19,7 @@ pub mod put_if_not_exists;
 pub mod rename;
 pub mod rename_if_not_exists;
 
-pub fn analyze_file_function(
+pub(crate) fn analyze_file_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

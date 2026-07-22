@@ -11,7 +11,11 @@ use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::expression::infer::closure_return_kind;
 use crate::analyzer::function::{check_closure_arity, closure_arg};
 
-pub fn analyze_set_map(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
+pub(crate) fn analyze_set_map(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    args: &[Kind],
+) -> Kind {
     let Some((Kind::Set(element, max_len), closure)) =
         args.first().cloned().zip(closure_arg(call, 1))
     else {
@@ -39,6 +43,6 @@ mod tests {
                 analyze_set_map(ctx, &call, &[Kind::Set(Box::new(Kind::Int), None)]),
                 Kind::Any
             );
-        })
+        });
     }
 }

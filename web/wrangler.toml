@@ -1,0 +1,8 @@
+name = "surrealguard"
+account_id = "d37dc7dc807bdb070b2249d7e8014a8a"
+compatibility_date = "2025-06-01"
+
+# Static site served from Cloudflare Workers Static Assets.
+[assets]
+directory = "./public"
+not_found_handling = "404-page"

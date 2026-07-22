@@ -11,7 +11,10 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::expression::{ExpressionFact, ExpressionValueClass};
 
-pub fn analyze_define_function(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineFunction) -> Kind {
+pub(crate) fn analyze_define_function(
+    ctx: &mut AnalysisContext<'_>,
+    stmt: &ast::DefineFunction,
+) -> Kind {
     let Some(body) = &stmt.body else {
         return Kind::None;
     };

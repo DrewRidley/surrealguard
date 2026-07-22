@@ -6,7 +6,7 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{apply, ParamKind, ReturnKind, Signature};
 
-pub fn analyze_math_product(
+pub(crate) fn analyze_math_product(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     args: &[Kind],

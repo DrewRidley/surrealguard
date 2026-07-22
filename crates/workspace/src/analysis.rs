@@ -32,9 +32,14 @@ pub struct Workspace {
 /// overall response kind.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AnalysisOutput {
+    /// Every finding raised for the source, syntax and semantic.
     pub diagnostics: Vec<Finding>,
+    /// One record per top-level statement, in source order.
     pub statements: Vec<StatementAnalysis>,
+    /// The host-supplied parameters the source reads.
     pub inferred_params: Vec<ParamInference>,
+    /// The source's response kind — present only when exactly one
+    /// statement responds.
     pub response_kind: Option<Kind>,
 }
 
@@ -42,8 +47,11 @@ pub struct AnalysisOutput {
 /// list, and the schema index built from all sources in order.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct WorkspaceAnalysis {
+    /// Per-source analysis output, keyed by source id.
     pub sources: BTreeMap<SourceId, AnalysisOutput>,
+    /// Every finding across all sources, flattened into one list.
     pub diagnostics: Vec<Finding>,
+    /// The schema index built from all sources in source order.
     pub schema: SchemaIndex,
 }
 
@@ -52,9 +60,13 @@ pub struct WorkspaceAnalysis {
 /// statement responds, and SELECT's clause modifiers.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StatementAnalysis {
+    /// Where the statement sits in its source.
     pub span: SourceSpan,
+    /// Stable statement-kind name (`"select"`, `"define_table"`, ...).
     pub kind: String,
+    /// The statement's response kind, when it responds.
     pub response_kind: Option<Kind>,
+    /// SELECT clause modifiers; empty for other statement kinds.
     pub select_modifiers: Vec<SelectModifierAnalysis>,
 }
 
@@ -63,9 +75,15 @@ pub struct StatementAnalysis {
 /// and the literal LIMIT bound when known.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SelectModifierAnalysis {
+    /// Which clause (`"where"`, `"group"`, `"limit"`, ...).
     pub kind: String,
+    /// Where the clause sits in its source.
     pub span: SourceSpan,
+    /// Whether the clause preserves the row shape (WHERE/ORDER/LIMIT do;
+    /// GROUP/SPLIT do not).
     pub row_preserving: bool,
+    /// The literal `LIMIT` bound, when the clause is a `LIMIT` with a known
+    /// constant.
     pub max_len: Option<u64>,
 }
 
@@ -75,6 +93,7 @@ pub struct SelectModifierAnalysis {
 /// host adapter enforces at the call site.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ParamInference {
+    /// The parameter name, without the leading `$`.
     pub name: String,
     /// The kind every use agrees on, unified across constraint sites.
     pub kind: Option<surrealdb_types::Kind>,
@@ -82,7 +101,10 @@ pub struct ParamInference {
     /// uses imply one (`type::field($f)` → the table's field paths;
     /// `LIMIT $n` → non-negative).
     pub domain: Option<ValueDomain>,
+    /// Whether the host must supply the parameter — true unless a
+    /// `DEFINE PARAM` default covers it.
     pub required: bool,
+    /// Every use site of the parameter.
     pub spans: Vec<SourceSpan>,
 }
 
@@ -94,10 +116,16 @@ pub enum ValueDomain {
     /// One of an enumerable set of values.
     OneOf(Vec<surrealdb_types::Value>),
     /// A numeric range (inclusive bounds; `None` = unbounded).
-    Range { min: Option<i64>, max: Option<i64> },
+    Range {
+        /// Inclusive lower bound; `None` if unbounded below.
+        min: Option<i64>,
+        /// Inclusive upper bound; `None` if unbounded above.
+        max: Option<i64>,
+    },
 }
 
 impl Workspace {
+    /// An empty workspace configured with `config`.
     pub fn new(config: WorkspaceConfig) -> Self {
         Self {
             config,
@@ -105,22 +133,29 @@ impl Workspace {
         }
     }
 
+    /// The workspace's resolved configuration.
     pub fn config(&self) -> &WorkspaceConfig {
         &self.config
     }
 
+    /// The source registry backing the workspace.
     pub fn registry(&self) -> &SourceRegistry {
         &self.registry
     }
 
+    /// Mutable access to the source registry, for registering sources
+    /// directly.
     pub fn registry_mut(&mut self) -> &mut SourceRegistry {
         &mut self.registry
     }
 
+    /// Registers or updates a file source, returning its [`SourceId`].
     pub fn add_file_source(&mut self, path: std::path::PathBuf, text: String) -> SourceId {
         self.registry.add_file(path, text)
     }
 
+    /// Registers a virtual (non-file) source, returning a fresh
+    /// [`SourceId`].
     pub fn add_virtual_source(&mut self, name: String, text: String) -> SourceId {
         self.registry.add_virtual(name, text)
     }
@@ -132,11 +167,15 @@ impl Default for Workspace {
     }
 }
 
+/// Registers `query_text` as a virtual source and analyzes it against the
+/// workspace's existing schema.
 pub fn analyze_query(workspace: &mut Workspace, query_text: &str) -> AnalysisOutput {
     let source_id = workspace.add_virtual_source("query".into(), query_text.into());
     analyze_source(workspace, source_id)
 }
 
+/// Parses and analyzes a single registered source, returning its findings,
+/// per-statement records, inferred params, and response kind.
 pub fn analyze_source(workspace: &Workspace, source: SourceId) -> AnalysisOutput {
     let Some(text) = workspace.registry.text(&source) else {
         return AnalysisOutput::default();
@@ -185,6 +224,8 @@ fn single_response_kind(statements: &[StatementAnalysis]) -> Option<Kind> {
     }
 }
 
+/// Analyzes every registered source together, building one shared schema
+/// index and returning per-source outputs plus all findings.
 pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
     let mut sources = BTreeMap::new();
     let mut diagnostics = Vec::new();

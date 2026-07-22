@@ -10,7 +10,7 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::data::mutation;
 
-pub fn analyze_delete(ctx: &mut AnalysisContext<'_>, stmt: &ast::DeleteStmt) -> Kind {
+pub(crate) fn analyze_delete(ctx: &mut AnalysisContext<'_>, stmt: &ast::DeleteStmt) -> Kind {
     delete_response_kind(stmt, ctx)
 }
 

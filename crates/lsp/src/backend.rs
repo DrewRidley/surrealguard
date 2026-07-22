@@ -1,4 +1,4 @@
-//! LSP backend — implements the LanguageServer trait.
+//! LSP backend — implements the `LanguageServer` trait.
 
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
@@ -8,12 +8,16 @@ use tower_lsp::{Client, LanguageServer};
 use crate::diagnostics;
 use crate::workspace::Workspace;
 
+/// The language server: holds the LSP client handle and the tracked
+/// workspace, and implements [`tower_lsp::LanguageServer`].
 pub struct Backend {
     client: Client,
     workspace: RwLock<Workspace>,
 }
 
 impl Backend {
+    /// Builds a backend bound to the given LSP client, with an empty
+    /// workspace.
     pub fn new(client: Client) -> Self {
         Self {
             client,

@@ -31,9 +31,13 @@ pub struct EmbeddedQuery {
     pub substitutions: Vec<Substitution>,
 }
 
+/// A `${...}` template substitution rewritten into an analyzer parameter.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Substitution {
+    /// The generated parameter name (`__hostN`) standing in for the
+    /// substitution.
     pub param: String,
+    /// Byte range of the original `${...}` expression in the host file.
     pub host_range: std::ops::Range<usize>,
 }
 
@@ -78,8 +82,7 @@ impl EmbeddedQuery {
             let marker = format!("${}", substitution.param);
             let at = self.text[cursor..]
                 .find(&marker)
-                .map(|i| cursor + i)
-                .unwrap_or(self.text.len());
+                .map_or(self.text.len(), |i| cursor + i);
             parts.push(self.text[cursor..at].to_string());
             cursor = (at + marker.len()).min(self.text.len());
         }

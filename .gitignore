@@ -1,3 +1,8 @@
 /target
 
 .DS_Store
+
+# JavaScript / TypeScript packages
+node_modules/
+dist/
+*.tsbuildinfo

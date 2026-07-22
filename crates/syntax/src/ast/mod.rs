@@ -31,11 +31,14 @@ use crate::span::ByteRange;
 /// working on); spans are plain `Copy` byte ranges so the AST is `'static`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Spanned<T> {
+    /// The wrapped syntax node.
     pub node: T,
+    /// Byte range in the source the node was lowered from.
     pub span: ByteRange,
 }
 
 impl<T> Spanned<T> {
+    /// Pairs a node with the span it was lowered from.
     pub fn new(node: T, span: ByteRange) -> Self {
         Self { node, span }
     }
@@ -56,6 +59,7 @@ impl<T> Spanned<T> {
 /// must never be ignored.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PartialNode {
+    /// Byte range of the unmodeled region.
     pub span: ByteRange,
     /// The CST node kind this region had (`"ERROR"`, `"MISSING Ident"`, or
     /// the named kind of an unmodeled construct).

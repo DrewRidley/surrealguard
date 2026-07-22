@@ -6,7 +6,7 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{apply, ReturnKind, Signature};
 
-pub fn analyze_time_timezone(
+pub(crate) fn analyze_time_timezone(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     args: &[Kind],

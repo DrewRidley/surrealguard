@@ -6,7 +6,7 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{apply, ParamKind, ReturnKind, Signature};
 
-pub fn analyze_crypto_pbkdf2_compare(
+pub(crate) fn analyze_crypto_pbkdf2_compare(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     args: &[Kind],

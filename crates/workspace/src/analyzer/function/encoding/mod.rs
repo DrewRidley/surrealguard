@@ -12,7 +12,7 @@ pub mod cbor_encode;
 pub mod json_decode;
 pub mod json_encode;
 
-pub fn analyze_encoding_function(
+pub(crate) fn analyze_encoding_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

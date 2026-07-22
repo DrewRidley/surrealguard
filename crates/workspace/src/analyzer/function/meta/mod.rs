@@ -9,7 +9,7 @@ pub mod id;
 pub mod table;
 pub mod tb;
 
-pub fn analyze_meta_function(
+pub(crate) fn analyze_meta_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

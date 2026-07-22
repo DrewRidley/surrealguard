@@ -9,6 +9,8 @@ use surrealguard_syntax::span::SourceSpan;
 use crate::analysis::ParamInference;
 use crate::expression::ExpressionFact;
 
+/// The bindings in scope for a statement: `LET` facts, param defaults, and
+/// the accumulated param uses, threaded through statements in source order.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StatementEnv {
     lets: BTreeMap<String, ExpressionFact>,
@@ -20,6 +22,9 @@ pub struct StatementEnv {
 }
 
 impl StatementEnv {
+    /// A child scope for a block or branch: it inherits the parent's `LET`
+    /// bindings and param defaults but collects its own param uses, so a
+    /// local `LET` shadows rather than leaks.
     pub fn fork_child_scope(&self) -> Self {
         Self {
             lets: self.lets.clone(),
@@ -35,26 +40,35 @@ impl StatementEnv {
         self.inherited.contains(name)
     }
 
+    /// Binds `name` to `fact`, shadowing any existing binding.
     pub fn define_let(&mut self, name: String, fact: ExpressionFact) {
         self.lets.insert(name, fact);
     }
 
+    /// The fact for the `LET` binding `name`, if in scope.
     pub fn let_fact(&self, name: &str) -> Option<&ExpressionFact> {
         self.lets.get(name)
     }
 
+    /// Every `LET` binding currently in scope.
     pub fn let_facts(&self) -> &BTreeMap<String, ExpressionFact> {
         &self.lets
     }
 
+    /// Records the `DEFINE PARAM` default for `name`, whose kind seeds the
+    /// inferred param and makes it optional at the call site.
     pub fn define_param_default(&mut self, name: String, fact: ExpressionFact) {
         self.param_defaults.insert(name, fact);
     }
 
+    /// The declared default fact for param `name`, if any.
     pub fn param_default_fact(&self, name: &str) -> Option<&ExpressionFact> {
         self.param_defaults.get(name)
     }
 
+    /// Notes one use of param `name` at `span`, creating its inference
+    /// entry on first sight (seeded from any default) and deduplicating
+    /// repeat visits to the same span.
     pub fn record_param_use(&mut self, name: String, span: SourceSpan) {
         let default_kind = self
             .param_default_fact(&name)
@@ -78,6 +92,8 @@ impl StatementEnv {
         }
     }
 
+    /// Folds a child scope's param uses back into this one, unifying kinds
+    /// and domains and unioning the `required` flag and spans.
     pub fn merge_param_uses_from(&mut self, child: StatementEnv) {
         for param in child.params.into_values() {
             let entry = self
@@ -101,6 +117,7 @@ impl StatementEnv {
         }
     }
 
+    /// Consumes the scope and returns its collected param inferences.
     pub fn into_params(self) -> Vec<ParamInference> {
         self.params.into_values().collect()
     }
@@ -146,6 +163,8 @@ impl StatementEnv {
         None
     }
 
+    /// A snapshot of the collected param inferences without consuming the
+    /// scope.
     pub fn params(&self) -> Vec<ParamInference> {
         self.params.values().cloned().collect()
     }

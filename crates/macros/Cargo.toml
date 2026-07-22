@@ -1,0 +1,26 @@
+[package]
+name = "surrealguard-macros"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Compile-time checked SurrealQL for Rust — the surql! macro"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+surrealdb-types.workspace = true
+surrealguard-workspace = { path = "../workspace", version = "0.1.0" }
+surrealguard-diagnostics = { path = "../diagnostics", version = "0.1.0" }
+
+[lints]
+workspace = true

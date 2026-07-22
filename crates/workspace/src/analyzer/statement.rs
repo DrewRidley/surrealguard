@@ -1,7 +1,7 @@
 //! Top-level analyzer dispatch over the lowered AST.
 //!
-//! [`analyze_lowered_statement`] matches exhaustively over
-//! [`ast::Statement`] — adding a variant without routing it is a compile
+//! `analyze_lowered_statement` matches exhaustively over
+//! `ast::Statement` — adding a variant without routing it is a compile
 //! error. Every statement dispatches to its own analyzer; composite
 //! constructs (blocks, IF/FOR bodies) re-enter here per child, so
 //! per-statement rules stay attached to their own analyzer.
@@ -11,7 +11,7 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub fn analyze_lowered_statement(
+pub(crate) fn analyze_lowered_statement(
     ctx: &mut AnalysisContext<'_>,
     stmt: &ast::Spanned<ast::Statement>,
 ) -> Kind {

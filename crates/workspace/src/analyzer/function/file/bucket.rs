@@ -6,7 +6,11 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{evaluate, ParamKind, ReturnKind, Signature};
 
-pub fn analyze_file_bucket(ctx: &mut AnalysisContext<'_>, call: &ast::Call, args: &[Kind]) -> Kind {
+pub(crate) fn analyze_file_bucket(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    args: &[Kind],
+) -> Kind {
     let _ = (ctx, call);
     // The file-pointer argument is left `Any`: `Kind::File` compares by exact
     // bucket list, so an inferred `File(["bucket"])` would never match a

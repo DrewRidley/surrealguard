@@ -8,7 +8,7 @@ use crate::analyzer::context::AnalysisContext;
 pub mod invoke;
 pub mod timeout;
 
-pub fn analyze_api_function(
+pub(crate) fn analyze_api_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

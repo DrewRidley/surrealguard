@@ -11,7 +11,7 @@ use crate::analyzer::context::AnalysisContext;
 
 pub mod sleep;
 
-pub fn analyze_sleep_function(
+pub(crate) fn analyze_sleep_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

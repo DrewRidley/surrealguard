@@ -17,7 +17,7 @@ pub mod index;
 pub mod param;
 pub mod table;
 
-pub fn analyze_define(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineStmt) -> Kind {
+pub(crate) fn analyze_define(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineStmt) -> Kind {
     match stmt {
         ast::DefineStmt::Table(def) => table::analyze_define_table(ctx, def),
         ast::DefineStmt::Field(def) => field::analyze_define_field(ctx, def),

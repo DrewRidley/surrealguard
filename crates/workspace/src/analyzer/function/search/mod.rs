@@ -12,7 +12,7 @@ pub mod offsets;
 pub mod rrf;
 pub mod score;
 
-pub fn analyze_search_function(
+pub(crate) fn analyze_search_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,

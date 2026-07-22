@@ -11,7 +11,7 @@ use crate::analyzer::context::AnalysisContext;
 
 pub mod not;
 
-pub fn analyze_not_function(
+pub(crate) fn analyze_not_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     path: &str,
