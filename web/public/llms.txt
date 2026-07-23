@@ -8,9 +8,9 @@ SurrealDB is permissive at runtime (cross-kind comparisons order by kind, coerci
 
 - Run `npx surrealguard init` to create `surrealguard.toml`, point it at your `.surql` schema and query directories.
 - Run `npx surrealguard check --json` for machine-readable diagnostics (code, severity, message, byte span, help). Exit code reflects post-policy errors.
-- Run `npx surrealguard generate` to emit TypeScript types (a module augmentation of `@surrealguard/client`).
+- Run `npx surrealguard generate` to emit a TypeScript file that re-exports a ready `SurrealGuardClient` and augments its query registry (point `--out` at a `.ts`, e.g. `src/surrealguard.generated.ts`).
 - In Rust, wrap queries in the `query!` macro (crate `surrealguard-rs`) — they are checked against your schema at compile time and fail `cargo check` on any violation.
-- In TypeScript, pass a string literal to `SurrealGuardClient.query("…")` — result and params are typed from the query text.
+- In TypeScript, import `SurrealGuardClient` from the generated file (one import). It extends the `surrealdb` SDK's `Surreal` class, so `new SurrealGuardClient()` has every SDK method. Pass a string literal to `db.query("…")` — result and params are typed from the query text; the SDK returns one result per statement, so destructure the first: `const [rows] = await db.query("…")`.
 
 ## Diagnostics
 

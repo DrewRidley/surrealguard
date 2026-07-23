@@ -115,18 +115,19 @@
     </div>
 
     <div class="card card-split reveal">
-      <div class="code"><span class="k">const</span> users = <span class="k">await</span> db.<span class="fn">query</span>(
+      <div class="code"><span class="k">const</span> db = <span class="k">new</span> <span class="fn">SurrealGuardClient</span>();  <span class="c">// extends the SurrealDB SDK</span>
+<span class="k">const</span> [users] = <span class="k">await</span> db.<span class="fn">query</span>(
   <span class="s">"SELECT name FROM user WHERE team = $team"</span>,
   { team: <span class="s">"red"</span> }
 );
-<span class="c">//    ^ Array&lt;{ name: string }&gt; — params typed from the text</span>
+<span class="c">//     ^ Array&lt;{ name: string }&gt; — params typed from the text</span>
 
 <span class="k">await</span> db.<span class="fn">query</span>(<span class="s">"SELECT name FROM user WHERE team = $team"</span>);
 <span class="err">//    ✗ Expected 2 arguments, but got 1.</span></div>
       <div class="card-copy">
         <div class="tag">TypeScript · @surrealguard/client</div>
         <h3>Typed queries, no wrapper</h3>
-        <p>Pass a literal to <code>db.query</code> and its result and parameters are inferred from the query text. Missing or wrong params are compile errors. Dynamic strings degrade to <code>unknown</code> and still run.</p>
+        <p><code>SurrealGuardClient</code> extends the SurrealDB SDK, so <code>new SurrealGuardClient()</code> has every SDK method plus typed queries. Pass a literal to <code>db.query</code> and its result (the per-statement tuple — destructure the first) and params are inferred from the query text. Missing or wrong params are compile errors. Dynamic strings degrade to <code>unknown[]</code> and still run.</p>
       </div>
     </div>
 

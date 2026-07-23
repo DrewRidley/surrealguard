@@ -1,5 +1,7 @@
-//! The generated `.d.ts`: a module augmentation of `@surrealguard/client` that
-//! adds one `SurqlRegistry` entry per analyzed query, keyed by its exact text.
+//! The generated TypeScript module: it re-exports a ready `SurrealGuardClient`
+//! and augments its `SurqlRegistry` with one entry per analyzed query, keyed by
+//! its exact text. Importing the client from this one file also loads the
+//! augmentation, so the user needs no separate side-import.
 //!
 //! A string-literal query passed to `SurrealGuardClient.query` resolves its
 //! result and parameter types from these entries; TypeScript can key on the
@@ -8,11 +10,16 @@
 //! uses the call form `graphql("...")`).
 //!
 //! ```ts
+//! import { SurrealGuardClient } from "./surrealguard.generated";
+//!
+//! const db = new SurrealGuardClient();
+//! await db.connect("ws://localhost:8000/rpc");
+//!
 //! // ...augments @surrealguard/client with:
 //! //   "SELECT name FROM person WHERE team = $team":
 //! //     { result: Array<{ name: string }>; params: { team: string } }
-//! await db.query("SELECT name FROM person WHERE team = $team", { team: "red" });
-//! //    ^ Promise<Array<{ name: string }>>, params required + typed from the text
+//! const [rows] = await db.query("SELECT name FROM person WHERE team = $team", { team: "red" });
+//! //     ^ Array<{ name: string }> — one result per statement, params typed from the text
 //! ```
 
 use surrealguard_workspace::analysis::ParamInference;
@@ -54,12 +61,16 @@ pub fn render_registry(entries: &[QueryEntry]) -> String {
 // Conventions: datetime = Date, duration/uuid = string, record links =
 // RecordId<"table"> (a branded string), NONE fields are optional, decimal = number.
 //
-// This augments the `SurqlRegistry` interface in `@surrealguard/client`, so a
-// string-literal query passed to `SurrealGuardClient.query` resolves its result
-// and parameter types from the entries below. Import the client's `RecordId`
-// (and `GeoJSON`) types rather than redeclaring them here.
+// This file re-exports a ready-to-use `SurrealGuardClient` and augments its
+// `SurqlRegistry` with one entry per analyzed query, keyed by the exact query
+// text. Import the client from here — a string-literal query then resolves its
+// result and params from the entries below, with no separate augmentation
+// import. Import the client's `RecordId` (and `GeoJSON`) types rather than
+// redeclaring them here.
 
 import type {{ RecordId, GeoJSON }} from "@surrealguard/client";
+
+export {{ SurrealGuardClient }} from "@surrealguard/client";
 
 declare module "@surrealguard/client" {{
   interface SurqlRegistry {{
@@ -124,6 +135,10 @@ mod tests {
         assert!(rendered.contains("interface SurqlRegistry"));
         assert!(
             rendered.contains("import type { RecordId, GeoJSON } from \"@surrealguard/client\"")
+        );
+        assert!(
+            rendered.contains("export { SurrealGuardClient } from \"@surrealguard/client\""),
+            "generated file re-exports the client for a single-import DX"
         );
     }
 

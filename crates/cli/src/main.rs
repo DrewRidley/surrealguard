@@ -36,10 +36,11 @@ enum Commands {
         json: bool,
     },
 
-    /// Generate TypeScript declarations for embedded surql queries
+    /// Generate the typed SurrealGuard client + query registry
     Generate {
-        /// Output path for the generated .d.ts (default: surql.gen.d.ts
-        /// at the workspace root)
+        /// Output path for the generated module (default:
+        /// surrealguard.generated.ts at the workspace root). It re-exports a
+        /// runtime value, so the extension must be `.ts`, not `.d.ts`.
         #[arg(long)]
         out: Option<std::path::PathBuf>,
     },
@@ -340,7 +341,7 @@ fn run_generate(root: &Path, out: Option<&Path>) -> Result<std::path::PathBuf, B
         })
         .collect();
 
-    let out_path = out.map_or_else(|| root.join("surql.gen.d.ts"), Path::to_path_buf);
+    let out_path = out.map_or_else(|| root.join("surrealguard.generated.ts"), Path::to_path_buf);
     fs::write(&out_path, surrealguard_codegen::render_registry(&entries))?;
     Ok(out_path)
 }

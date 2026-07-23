@@ -44,14 +44,17 @@ expand to its text.
 ## Typed queries, no wrapper (TypeScript)
 
 ```ts
-import { SurrealGuardClient, fromSurreal } from "@surrealguard/client";
-// import "./surrealguard.generated"; // from `surrealguard generate`
+// One import: the generated file re-exports a ready client that IS a SurrealDB
+// `Surreal` (every SDK method) and loads the typed query registry.
+import { SurrealGuardClient } from "./surrealguard.generated"; // from `surrealguard generate`
 
-const db = new SurrealGuardClient(fromSurreal(surreal));
+const db = new SurrealGuardClient();
+await db.connect("ws://localhost:8000/rpc");
 
-const users = await db.query("SELECT name FROM user WHERE team = $team", { team: "red" });
-//    ^ result typed from the query text; params required + typed; wrong/missing params
-//      are compile errors. Dynamic strings degrade to `unknown` and still run.
+// SurrealDB returns one result per statement, so destructure the first result.
+const [users] = await db.query("SELECT name FROM user WHERE team = $team", { team: "red" });
+//     ^ result typed from the query text; params required + typed; wrong/missing params
+//       are compile errors. Dynamic strings degrade to `unknown[]` and still run.
 ```
 
 Framework adapters build on a reactive core (`@surrealguard/query`) that hides

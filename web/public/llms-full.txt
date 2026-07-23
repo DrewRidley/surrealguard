@@ -177,17 +177,17 @@ populated. The `help` and `related` arrays are always present, often empty.
 ### `surrealguard generate [--out <path>]`
 
 Scans host-language files for embedded SurrealQL, analyzes each query against the
-workspace schema, and writes a typed query registry as a TypeScript declaration
-file. Host files are discovered by extension — `.ts`, `.tsx`, `.js`, `.jsx`,
-`.svelte`, `.vue`, `.astro` — honoring the same ignore patterns as `.surql`
-discovery. Default output: `surql.gen.d.ts` at the workspace root. The emitted
-file is a module augmentation of `@surrealguard/client` (see §8).
+workspace schema, and writes a TypeScript module that re-exports a ready
+`SurrealGuardClient` and augments its query registry. Host files are discovered
+by extension — `.ts`, `.tsx`, `.js`, `.jsx`, `.svelte`, `.vue`, `.astro` —
+honoring the same ignore patterns as `.surql` discovery. Because the file
+re-exports a runtime value (the client), write it to a `.ts` file via `--out`
+(e.g. `src/surrealguard.generated.ts`). The emitted file both re-exports
+`SurrealGuardClient` and augments `@surrealguard/client` (see §8).
 
 ```
-$ surrealguard generate
-Generated surql.gen.d.ts
-
-$ surrealguard generate --out src/surql.gen.d.ts
+$ surrealguard generate --out src/surrealguard.generated.ts
+Generated src/surrealguard.generated.ts
 ```
 
 ### Exit codes
@@ -512,66 +512,66 @@ Four packages: `@surrealguard/client`, `@surrealguard/query`,
 
 ### `@surrealguard/client`
 
-A typed wrapper over any SurrealDB-like connection. Pass a string literal to
-`query` and its result and params resolve from the generated registry; a dynamic
-string falls back to `unknown` and still runs.
+`SurrealGuardClient` extends the official `surrealdb` SDK's `Surreal` class, so
+`new SurrealGuardClient()` has every SDK method plus typed queries. Pass a string
+literal to `query` and its result and params resolve from the generated registry;
+a dynamic string falls back to the SDK's `unknown[]` and still runs. `surrealdb`
+is a peer dependency.
 
 ```ts
-import { SurrealGuardClient, fromSurreal } from "@surrealguard/client";
-import "./surql.gen"; // the module augmentation from `surrealguard generate`
+// One import: the generated file re-exports a ready client and loads the registry.
+import { SurrealGuardClient } from "./surrealguard.generated";
 
-const db = new SurrealGuardClient(fromSurreal(surreal));
+const db = new SurrealGuardClient();
+await db.connect("ws://localhost:8000/rpc");
+await db.use({ namespace: "app", database: "app" });
 
-const users = await db.query("SELECT name FROM user WHERE team = $team", { team: "red" });
-//    ^ Array<{ name: string }> — result & params inferred from the query text
+// SurrealDB returns one result per statement, so destructure the first result.
+const [users] = await db.query("SELECT name FROM user WHERE team = $team", { team: "red" });
+//     ^ Array<{ name: string }> — result & params inferred from the query text
 
 await db.query("SELECT name FROM user WHERE team = $team");
 //    ✗ Expected 2 arguments, but got 1.  (params required when the query reads them)
 ```
 
-`fromSurreal(surreal)` adapts a SurrealDB JS SDK `Surreal` instance to the
-client's `Connection` interface (kept structural, so the package does not depend
-on the SDK). Since the SDK returns one result per statement, the adapter returns
-the first statement's result.
+Because the client IS a real `Surreal`, `connect()`, `use()`, live queries, and
+every other SDK method behave exactly as the SDK documents.
 
 Signatures and exports:
 
 ```ts
-class SurrealGuardClient {
-  constructor(connection: Connection);
-  query<Q extends string>(query: Q, ...args: ArgsOf<Q>): Promise<ResultOf<Q>>;
-  get raw(): Connection;
+class SurrealGuardClient extends Surreal {
+  // The SDK's `query` builder is nominal and unexported, so the override
+  // intersects it with `Promise<tuple>` — narrowing what `await` yields while
+  // staying assignable to the base method (no runtime change, no lie about it).
+  query<Q extends string>(query: Q, ...args: ArgsOf<Q>): QueryBuilder & Promise<QueryResultOf<Q>>;
 }
 
 // Required exactly when the query reads params, forbidden otherwise — one
 // conditional generic, proven against tsc. There is deliberately NO permissive
-// string overload; a second overload would defeat the inference.
+// string overload for text; a second overload would defeat the inference.
 type ParamsArg<P> = P extends Record<string, never> ? [] : [params: P];
-type ResultOf<Q extends string> = Q extends keyof SurqlRegistry ? SurqlRegistry[Q]["result"] : unknown;
-type ArgsOf<Q extends string>   = Q extends keyof SurqlRegistry ? ParamsArg<SurqlRegistry[Q]["params"]> : [params?: Record<string, unknown>];
+type ArgsOf<Q extends string>        = Q extends keyof SurqlRegistry ? ParamsArg<SurqlRegistry[Q]["params"]> : [bindings?: Record<string, unknown>];
+type QueryResultOf<Q extends string> = Q extends keyof SurqlRegistry ? [SurqlRegistry[Q]["result"]] : unknown[];
 
-interface Connection {
-  query(sql: string, vars?: Record<string, unknown>): Promise<unknown>;
-  live?(sql: string, cb: (n: LiveNotification) => void): Promise<string>;
-  kill?(id: string): Promise<void>;
-}
-interface LiveNotification<Row = Record<string, unknown>> {
-  action: "CREATE" | "UPDATE" | "DELETE";
-  result: Row;
-}
 type RecordId<T extends string = string> = string & { readonly __table?: T };
 ```
 
-Also exports `GeoJSON`, `SurqlRegistry`, `SurqlQueryShape`.
+Also exports `GeoJSON`, `SurqlRegistry`, `SurqlQueryShape`, `ArgsOf`, `QueryResultOf`.
 
 ### `surrealguard generate`
 
-Emits a module augmentation of `@surrealguard/client` — one registry entry per
-analyzed query, keyed by its exact text. The base `SurqlRegistry` is empty; the
-generated file only ever adds entries. Import it once and every matching
-`db.query("…")` is typed.
+Emits one TypeScript module that re-exports a ready `SurrealGuardClient` and
+augments `@surrealguard/client`'s registry — one entry per analyzed query, keyed
+by its exact text. The base `SurqlRegistry` is empty; the generated file only
+ever adds entries. Import the client from this one file (that also loads the
+augmentation) and every matching `db.query("…")` is typed, no side-import.
 
 ```ts
+import type { RecordId, GeoJSON } from "@surrealguard/client";
+
+export { SurrealGuardClient } from "@surrealguard/client";
+
 declare module "@surrealguard/client" {
   interface SurqlRegistry {
     "SELECT * FROM user": {
@@ -589,6 +589,10 @@ A framework-agnostic reactive core. A `QueryClient` (constructed from a
 
 ```ts
 import { QueryClient } from "@surrealguard/query";
+import { SurrealGuardClient } from "./surrealguard.generated";
+
+const db = new SurrealGuardClient();
+await db.connect("ws://localhost:8000/rpc");
 const qc = new QueryClient(db);
 const handle = qc.observe("LIVE SELECT * FROM user", { initialData });
 const stop = handle.subscribe((state) => render(state.data));
@@ -599,8 +603,9 @@ const stop = handle.subscribe((state) => render(state.data));
   subscriber starts it, the last to leave tears it down. Returns an `Observable`
   with `get()` and `subscribe(listener)`.
 - **Live reconcile by id.** `LIVE SELECT` (matched by a leading `live` keyword)
-  seeds with current rows, then applies notifications keyed by record `id` —
-  `CREATE`/`UPDATE` upsert, `DELETE` removes. A plain query resolves once.
+  seeds from `initialData` (SSR), subscribes to the live-query id via the SDK's
+  `liveOf`, then applies notifications keyed by record `id` — `CREATE`/`UPDATE`
+  upsert, `DELETE` removes. A plain query resolves once.
 - `fetch(sql, params)` — a one-shot query outside the reactive layer.
 - `dehydrate()` — snapshot successful cached results for SSR transport.
 - `hydrate(state)` — seed the cache from a server snapshot so the client renders

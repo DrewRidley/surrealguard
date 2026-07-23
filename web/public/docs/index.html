@@ -79,13 +79,16 @@
 //   [E1002] unknown field `ssn` on table `user`</span></pre>
 
     <h2>Typed queries, no wrapper (TypeScript)</h2>
-    <p>Pass a string literal to <code>db.query</code> and its result and parameters are inferred from the query text. Missing or wrong params are compile errors; dynamic strings degrade to <code>unknown</code> and still run.</p>
-    <pre class="code"><span class="k">import</span> { SurrealGuardClient, fromSurreal } <span class="k">from</span> <span class="s">"@surrealguard/client"</span>;
+    <p><code>SurrealGuardClient</code> extends the SurrealDB SDK, so <code>new SurrealGuardClient()</code> has every SDK method plus typed queries. Pass a string literal to <code>db.query</code> and its result and parameters are inferred from the query text. Missing or wrong params are compile errors; dynamic strings degrade to <code>unknown[]</code> and still run.</p>
+    <pre class="code"><span class="c">// One import: the generated file re-exports a ready client and loads the registry.</span>
+<span class="k">import</span> { SurrealGuardClient } <span class="k">from</span> <span class="s">"./surrealguard.generated"</span>;
 
-<span class="k">const</span> db = <span class="k">new</span> <span class="fn">SurrealGuardClient</span>(<span class="fn">fromSurreal</span>(surreal));
+<span class="k">const</span> db = <span class="k">new</span> <span class="fn">SurrealGuardClient</span>();
+<span class="k">await</span> db.<span class="fn">connect</span>(<span class="s">"ws://localhost:8000/rpc"</span>);
 
-<span class="k">const</span> users = <span class="k">await</span> db.<span class="fn">query</span>(<span class="s">"SELECT name FROM user WHERE team = $team"</span>, { team: <span class="s">"red"</span> });
-<span class="c">//    ^ Array&lt;{ name: string }&gt; — params required + typed from the text</span></pre>
+<span class="c">// SurrealDB returns one result per statement, so destructure the first result.</span>
+<span class="k">const</span> [users] = <span class="k">await</span> db.<span class="fn">query</span>(<span class="s">"SELECT name FROM user WHERE team = $team"</span>, { team: <span class="s">"red"</span> });
+<span class="c">//     ^ Array&lt;{ name: string }&gt; — params required + typed from the text</span></pre>
 
     <h2>Install</h2>
     <pre class="code"><span class="cmt"># zero-install, great for CI & agents</span>

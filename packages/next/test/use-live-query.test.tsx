@@ -1,28 +1,36 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { act, render, screen } from "@testing-library/react";
-import {
-  SurrealGuardClient,
-  type Connection,
-  type LiveNotification,
-} from "@surrealguard/client";
+import type { SurrealGuardClient } from "@surrealguard/client";
+import type { LiveMessage } from "surrealdb";
 import { QueryClient } from "@surrealguard/query";
 import { useLiveQuery } from "../src/index.js";
 
-/** A fake connection: canned rows plus a capturable live callback. */
-function makeConn() {
-  let liveCb: ((n: LiveNotification) => void) | null = null;
-  const conn: Connection = {
-    async query() {
-      return [{ id: "user:1", name: "ada" }];
-    },
-    async live(_sql, cb) {
-      liveCb = cb;
-      return "live-1";
+const isLive = (sql: string) => /^\s*live\b/i.test(sql);
+
+/** A fake client: canned rows plus a capturable live handler. */
+function makeClient() {
+  let handler: ((m: LiveMessage) => void) | null = null;
+  const liveOf = vi.fn(async () => ({
+    id: "live-1",
+    subscribe(h: (m: LiveMessage) => void) {
+      handler = h;
+      return () => {
+        handler = null;
+      };
     },
     async kill() {},
-  };
-  return { conn, emit: (n: LiveNotification) => liveCb?.(n) };
+  }));
+  const client = {
+    async query(sql: string) {
+      return isLive(sql) ? ["live-1"] : [[{ id: "user:1", name: "ada" }]];
+    },
+    liveOf,
+  } as unknown as SurrealGuardClient;
+  return { client, emit: (m: LiveMessage) => handler?.(m) };
 }
+
+const change = (action: "CREATE" | "UPDATE" | "DELETE", id: string, value: Record<string, unknown> = {}) =>
+  ({ queryId: "live-1", action, recordId: id, value }) as unknown as LiveMessage;
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -41,8 +49,8 @@ function Users({ client }: { client: QueryClient }) {
 
 describe("useLiveQuery", () => {
   it("renders seeded data and re-renders on a live CREATE notification", async () => {
-    const { conn, emit } = makeConn();
-    const qc = new QueryClient(new SurrealGuardClient(conn));
+    const { client, emit } = makeClient();
+    const qc = new QueryClient(client);
 
     render(<Users client={qc} />);
 
@@ -50,14 +58,14 @@ describe("useLiveQuery", () => {
     expect(screen.getByText("ada")).toBeTruthy();
     expect(screen.queryByText("lin")).toBeNull();
 
-    // Let the observable start: fetch the seed rows and open the live sub.
+    // Let the observable start: subscribe to the live query.
     await act(async () => {
       await flush();
     });
 
     // A live CREATE pushes through the QueryClient and re-renders the hook.
     await act(async () => {
-      emit({ action: "CREATE", result: { id: "user:2", name: "lin" } });
+      emit(change("CREATE", "user:2", { name: "lin" }));
     });
 
     expect(screen.getByText("ada")).toBeTruthy();

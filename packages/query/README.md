@@ -8,7 +8,10 @@ SSR hydration. The framework packages (`@surrealguard/next`,
 
 ```ts
 import { QueryClient } from "@surrealguard/query";
+import { SurrealGuardClient } from "./surrealguard.generated";
 
+const db = new SurrealGuardClient();
+await db.connect("ws://localhost:8000/rpc");
 const qc = new QueryClient(db);
 
 // A plain query resolves once; a LIVE query keeps updating in place.

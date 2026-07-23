@@ -1,6 +1,6 @@
 {
   "name": "@surrealguard/next",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Next.js / React bindings for SurrealGuard: typed queries, live subscriptions, SSR hydration.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
@@ -28,7 +28,8 @@
     "@surrealguard/query": "workspace:*"
   },
   "peerDependencies": {
-    "react": ">=18"
+    "react": ">=18",
+    "surrealdb": "^2.0.8"
   },
   "devDependencies": {
     "@testing-library/react": "^14",
@@ -36,7 +37,8 @@
     "@types/react-dom": "^18",
     "jsdom": "^25",
     "react": "^18",
-    "react-dom": "^18"
+    "react-dom": "^18",
+    "surrealdb": "2.0.8"
   },
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean --external react",

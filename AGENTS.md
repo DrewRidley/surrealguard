@@ -22,8 +22,10 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
 4. **Type the queries:**
    - Rust: wrap queries in the `query!` macro (`cargo add surrealguard-rs`). They
      are checked at compile time; a violation fails `cargo check`.
-   - TypeScript: run `surrealguard generate` and pass string literals to
-     `SurrealGuardClient.query("…")` from `@surrealguard/client`.
+   - TypeScript: run `surrealguard generate --out src/surrealguard.generated.ts`,
+     import `SurrealGuardClient` from that file (it extends the `surrealdb` SDK),
+     and pass string literals to `db.query("…")` — destructure the first result,
+     `const [rows] = await db.query("…")`.
 
 ## Working inside this repository
 

@@ -1,6 +1,6 @@
 {
   "name": "@surrealguard/client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Typed SurrealQL client — literal queries resolve their result and params from generated types.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
@@ -23,8 +23,14 @@
   "publishConfig": {
     "access": "public"
   },
+  "peerDependencies": {
+    "surrealdb": "^2.0.8"
+  },
+  "devDependencies": {
+    "surrealdb": "2.0.8"
+  },
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean --external surrealdb",
     "typecheck": "tsc --noEmit"
   }
 }

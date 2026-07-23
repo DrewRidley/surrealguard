@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>TypeScript — SurrealGuard Docs</title>
-<meta name="description" content="@surrealguard/client typed db.query and fromSurreal, surrealguard generate module augmentation, the @surrealguard/query reactive core, and the Next.js and SvelteKit live-query adapters." />
+<meta name="description" content="@surrealguard/client — a SurrealGuardClient that extends the SurrealDB SDK with a typed db.query, surrealguard generate's single-import generated client, the @surrealguard/query reactive core, and the Next.js and SvelteKit live-query adapters." />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
 <link rel="stylesheet" href="/styles.css" />
 <link rel="stylesheet" href="/docs/docs.css" />
@@ -55,29 +55,35 @@
     </div>
 
     <h2>@surrealguard/client</h2>
-    <p>A typed wrapper over any SurrealDB-like connection. Pass a string literal to <code>query</code> and its result and parameters resolve from the generated registry; a dynamic string falls back to <code>unknown</code> and still runs.</p>
-    <pre class="code"><span class="k">import</span> { SurrealGuardClient, fromSurreal } <span class="k">from</span> <span class="s">"@surrealguard/client"</span>;
-<span class="k">import</span> <span class="s">"./surql.gen"</span>; <span class="c">// the module augmentation from `surrealguard generate`</span>
+    <p><code>SurrealGuardClient</code> <strong>extends</strong> the official <code>surrealdb</code> SDK's <code>Surreal</code> class, so you get every SDK method plus typed queries. Pass a string literal to <code>query</code> and its result and parameters resolve from the generated registry; a dynamic string falls back to the SDK's <code>unknown[]</code> and still runs. <code>surrealdb</code> is a peer dependency.</p>
+    <pre class="code"><span class="c">// One import: the generated file re-exports a ready client and loads the registry.</span>
+<span class="k">import</span> { SurrealGuardClient } <span class="k">from</span> <span class="s">"./surrealguard.generated"</span>;
 
-<span class="k">const</span> db = <span class="k">new</span> <span class="fn">SurrealGuardClient</span>(<span class="fn">fromSurreal</span>(surreal));
+<span class="k">const</span> db = <span class="k">new</span> <span class="fn">SurrealGuardClient</span>();
+<span class="k">await</span> db.<span class="fn">connect</span>(<span class="s">"ws://localhost:8000/rpc"</span>);
 
-<span class="k">const</span> users = <span class="k">await</span> db.<span class="fn">query</span>(<span class="s">"SELECT name FROM user WHERE team = $team"</span>, { team: <span class="s">"red"</span> });
-<span class="c">//    ^ Array&lt;{ name: string }&gt; — result & params inferred from the query text</span>
+<span class="c">// SurrealDB returns one result per statement, so destructure the first result.</span>
+<span class="k">const</span> [users] = <span class="k">await</span> db.<span class="fn">query</span>(<span class="s">"SELECT name FROM user WHERE team = $team"</span>, { team: <span class="s">"red"</span> });
+<span class="c">//     ^ Array&lt;{ name: string }&gt; — result & params inferred from the query text</span>
 
 <span class="k">await</span> db.<span class="fn">query</span>(<span class="s">"SELECT name FROM user WHERE team = $team"</span>);
 <span class="err">//    ✗ Expected 2 arguments, but got 1.  (params are required when the query reads them)</span></pre>
-    <p><code>fromSurreal</code> adapts a SurrealDB JS SDK <code>Surreal</code> instance to the client's <code>Connection</code> interface (kept structural, so the package doesn't depend on the SDK). Since the SDK returns one result per statement, the adapter returns the first statement's result.</p>
+    <p>Because the client is a real <code>Surreal</code>, <code>new SurrealGuardClient()</code> then <code>connect()</code>, <code>use()</code>, live queries, and every other SDK method work exactly as the SDK documents. The SDK's fluent <code>query</code> builder resolves to the per-statement tuple, which is why you destructure the first statement's result.</p>
 
     <h3>The typing trick</h3>
-    <p>Params are required exactly when the query reads them, forbidden otherwise. This is one conditional generic — <code>ParamsArg&lt;P&gt;</code> — proven against <code>tsc</code>. There is deliberately <strong>no</strong> permissive string overload: a second overload would defeat the inference, so <code>query</code> stays a single generic.</p>
+    <p>Params are required exactly when the query reads them, forbidden otherwise. This is one conditional generic — <code>ParamsArg&lt;P&gt;</code> — proven against <code>tsc</code>. There is deliberately <strong>no</strong> permissive string overload for text: a second overload would defeat the inference, so a query text stays a single generic. The result narrows without lying about the runtime — the SDK's builder is nominal and unexported, so the override intersects it with <code>Promise&lt;tuple&gt;</code> to type what <code>await</code> yields while staying assignable to the base method.</p>
     <pre class="code"><span class="k">type</span> <span class="t">ParamsArg</span>&lt;P&gt; = P <span class="k">extends</span> Record&lt;<span class="t">string</span>, <span class="t">never</span>&gt; ? [] : [params: P];
 
-<span class="fn">query</span>&lt;Q <span class="k">extends</span> <span class="t">string</span>&gt;(query: Q, ...args: <span class="t">ArgsOf</span>&lt;Q&gt;): Promise&lt;<span class="t">ResultOf</span>&lt;Q&gt;&gt;;</pre>
-    <p>Use <code>db.raw</code> to reach the underlying connection for live queries and lower-level access. The package also exports <code>RecordId&lt;T&gt;</code>, <code>GeoJSON</code>, <code>Connection</code>, <code>LiveNotification</code>, <code>ResultOf</code>, <code>ArgsOf</code>, <code>SurqlRegistry</code>, and <code>ParamsArg</code>.</p>
+<span class="fn">query</span>&lt;Q <span class="k">extends</span> <span class="t">string</span>&gt;(query: Q, ...args: <span class="t">ArgsOf</span>&lt;Q&gt;): <span class="t">QueryBuilder</span> &amp; Promise&lt;<span class="t">QueryResultOf</span>&lt;Q&gt;&gt;;</pre>
+    <p>The package also exports <code>RecordId&lt;T&gt;</code>, <code>GeoJSON</code>, <code>ArgsOf</code>, <code>QueryResultOf</code>, <code>SurqlRegistry</code>, <code>SurqlQueryShape</code>, and <code>ParamsArg</code>.</p>
 
     <h2>surrealguard generate</h2>
-    <p><code>surrealguard generate</code> scans your host files for embedded SurrealQL, analyzes each query against the schema, and emits a <strong>module augmentation of <code>@surrealguard/client</code></strong> — one registry entry per analyzed query, keyed by its exact text.</p>
-    <pre class="code"><span class="k">declare module</span> <span class="s">"@surrealguard/client"</span> {
+    <p><code>surrealguard generate</code> scans your host files for embedded SurrealQL, analyzes each query against the schema, and emits one TypeScript file that <strong>re-exports a ready <code>SurrealGuardClient</code></strong> and <strong>augments its <code>SurqlRegistry</code></strong> — one entry per analyzed query, keyed by its exact text.</p>
+    <pre class="code"><span class="k">import type</span> { RecordId, GeoJSON } <span class="k">from</span> <span class="s">"@surrealguard/client"</span>;
+
+<span class="k">export</span> { SurrealGuardClient } <span class="k">from</span> <span class="s">"@surrealguard/client"</span>;
+
+<span class="k">declare module</span> <span class="s">"@surrealguard/client"</span> {
   <span class="k">interface</span> <span class="t">SurqlRegistry</span> {
     <span class="s">"SELECT * FROM user"</span>: {
       result: Array&lt;{ id: <span class="t">RecordId</span>&lt;<span class="s">"user"</span>&gt;; name: <span class="t">string</span> }&gt;;
@@ -85,18 +91,21 @@
     };
   }
 }</pre>
-    <p>Import the generated file once and every matching <code>db.query("…")</code> across the app is typed. The base <code>SurqlRegistry</code> is empty; the generated file only ever adds entries. See the <a class="link" href="/docs/cli.html#generate">CLI</a> for <code>--out</code> and discovery.</p>
+    <p>Import <code>SurrealGuardClient</code> from this one generated file — that also loads the augmentation, so every matching <code>db.query("…")</code> across the app is typed with no separate side-import. The base <code>SurqlRegistry</code> is empty; the generated file only ever adds entries. Point <code>--out</code> at a <code>.ts</code> file (e.g. <code>src/surrealguard.generated.ts</code>); see the <a class="link" href="/docs/cli.html#generate">CLI</a> for discovery.</p>
 
     <h2>@surrealguard/query</h2>
     <p>A framework-agnostic reactive core. A <code>QueryClient</code> owns a cache of results keyed by <code>(sql, params)</code>; <code>observe</code> reference-counts subscriptions so N subscribers to the same query share one live subscription and one reconciled array.</p>
     <pre class="code"><span class="k">import</span> { QueryClient } <span class="k">from</span> <span class="s">"@surrealguard/query"</span>;
+<span class="k">import</span> { SurrealGuardClient } <span class="k">from</span> <span class="s">"./surrealguard.generated"</span>;
 
+<span class="k">const</span> db = <span class="k">new</span> <span class="fn">SurrealGuardClient</span>();
+<span class="k">await</span> db.<span class="fn">connect</span>(<span class="s">"ws://localhost:8000/rpc"</span>);
 <span class="k">const</span> qc = <span class="k">new</span> <span class="fn">QueryClient</span>(db);           <span class="c">// wraps a SurrealGuardClient</span>
 <span class="k">const</span> handle = qc.<span class="fn">observe</span>(<span class="s">"LIVE SELECT * FROM user"</span>, { initialData });
 <span class="k">const</span> stop = handle.<span class="fn">subscribe</span>((state) =&gt; render(state.data));</pre>
     <ul>
       <li><strong>Dedup.</strong> Identical <code>(sql, params)</code> calls share one cache entry via a stable <code>queryKey</code>; the first subscriber starts it, the last to leave tears it down.</li>
-      <li><strong>Live reconcile by id.</strong> A <code>LIVE SELECT</code> seeds with current rows, then applies change notifications to the array keyed by record <code>id</code> — <code>CREATE</code> and <code>UPDATE</code> upsert, <code>DELETE</code> removes. A plain query resolves once.</li>
+      <li><strong>Live reconcile by id.</strong> A <code>LIVE SELECT</code> seeds from <code>initialData</code> (SSR), subscribes to the live-query id via the SDK, then applies change notifications to the array keyed by record <code>id</code> — <code>CREATE</code> and <code>UPDATE</code> upsert, <code>DELETE</code> removes. A plain query resolves once.</li>
       <li><strong>SSR.</strong> <code>dehydrate()</code> snapshots successful cached results for transport; <code>hydrate(state)</code> seeds the client cache so the first render has no gap, then (for live queries) upgrades in place.</li>
       <li><code>fetch(sql, params)</code> runs a one-shot query outside the reactive layer (e.g. in an SSR <code>load</code>).</li>
     </ul>

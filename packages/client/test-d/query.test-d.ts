@@ -2,9 +2,11 @@
  * Type-level tests for the `db.query` contract. Compiling this file IS the
  * test: the positive lines must typecheck, and every `@ts-expect-error` line
  * must fail (tsc errors if an expected-error line unexpectedly compiles).
+ *
+ * These are pure type checks — `main` is never called, so no connection opens.
  */
 
-import { SurrealGuardClient, type Connection, type RecordId } from "../src/index.js";
+import { SurrealGuardClient, type RecordId } from "../src/index.js";
 
 // Stand in for what `surrealguard generate` emits.
 declare module "../src/registry.js" {
@@ -20,23 +22,33 @@ declare module "../src/registry.js" {
   }
 }
 
-declare const conn: Connection;
-const db = new SurrealGuardClient(conn);
+const db = new SurrealGuardClient();
 
 async function main() {
-  // Result type is inferred; no params allowed on a param-free query.
-  const users = await db.query("SELECT * FROM user");
+  // Result type is inferred; SurrealDB returns one result per statement, so
+  // destructure the first statement's rows. No params on a param-free query.
+  const [users] = await db.query("SELECT * FROM user");
   users[0]!.name.toUpperCase();
   users[0]!.age.toFixed(0);
 
   // Params required and typed from the query text.
-  const team = await db.query("SELECT * FROM user WHERE team = $team", { team: "red" });
+  const [team] = await db.query("SELECT * FROM user WHERE team = $team", { team: "red" });
   team[0]!.name.length;
 
-  // Dynamic strings fall back to `unknown`.
+  // The SDK's fluent builder is still available on a typed query. Chaining a
+  // builder method resolves to the SDK's own `unknown[]` (its generic default);
+  // the narrowed result comes from awaiting `db.query(...)` directly, above.
+  const rows: unknown[] = await db.query("SELECT * FROM user").retry();
+  void rows;
+
+  // Dynamic strings fall back to the SDK's `unknown[]`.
   const dynamic: string = "SELECT " + "1";
   const anyResult = await db.query(dynamic);
   void anyResult;
+
+  // `SurrealGuardClient` is a real `Surreal`: SDK methods are present.
+  await db.connect("ws://localhost:8000/rpc");
+  await db.use({ namespace: "test", database: "test" });
 
   // --- negatives: each must fail to compile ---
   // @ts-expect-error missing required params

@@ -10,11 +10,17 @@
  * carry server-fetched data across the SSR boundary so the client renders
  * without a refetch, then (for live queries) upgrades in place.
  *
+ * The client is a {@link SurrealGuardClient} — a real SurrealDB `Surreal`
+ * instance. `client.query(...)` resolves to the SDK's per-statement tuple, so
+ * one-shot queries unwrap the first statement's rows; a `LIVE SELECT` returns a
+ * live-query id which this core subscribes to via `client.liveOf(...)`.
+ *
  * The framework packages (`@surrealguard/next`, `@surrealguard/svelte`) are
  * thin bindings over the {@link Observable} returned here.
  */
 
-import type { LiveNotification, SurrealGuardClient } from "@surrealguard/client";
+import type { SurrealGuardClient } from "@surrealguard/client";
+import type { LiveMessage, LiveSubscription, Uuid } from "surrealdb";
 
 export type QueryStatus = "loading" | "success" | "error";
 
@@ -56,7 +62,7 @@ interface Entry {
   state: QueryState<Row>;
   listeners: Set<(state: QueryState<Row>) => void>;
   refs: number;
-  liveId?: string;
+  subscription?: LiveSubscription;
   started: boolean;
 }
 
@@ -118,9 +124,10 @@ export class QueryClient {
     sql: string,
     params?: Record<string, unknown>,
   ): Promise<R[]> {
-    const result = (await this.client.query(sql, params as never)) as R[];
-    this.commit(queryKey(sql, params), { data: result, status: "success" });
-    return result;
+    const [rows] = await this.client.query(sql, params);
+    const data = ((rows as R[] | undefined) ?? []) as R[];
+    this.commit(queryKey(sql, params), { data, status: "success" });
+    return data;
   }
 
   /** Snapshot cached results for transport to the client (SSR). */
@@ -156,34 +163,42 @@ export class QueryClient {
     entry: Entry,
   ): Promise<void> {
     try {
-      if (isLive(sql) && this.client.raw.live) {
-        // Live: seed with the current rows, then reconcile notifications.
-        const initial = (await this.client.query(sql, params as never)) as unknown;
-        if (Array.isArray(initial)) this.set(entry, { data: initial as Row[], status: "success" });
-        entry.liveId = await this.client.raw.live(sql, (note) => this.reconcile(entry, note));
+      if (isLive(sql)) {
+        // A `LIVE SELECT` resolves to its live-query id; subscribe to that id's
+        // change stream and reconcile notifications. Seed rows come from
+        // `initialData` (SSR), not the live query itself.
+        const [liveId] = await this.client.query(sql, params);
+        const subscription = await this.client.liveOf(liveId as Uuid);
+        entry.subscription = subscription;
+        if (entry.state.status === "loading") {
+          this.set(entry, { data: entry.state.data, status: "success" });
+        }
+        subscription.subscribe((message) => this.reconcile(entry, message));
       } else {
-        const data = (await this.client.query(sql, params as never)) as Row[];
-        this.set(entry, { data, status: "success" });
+        const [rows] = await this.client.query(sql, params);
+        this.set(entry, { data: ((rows as Row[] | undefined) ?? []) as Row[], status: "success" });
       }
     } catch (error) {
       this.set(entry, { data: entry.state.data, status: "error", error });
     }
   }
 
-  private stop(key: string, entry: Entry): void {
-    if (entry.liveId && this.client.raw.kill) void this.client.raw.kill(entry.liveId);
-    entry.liveId = undefined;
+  private stop(_key: string, entry: Entry): void {
+    if (entry.subscription) void entry.subscription.kill();
+    entry.subscription = undefined;
     entry.started = false;
     // Keep the last data cached for a fast re-subscribe; drop no-longer-live.
   }
 
-  /** Apply a change notification to the reconciled array, keyed by `id`. */
-  private reconcile(entry: Entry, note: LiveNotification): void {
-    const row = note.result as Row;
-    const id = row.id;
+  /** Apply a change notification to the reconciled array, keyed by record id. */
+  private reconcile(entry: Entry, message: LiveMessage): void {
+    if (message.action === "KILLED") return;
+    const id = message.recordId;
+    const key = String(id);
+    const row = { id, ...message.value } as Row;
     const data = entry.state.data.slice();
-    const at = data.findIndex((existing) => existing.id === id);
-    if (note.action === "DELETE") {
+    const at = data.findIndex((existing) => String(existing.id) === key);
+    if (message.action === "DELETE") {
       if (at >= 0) data.splice(at, 1);
     } else if (at >= 0) {
       data[at] = row;

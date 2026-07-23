@@ -7,9 +7,6 @@ export type {
 } from "./registry.js";
 export {
   SurrealGuardClient,
-  fromSurreal,
-  type Connection,
-  type LiveNotification,
-  type ResultOf,
   type ArgsOf,
+  type QueryResultOf,
 } from "./client.js";

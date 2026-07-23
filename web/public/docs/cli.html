@@ -117,13 +117,11 @@ check failed: 1 error(s), 1 diagnostic(s)</pre>
     </div>
 
     <h2 id="generate">generate</h2>
-    <p>Scans host-language files for embedded SurrealQL, analyzes each query against the workspace schema, and writes a typed query registry as a TypeScript declaration file. Host files are discovered by extension — <code>.ts</code>, <code>.tsx</code>, <code>.js</code>, <code>.jsx</code>, <code>.svelte</code>, <code>.vue</code>, <code>.astro</code> — honoring the same ignore patterns as <code>.surql</code> discovery.</p>
-    <pre class="code"><span class="dollar">$</span> surrealguard generate
-Generated surql.gen.d.ts
-
-<span class="cmt"># custom output path</span>
-<span class="dollar">$</span> surrealguard generate --out src/surql.gen.d.ts</pre>
-    <p>The default output is <code>surql.gen.d.ts</code> at the workspace root. The emitted file is a <strong>module augmentation of <code>@surrealguard/client</code></strong> — importing it makes <code>db.query("…")</code> resolve the result and params of each analyzed query from its exact text. See the <a class="link" href="/docs/typescript.html">TypeScript</a> page.</p>
+    <p>Scans host-language files for embedded SurrealQL, analyzes each query against the workspace schema, and writes a TypeScript module that re-exports a ready <code>SurrealGuardClient</code> and augments its query registry. Host files are discovered by extension — <code>.ts</code>, <code>.tsx</code>, <code>.js</code>, <code>.jsx</code>, <code>.svelte</code>, <code>.vue</code>, <code>.astro</code> — honoring the same ignore patterns as <code>.surql</code> discovery.</p>
+    <pre class="code"><span class="cmt"># the file re-exports a runtime value, so write it to a .ts</span>
+<span class="dollar">$</span> surrealguard generate --out src/surrealguard.generated.ts
+Generated src/surrealguard.generated.ts</pre>
+    <p>The emitted file both <strong>re-exports <code>SurrealGuardClient</code></strong> and <strong>augments <code>@surrealguard/client</code></strong>. Import the client from that one file — that also loads the augmentation, so every <code>db.query("…")</code> resolves the result and params of each analyzed query from its exact text, with no separate side-import. See the <a class="link" href="/docs/typescript.html">TypeScript</a> page.</p>
 
     <h2>Exit codes</h2>
     <div class="tbl-wrap">

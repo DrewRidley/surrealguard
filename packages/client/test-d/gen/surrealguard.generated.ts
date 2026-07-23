@@ -3,12 +3,16 @@
 // Conventions: datetime = Date, duration/uuid = string, record links =
 // RecordId<"table"> (a branded string), NONE fields are optional, decimal = number.
 //
-// This augments the `SurqlRegistry` interface in `@surrealguard/client`, so a
-// string-literal query passed to `SurrealGuardClient.query` resolves its result
-// and parameter types from the entries below. Import the client's `RecordId`
-// (and `GeoJSON`) types rather than redeclaring them here.
+// This file re-exports a ready-to-use `SurrealGuardClient` and augments its
+// `SurqlRegistry` with one entry per analyzed query, keyed by the exact query
+// text. Import the client from here — a string-literal query then resolves its
+// result and params from the entries below, with no separate augmentation
+// import. Import the client's `RecordId` (and `GeoJSON`) types rather than
+// redeclaring them here.
 
 import type { RecordId, GeoJSON } from "@surrealguard/client";
+
+export { SurrealGuardClient } from "@surrealguard/client";
 
 declare module "@surrealguard/client" {
   interface SurqlRegistry {
