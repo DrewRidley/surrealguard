@@ -1,9 +1,21 @@
-# SurrealGuard 🛡️
+<div align="center">
 
-**Static analysis and type inference for SurrealQL** — catch unknown tables and
-fields, kind mismatches, invalid graph traversals, misused clauses, and bad
-function calls *before* a query ever reaches SurrealDB, and get fully typed
-results in Rust and TypeScript.
+# 🛡️ SurrealGuard
+
+### Static analysis &amp; type inference for SurrealQL
+
+Catch unknown fields, kind mismatches, and bad graph traversals *before* a query
+reaches SurrealDB — with fully typed results in **Rust** and **TypeScript**.
+
+[![npm](https://img.shields.io/npm/v/@surrealguard/client?label=%40surrealguard%2Fclient&color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/@surrealguard/client)
+[![CI](https://github.com/DrewRidley/surrealguard/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/DrewRidley/surrealguard/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-3b82f6)](#license)
+
+[**Docs**](https://surrealguard.dev/docs/) · [**Live playground**](https://surrealguard.dev/#playground) · [**npm**](https://www.npmjs.com/org/surrealguard) · [**DESIGN.md**](docs/DESIGN.md)
+
+</div>
+
+---
 
 SurrealGuard parses your `.surql` schema and queries into a typed, span-carrying
 AST, infers the response type of every statement, and reports violations of each
@@ -123,8 +135,15 @@ surrealguard/
 
 ## Install
 
+**TypeScript** (published):
+
 ```bash
-# CLI (from source until the crates.io release)
+npm i @surrealguard/client      # + @surrealguard/{query,next,svelte}
+```
+
+**Rust / CLI** (from source while the crates.io release is finalized):
+
+```bash
 cargo install --path crates/cli
 surrealguard init && surrealguard check
 ```
@@ -136,10 +155,14 @@ visible to the queries that follow them.
 
 The engine (typed AST, full inference, ~80 contract diagnostics, parameter
 constraints), the CLI, the LSP, the Rust `surql!` / `query!` macros, and the
-TypeScript packages are all built and tested. First release is in preparation:
-the crates.io publish is gated on the tree-sitter SurrealQL grammar being
-published upstream; the npm packages have no such dependency. See `docs/DESIGN.md`
-for architecture and roadmap.
+TypeScript packages are all built and tested with CI green.
+
+- **npm** — `@surrealguard/{client,query,next,svelte}` are **published** (0.2.x).
+- **Grammar** — the precedence fix and feature additions are **merged upstream**
+  into [`surrealdb/surrealql-tree-sitter`](https://github.com/surrealdb/surrealql-tree-sitter).
+- **crates.io** — the Rust crates (`surrealguard`, `surrealguard-rs`) are next.
+
+See [`docs/DESIGN.md`](docs/DESIGN.md) for architecture and roadmap.
 
 ## License
 

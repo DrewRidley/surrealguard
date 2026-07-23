@@ -2,6 +2,12 @@ name = "surrealguard"
 account_id = "d37dc7dc807bdb070b2249d7e8014a8a"
 compatibility_date = "2025-06-01"
 
+# Custom domains — Cloudflare provisions DNS + TLS automatically (zone on-account).
+routes = [
+  { pattern = "surrealguard.dev", custom_domain = true },
+  { pattern = "www.surrealguard.dev", custom_domain = true },
+]
+
 # Static site served from Cloudflare Workers Static Assets.
 [assets]
 directory = "./public"
