@@ -191,6 +191,12 @@ impl StatementEnv {
     /// site, unifying with anything already known. Returns the conflict
     /// pair when the kinds cannot be reconciled — the query is then
     /// unsatisfiable by any value (6001).
+    ///
+    /// This is the *exact* form: the param is consumed as `kind` (a function
+    /// argument, `SET`, `LIMIT`, ...), so two incompatible demands genuinely
+    /// cannot both be met. Value comparisons use
+    /// [`constrain_param_comparable`](Self::constrain_param_comparable), whose
+    /// reconciliation is looser.
     pub fn constrain_param(
         &mut self,
         name: String,
@@ -198,11 +204,42 @@ impl StatementEnv {
         kind: surrealdb_types::Kind,
         domain: Option<crate::analysis::ValueDomain>,
     ) -> Option<(surrealdb_types::Kind, surrealdb_types::Kind)> {
+        self.constrain_with(name, span, kind, domain, unify_kinds)
+    }
+
+    /// Records a constraint derived from a *value comparison* (`in = $param`,
+    /// `$param = NONE`, ...). SurrealQL comparisons require only comparability,
+    /// not that the param BE the other side's kind: records of different tables
+    /// compare fine (they just aren't equal), and `NONE` compares against
+    /// anything. So this reconciles with [`unify_comparable`] — records union
+    /// their tables and `none` is compatible with everything — and only a
+    /// genuine scalar clash (int vs string) yields a 6001.
+    pub fn constrain_param_comparable(
+        &mut self,
+        name: String,
+        span: SourceSpan,
+        kind: surrealdb_types::Kind,
+        domain: Option<crate::analysis::ValueDomain>,
+    ) -> Option<(surrealdb_types::Kind, surrealdb_types::Kind)> {
+        self.constrain_with(name, span, kind, domain, unify_comparable)
+    }
+
+    fn constrain_with(
+        &mut self,
+        name: String,
+        span: SourceSpan,
+        kind: surrealdb_types::Kind,
+        domain: Option<crate::analysis::ValueDomain>,
+        unify: impl Fn(
+            &surrealdb_types::Kind,
+            &surrealdb_types::Kind,
+        ) -> Option<surrealdb_types::Kind>,
+    ) -> Option<(surrealdb_types::Kind, surrealdb_types::Kind)> {
         self.record_param_use(name.clone(), span);
         let entry = self.params.get_mut(&name).expect("recorded above");
         match &entry.kind {
             None => entry.kind = Some(kind),
-            Some(existing) => match unify_kinds(existing, &kind) {
+            Some(existing) => match unify(existing, &kind) {
                 Some(unified) => entry.kind = Some(unified),
                 None => return Some((existing.clone(), kind)),
             },
@@ -256,6 +293,43 @@ fn unify_kinds(
             .iter()
             .find_map(|variant| unify_kinds(variant, other)),
         _ => None,
+    }
+}
+
+/// The reconciliation for two constraints that both come from *value
+/// comparisons*. Comparisons never make a query unsatisfiable on their own —
+/// SurrealQL compares any two values, yielding a boolean rather than an error —
+/// so this is deliberately looser than [`unify_kinds`]:
+///
+/// - `none` is compatible with everything (`$p = NONE` is an existence check,
+///   never a demand that `$p` BE none), so it defers to the other kind.
+/// - two record kinds union their table sets: a param compared against two
+///   different edges' `in`/`out` fields (e.g. `record<account>` and
+///   `record<team>`) is satisfiable — it just compares unequal to one of them.
+///
+/// Everything else falls back to [`unify_kinds`], so a genuine scalar clash
+/// (a param compared as an `int` in one place and a `string` in another) still
+/// reports a 6001.
+fn unify_comparable(
+    a: &surrealdb_types::Kind,
+    b: &surrealdb_types::Kind,
+) -> Option<surrealdb_types::Kind> {
+    use surrealdb_types::Kind;
+    if a == b {
+        return Some(a.clone());
+    }
+    match (a, b) {
+        (Kind::None, other) | (other, Kind::None) => Some(other.clone()),
+        (Kind::Record(a_tables), Kind::Record(b_tables)) => {
+            let mut tables = a_tables.clone();
+            for table in b_tables {
+                if !tables.contains(table) {
+                    tables.push(table.clone());
+                }
+            }
+            Some(Kind::Record(tables))
+        }
+        _ => unify_kinds(a, b),
     }
 }
 
@@ -329,5 +403,86 @@ mod tests {
         let name = params.get("name").expect("name param is recorded");
         assert_eq!(name.kind, None);
         assert_eq!(name.spans.len(), 2);
+    }
+
+    fn span(start: u32) -> SourceSpan {
+        SourceSpan::new(
+            SourceId::new("env-test"),
+            ByteRange::new(start, start + 1).unwrap(),
+        )
+    }
+
+    fn record(table: &str) -> Kind {
+        Kind::Record(vec![surrealdb_types::Table::from(table)])
+    }
+
+    #[test]
+    fn comparable_constraint_unions_record_tables_without_conflict() {
+        // `WHERE in = $p` (record<account>) then `WHERE out = $p`
+        // (record<team>): the param compares against two edges' record fields.
+        // Records of different tables compare fine, so this is satisfiable —
+        // no 6001 — and the param widens to the union.
+        let mut env = StatementEnv::default();
+        assert_eq!(
+            env.constrain_param_comparable("p".into(), span(0), record("account"), None),
+            None
+        );
+        let conflict =
+            env.constrain_param_comparable("p".into(), span(5), record("team"), None);
+        assert_eq!(conflict, None, "records of different tables do not conflict");
+
+        let kind = env.into_params().into_iter().next().unwrap().kind.unwrap();
+        assert_eq!(
+            kind,
+            Kind::Record(vec![
+                surrealdb_types::Table::from("account"),
+                surrealdb_types::Table::from("team"),
+            ])
+        );
+    }
+
+    #[test]
+    fn comparable_constraint_none_is_compatible_with_records() {
+        // `IF $p = NONE` (none) then `WHERE in = $p` (record<account>): the
+        // NONE guard is an existence check, not a demand that `$p` be none.
+        let mut env = StatementEnv::default();
+        assert_eq!(
+            env.constrain_param_comparable("p".into(), span(0), Kind::None, None),
+            None
+        );
+        let conflict =
+            env.constrain_param_comparable("p".into(), span(5), record("account"), None);
+        assert_eq!(conflict, None, "`none` is comparable with any record");
+
+        let kind = env.into_params().into_iter().next().unwrap().kind.unwrap();
+        assert_eq!(kind, record("account"));
+    }
+
+    #[test]
+    fn comparable_constraint_still_conflicts_on_incompatible_scalars() {
+        // A param compared as an `int` in one place and a `string` in another
+        // is a genuine irreconcilable use — still a 6001.
+        let mut env = StatementEnv::default();
+        assert_eq!(
+            env.constrain_param_comparable("p".into(), span(0), Kind::Int, None),
+            None
+        );
+        let conflict =
+            env.constrain_param_comparable("p".into(), span(5), Kind::String, None);
+        assert_eq!(conflict, Some((Kind::Int, Kind::String)));
+    }
+
+    #[test]
+    fn exact_constraint_still_conflicts_on_incompatible_records() {
+        // The exact form (function argument / SET / LIMIT) keeps pinning: a
+        // param passed to two functions wanting different record tables cannot
+        // be both — still a conflict.
+        let mut env = StatementEnv::default();
+        assert_eq!(
+            env.constrain_param("p".into(), span(0), Kind::Int, None),
+            None
+        );
+        let conflict = env.constrain_param("p".into(), span(5), Kind::String, None);
+        assert_eq!(conflict, Some((Kind::Int, Kind::String)));
     }
 }

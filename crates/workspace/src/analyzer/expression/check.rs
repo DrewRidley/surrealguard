@@ -482,7 +482,9 @@ fn constrain_comparison_params(
         if let ast::Expr::Param(param) = &param_side.node {
             if let Some(kind) = known_kind(ctx, typed_side) {
                 let span = SourceSpan::new(ctx.source().clone(), param_side.span);
-                ctx.constrain_param(param, span, kind, None);
+                // A comparison requires only comparability, not that the param
+                // BE the other side's kind — reconcile with comparison rules.
+                ctx.constrain_param_comparable(param, span, kind, None);
             }
         }
     }

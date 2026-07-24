@@ -200,7 +200,22 @@ fn check_argument_kinds(
 /// Whether an argument of `kind` satisfies the expectation. Checking-side
 /// twin of nothing in inference: [`evaluate`] never consults it.
 fn param_matches(expected: &ParamKind, kind: &Kind) -> bool {
+    // A union argument satisfies the expectation exactly when every variant
+    // does: `array<record> | array<any, 0>` (the shape a `$x ?? []` fallback
+    // infers) is always an array, so it fits an array parameter. `Exact`
+    // already routes through `kind_is_assignable_to`, which handles unions
+    // itself; the other expectations do not, so fan out here.
+    if let Kind::Either(variants) = kind {
+        return variants.iter().all(|variant| param_matches(expected, variant));
+    }
     let base = crate::kinds::literal_base_kind(kind).unwrap_or_else(|| kind.clone());
+    // An unknown (`any`) argument is given the benefit of the doubt, mirroring
+    // the whole-argument `Any` skip in `check_argument_kinds` — it matters for
+    // a union variant like `any | array<any, 0>`, which reaches here rather
+    // than that skip.
+    if matches!(base, Kind::Any) {
+        return true;
+    }
     match expected {
         ParamKind::Exact(target) => crate::kinds::kind_is_assignable_to(kind, target),
         ParamKind::Numeric => {

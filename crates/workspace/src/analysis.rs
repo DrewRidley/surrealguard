@@ -3114,6 +3114,92 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_param_compared_to_two_record_tables_is_not_6001() {
+        // A host param compared against two different edges' record fields
+        // (`in = $p`, then `out = $p`) is satisfiable — records of different
+        // tables compare fine, they just aren't equal. No 6001; the param
+        // widens to the union of the two record targets.
+        let mut workspace = Workspace::default();
+        let _source = workspace.add_virtual_source(
+            "query".into(),
+            concat!(
+                "DEFINE TABLE account SCHEMAFULL;\n",
+                "DEFINE TABLE team SCHEMAFULL;\n",
+                "DEFINE TABLE membership TYPE RELATION IN account OUT team SCHEMAFULL;\n",
+                "SELECT * FROM membership WHERE in = $p;\n",
+                "SELECT * FROM membership WHERE out = $p;\n",
+            )
+            .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        assert_eq!(
+            codes(&output, 6001),
+            0,
+            "records of different tables compare fine: {:?}",
+            output.diagnostics
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_session_param_guard_then_edge_compare_is_not_6001() {
+        // The workshop pattern: `IF $auth = NONE ...` (a `none` comparison)
+        // then `WHERE in = $auth` (a record comparison). `$auth` is a session
+        // param and the NONE guard is an existence check — not a demand that it
+        // be `none`. No 6001.
+        let mut workspace = Workspace::default();
+        let _source = workspace.add_virtual_source(
+            "query".into(),
+            concat!(
+                "DEFINE TABLE account SCHEMAFULL;\n",
+                "DEFINE TABLE org SCHEMAFULL;\n",
+                "DEFINE TABLE employee_of TYPE RELATION IN account OUT org SCHEMAFULL;\n",
+                "DEFINE FUNCTION fn::guard() {\n",
+                "  IF $auth = NONE THEN RETURN false END;\n",
+                "  LET $rows = SELECT VALUE id FROM employee_of WHERE in = $auth;\n",
+                "  RETURN array::len($rows) > 0;\n",
+                "};\n",
+            )
+            .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        assert_eq!(
+            codes(&output, 6001),
+            0,
+            "session-param NONE guard then edge compare is satisfiable: {:?}",
+            output.diagnostics
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_either_of_arrays_satisfies_array_argument() {
+        // `$rows ?? []` infers `array<...> | array<any, 0>` — a union whose
+        // every variant is an array, so it satisfies `array::concat`'s array
+        // parameter. No 5002.
+        let mut workspace = Workspace::default();
+        let _source = workspace.add_virtual_source(
+            "query".into(),
+            concat!(
+                "DEFINE TABLE org SCHEMAFULL;\n",
+                "DEFINE FUNCTION fn::principals() {\n",
+                "  LET $orgs = SELECT VALUE id FROM org;\n",
+                "  RETURN array::concat([], $orgs ?? []);\n",
+                "};\n",
+            )
+            .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        assert_eq!(
+            codes(&output, 5002),
+            0,
+            "an array-or-empty-array union is an array: {:?}",
+            output.diagnostics
+        );
+    }
+
+    #[test]
     fn analyze_workspace_machinery_batch() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(

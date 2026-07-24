@@ -194,6 +194,46 @@ impl<'a> AnalysisContext<'a> {
         }
     }
 
+    /// Records a constraint on `name` derived from a *value comparison*
+    /// (`field = $param`, `$param = NONE`, ...). Unlike [`constrain_param`],
+    /// this reconciles with comparison semantics — records union, `none` is
+    /// compatible with everything — so a param compared against unrelated
+    /// record tables is satisfiable and never reports a 6001; only a genuine
+    /// scalar clash does. Reserved session params (`$auth`, `$token`, ...) are
+    /// externally typed by the runtime, so a comparison against one records the
+    /// use but never constrains its kind.
+    ///
+    /// [`constrain_param`]: Self::constrain_param
+    pub fn constrain_param_comparable(
+        &mut self,
+        name: &str,
+        span: SourceSpan,
+        kind: surrealdb_types::Kind,
+        domain: Option<crate::analysis::ValueDomain>,
+    ) {
+        if self.env.let_fact(name).is_some() {
+            // Bound locally: not a host parameter.
+            return;
+        }
+        if crate::context_params::is_reserved_session_param(name) {
+            // Externally typed by the runtime; a comparison never pins it.
+            self.env.record_param_use(name.to_string(), span);
+            return;
+        }
+        if let Some((existing, new)) =
+            self.env
+                .constrain_param_comparable(name.to_string(), span.clone(), kind, domain)
+        {
+            self.emit(surrealguard_diagnostics::catalog::finding(
+                span,
+                6001,
+                format!(
+                    "`${name}` cannot satisfy this query: one use needs `{existing}`, this one needs `{new}`"
+                ),
+            ));
+        }
+    }
+
     /// The schema table backing the row/document currently in scope, if
     /// any (e.g. the `FROM` target of an enclosing `SELECT`, or the target
     /// table of a mutation). `None` outside any row context, such as a

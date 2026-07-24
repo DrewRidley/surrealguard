@@ -23,6 +23,25 @@ use surrealguard_syntax::span::ByteRange;
 
 use crate::schema::SchemaIndex;
 
+/// Whether `name` (without the leading `$`) is a reserved *session* param —
+/// one SurrealDB binds from the authenticated session (`$auth`) or access
+/// token, available in every schema-time context and never a host-supplied
+/// query parameter. These are externally typed by the runtime (the concrete
+/// `$auth` record depends on the access method), so a *value comparison*
+/// against one (`$auth = NONE`, `in = $auth`) must never pin or conflict its
+/// kind.
+///
+/// Only the session set is unconditional: document-context params
+/// (`$before`/`$after`/`$value`/...) are context-bound *inside* `DEFINE
+/// FIELD`/`EVENT` bodies but are ordinary host params at the top level, so
+/// they are deliberately excluded here — comparison-derived reconciliation
+/// ([`unify_comparable`](crate::statement_env)) already keeps their record/none
+/// comparisons from conflicting without suppressing legitimate host inference.
+pub fn is_reserved_session_param(name: &str) -> bool {
+    // Mirrors `insert_session_params`.
+    matches!(name, "auth" | "token" | "session" | "access" | "scope")
+}
+
 /// The context params bound by the DEFINE construct enclosing `offset`,
 /// mapped from name (without the leading `$`) to the `Kind` SurrealDB gives
 /// them. `None` when the offset sits inside no context-binding construct.
