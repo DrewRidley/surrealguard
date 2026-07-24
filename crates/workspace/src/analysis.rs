@@ -905,8 +905,8 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(
             messages,
             vec![
-                "index `by_email` references unknown field `email` on table `person`",
-                "index `missing_table_idx` targets unknown table `ghost`",
+                "`person` has no field `email` (used by index `by_email`)",
+                "index `missing_table_idx` is defined on `ghost`, which is not a defined table",
             ]
         );
     }
@@ -975,8 +975,8 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(
             messages,
             vec![
-                "unknown index `missing` on table `person` in REBUILD statement",
-                "index `by_name` targets unknown table `ghost` in REMOVE statement",
+                "`person` has no index `missing` (REBUILD)",
+                "REMOVE targets `ghost`, which is not a defined table",
             ]
         );
     }
@@ -1000,9 +1000,9 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(
             messages,
             vec![
-                "REMOVE TABLE targets unknown table `ghost`",
-                "REMOVE FIELD targets unknown field `missing` on table `person`",
-                "REMOVE FIELD `name` targets unknown table `ghost`",
+                "REMOVE TABLE `ghost` targets a table that doesn't exist",
+                "`person` has no field `missing` to remove",
+                "REMOVE FIELD `name` targets `ghost`, which is not a defined table",
             ]
         );
     }
@@ -1023,7 +1023,7 @@ INSERT INTO person { name: 'Ada' };
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(messages, vec!["unknown table `ghost`"]);
+        assert_eq!(messages, vec!["`ghost` is not a defined table"]);
     }
 
     #[test]
@@ -1120,7 +1120,7 @@ INSERT INTO person { name: 'Ada' };
             .filter(|finding| finding.code() == FindingCode::schema(1001))
             .collect();
         assert_eq!(unknown_tables.len(), 1);
-        assert_eq!(unknown_tables[0].message(), "unknown table `company`");
+        assert_eq!(unknown_tables[0].message(), "`company` is not a defined table");
         assert_eq!(unknown_tables[0].span().source(), &query);
         assert_eq!(unknown_tables[0].span().range().start(), 35);
         assert_eq!(unknown_tables[0].span().range().end(), 42);
@@ -1159,7 +1159,7 @@ INSERT INTO person { name: 'Ada' };
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(messages, vec!["unknown table `person`"]);
+        assert_eq!(messages, vec!["`person` is not a defined table"]);
         assert!(output.schema.table("person").is_none());
     }
 
@@ -1179,7 +1179,7 @@ INSERT INTO person { name: 'Ada' };
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(unknown_tables, vec!["unknown table `person`"]);
+        assert_eq!(unknown_tables, vec!["`person` is not a defined table"]);
         assert!(output.schema.table("person").is_some());
     }
 
@@ -1201,7 +1201,7 @@ INSERT INTO person { name: 'Ada' };
 
         assert_eq!(
             type_mismatches,
-            vec!["field `name` expects `int`, found `string`".to_string()]
+            vec!["`name` is declared `int`, but this value is `string`".to_string()]
         );
         assert!(output
             .schema
@@ -1261,7 +1261,7 @@ INSERT INTO person { name: 'Ada' };
             .filter(|finding| finding.code() == FindingCode::schema(1001))
             .map(|finding| finding.message().to_string())
             .collect();
-        assert_eq!(messages, vec!["unknown table `phantom`"]);
+        assert_eq!(messages, vec!["`phantom` is not a defined table"]);
     }
 
     #[test]
@@ -1286,12 +1286,12 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(
             unknown_tables,
             vec![
-                "unknown table `missing`",
-                "unknown table `shadow`",
-                "unknown table `absent`",
-                "unknown table `vanished`",
-                "unknown table `hidden`",
-                "unknown table `obscured`",
+                "`missing` is not a defined table",
+                "`shadow` is not a defined table",
+                "`absent` is not a defined table",
+                "`vanished` is not a defined table",
+                "`hidden` is not a defined table",
+                "`obscured` is not a defined table",
             ]
         );
     }
@@ -1413,7 +1413,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2001" && message == "field `age` expects `int`, found `string`"
+            code == "E2001" && message == "`age` is declared `int`, but this value is `string`"
         }));
     }
 
@@ -1433,7 +1433,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2001" && message == "field `age` expects `int`, found `string`"
+            code == "E2001" && message == "`age` is declared `int`, but this value is `string`"
         }));
     }
 
@@ -1491,7 +1491,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2001" && message == "field `age` expects `int`, found `string`"
+            code == "E2001" && message == "`age` is declared `int`, but this value is `string`"
         }));
     }
 
@@ -1628,10 +1628,10 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2005" && message == "IF condition has type `int`, expected `bool`"
+            code == "E2005" && message == "this IF condition is a `int`, not a `bool`"
         }));
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2005" && message == "IF condition has type `string`, expected `bool`"
+            code == "E2005" && message == "this IF condition is a `string`, not a `bool`"
         }));
     }
 
@@ -1671,7 +1671,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2005" && message == "IF condition has type `int`, expected `bool`"
+            code == "E2005" && message == "this IF condition is a `int`, not a `bool`"
         }));
     }
 
@@ -1691,7 +1691,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2005" && message == "IF condition has type `int`, expected `bool`"
+            code == "E2005" && message == "this IF condition is a `int`, not a `bool`"
         }));
     }
 
@@ -1962,14 +1962,14 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(unknown_fields.len(), 2);
         assert_eq!(
             unknown_fields[0].message(),
-            "unknown field `nickname` on table `person`"
+            "`person` has no field `nickname`"
         );
         assert_eq!(unknown_fields[0].span().source(), &source);
         assert_eq!(unknown_fields[0].span().range().start(), 69);
         assert_eq!(unknown_fields[0].span().range().end(), 77);
         assert_eq!(
             unknown_fields[1].message(),
-            "unknown field `profile.phone` on table `person`"
+            "`person` has no field `profile.phone`"
         );
         assert_eq!(unknown_fields[1].span().range().start(), 79);
         assert_eq!(unknown_fields[1].span().range().end(), 92);
@@ -1994,7 +1994,7 @@ INSERT INTO person { name: 'Ada' };
 
         assert_eq!(
             unknown_fields,
-            vec!["unknown field `missing` on table `person`".to_string()]
+            vec!["`person` has no field `missing`".to_string()]
         );
     }
 
@@ -2019,8 +2019,8 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(
             unknown_fields,
             vec![
-                "unknown field `missing_group` on table `person`".to_string(),
-                "unknown field `missing_split` on table `person`".to_string(),
+                "`person` has no field `missing_group`".to_string(),
+                "`person` has no field `missing_split`".to_string(),
             ]
         );
     }
@@ -2041,7 +2041,7 @@ INSERT INTO person { name: 'Ada' };
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(messages, vec!["unknown field `missing` on table `person`"]);
+        assert_eq!(messages, vec!["`person` has no field `missing`"]);
     }
 
     #[test]
@@ -2063,9 +2063,9 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(
             messages,
             vec![
-                "unknown field `nickname` on table `person`",
-                "unknown field `handle` on table `person`",
-                "unknown field `alias` on table `person`",
+                "`person` has no field `nickname`",
+                "`person` has no field `handle`",
+                "`person` has no field `alias`",
             ]
         );
     }
@@ -2089,13 +2089,13 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(
             messages,
             vec![
-                "unknown field `nickname` on table `person`",
-                "unknown field `profile.phone` on table `person`",
-                "unknown field `handle` on table `person`",
-                "unknown field `alias` on table `person`",
-                "unknown field `stale` on table `person`",
-                "unknown field `missing` on table `person`",
-                "unknown field `missing_since` on table `likes`",
+                "`person` has no field `nickname`",
+                "`person` has no field `profile.phone`",
+                "`person` has no field `handle`",
+                "`person` has no field `alias`",
+                "`person` has no field `stale`",
+                "`person` has no field `missing`",
+                "`likes` has no field `missing_since`",
             ]
         );
     }
@@ -2119,10 +2119,10 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(
             messages,
             vec![
-                "field `age` expects `int`, found `string`",
-                "field `age` expects `int`, found `string`",
-                "field `age` expects `int`, found `string`",
-                "column `age` expects `int`, found `string`",
+                "`age` is declared `int`, but this value is `string`",
+                "`age` is declared `int`, but this value is `string`",
+                "`age` is declared `int`, but this value is `string`",
+                "`age` is declared `int`, but this value is `string`",
             ]
         );
     }
@@ -2164,8 +2164,8 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(
             messages,
             vec![
-                "field `profile.email` expects `string`, found `int`",
-                "field `created_at` expects `datetime`, found `string`",
+                "`profile.email` is declared `string`, but this value is `int`",
+                "`created_at` is declared `datetime`, but this value is `string`",
             ]
         );
     }
@@ -2189,8 +2189,8 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(
             messages,
             vec![
-                "INSERT VALUES has 1 value for 2 columns",
-                "INSERT VALUES has 3 values for 2 columns",
+                "this INSERT row has 1 value but 2 columns",
+                "this INSERT row has 3 values but 2 columns",
             ]
         );
     }
@@ -2211,7 +2211,7 @@ INSERT INTO person { name: 'Ada' };
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(messages, vec!["column `age` expects `int`, found `string`"]);
+        assert_eq!(messages, vec!["`age` is declared `int`, but this value is `string`"]);
     }
 
     #[test]
@@ -2233,9 +2233,9 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(
             messages,
             vec![
-                "unknown field `missing` on table `person`",
-                "unknown field `ghost` on table `person`",
-                "unknown field `stale` on table `person`",
+                "`person` has no field `missing`",
+                "`person` has no field `ghost`",
+                "`person` has no field `stale`",
             ]
         );
         assert_eq!(output.sources[&source].diagnostics.len(), 3);
@@ -2285,7 +2285,7 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(unknown_fields.len(), 1);
         assert_eq!(
             unknown_fields[0].message(),
-            "unknown field `nickname` on table `person`"
+            "`person` has no field `nickname`"
         );
     }
 
@@ -2439,7 +2439,7 @@ INSERT INTO person { name: 'Ada' };
         let binary_mismatches = messages
             .iter()
             .filter(|(code, message)| {
-                code == "E2004" && message == "incompatible operands for `+`: `int` and `string`"
+                code == "E2004" && message == "`+` can't combine a `int` and a `string`"
             })
             .count();
         assert_eq!(binary_mismatches, 3);
@@ -2485,8 +2485,7 @@ INSERT INTO person { name: 'Ada' };
         // contract (2001); into option<datetime> it is fine.
         assert!(messages.iter().any(|(code, message)| {
             code == "E2001"
-                && message
-                    == "field `age` (`int`) is not optional; wrap it in option<> or assign a value"
+                && message == "`age` is not optional, so it can't be set to none"
         }));
         assert!(!messages
             .iter()
@@ -2510,7 +2509,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2004" && message == "incompatible operands for `+`: `int` and `string`"
+            code == "E2004" && message == "`+` can't combine a `int` and a `string`"
         }));
     }
 
@@ -2623,7 +2622,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5002" && message == "`string::len` argument 1 expects `string`, found `int`"
+            code == "E5002" && message == "argument 1 to `string::len` is a `int`, but `string` is required"
         }));
     }
 
@@ -2643,7 +2642,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5002" && message == "`string::len` argument 1 expects `string`, found `int`"
+            code == "E5002" && message == "argument 1 to `string::len` is a `int`, but `string` is required"
         }));
     }
 
@@ -2665,10 +2664,10 @@ INSERT INTO person { name: 'Ada' };
         // WHERE conditions and SET values are walked like any other
         // expression position.
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5002" && message == "`string::len` argument 1 expects `string`, found `int`"
+            code == "E5002" && message == "argument 1 to `string::len` is a `int`, but `string` is required"
         }));
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5002" && message == "`math::abs` argument 1 expects a number, found `string`"
+            code == "E5002" && message == "argument 1 to `math::abs` is a `string`, but a number is required"
         }));
     }
 
@@ -2688,7 +2687,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5001" && message == "unknown function `fn::gret`"
+            code == "E5001" && message == "`fn::gret` is not a defined function"
         }));
         // The defined function produces no finding.
         assert!(!messages
@@ -2713,16 +2712,16 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5002" && message == "`string::len` expects 1 argument, found 0"
+            code == "E5002" && message == "`string::len` takes 1 argument, but this call passes 0"
         }));
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5002" && message == "`string::len` argument 1 expects `string`, found `int`"
+            code == "E5002" && message == "argument 1 to `string::len` is a `int`, but `string` is required"
         }));
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5002" && message == "`array::len` argument 1 expects an array, found `int`"
+            code == "E5002" && message == "argument 1 to `array::len` is a `int`, but an array is required"
         }));
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5001" && message == "unknown function `unknown::fn`"
+            code == "E5001" && message == "`unknown::fn` is not a known function"
         }));
     }
 
@@ -2787,8 +2786,8 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(
             unknown_fields,
             vec![
-                "unknown field `nickname` on table `person`".to_string(),
-                "unknown field `profile.phone` on table `person`".to_string(),
+                "`person` has no field `nickname`".to_string(),
+                "`person` has no field `profile.phone`".to_string(),
             ]
         );
     }
@@ -2812,7 +2811,7 @@ INSERT INTO person { name: 'Ada' };
 
         assert_eq!(
             unknown_fields,
-            vec!["unknown field `missing` on table `person`".to_string()]
+            vec!["`person` has no field `missing`".to_string()]
         );
     }
 
@@ -2863,8 +2862,8 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(
             unknown_fields,
             vec![
-                "unknown field `password` on table `person`",
-                "unknown field `friend` on table `person`",
+                "`person` has no field `password`",
+                "`person` has no field `friend`",
             ]
         );
     }
@@ -2925,7 +2924,7 @@ INSERT INTO person { name: 'Ada' };
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(messages, vec!["unknown table `missing`"]);
+        assert_eq!(messages, vec!["`missing` is not a defined table"]);
     }
 
     #[test]
@@ -2946,7 +2945,7 @@ INSERT INTO person { name: 'Ada' };
 
         assert_eq!(
             messages,
-            vec!["unknown table `missing`", "unknown table `ghost`",]
+            vec!["`missing` is not a defined table", "`ghost` is not a defined table",]
         );
     }
 
@@ -2966,7 +2965,7 @@ INSERT INTO person { name: 'Ada' };
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(messages, vec!["unknown table `missing`"]);
+        assert_eq!(messages, vec!["`missing` is not a defined table"]);
     }
 
     #[test]
@@ -2985,23 +2984,23 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         for (code, message) in [
-            ("E2018", "LIMIT expects an integer, found `string`"),
-            ("E2018", "START cannot be negative"),
-            ("E1023", "FETCH `age` does nothing: `int` holds no records"),
+            ("E2018", "LIMIT needs an integer, but this is a `string`"),
+            ("E2018", "START can't be negative"),
+            ("E1023", "FETCH `age` does nothing — `int` holds no records"),
             (
                 "E1024",
-                "SPLIT `age` expects a collection field, found `int`",
+                "SPLIT needs a collection field, but `age` is a `int`",
             ),
             (
                 "E2017",
-                "ORDER BY `name` does not name a field selected by this query",
+                "ORDER BY `name` doesn't name a field of this query's rows",
             ),
             (
                 "E6007",
-                "`$auth` is a protected parameter and cannot be assigned",
+                "`$auth` is a protected parameter and can't be assigned",
             ),
             ("L7003", "array literal mixes kinds: `int`, `string`"),
-            ("L7004", "condition is constant"),
+            ("L7004", "this IF condition is constant, so one branch is never taken"),
             (
                 "E5002",
                 "`array::map` calls its closure with 2 arguments; `$extra` is never bound",
@@ -3167,20 +3166,20 @@ INSERT INTO person { name: 'Ada' };
         for (code, needle) in [
             ("E2032", "not a valid datetime"),
             ("E2031", "not a valid regex"),
-            ("E2008", "`abc` can never convert to `int`"),
-            ("E2008", "a `bool` can never convert to `duration`"),
-            ("E2021", "SINCE expects a versionstamp or datetime"),
-            ("E2022", "FOR expects a collection to iterate, found `int`"),
+            ("E2008", "`abc` can't be cast to `int`"),
+            ("E2008", "a `bool` can't be cast to `duration`"),
+            ("E2021", "needs a versionstamp or datetime"),
+            ("E2022", "FOR can't iterate a `int`"),
             ("E2033", "`remvoe` is not a PATCH operation"),
             ("E2033", "PATCH paths start with `/`"),
             ("E2036", "`Pointt` is not a GeoJSON geometry type"),
-            ("E3004", "must land on a table"),
-            ("E3009", "cannot traverse from `age`"),
+            ("E3004", "not on a table"),
+            ("E3009", "can't start from `age`"),
             ("E1027", "needs a SEARCH ANALYZER index"),
             ("E1029", "covers the same fields as `by_name`"),
             ("E1032", "`klingon` is not a snowball language"),
             ("E2035", "needs `(min, max)` with min <= max"),
-            ("E3011", "unbounded graph recursion"),
+            ("E3011", "no upper bound"),
             ("E6004", "read before its LET"),
         ] {
             assert!(
@@ -3219,19 +3218,19 @@ INSERT INTO person { name: 'Ada' };
 
         for (code, message) in [
             // DEFAULT must inhabit the declared type.
-            ("E2001", "field `age` expects `int`, found `string`"),
+            ("E2001", "`age`'s value is `string`, but the field is declared `int`"),
             // ASSERT is a condition; `$value` carries the declared kind.
-            ("E2005", "ASSERT has type `int`, expected `bool`"),
-            ("E2004", "incompatible operands for `>`: `int` and `string`"),
+            ("E2005", "this ASSERT is a `int`, not a `bool`"),
+            ("E2004", "`>` can't combine a `int` and a `string`"),
             // READONLY blocks non-creation writes; computed fields warn.
-            ("E2025", "`created` is READONLY; it is set at creation only"),
+            ("E2025", "`created` can't be changed after creation"),
             (
                 "E2026",
-                "`synced` is computed by its VALUE clause; this write is overwritten",
+                "this write to `synced` is discarded",
             ),
             (
                 "L7012",
-                "`http::get` runs on every write from a computed field clause",
+                "`http::get` runs on every write to this row",
             ),
         ] {
             assert!(
@@ -3290,10 +3289,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         for (code, message) in [
-            (
-                "E2034",
-                "required field `name` (`string`) has no value here and no DEFAULT",
-            ),
+            ("E2034", "`name` must be set when creating a `person`"),
             (
                 "E4020",
                 "RETURN BEFORE on CREATE is always NONE; there is no before state",
@@ -3309,17 +3305,20 @@ INSERT INTO person { name: 'Ada' };
             ("L7011", "record ids are immutable; `id` is set at creation"),
             (
                 "E2004",
-                "incompatible operands for `+=`: `int` and `string`",
+                "`+=` can't combine a `int` and a `string`",
             ),
             (
                 "E5002",
-                "`fn::greet` argument 1 (`$who`) expects `string`, found `int`",
+                "argument 1 to `fn::greet` is a `int`, but `$who` is declared `string`",
             ),
-            ("E5002", "`fn::greet` expects 1 argument, found 0"),
-            ("E4005", "BREAK outside a FOR loop does nothing"),
-            ("E4006", "unreachable: the block already returned"),
-            ("L7002", "`$shadow` shadows an outer binding"),
-            ("L7007", "field is already included by `*`"),
+            ("E5002", "`fn::greet` takes 1 argument, but this call passes 0"),
+            ("E4005", "BREAK here does nothing — it is outside any FOR loop"),
+            ("E4006", "this statement is unreachable — the block already returned"),
+            (
+                "L7002",
+                "`$shadow` is re-bound inside this block; the outer `$shadow` is unchanged",
+            ),
+            ("L7007", "this field is already included by `*`"),
             (
                 "E4018",
                 "this SELECT hides a write; run the mutation as its own statement",
@@ -3328,10 +3327,10 @@ INSERT INTO person { name: 'Ada' };
                 "L7006",
                 "membership test against an empty collection is always false",
             ),
-            ("E4022", "`audit` is a DROP table; rows are never retained"),
+            ("E4022", "`audit` is a DROP table, so this SELECT never returns rows"),
             (
                 "E4021",
-                "`person` has no CHANGEFEED; SHOW CHANGES has nothing to read",
+                "`person` has no CHANGEFEED, so SHOW CHANGES reads nothing",
             ),
         ] {
             assert!(
@@ -3360,14 +3359,14 @@ INSERT INTO person { name: 'Ada' };
         let expect = [
             (
                 "E4003",
-                "ONLY on a whole table needs LIMIT 1 (or a record id target)",
+                "ONLY needs a single-row target, but this reads a whole table",
             ),
             ("E4003", "ONLY on a whole table needs a record id target"),
             (
                 "W4010",
                 "`age` is assigned more than once; the last assignment wins",
             ),
-            ("W4011", "duplicate projection key `age`"),
+            ("W4011", "`age` is projected twice; the later one wins"),
             (
                 "W4017",
                 "block ends with LET, so its value is NONE — return the value instead",
@@ -3414,11 +3413,11 @@ INSERT INTO person { name: 'Ada' };
         // comparison (it kind-orders) changes nothing.
         assert!(messages.contains(&(
             "E2004".to_string(),
-            "incompatible operands for `>`: `datetime` and `int`".to_string()
+            "`>` can't combine a `datetime` and a `int`".to_string()
         )));
         assert!(messages.contains(&(
             "E2004".to_string(),
-            "incompatible operands for `+`: `datetime` and `int`".to_string()
+            "`+` can't combine a `datetime` and a `int`".to_string()
         )));
     }
 
@@ -3532,9 +3531,9 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(
             messages,
             vec![
-                "unknown table `missing`",
-                "unknown table `ghost` in RELATE endpoint",
-                "unknown table `likes`",
+                "`missing` is not a defined table",
+                "`ghost` is not a defined table",
+                "`likes` is not a defined table",
             ]
         );
     }
@@ -3557,7 +3556,7 @@ INSERT INTO person { name: 'Ada' };
 
         assert_eq!(
             messages,
-            vec!["unknown field `missing_since` on table `likes`"]
+            vec!["`likes` has no field `missing_since`"]
         );
     }
 
@@ -3579,7 +3578,7 @@ INSERT INTO person { name: 'Ada' };
 
         assert_eq!(
             messages,
-            vec!["unknown field `missing_since` on table `likes`"]
+            vec!["`likes` has no field `missing_since`"]
         );
     }
 
@@ -3618,7 +3617,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
         assert_eq!(
             messages,
-            vec!["cannot index or filter a value of type `int`"]
+            vec!["a `int` can't be indexed or filtered — it is not a collection"]
         );
     }
 
@@ -3641,7 +3640,7 @@ INSERT INTO person { name: 'Ada' };
             .filter(|finding| finding.code() == FindingCode::graph(3001))
             .map(|finding| finding.message().to_string())
             .collect();
-        assert_eq!(messages, vec!["`post` is not a relation table"]);
+        assert_eq!(messages, vec!["`post` can't be traversed — it is not a relation table"]);
     }
 
     #[test]
@@ -3663,7 +3662,7 @@ INSERT INTO person { name: 'Ada' };
             .filter(|finding| finding.code() == FindingCode::schema(1001))
             .map(|finding| finding.message().to_string())
             .collect();
-        assert_eq!(unknown_tables, vec!["unknown table `spectre`"]);
+        assert_eq!(unknown_tables, vec!["`spectre` is not a defined table"]);
     }
 
     #[test]
@@ -3728,7 +3727,7 @@ INSERT INTO person { name: 'Ada' };
             .filter(|finding| finding.code() == FindingCode::type_error(2007))
             .map(|finding| finding.message().to_string())
             .collect();
-        assert_eq!(messages, vec!["`ghost` is not a type"]);
+        assert_eq!(messages, vec!["`ghost` is not a known type"]);
     }
 
     #[test]
@@ -3751,7 +3750,7 @@ INSERT INTO person { name: 'Ada' };
             .filter(|finding| finding.code() == FindingCode::graph(3001))
             .map(|finding| finding.message().to_string())
             .collect();
-        assert_eq!(messages, vec!["`post` is not a relation table"]);
+        assert_eq!(messages, vec!["`post` can't be traversed — it is not a relation table"]);
     }
 
     #[test]
@@ -3773,7 +3772,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
         assert_eq!(
             messages,
-            vec!["table `bare` has no declared fields; analysis is limited"]
+            vec!["`bare` has no declared fields, so field-level checks are skipped"]
         );
     }
 
@@ -3792,7 +3791,7 @@ INSERT INTO person { name: 'Ada' };
         assert!(
             diagnostics.iter().any(|finding| {
                 finding.code() == FindingCode::type_error(2015)
-                    && finding.message().contains("may be NONE at runtime")
+                    && finding.message().contains("may be NONE here")
             }),
             "expected 2015 for the option<string> operand, have: {:?}",
             diagnostics

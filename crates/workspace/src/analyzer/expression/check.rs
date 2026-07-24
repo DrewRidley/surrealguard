@@ -44,7 +44,7 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
                             ctx,
                             expr.span,
                             2004,
-                            format!("incompatible operand for `-`: `{kind}`"),
+                            format!("`-` can't be applied to a `{kind}`"),
                         );
                     }
                 }
@@ -158,11 +158,17 @@ fn check_cast(
     };
     if let Some(name) = named {
         if !TYPE_NAMES.contains(&name.node.to_ascii_lowercase().as_str()) {
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
+            let mut finding = surrealguard_diagnostics::catalog::finding(
                 SourceSpan::new(ctx.source().clone(), name.span),
                 2007,
-                format!("`{}` is not a type", name.node),
-            ));
+                format!("`{}` is not a known type", name.node),
+            );
+            if let Some(nearest) =
+                crate::suggest::closest(&name.node, TYPE_NAMES.iter().copied())
+            {
+                finding = finding.with_help(format!("did you mean `{nearest}`?"));
+            }
+            ctx.emit(finding);
             return;
         }
     }
@@ -192,7 +198,7 @@ fn check_cast(
                 ctx,
                 whole.span,
                 2008,
-                format!("`{text}` can never convert to `{target}`"),
+                format!("`{text}` can't be cast to `{target}`"),
             );
         }
         return;
@@ -224,7 +230,7 @@ fn check_cast(
             ctx,
             whole.span,
             2008,
-            format!("a `{kind}` can never convert to `{target}`"),
+            format!("a `{kind}` can't be cast to `{target}`"),
         );
     }
 }
@@ -268,7 +274,7 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
                     ctx,
                     part.span,
                     2030,
-                    format!("cannot index or filter a value of type `{receiver}`"),
+                    format!("a `{receiver}` can't be indexed or filtered — it is not a collection"),
                 );
                 return;
             }
@@ -288,7 +294,7 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
                         ctx,
                         name.span,
                         5001,
-                        format!("no method `{}` on `{receiver}`", name.node),
+                        format!("`{receiver}` has no method `{}`", name.node),
                     );
                     return;
                 }
@@ -375,7 +381,7 @@ fn check_binary(
             whole.span,
             2004,
             format!(
-                "incompatible operands for `{}`: `{left}` and `{right}`",
+                "`{}` can't combine a `{left}` and a `{right}`",
                 op_text(op)
             ),
         );
@@ -413,20 +419,27 @@ fn check_index_backed_operator(
         return;
     };
     let path = segments.join(".");
+    let table_name = table.name.clone();
     let covered = table
         .indexes
         .values()
         .any(|index| index.kind == required && index.covers(&path));
     if !covered {
-        let what = match required {
-            crate::schema::IndexKind::Search => "a SEARCH ANALYZER index",
-            _ => "an MTREE or HNSW index",
+        let (what, clause) = match required {
+            crate::schema::IndexKind::Search => {
+                ("a SEARCH ANALYZER index", "SEARCH ANALYZER <analyzer>")
+            }
+            _ => ("an MTREE or HNSW index", "MTREE DIMENSION <n>"),
         };
-        emit(
-            ctx,
-            whole.span,
-            1027,
-            format!("`{name}` on `{path}` needs {what} on that field"),
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                SourceSpan::new(ctx.source().clone(), whole.span),
+                1027,
+                format!("`{name}` needs {what} on `{path}`, and there isn't one"),
+            )
+            .with_help(format!(
+                "define one: `DEFINE INDEX ... ON {table_name} FIELDS {path} {clause}`"
+            )),
         );
     }
 }
@@ -537,11 +550,15 @@ fn check_none_arithmetic(
                     .iter()
                     .any(|v| !matches!(v, Kind::None | Kind::Null))
             {
-                emit(
-                    ctx,
-                    side.span,
-                    2015,
-                    format!("this value may be NONE at runtime (`{kind}`)"),
+                ctx.emit(
+                    surrealguard_diagnostics::catalog::finding(
+                        SourceSpan::new(ctx.source().clone(), side.span),
+                        2015,
+                        "this value may be NONE here, and arithmetic on NONE fails".to_string(),
+                    )
+                    .with_help(format!(
+                        "it is `{kind}`; coalesce with `?? <default>` or narrow before the operation"
+                    )),
                 );
             }
         }

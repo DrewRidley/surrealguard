@@ -49,15 +49,18 @@ pub(crate) fn check_graph_idiom_at(
             if let Some(table) = ctx.schema().tables.get(&source_table) {
                 if let Some(kind) = crate::analyzer::data::select::kind_for_path(table, &prefix) {
                     if kind != Kind::Any && !kind_is_recordish(&kind) {
-                        emit(
-                            ctx,
-                            first_graph,
+                        let mut finding = surrealguard_diagnostics::catalog::finding(
+                            SourceSpan::new(ctx.source().clone(), first_graph),
                             3009,
                             format!(
-                                "cannot traverse from `{}`: `{kind}` holds no records",
+                                "a graph step can't start from `{}` — `{kind}` holds no records",
                                 prefix.join(".")
                             ),
                         );
+                        finding = finding.with_help(
+                            "`->`/`<-` traverse from records; this field is not a record link",
+                        );
+                        ctx.emit(finding);
                         return;
                     }
                     if let Some(target) = single_record_target(&kind) {
@@ -124,11 +127,14 @@ pub(crate) fn check_graph_idiom_at(
                 }
             }
             ast::IdiomPart::Recurse { bounded } if !bounded => {
-                emit(
-                    ctx,
-                    part.span,
-                    3011,
-                    "unbounded graph recursion; give the range an upper bound".to_string(),
+                ctx.emit(
+                    surrealguard_diagnostics::catalog::finding(
+                        SourceSpan::new(ctx.source().clone(), part.span),
+                        3011,
+                        "this recursion has no upper bound and can walk the entire graph"
+                            .to_string(),
+                    )
+                    .with_help("give the range an upper bound, e.g. `{1..5}`"),
                 );
             }
             // A field hop after a graph step projects off the current
@@ -141,11 +147,15 @@ pub(crate) fn check_graph_idiom_at(
     if require_landing {
         if let Some((edge, _)) = &pending_edge {
             if let Some(last) = idiom.parts.last() {
-                emit(
-                    ctx,
-                    last.span,
-                    3004,
-                    format!("a FROM traversal must land on a table; it ends on the edge `{edge}`"),
+                ctx.emit(
+                    surrealguard_diagnostics::catalog::finding(
+                        SourceSpan::new(ctx.source().clone(), last.span),
+                        3004,
+                        format!(
+                            "this FROM target stops on the edge `{edge}`, not on a table"
+                        ),
+                    )
+                    .with_help(format!("add a landing step, e.g. `->{edge}->target`")),
                 );
             }
         }
@@ -236,11 +246,15 @@ fn check_step(
             // (`->likes->comment`). With nothing to land from, the step
             // is a traversal — and a traversal must name a relation.
             if !after_edge {
-                emit(
-                    ctx,
-                    target.span,
-                    3001,
-                    format!("`{edge}` is not a relation table"),
+                ctx.emit(
+                    surrealguard_diagnostics::catalog::finding(
+                        SourceSpan::new(ctx.source().clone(), target.span),
+                        3001,
+                        format!("`{edge}` can't be traversed — it is not a relation table"),
+                    )
+                    .with_help(
+                        "only tables defined with `TYPE RELATION` can be stepped through with `->`/`<-`",
+                    ),
                 );
                 return StepOutcome {
                     edge_table: None,
@@ -359,7 +373,16 @@ pub(crate) fn check_hop_reachability(
 fn check_edge_is_relation(ctx: &mut AnalysisContext<'_>, edge: &str, span: ByteRange) {
     match ctx.schema().tables.get(edge) {
         Some(table) if table.relation.is_none() => {
-            emit(ctx, span, 3001, format!("`{edge}` is not a relation table"));
+            ctx.emit(
+                surrealguard_diagnostics::catalog::finding(
+                    SourceSpan::new(ctx.source().clone(), span),
+                    3001,
+                    format!("`{edge}` can't be traversed — it is not a relation table"),
+                )
+                .with_help(
+                    "only tables defined with `TYPE RELATION` can be stepped through with `->`/`<-`",
+                ),
+            );
         }
         Some(_) => {}
         None => {
@@ -415,14 +438,7 @@ pub(crate) fn table_list(tables: &[String]) -> String {
         .join("|")
 }
 
-fn emit(ctx: &mut AnalysisContext<'_>, span: ByteRange, code: u16, message: String) {
-    let span = SourceSpan::new(ctx.source().clone(), span);
-    ctx.emit(surrealguard_diagnostics::catalog::finding(
-        span, code, message,
-    ));
-}
-
-/// Like [`emit`], pointing back at the relation's `DEFINE TABLE` so the
+/// Emits `code` pointing back at the relation's `DEFINE TABLE` so the
 /// declared shape and the violating usage read side by side.
 fn emit_with_declaration(
     ctx: &mut AnalysisContext<'_>,

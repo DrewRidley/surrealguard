@@ -15,11 +15,14 @@ pub(crate) fn analyze_break(
     let _ = stmt;
     if !ctx.in_loop() {
         let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
-            span,
-            4005,
-            "BREAK outside a FOR loop does nothing".to_string(),
-        ));
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                span,
+                4005,
+                "BREAK here does nothing — it is outside any FOR loop".to_string(),
+            )
+            .with_help("remove it, or move it inside a `FOR` loop"),
+        );
     }
     Kind::None
 }

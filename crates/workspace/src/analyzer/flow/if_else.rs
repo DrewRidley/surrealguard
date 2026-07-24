@@ -25,7 +25,7 @@ pub(crate) fn analyze_if_else(ctx: &mut AnalysisContext<'_>, stmt: &ast::IfElseS
             ctx.emit(surrealguard_diagnostics::catalog::finding(
                 span,
                 7004,
-                "condition is constant".to_string(),
+                "this IF condition is constant, so one branch is never taken".to_string(),
             ));
         }
         let condition_kind = condition_fact.kind.unwrap_or(Kind::Any);
@@ -34,11 +34,14 @@ pub(crate) fn analyze_if_else(ctx: &mut AnalysisContext<'_>, stmt: &ast::IfElseS
                 ctx.source().clone(),
                 branch.condition.span,
             );
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
-                span,
-                2005,
-                format!("IF condition has type `{condition_kind}`, expected `bool`"),
-            ));
+            ctx.emit(
+                surrealguard_diagnostics::catalog::finding(
+                    span,
+                    2005,
+                    format!("this IF condition is a `{condition_kind}`, not a `bool`"),
+                )
+                .with_help("an IF chooses a branch on a true/false test; the condition must be a bool"),
+            );
         }
         // The THEN body runs only when the branch condition holds, so it
         // sees the positive narrowing of that condition's guards.

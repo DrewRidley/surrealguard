@@ -17,14 +17,17 @@ pub(crate) fn analyze_show(ctx: &mut AnalysisContext<'_>, stmt: &ast::ShowStmt) 
             if !has_changefeed {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), table.span);
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
-                    span,
-                    4021,
-                    format!(
-                        "`{}` has no CHANGEFEED; SHOW CHANGES has nothing to read",
-                        table.node
-                    ),
-                ));
+                ctx.emit(
+                    surrealguard_diagnostics::catalog::finding(
+                        span,
+                        4021,
+                        format!(
+                            "`{}` has no CHANGEFEED, so SHOW CHANGES reads nothing",
+                            table.node
+                        ),
+                    )
+                    .with_help("add `CHANGEFEED <duration>` to the table's `DEFINE TABLE`"),
+                );
             }
         }
     }
@@ -38,7 +41,7 @@ pub(crate) fn analyze_show(ctx: &mut AnalysisContext<'_>, stmt: &ast::ShowStmt) 
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
                     span,
                     2021,
-                    format!("SINCE expects a versionstamp or datetime; `{text}` is neither"),
+                    format!("SHOW SINCE needs a versionstamp or datetime, but `{text}` is neither"),
                 ));
             }
         }

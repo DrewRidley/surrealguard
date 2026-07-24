@@ -125,11 +125,20 @@ pub fn check_required_fields(
             continue;
         }
         let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), anchor);
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
-            span,
-            2034,
-            format!("required field `{path}` (`{kind}`) has no value here and no DEFAULT"),
-        ));
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                span,
+                2034,
+                format!("`{path}` must be set when creating a `{}`", table.name),
+            )
+            .with_help(format!(
+                "`{path}` is `{kind}` with no `DEFAULT`, so every create must provide it"
+            ))
+            .with_related(
+                field.name_span.clone(),
+                format!("`{path}` is defined here"),
+            ),
+        );
     }
 }
 
@@ -344,26 +353,31 @@ fn check_field_write_flags(
         return;
     };
     let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), target.span);
+    let path = segments.join(".");
     if field.readonly && !creating {
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
-            span,
-            2025,
-            format!(
-                "`{}` is READONLY; it is set at creation only",
-                segments.join(".")
-            ),
-        ));
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                span,
+                2025,
+                format!("`{path}` can't be changed after creation"),
+            )
+            .with_help(format!("`{path}` is READONLY; set it once, when the row is created"))
+            .with_related(field.name_span.clone(), format!("`{path}` is defined READONLY here")),
+        );
         return;
     }
     if field.computed {
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
-            span,
-            2026,
-            format!(
-                "`{}` is computed by its VALUE clause; this write is overwritten",
-                segments.join(".")
-            ),
-        ));
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                span,
+                2026,
+                format!("this write to `{path}` is discarded"),
+            )
+            .with_help(format!(
+                "`{path}` is computed by its VALUE clause, which overwrites any assigned value"
+            ))
+            .with_related(field.name_span.clone(), format!("`{path}` is defined here")),
+        );
     }
 }
 
@@ -469,11 +483,20 @@ fn check_assignment_value(
             } else {
                 "-="
             };
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
+            let path = segments.join(".");
+            let mut finding = surrealguard_diagnostics::catalog::finding(
                 span,
                 2004,
-                format!("incompatible operands for `{op_text}`: `{field_kind}` and `{value_kind}`"),
+                format!("`{op_text}` can't combine a `{field_kind}` and a `{value_kind}`"),
+            )
+            .with_help(format!(
+                "`{path}` is `{field_kind}`; `{op_text}` needs a right-hand value that combines with it"
             ));
+            if let Some(def) = table.fields.get(&path) {
+                finding =
+                    finding.with_related(def.name_span.clone(), format!("`{path}` is defined here"));
+            }
+            ctx.emit(finding);
         }
         return;
     }
@@ -503,14 +526,26 @@ fn check_assignment_value(
     let field = segments.join(".");
     // One contract: the value must inhabit the field's declared type. NONE
     // gets the actionable variant of the message, not its own code.
-    let message = if matches!(value_kind, Kind::None | Kind::Null) {
-        format!("field `{field}` (`{field_kind}`) is not optional; wrap it in option<> or assign a value")
+    let mut finding = if matches!(value_kind, Kind::None | Kind::Null) {
+        surrealguard_diagnostics::catalog::finding(
+            span,
+            2001,
+            format!("`{field}` is not optional, so it can't be set to {value_kind}"),
+        )
+        .with_help(format!(
+            "declare it `option<{field_kind}>`, or coalesce with `?? <value>`"
+        ))
     } else {
-        format!("field `{field}` expects `{field_kind}`, found `{value_kind}`")
+        surrealguard_diagnostics::catalog::finding(
+            span,
+            2001,
+            format!("`{field}` is declared `{field_kind}`, but this value is `{value_kind}`"),
+        )
     };
-    ctx.emit(surrealguard_diagnostics::catalog::finding(
-        span, 2001, message,
-    ));
+    if let Some(def) = table.fields.get(&field) {
+        finding = finding.with_related(def.name_span.clone(), format!("`{field}` is defined here"));
+    }
+    ctx.emit(finding);
 }
 
 /// `SET target = ...`: the target must be a declared field path (1004).
@@ -575,14 +610,19 @@ pub fn check_payload_object_keys(
             {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), value.span);
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                let path = segments.join(".");
+                let mut finding = surrealguard_diagnostics::catalog::finding(
                     span,
                     2001,
                     format!(
-                        "field `{}` expects `{field_kind}`, found `{value_kind}`",
-                        segments.join(".")
+                        "`{path}` is declared `{field_kind}`, but this value is `{value_kind}`"
                     ),
-                ));
+                );
+                if let Some(def) = table.fields.get(&path) {
+                    finding = finding
+                        .with_related(def.name_span.clone(), format!("`{path}` is defined here"));
+                }
+                ctx.emit(finding);
             }
         }
     }

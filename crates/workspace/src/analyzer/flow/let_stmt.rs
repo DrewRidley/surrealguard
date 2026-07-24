@@ -17,22 +17,32 @@ pub(crate) fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) ->
     ];
     if ctx.env().would_shadow(&stmt.name.node) {
         let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.name.span);
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
-            span,
-            7002,
-            format!("`${}` shadows an outer binding", stmt.name.node),
-        ));
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                span,
+                7002,
+                format!(
+                    "`${}` is re-bound inside this block; the outer `${}` is unchanged",
+                    stmt.name.node, stmt.name.node
+                ),
+            )
+            .with_help("a block introduces a new scope, so this LET does not affect the outer binding")
+            .with_help("silence with `W7002 = \"allow\"`"),
+        );
     }
     if PROTECTED.contains(&stmt.name.node.as_str()) {
         let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.name.span);
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
-            span,
-            6007,
-            format!(
-                "`${}` is a protected parameter and cannot be assigned",
-                stmt.name.node
-            ),
-        ));
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                span,
+                6007,
+                format!(
+                    "`${}` is a protected parameter and can't be assigned",
+                    stmt.name.node
+                ),
+            )
+            .with_help("protected parameters (`$this`, `$parent`, `$value`, ...) are bound by the engine"),
+        );
     }
 
     let fact = crate::analyzer::expression::expr_fact(ctx, &stmt.value);

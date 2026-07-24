@@ -15,11 +15,17 @@ pub(crate) fn analyze_remove(ctx: &mut AnalysisContext<'_>, stmt: &ast::RemoveSt
     match &stmt.target {
         ast::RemoveTarget::Table(table) => {
             if !ctx.schema().tables.contains_key(&table.node) {
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
-                    SourceSpan::new(ctx.source().clone(), table.span),
-                    1021,
-                    format!("REMOVE TABLE targets unknown table `{}`", table.node),
-                ));
+                ctx.emit(
+                    surrealguard_diagnostics::catalog::finding(
+                        SourceSpan::new(ctx.source().clone(), table.span),
+                        1021,
+                        format!(
+                            "REMOVE TABLE `{}` targets a table that doesn't exist",
+                            table.node
+                        ),
+                    )
+                    .with_help("nothing to remove — no such table"),
+                );
             }
         }
         ast::RemoveTarget::Field { field, table } => {
@@ -29,19 +35,20 @@ pub(crate) fn analyze_remove(ctx: &mut AnalysisContext<'_>, stmt: &ast::RemoveSt
                     SourceSpan::new(ctx.source().clone(), table.span),
                     1021,
                     format!(
-                        "REMOVE FIELD `{field_text}` targets unknown table `{}`",
+                        "REMOVE FIELD `{field_text}` targets `{}`, which is not a defined table",
                         table.node
                     ),
                 )),
                 Some(table_def) if !table_def.fields.contains_key(&field_text) => {
-                    ctx.emit(surrealguard_diagnostics::catalog::finding(
-                        SourceSpan::new(ctx.source().clone(), field.span),
-                        1021,
-                        format!(
-                            "REMOVE FIELD targets unknown field `{field_text}` on table `{}`",
-                            table.node
-                        ),
-                    ));
+                    let related = table_def.name_span.clone();
+                    ctx.emit(
+                        surrealguard_diagnostics::catalog::finding(
+                            SourceSpan::new(ctx.source().clone(), field.span),
+                            1021,
+                            format!("`{}` has no field `{field_text}` to remove", table.node),
+                        )
+                        .with_related(related, format!("`{}` is defined here", table.node)),
+                    );
                 }
                 Some(_) => {}
             }

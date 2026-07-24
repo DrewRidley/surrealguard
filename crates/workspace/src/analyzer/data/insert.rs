@@ -66,14 +66,19 @@ fn check_insert_payload(
                 let (values, columns) = counts.node;
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), counts.span);
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
-                    span,
-                    4004,
-                    format!(
-                        "INSERT VALUES has {values} {} for {columns} columns",
-                        if values == 1 { "value" } else { "values" }
-                    ),
-                ));
+                ctx.emit(
+                    surrealguard_diagnostics::catalog::finding(
+                        span,
+                        4004,
+                        format!(
+                            "this INSERT row has {values} {} but {columns} columns",
+                            if values == 1 { "value" } else { "values" }
+                        ),
+                    )
+                    .with_help(format!(
+                        "give each row exactly {columns} values, one per column"
+                    )),
+                );
             }
             for row in rows {
                 for (column, value) in row {
@@ -109,14 +114,21 @@ fn check_insert_payload(
                             ctx.source().clone(),
                             value.span,
                         );
-                        ctx.emit(surrealguard_diagnostics::catalog::finding(
+                        let path = segments.join(".");
+                        let mut finding = surrealguard_diagnostics::catalog::finding(
                             span,
                             2001,
                             format!(
-                                "column `{}` expects `{column_kind}`, found `{value_kind}`",
-                                segments.join(".")
+                                "`{path}` is declared `{column_kind}`, but this value is `{value_kind}`"
                             ),
-                        ));
+                        );
+                        if let Some(def) = table.fields.get(&path) {
+                            finding = finding.with_related(
+                                def.name_span.clone(),
+                                format!("`{path}` is defined here"),
+                            );
+                        }
+                        ctx.emit(finding);
                     }
                 }
             }

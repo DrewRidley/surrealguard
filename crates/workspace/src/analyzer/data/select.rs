@@ -166,19 +166,25 @@ fn check_source_table_shape(
 ) -> Option<Kind> {
     if table.drop_table {
         let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from_span);
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
-            span,
-            4022,
-            format!("`{table_name}` is a DROP table; rows are never retained"),
-        ));
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                span,
+                4022,
+                format!("`{table_name}` is a DROP table, so this SELECT never returns rows"),
+            )
+            .with_help("DROP tables discard every row on write"),
+        );
     }
     if table.fields.is_empty() && !stmt.projections.iter().any(is_graph_projection) {
         let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from_span);
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
-            span,
-            7008,
-            format!("table `{table_name}` has no declared fields; analysis is limited"),
-        ));
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                span,
+                7008,
+                format!("`{table_name}` has no declared fields, so field-level checks are skipped"),
+            )
+            .with_help(format!("add `DEFINE FIELD` declarations to `{table_name}` for full analysis")),
+        );
         return Some(walk_projections_for_findings(stmt, ctx));
     }
     None
@@ -207,11 +213,14 @@ fn check_where_clause<'a>(
     if let Some(kind) = cond_kind {
         if crate::analyzer::flow::if_else::definitely_not_bool(&kind) {
             let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), cond.span);
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
-                span,
-                2005,
-                format!("WHERE condition has type `{kind}`, expected `bool`"),
-            ));
+            ctx.emit(
+                surrealguard_diagnostics::catalog::finding(
+                    span,
+                    2005,
+                    format!("this WHERE condition is a `{kind}`, not a `bool`"),
+                )
+                .with_help("a WHERE filter keeps rows where the condition is true; it must be a bool"),
+            );
         }
     }
 }
@@ -251,13 +260,16 @@ fn check_fetch_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analy
                                 ctx.source().clone(),
                                 idiom.span,
                             );
-                            ctx.emit(surrealguard_diagnostics::catalog::finding(
-                                span,
-                                1023,
-                                format!(
-                                    "FETCH `{alias_name}` does nothing: `{kind}` holds no records"
-                                ),
-                            ));
+                            ctx.emit(
+                                surrealguard_diagnostics::catalog::finding(
+                                    span,
+                                    1023,
+                                    format!(
+                                        "FETCH `{alias_name}` does nothing — `{kind}` holds no records"
+                                    ),
+                                )
+                                .with_help("FETCH only expands record links, not scalar values"),
+                            );
                         }
                     }
                 }
@@ -273,14 +285,17 @@ fn check_fetch_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analy
                         ctx.source().clone(),
                         idiom.span,
                     );
-                    ctx.emit(surrealguard_diagnostics::catalog::finding(
-                        span,
-                        1023,
-                        format!(
-                            "FETCH `{}` does nothing: `{kind}` holds no records",
-                            segments.join(".")
-                        ),
-                    ));
+                    ctx.emit(
+                        surrealguard_diagnostics::catalog::finding(
+                            span,
+                            1023,
+                            format!(
+                                "FETCH `{}` does nothing — `{kind}` holds no records",
+                                segments.join(".")
+                            ),
+                        )
+                        .with_help("FETCH only expands record links, not scalar values"),
+                    );
                 }
             }
         }
@@ -305,7 +320,7 @@ fn check_split_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analy
                         span,
                         1024,
                         format!(
-                            "SPLIT `{}` expects a collection field, found `{kind}`",
+                            "SPLIT needs a collection field, but `{}` is a `{kind}`",
                             segments.join(".")
                         ),
                     ));
@@ -357,7 +372,7 @@ fn check_order_clause(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analys
             ctx.emit(surrealguard_diagnostics::catalog::finding(
                 span,
                 2017,
-                "ORDER BY expects a field of the query source (or RAND())".to_string(),
+                "ORDER BY must name a field of the result rows (or `RAND()`)".to_string(),
             ));
             continue;
         };
@@ -370,7 +385,7 @@ fn check_order_clause(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analys
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
                     span,
                     2017,
-                    format!("ORDER BY `{name}` does not name a field selected by this query"),
+                    format!("ORDER BY `{name}` doesn't name a field of this query's rows"),
                 ));
             }
         }
@@ -426,7 +441,7 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
                     span,
                     2018,
-                    format!("{name} expects an integer, found `{kind}`"),
+                    format!("{name} needs an integer, but this is a `{kind}`"),
                 ));
                 continue;
             }
@@ -440,7 +455,7 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
                     span,
                     2018,
-                    format!("{name} cannot be negative"),
+                    format!("{name} can't be negative"),
                 ));
             }
         }
@@ -454,7 +469,7 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
                     span,
                     2019,
-                    format!("TIMEOUT expects a duration, found `{kind}`"),
+                    format!("TIMEOUT needs a duration, but this is a `{kind}`"),
                 ));
             }
         }
@@ -485,11 +500,14 @@ fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContex
                             ctx.source().clone(),
                             expr.span,
                         );
-                        ctx.emit(surrealguard_diagnostics::catalog::finding(
-                            span,
-                            7007,
-                            "field is already included by `*`".to_string(),
-                        ));
+                        ctx.emit(
+                            surrealguard_diagnostics::catalog::finding(
+                                span,
+                                7007,
+                                "this field is already included by `*`".to_string(),
+                            )
+                            .with_help("remove the explicit field, or drop the `*`"),
+                        );
                     }
                 }
             }
@@ -518,11 +536,14 @@ fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContex
             if !limited_to_one && stmt.where_clause.is_none() {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from.span);
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
-                    span,
-                    4003,
-                    "ONLY on a whole table needs LIMIT 1 (or a record id target)".to_string(),
-                ));
+                ctx.emit(
+                    surrealguard_diagnostics::catalog::finding(
+                        span,
+                        4003,
+                        "ONLY needs a single-row target, but this reads a whole table".to_string(),
+                    )
+                    .with_help("add `LIMIT 1`, a `WHERE`, or target a record id"),
+                );
             }
         }
     }
@@ -539,11 +560,14 @@ fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContex
         let span = alias.as_ref().map_or(expr.span, |a| a.span);
         if seen.insert(key.clone(), span).is_some() {
             let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
-                span,
-                4011,
-                format!("duplicate projection key `{key}`"),
-            ));
+            ctx.emit(
+                surrealguard_diagnostics::catalog::finding(
+                    span,
+                    4011,
+                    format!("`{key}` is projected twice; the later one wins"),
+                )
+                .with_help("rename one projection with `AS <alias>`"),
+            );
         }
     }
 }

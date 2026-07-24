@@ -22,11 +22,16 @@ pub(crate) fn relate_response_kind(stmt: &ast::RelateStmt, ctx: &mut AnalysisCon
             if !ctx.schema().tables.contains_key(&endpoint_table) {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), endpoint.span);
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
-                    span,
-                    1001,
-                    format!("unknown table `{endpoint_table}` in RELATE endpoint"),
-                ));
+                ctx.emit(
+                    surrealguard_diagnostics::catalog::finding(
+                        span,
+                        1001,
+                        format!("`{endpoint_table}` is not a defined table"),
+                    )
+                    .with_help(format!(
+                        "no `DEFINE TABLE {endpoint_table}` exists in the workspace"
+                    )),
+                );
             }
         }
     }
@@ -65,11 +70,14 @@ fn check_relate_endpoints(ctx: &mut AnalysisContext<'_>, stmt: &ast::RelateStmt,
     else {
         if let Some(edge) = &stmt.edge {
             let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), edge.span);
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
-                span,
-                3001,
-                format!("`{edge_name}` is not a relation table"),
-            ));
+            ctx.emit(
+                surrealguard_diagnostics::catalog::finding(
+                    span,
+                    3001,
+                    format!("`{edge_name}` can't be used in RELATE — it is not a relation table"),
+                )
+                .with_help("only tables defined with `TYPE RELATION` can be related"),
+            );
         }
         return;
     };

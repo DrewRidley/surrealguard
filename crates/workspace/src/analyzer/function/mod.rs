@@ -98,13 +98,19 @@ pub(crate) fn analyze_builtin_function(
                     let mut finding = surrealguard_diagnostics::catalog::finding(
                         span,
                         5001,
-                        format!("unknown function `{path}`"),
+                        format!("`{path}` is not a defined function"),
                     );
-                    if let Some(nearest) = crate::suggest::closest(
+                    match crate::suggest::closest(
                         path,
                         ctx.schema().functions.keys().map(String::as_str),
                     ) {
-                        finding = finding.with_help(format!("did you mean `{nearest}`?"));
+                        Some(nearest) => {
+                            finding = finding.with_help(format!("did you mean `{nearest}`?"));
+                        }
+                        None => {
+                            finding = finding
+                                .with_help(format!("no `DEFINE FUNCTION {path}` exists in the workspace"));
+                        }
                     }
                     ctx.emit(finding);
                 }
@@ -124,7 +130,7 @@ pub(crate) fn unknown_function(ctx: &mut AnalysisContext<'_>, call: &ast::Call) 
         ctx.emit(surrealguard_diagnostics::catalog::finding(
             span,
             5001,
-            format!("unknown function `{}`", call.path.node),
+            format!("`{}` is not a known function", call.path.node),
         ));
     }
     Kind::Any
@@ -184,21 +190,27 @@ fn check_custom_call(
     }
     if args.len() != function.args.len() {
         let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), call.path.span);
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
-            span,
-            5002,
-            format!(
-                "`{}` expects {} {}, found {}",
-                call.path.node,
-                function.args.len(),
-                if function.args.len() == 1 {
-                    "argument"
-                } else {
-                    "arguments"
-                },
-                args.len()
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                span,
+                5002,
+                format!(
+                    "`{}` takes {} {}, but this call passes {}",
+                    call.path.node,
+                    function.args.len(),
+                    if function.args.len() == 1 {
+                        "argument"
+                    } else {
+                        "arguments"
+                    },
+                    args.len()
+                ),
+            )
+            .with_related(
+                function.name_span.clone(),
+                format!("`{}` is defined here", function.name),
             ),
-        ));
+        );
         return;
     }
     for (index, (param, kind)) in function.args.iter().zip(args).enumerate() {
@@ -224,16 +236,26 @@ fn check_custom_call(
             continue;
         };
         let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), arg_expr.span);
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
-            span,
-            5002,
-            format!(
-                "`{}` argument {} (`${}`) expects `{expected}`, found `{kind}`",
-                call.path.node,
-                index + 1,
-                param.name,
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                span,
+                5002,
+                format!(
+                    "argument {} to `{}` is a `{kind}`, but `${}` is declared `{expected}`",
+                    index + 1,
+                    call.path.node,
+                    param.name,
+                ),
+            )
+            .with_help(format!(
+                "pass a `{expected}`, or widen `${}` to accept `{kind}`",
+                param.name
+            ))
+            .with_related(
+                function.name_span.clone(),
+                format!("`{}` is defined here", function.name),
             ),
-        ));
+        );
     }
 }
 

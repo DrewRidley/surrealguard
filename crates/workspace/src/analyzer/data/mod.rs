@@ -26,12 +26,18 @@ pub(crate) fn check_table_reference(
         return true;
     }
     let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
-    let mut finding =
-        surrealguard_diagnostics::catalog::finding(span, 1001, format!("unknown table `{name}`"));
-    if let Some(nearest) =
-        crate::suggest::closest(name, ctx.schema().tables.keys().map(String::as_str))
-    {
-        finding = finding.with_help(format!("did you mean `{nearest}`?"));
+    let mut finding = surrealguard_diagnostics::catalog::finding(
+        span,
+        1001,
+        format!("`{name}` is not a defined table"),
+    );
+    match crate::suggest::closest(name, ctx.schema().tables.keys().map(String::as_str)) {
+        Some(nearest) => {
+            finding = finding.with_help(format!("did you mean `{nearest}`?"));
+        }
+        None => {
+            finding = finding.with_help(format!("no `DEFINE TABLE {name}` exists in the workspace"));
+        }
     }
     ctx.emit(finding);
     false
@@ -51,20 +57,21 @@ pub(crate) fn check_field_path(
         return;
     }
     let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
+    let path = segments.join(".");
     let mut finding = surrealguard_diagnostics::catalog::finding(
         span,
         code,
-        format!(
-            "unknown field `{}` on table `{}`",
-            segments.join("."),
-            table.name
-        ),
+        format!("`{}` has no field `{path}`", table.name),
     );
     if let Some(nearest) =
-        crate::suggest::closest(&segments.join("."), table.fields.keys().map(String::as_str))
+        crate::suggest::closest(&path, table.fields.keys().map(String::as_str))
     {
         finding = finding.with_help(format!("did you mean `{nearest}`?"));
     }
+    finding = finding.with_related(
+        table.name_span.clone(),
+        format!("`{}` is defined here", table.name),
+    );
     ctx.emit(finding);
 }
 

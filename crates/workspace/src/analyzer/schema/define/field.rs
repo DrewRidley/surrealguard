@@ -49,7 +49,7 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
                     span,
                     2001,
                     format!(
-                        "field `{}` expects `{declared}`, found `{kind}`",
+                        "`{}`'s value is `{kind}`, but the field is declared `{declared}`",
                         idiom_text(&stmt.path.node)
                     ),
                 ));
@@ -71,7 +71,7 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
                     span,
                     2005,
-                    format!("ASSERT has type `{kind}`, expected `bool`"),
+                    format!("this ASSERT is a `{kind}`, not a `bool`"),
                 ));
             }
         }
@@ -99,14 +99,20 @@ fn check_record_targets(
         return;
     }
     let span = stmt.ty.as_ref().map_or(stmt.path.span, |ty| ty.span);
-    let field_key = crate::schema::idiom_field_path(&stmt.path.node).join(".");
     for table in tables {
         if ctx.schema().table(&table).is_none() {
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
+            let mut finding = surrealguard_diagnostics::catalog::finding(
                 surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span),
                 1001,
-                format!("field `{field_key}` references unknown table `{table}` in `record<...>`"),
-            ));
+                format!("`record<{table}>` targets a table that's never defined"),
+            )
+            .with_help(format!("no `DEFINE TABLE {table}` exists in the workspace"));
+            if let Some(suggestion) =
+                crate::suggest::closest(&table, ctx.schema().tables.keys().map(String::as_str))
+            {
+                finding = finding.with_help(format!("did you mean `{suggestion}`?"));
+            }
+            ctx.emit(finding);
         }
     }
 }
@@ -150,11 +156,14 @@ fn check_field_definition(
         PartialReason::Unresolved | PartialReason::DynamicExpression => None,
     }) {
         let span = stmt.ty.as_ref().map_or(stmt.path.span, |ty| ty.span);
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
-            surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span),
-            6003,
-            format!("unsupported field type syntax `{reason}` for field `{field_key}`"),
-        ));
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span),
+                6003,
+                format!("surrealguard can't analyze the type of `{field_key}` yet"),
+            )
+            .with_help(format!("unsupported type syntax: {reason}")),
+        );
     }
 
     match ctx.schema().table(&stmt.table.node) {
@@ -163,20 +172,23 @@ fn check_field_definition(
                 surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.table.span),
                 1001,
                 format!(
-                    "field `{field_key}` targets unknown table `{}`",
+                    "`{field_key}` is defined on `{}`, which is not a defined table",
                     stmt.table.node
                 ),
             ));
         }
         Some(table) if !stmt.overwrite && field_is_duplicate(table, &stmt.path.node, &field_key) => {
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
+            let mut finding = surrealguard_diagnostics::catalog::finding(
                 surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.path.span),
                 1022,
-                format!(
-                    "duplicate field definition `{field_key}` on table `{}`",
-                    stmt.table.node
-                ),
-            ));
+                format!("`{field_key}` is already defined on `{}`", stmt.table.node),
+            )
+            .with_help("use `DEFINE FIELD OVERWRITE` to redefine it intentionally");
+            if let Some(existing) = table.fields.get(&field_key) {
+                finding = finding
+                    .with_related(existing.name_span.clone(), format!("`{field_key}` is defined here"));
+            }
+            ctx.emit(finding);
         }
         Some(_) => {}
     }
@@ -226,11 +238,16 @@ fn check_computed_calls(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::
                     ctx.source().clone(),
                     call.path.span,
                 );
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
-                    span,
-                    7012,
-                    format!("`{path}` runs on every write from a computed field clause"),
-                ));
+                ctx.emit(
+                    surrealguard_diagnostics::catalog::finding(
+                        span,
+                        7012,
+                        format!("`{path}` runs on every write to this row"),
+                    )
+                    .with_help(
+                        "this clause is computed on every write; avoid blocking or side-effecting calls here",
+                    ),
+                );
             }
             for arg in &call.args {
                 check_computed_calls(ctx, arg);
@@ -291,7 +308,7 @@ fn check_default_satisfies_assert(ctx: &mut AnalysisContext<'_>, stmt: &ast::Def
             span,
             2037,
             format!(
-                "field `{}` DEFAULT never satisfies its own ASSERT",
+                "`{}`'s DEFAULT can never satisfy its own ASSERT",
                 idiom_text(&stmt.path.node)
             ),
         ));

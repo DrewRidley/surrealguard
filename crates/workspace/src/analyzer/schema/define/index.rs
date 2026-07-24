@@ -20,7 +20,7 @@ pub(crate) fn analyze_define_index(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
             SourceSpan::new(source, stmt.table.span),
             1001,
             format!(
-                "index `{}` targets unknown table `{}`",
+                "index `{}` is defined on `{}`, which is not a defined table",
                 stmt.name.node, stmt.table.node
             ),
         ));
@@ -55,26 +55,36 @@ pub(crate) fn analyze_define_index(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
         .flatten()
         .map(|other| other.name.clone());
 
+    let table_name_span = table.name_span.clone();
     for (text, span) in unknown_fields {
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
-            span,
-            1002,
-            format!(
-                "index `{}` references unknown field `{}` on table `{}`",
-                stmt.name.node, text, stmt.table.node
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                span,
+                1002,
+                format!(
+                    "`{}` has no field `{text}` (used by index `{}`)",
+                    stmt.table.node, stmt.name.node
+                ),
+            )
+            .with_related(
+                table_name_span.clone(),
+                format!("`{}` is defined here", stmt.table.node),
             ),
-        ));
+        );
     }
 
     if let Some(existing) = duplicate {
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
-            SourceSpan::new(ctx.source().clone(), stmt.name.span),
-            1029,
-            format!(
-                "index `{}` covers the same fields as `{}`",
-                stmt.name.node, existing
-            ),
-        ));
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                SourceSpan::new(ctx.source().clone(), stmt.name.span),
+                1029,
+                format!(
+                    "index `{}` covers the same fields as `{existing}`",
+                    stmt.name.node
+                ),
+            )
+            .with_help("drop one — the duplicate index adds write cost without benefit"),
+        );
     }
 
     Kind::None
@@ -95,13 +105,13 @@ pub(crate) fn check_index_target(
         None => ctx.emit(surrealguard_diagnostics::catalog::finding(
             SourceSpan::new(source, table_span),
             1012,
-            format!("index `{index}` targets unknown table `{table}` in {statement} statement"),
+            format!("{statement} targets `{table}`, which is not a defined table"),
         )),
         Some(table_def) if !table_def.indexes.contains_key(index) => {
             ctx.emit(surrealguard_diagnostics::catalog::finding(
                 SourceSpan::new(source, index_span),
                 1012,
-                format!("unknown index `{index}` on table `{table}` in {statement} statement"),
+                format!("`{table}` has no index `{index}` ({statement})"),
             ));
         }
         Some(_) => {}

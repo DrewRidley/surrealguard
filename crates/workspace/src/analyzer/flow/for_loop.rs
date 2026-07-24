@@ -41,7 +41,7 @@ pub(crate) fn analyze_for_loop(ctx: &mut AnalysisContext<'_>, stmt: &ast::ForStm
             ctx.emit(surrealguard_diagnostics::catalog::finding(
                 span,
                 2022,
-                format!("FOR expects a collection to iterate, found `{kind}`"),
+                format!("FOR can't iterate a `{kind}` — it is not a collection"),
             ));
         }
         // Constant empty collections never run their body (7004: control
@@ -52,11 +52,15 @@ pub(crate) fn analyze_for_loop(ctx: &mut AnalysisContext<'_>, stmt: &ast::ForStm
                     ctx.source().clone(),
                     stmt.iterable.span,
                 );
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
-                    span,
-                    7004,
-                    "this loop never runs: the collection is a constant empty array".to_string(),
-                ));
+                ctx.emit(
+                    surrealguard_diagnostics::catalog::finding(
+                        span,
+                        7004,
+                        "this loop never runs: the collection is a constant empty array"
+                            .to_string(),
+                    )
+                    .with_help("remove the loop, or iterate a non-empty collection"),
+                );
             }
         }
     }

@@ -23,7 +23,7 @@ pub(crate) fn analyze_block(ctx: &mut AnalysisContext<'_>, block: &ast::Block) -
                 surrealguard_diagnostics::catalog::finding(
                     span,
                     4006,
-                    "unreachable: the block already returned".to_string(),
+                    "this statement is unreachable — the block already returned".to_string(),
                 )
                 .with_tag(surrealguard_diagnostics::FindingTag::Unnecessary),
             );

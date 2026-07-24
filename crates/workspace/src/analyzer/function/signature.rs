@@ -120,7 +120,10 @@ fn check_arity(
     ctx.emit(surrealguard_diagnostics::catalog::finding(
         span,
         5002,
-        format!("`{}` expects {expected}, found {found}", call.path.node),
+        format!(
+            "`{}` takes {expected}, but this call passes {found}",
+            call.path.node
+        ),
     ));
 }
 
@@ -184,9 +187,9 @@ fn check_argument_kinds(
             span,
             5002,
             format!(
-                "`{}` argument {} expects {}, found `{kind}`",
-                call.path.node,
+                "argument {} to `{}` is a `{kind}`, but {} is required",
                 index + 1,
+                call.path.node,
                 param_label(expected),
             ),
         ));
