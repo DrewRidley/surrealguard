@@ -39,6 +39,14 @@ fn collect(node: Node<'_>, text: &str, queries: &mut Vec<EmbeddedQuery>) {
                 } else if let Some(query) = call_string_to_query(arguments, text) {
                     queries.push(query);
                 }
+            } else if is_query_method(function, text) {
+                // The runtime API: `db.query("...")` / `db.live("...")`. The
+                // first string (or template) argument is the query; a trailing
+                // bindings object is ignored. This is what makes the generated
+                // registry cover real client code, not just `surql` templates.
+                if let Some(query) = method_call_to_query(arguments, text) {
+                    queries.push(query);
+                }
             }
         }
     }
@@ -76,8 +84,41 @@ fn call_string_to_query(arguments: Node<'_>, text: &str) -> Option<EmbeddedQuery
     let [string] = literals.as_slice() else {
         return None;
     };
-    // Content between the quotes; escape sequences pass through verbatim
-    // (SurrealQL strings share the common escapes).
+    string_node_to_query(*string, text)
+}
+
+/// The function of a call is a `.query`/`.live` member access — the
+/// SurrealDB runtime API (`db.query(...)`, `db.live(...)`). We match any
+/// receiver rather than a fixed `db` name; the string-literal-first-arg
+/// requirement keeps unrelated `.query(...)` calls (which pass options
+/// objects, not string literals) from matching.
+fn is_query_method(node: Node<'_>, text: &str) -> bool {
+    node.kind() == "member_expression"
+        && node.child_by_field_name("property").is_some_and(|property| {
+            matches!(&text[property.byte_range()], "query" | "live")
+        })
+}
+
+/// `db.query("...")` / `db.live("...")`: the first string (or template)
+/// argument is the query; a trailing bindings object is ignored.
+fn method_call_to_query(arguments: Node<'_>, text: &str) -> Option<EmbeddedQuery> {
+    if arguments.kind() != "arguments" {
+        return None;
+    }
+    let mut walker = arguments.walk();
+    let first = arguments
+        .children(&mut walker)
+        .find(|child| matches!(child.kind(), "string" | "template_string"))?;
+    match first.kind() {
+        "template_string" => template_to_query(first, text),
+        _ => string_node_to_query(first, text),
+    }
+}
+
+/// Extracts a single `string` literal node's contents as a query.
+/// Content between the quotes; escape sequences pass through verbatim
+/// (SurrealQL strings share the common escapes).
+fn string_node_to_query(string: Node<'_>, text: &str) -> Option<EmbeddedQuery> {
     let content_start = string.start_byte() + 1;
     let content_end = string.end_byte().saturating_sub(1);
     if content_end < content_start {
@@ -236,6 +277,40 @@ const other = css`b { color: red }`;
         let embedded_team = queries[0].text.find("team =").expect("team present");
         let host = queries[0].host_offset(embedded_team);
         assert_eq!(&source[host..host + 4], "team");
+    }
+
+    #[test]
+    fn db_query_string_literal_extracts() {
+        let source =
+            "const [rows] = await db.query(\"SELECT name FROM person WHERE team = $team\", { team });";
+        let queries = extract_typescript(source, false);
+
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].text, "SELECT name FROM person WHERE team = $team");
+        assert!(queries[0].substitutions.is_empty());
+        // The query maps back to the host string, past the bindings object.
+        let embedded_team = queries[0].text.find("team =").expect("team present");
+        let host = queries[0].host_offset(embedded_team);
+        assert_eq!(&source[host..host + 4], "team");
+    }
+
+    #[test]
+    fn db_live_string_literal_extracts() {
+        let source = "const handle = db.live(\"LIVE SELECT * FROM person\");";
+        let queries = extract_typescript(source, false);
+
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].text, "LIVE SELECT * FROM person");
+    }
+
+    #[test]
+    fn unrelated_query_method_with_options_object_is_ignored() {
+        // React-Query-style `.query({...})` passes an options object, never a
+        // string literal — it must not be picked up as a SurrealQL query.
+        let source = "const r = client.query({ url: '/api', method: 'GET' });";
+        let queries = extract_typescript(source, false);
+
+        assert!(queries.is_empty());
     }
 
     #[test]
