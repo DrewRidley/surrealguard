@@ -318,6 +318,7 @@ fn check_binary(
     if let Op::Other(name) = op {
         check_regex_pattern_operand(ctx, name, rhs);
         check_empty_membership(ctx, whole, name, lhs, rhs);
+        check_membership_kind(ctx, whole, name, &left, &right);
         return;
     }
 
@@ -327,10 +328,21 @@ fn check_binary(
     // the operator (2004). Whether SurrealDB throws (arithmetic) or
     // silently kind-orders (comparisons) is irrelevant — tolerated misuse
     // is still misuse; surfacing it is this tool's entire purpose.
-    // A literal-union side compared against a constant outside the union
-    // never matches (7005) — `WHEN $event = 'CRATE'`.
+    //
+    // Several shapes make an `=`/`!=` provably constant, all sharing the
+    // 7005 always-false/true family:
+    //   - a literal-union side compared against a constant outside the
+    //     union (`WHEN $event = 'CRATE'`);
+    //   - a `NONE`/`NULL` sentinel against a kind that structurally cannot
+    //     be that sentinel (`option<datetime> = NULL`, `string = NONE`);
+    //   - two record links whose declared table sets are disjoint
+    //     (`record<file> = record<folder>`).
     if matches!(op, Op::Eq | Op::NotEq)
-        && (literal_union_excludes(ctx, &left, rhs) || literal_union_excludes(ctx, &right, lhs))
+        && (literal_union_excludes(ctx, &left, rhs)
+            || literal_union_excludes(ctx, &right, lhs)
+            || sentinel_mismatch(lhs, rhs, &right)
+            || sentinel_mismatch(rhs, lhs, &left)
+            || disjoint_records(&left, &right))
     {
         emit(
             ctx,
@@ -568,6 +580,145 @@ fn literal_union_excludes(
     !members.contains(&value.as_str())
 }
 
+/// The sentinel kind an operand is a bare literal of, if it is `NONE`/`NULL`.
+fn sentinel_literal(expr: &ast::Spanned<ast::Expr>) -> Option<Kind> {
+    match &expr.node {
+        ast::Expr::Literal(ast::Literal::None) => Some(Kind::None),
+        ast::Expr::Literal(ast::Literal::Null) => Some(Kind::Null),
+        _ => None,
+    }
+}
+
+/// Whether `kind` can ever hold the given sentinel (`NONE`/`NULL`). `Any` and
+/// a union with a matching variant admit it; every other closed kind does not
+/// — an `option<T>` is `none | T`, so it admits NONE but never NULL.
+fn kind_admits_sentinel(kind: &Kind, sentinel: &Kind) -> bool {
+    match kind {
+        Kind::Any => true,
+        Kind::Either(variants) => variants
+            .iter()
+            .any(|variant| kind_admits_sentinel(variant, sentinel)),
+        other => other == sentinel,
+    }
+}
+
+/// C1: a `= NONE`/`= NULL` (or `!=`) whose other side has a known kind that
+/// structurally excludes that sentinel can never match. `sentinel_side` is the
+/// operand that must be the bare literal; `other_side`/`other_kind` are the
+/// counterpart expression and its known (non-`Any`) kind.
+fn sentinel_mismatch(
+    sentinel_side: &ast::Spanned<ast::Expr>,
+    other_side: &ast::Spanned<ast::Expr>,
+    other_kind: &Kind,
+) -> bool {
+    let Some(sentinel) = sentinel_literal(sentinel_side) else {
+        return false;
+    };
+    if matches!(other_kind, Kind::Any) {
+        return false;
+    }
+    // NONE is genuinely reachable for a param regardless of its declared kind:
+    // write-time/computed contexts bind `$value`/`$before`/`$after` and the
+    // idiomatic `ASSERT $value = NONE OR ...` guard depends on it. So the NONE
+    // branch fires only against a non-param operand (a stored field read, which
+    // is never NONE for a required kind). NULL is never inhabited by any known
+    // kind, so it fires everywhere.
+    if matches!(sentinel, Kind::None) && matches!(other_side.node, ast::Expr::Param(_)) {
+        return false;
+    }
+    !kind_admits_sentinel(other_kind, &sentinel)
+}
+
+/// Two non-empty record table sets share no table, so no record id of one can
+/// equal a record id of the other. An empty set is the unconstrained
+/// `record<>` (any table) and never counts as disjoint.
+fn tables_disjoint(
+    left: &[surrealdb_types::Table],
+    right: &[surrealdb_types::Table],
+) -> bool {
+    !left.is_empty()
+        && !right.is_empty()
+        && !left.iter().any(|table| right.contains(table))
+}
+
+/// C3: `=`/`!=` between two record links whose declared table sets are
+/// non-empty and disjoint is provably constant.
+fn disjoint_records(left: &Kind, right: &Kind) -> bool {
+    match (left, right) {
+        (Kind::Record(lt), Kind::Record(rt)) => tables_disjoint(lt, rt),
+        _ => false,
+    }
+}
+
+/// C2/D2: whether a value of kind `a` could ever equal a value of kind `b` —
+/// the membership-element predicate. Same kind, numeric-compatible, records
+/// whose table sets overlap, or any variant of a union. `Any`/`NONE`/`NULL`
+/// are never provably-incomparable, so they short-circuit to comparable.
+/// Kept separate from [`comparable`] (which treats all record pairs as
+/// orderable) so it can back both the membership check here and the future
+/// ASSERT `$value IN [...]` check without disturbing the 2004 ordering path.
+fn comparable_element(a: &Kind, b: &Kind) -> bool {
+    if a == b
+        || (is_numeric(a) && is_numeric(b))
+        || matches!(a, Kind::Any | Kind::None | Kind::Null)
+        || matches!(b, Kind::Any | Kind::None | Kind::Null)
+    {
+        return true;
+    }
+    match (a, b) {
+        (Kind::Record(at), Kind::Record(bt)) => !tables_disjoint(at, bt),
+        (Kind::Either(variants), other) | (other, Kind::Either(variants)) => {
+            variants.iter().any(|variant| comparable_element(variant, other))
+        }
+        _ => {
+            let a = crate::kinds::literal_base_kind(a).unwrap_or_else(|| a.clone());
+            let b = crate::kinds::literal_base_kind(b).unwrap_or_else(|| b.clone());
+            a == b
+        }
+    }
+}
+
+/// C2: `IN`/`INSIDE`/`CONTAINS` whose element operand can never equal any
+/// element of a known-element collection is always false (7006 family). Fires
+/// only when the collection kind is `Array(e)`/`Set(e)` with a concrete `e`
+/// and the element side has a concrete kind — bare `array`/`set` (element
+/// `Any`) and unknown operands never trigger.
+fn check_membership_kind(
+    ctx: &mut AnalysisContext<'_>,
+    whole: &ast::Spanned<ast::Expr>,
+    name: &str,
+    left: &Kind,
+    right: &Kind,
+) {
+    if !matches!(
+        name.to_ascii_uppercase().as_str(),
+        "IN" | "INSIDE" | "CONTAINS"
+    ) {
+        return;
+    }
+    // CONTAINS: the left side is the collection. IN/INSIDE: the right side is.
+    let (collection, element) = if name.eq_ignore_ascii_case("contains") {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    let elem = match collection {
+        Kind::Array(elem, _) | Kind::Set(elem, _) => elem.as_ref(),
+        _ => return,
+    };
+    if matches!(elem, Kind::Any) || matches!(element, Kind::Any) {
+        return;
+    }
+    if !comparable_element(element, elem) {
+        emit(
+            ctx,
+            whole.span,
+            7006,
+            format!("membership of `{element}` in a collection of `{elem}` is always false"),
+        );
+    }
+}
+
 fn comparable(left: &Kind, right: &Kind) -> bool {
     if left == right
         || (is_numeric(left) && is_numeric(right))
@@ -715,4 +866,138 @@ fn emit(
     ctx.emit(surrealguard_diagnostics::catalog::finding(
         span, code, message,
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::analysis::{analyze_query, Workspace};
+
+    /// The rendered code strings (e.g. `"L7005"`) a query produces.
+    fn codes(query: &str) -> Vec<String> {
+        let mut workspace = Workspace::default();
+        analyze_query(&mut workspace, query)
+            .diagnostics
+            .iter()
+            .map(|finding| finding.code().to_string())
+            .collect()
+    }
+
+    fn fires(query: &str, code: &str) -> bool {
+        codes(query).iter().any(|c| c == code)
+    }
+
+    // ---- C1: comparison to NULL/NONE a kind cannot be (7005) ----
+
+    #[test]
+    fn c1_null_against_option_field_is_always_false() {
+        // option<datetime> is `none | datetime` — it never holds NULL.
+        let query = concat!(
+            "DEFINE TABLE post SCHEMAFULL;\n",
+            "DEFINE FIELD deleted_at ON post TYPE option<datetime>;\n",
+            "SELECT * FROM post WHERE deleted_at = NULL;\n",
+        );
+        assert!(fires(query, "L7005"), "codes: {:?}", codes(query));
+    }
+
+    #[test]
+    fn c1_none_against_required_field_is_always_false() {
+        let query = concat!(
+            "DEFINE TABLE post SCHEMAFULL;\n",
+            "DEFINE FIELD name ON post TYPE string;\n",
+            "SELECT * FROM post WHERE name = NONE;\n",
+        );
+        assert!(fires(query, "L7005"), "codes: {:?}", codes(query));
+    }
+
+    #[test]
+    fn c1_none_against_option_field_does_not_fire() {
+        // The must-not-fire boundary: option<T> genuinely admits NONE.
+        let query = concat!(
+            "DEFINE TABLE post SCHEMAFULL;\n",
+            "DEFINE FIELD deleted_at ON post TYPE option<datetime>;\n",
+            "SELECT * FROM post WHERE deleted_at = NONE;\n",
+        );
+        assert!(!fires(query, "L7005"), "codes: {:?}", codes(query));
+    }
+
+    #[test]
+    fn c1_value_param_equals_none_in_assert_does_not_fire() {
+        // The idiomatic write-time guard: `$value` is genuinely NONE-reachable
+        // in an ASSERT/VALUE body, so this must stay silent (workshop pattern).
+        let query = concat!(
+            "DEFINE TABLE country SCHEMAFULL;\n",
+            "DEFINE FIELD timezones ON country TYPE array<string>\n",
+            "  ASSERT $value = NONE OR array::len($value) = 0;\n",
+        );
+        assert!(!fires(query, "L7005"), "codes: {:?}", codes(query));
+    }
+
+    // ---- C2: IN/CONTAINS/INSIDE element-kind mismatch (7006) ----
+
+    #[test]
+    fn c2_scalar_element_mismatch_is_always_false() {
+        let query = concat!(
+            "DEFINE TABLE post SCHEMAFULL;\n",
+            "DEFINE FIELD tags ON post TYPE array<string>;\n",
+            "SELECT * FROM post WHERE tags CONTAINS 5;\n",
+        );
+        assert!(fires(query, "L7006"), "codes: {:?}", codes(query));
+    }
+
+    #[test]
+    fn c2_disjoint_record_element_is_always_false() {
+        let query = concat!(
+            "DEFINE TABLE doc SCHEMAFULL;\n",
+            "DEFINE FIELD editors ON doc TYPE array<record<user>>;\n",
+            "SELECT * FROM doc WHERE post:1 IN editors;\n",
+        );
+        assert!(fires(query, "L7006"), "codes: {:?}", codes(query));
+    }
+
+    #[test]
+    fn c2_comparable_element_does_not_fire() {
+        // The must-not-fire boundary: a matching element kind.
+        let query = concat!(
+            "DEFINE TABLE post SCHEMAFULL;\n",
+            "DEFINE FIELD tags ON post TYPE array<string>;\n",
+            "SELECT * FROM post WHERE tags CONTAINS 'draft';\n",
+        );
+        assert!(!fires(query, "L7006"), "codes: {:?}", codes(query));
+    }
+
+    #[test]
+    fn c2_bare_array_any_element_does_not_fire() {
+        // A collection with an `Any` element makes no membership provable.
+        let query = concat!(
+            "DEFINE TABLE post SCHEMAFULL;\n",
+            "DEFINE FIELD tags ON post TYPE array;\n",
+            "SELECT * FROM post WHERE tags CONTAINS 5;\n",
+        );
+        assert!(!fires(query, "L7006"), "codes: {:?}", codes(query));
+    }
+
+    // ---- C3: `=`/`!=` between disjoint record links (7005) ----
+
+    #[test]
+    fn c3_disjoint_record_equality_is_always_false() {
+        let query = concat!(
+            "DEFINE TABLE edge SCHEMAFULL;\n",
+            "DEFINE FIELD a ON edge TYPE record<file>;\n",
+            "DEFINE FIELD b ON edge TYPE record<folder>;\n",
+            "SELECT * FROM edge WHERE a = b;\n",
+        );
+        assert!(fires(query, "L7005"), "codes: {:?}", codes(query));
+    }
+
+    #[test]
+    fn c3_overlapping_record_equality_does_not_fire() {
+        // The must-not-fire boundary: table sets share `file`.
+        let query = concat!(
+            "DEFINE TABLE edge SCHEMAFULL;\n",
+            "DEFINE FIELD a ON edge TYPE record<file>;\n",
+            "DEFINE FIELD b ON edge TYPE record<file | folder>;\n",
+            "SELECT * FROM edge WHERE a = b;\n",
+        );
+        assert!(!fires(query, "L7005"), "codes: {:?}", codes(query));
+    }
 }
