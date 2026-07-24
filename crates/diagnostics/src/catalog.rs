@@ -123,6 +123,16 @@ const ENTRIES: &[(u16, &str, Severity)] = &[
     (8003, "syntax requires a newer version", Severity::Error),
 ];
 
+/// Every registered catalog entry, in code-number order. Consumers use
+/// this to expand a family wildcard (e.g. `7xxx`) into its concrete codes.
+pub fn all() -> impl Iterator<Item = CatalogEntry> {
+    ENTRIES.iter().map(|(number, label, severity)| CatalogEntry {
+        number: *number,
+        label,
+        severity: *severity,
+    })
+}
+
 /// Looks up a catalog entry by code number.
 pub fn entry(number: u16) -> Option<CatalogEntry> {
     let index = ENTRIES.binary_search_by_key(&number, |(n, _, _)| *n).ok()?;

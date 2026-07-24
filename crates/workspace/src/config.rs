@@ -1,7 +1,9 @@
 //! `surrealguard.toml` workspace configuration.
 
+use std::collections::HashMap;
+
 use serde::Deserialize;
-use surrealguard_diagnostics::LintLevel;
+use surrealguard_diagnostics::{catalog, FindingCode, LintLevel, PolicyConfig};
 
 /// Resolved `surrealguard.toml`: the source globs, analysis settings,
 /// diagnostic policy, and per-lint overrides, with every unset key already
@@ -48,16 +50,27 @@ pub struct DiagnosticConfig {
     pub require_suppression_reasons: bool,
 }
 
-/// Per-lint level overrides read from `[lints]`; `None` keeps the lint's
-/// built-in default.
+/// Per-code level overrides read from `[lints]`.
+///
+/// `[lints]` accepts arbitrary diagnostic codes (`E1002`, `W7002`, or the
+/// bare number `7002`), whole-family wildcards (`"7xxx"` / `"7*"`), and the
+/// three legacy named lints. Codes and families resolve into [`levels`], the
+/// per-[`FindingCode`] map consumed when building a [`PolicyConfig`]; a
+/// specific code always overrides a family wildcard that also covers it.
+///
+/// [`levels`]: LintConfig::levels
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LintConfig {
-    /// Level override for `SELECT *`.
+    /// Level override for `SELECT *` (legacy named lint).
     pub select_star: Option<LintLevel>,
-    /// Level override for dynamically-built queries.
+    /// Level override for dynamically-built queries (legacy named lint).
     pub dynamic_query: Option<LintLevel>,
-    /// Level override for selecting a permission-gated field.
+    /// Level override for selecting a permission-gated field (legacy named
+    /// lint).
     pub permission_gated_field: Option<LintLevel>,
+    /// Per-code overrides, with family wildcards already expanded to their
+    /// concrete catalog codes.
+    pub levels: HashMap<FindingCode, LintLevel>,
 }
 
 /// A `surrealguard.toml` that failed to parse or carried an invalid value.
@@ -90,6 +103,19 @@ impl WorkspaceConfig {
         })?;
 
         raw.into_config()
+    }
+
+    /// Builds the [`PolicyConfig`] both surfaces (CLI, LSP) resolve findings
+    /// through: applies `warnings_as_errors` and every per-code/family level
+    /// override from `[lints]`. This is the single place config becomes
+    /// policy, so a `surrealguard.toml` behaves identically everywhere.
+    pub fn policy(&self) -> PolicyConfig {
+        let mut policy = PolicyConfig::default();
+        policy.set_warnings_as_errors(self.diagnostics.warnings_as_errors);
+        for (code, level) in &self.lints.levels {
+            policy.set_lint_level(*code, *level);
+        }
+        policy
     }
 }
 
@@ -147,11 +173,13 @@ struct RawDiagnosticConfig {
     require_suppression_reasons: Option<bool>,
 }
 
+/// The raw `[lints]` table: every key is a string, classified during
+/// [`RawWorkspaceConfig::into_config`] into a named lint, a family wildcard,
+/// or a specific catalog code.
 #[derive(Debug, Default, Deserialize)]
+#[serde(transparent)]
 struct RawLintConfig {
-    select_star: Option<String>,
-    dynamic_query: Option<String>,
-    permission_gated_field: Option<String>,
+    entries: HashMap<String, String>,
 }
 
 impl RawWorkspaceConfig {
@@ -181,31 +209,107 @@ impl RawWorkspaceConfig {
                     .require_suppression_reasons
                     .unwrap_or(defaults.diagnostics.require_suppression_reasons),
             },
-            lints: LintConfig {
-                select_star: parse_lint_level(self.lints.select_star, "lints.select_star")?,
-                dynamic_query: parse_lint_level(self.lints.dynamic_query, "lints.dynamic_query")?,
-                permission_gated_field: parse_lint_level(
-                    self.lints.permission_gated_field,
-                    "lints.permission_gated_field",
-                )?,
-            },
+            lints: parse_lint_config(self.lints.entries)?,
         })
     }
 }
 
-fn parse_lint_level(value: Option<String>, key: &str) -> Result<Option<LintLevel>, ConfigError> {
-    value
-        .map(|value| match value.as_str() {
-            "allow" => Ok(LintLevel::Allow),
-            "warn" => Ok(LintLevel::Warn),
-            "deny" => Ok(LintLevel::Deny),
-            _ => Err(ConfigError {
-                message: format!(
-                    "invalid lint level for {key}: expected allow, warn, or deny; got {value:?}"
-                ),
-            }),
-        })
-        .transpose()
+/// Classifies every `[lints]` key into a named lint, a family wildcard, or a
+/// specific code, resolving levels and expanding families into concrete
+/// codes. Specific codes are applied after families so a `W7002 = "allow"`
+/// always overrides a `"7xxx" = "warn"` that also covers it.
+fn parse_lint_config(entries: HashMap<String, String>) -> Result<LintConfig, ConfigError> {
+    let mut config = LintConfig::default();
+    let mut families: Vec<(u16, LintLevel)> = Vec::new();
+    let mut codes: Vec<(FindingCode, LintLevel)> = Vec::new();
+
+    for (key, value) in entries {
+        let level = parse_lint_level(&value, &format!("lints.{key}"))?;
+        match key.as_str() {
+            "select_star" => config.select_star = Some(level),
+            "dynamic_query" => config.dynamic_query = Some(level),
+            "permission_gated_field" => config.permission_gated_field = Some(level),
+            _ => {
+                if let Some(family) = parse_family_wildcard(&key) {
+                    families.push((family, level));
+                } else if let Some(number) = parse_code_number(&key) {
+                    if catalog::entry(number).is_none() {
+                        return Err(ConfigError {
+                            message: format!(
+                                "unknown diagnostic code in [lints]: {key:?} is not a catalog code"
+                            ),
+                        });
+                    }
+                    codes.push((FindingCode::from_number(number), level));
+                } else {
+                    return Err(ConfigError {
+                        message: format!(
+                            "unknown lint key in [lints]: {key:?}; expected a named lint, a \
+                             diagnostic code like \"E1002\", or a family wildcard like \"7xxx\""
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
+    // Families first; specific codes override the family they fall under.
+    for (family, level) in families {
+        for entry in catalog::all().filter(|entry| entry.number / 1000 == family) {
+            config
+                .levels
+                .insert(FindingCode::from_number(entry.number), level);
+        }
+    }
+    for (code, level) in codes {
+        config.levels.insert(code, level);
+    }
+
+    Ok(config)
+}
+
+fn parse_lint_level(value: &str, key: &str) -> Result<LintLevel, ConfigError> {
+    match value {
+        "allow" => Ok(LintLevel::Allow),
+        "warn" => Ok(LintLevel::Warn),
+        // `error` is an alias for `deny`: both promote the finding to an error.
+        "deny" | "error" => Ok(LintLevel::Deny),
+        _ => Err(ConfigError {
+            message: format!(
+                "invalid lint level for {key}: expected allow, warn, deny, or error; got {value:?}"
+            ),
+        }),
+    }
+}
+
+/// A whole-family wildcard: a single family digit (`0`–`8`) followed by
+/// `xxx` (any case) or `*`, e.g. `"7xxx"`, `"7XXX"`, `"7*"`. Returns the
+/// family digit.
+fn parse_family_wildcard(key: &str) -> Option<u16> {
+    let mut chars = key.chars();
+    let digit = chars.next()?.to_digit(10)?;
+    if digit > 8 {
+        return None;
+    }
+    match chars.as_str() {
+        "xxx" | "XXX" | "*" => Some(digit as u16),
+        _ => None,
+    }
+}
+
+/// A specific code key: an optional leading severity/family letter (`E`,
+/// `W`, `I`, `S`, `L`, any case) followed by the code number, e.g.
+/// `"E1002"`, `"W7002"`, or the bare `"7002"`. The letter is display-only —
+/// the number determines the code — so it is not validated here. Returns the
+/// code number; `None` when the key is not code-shaped.
+fn parse_code_number(key: &str) -> Option<u16> {
+    let digits = key
+        .strip_prefix(|c: char| c.is_ascii_alphabetic())
+        .unwrap_or(key);
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse::<u16>().ok()
 }
 
 #[cfg(test)]
@@ -248,6 +352,104 @@ permission_gated_field = "warn"
         assert_eq!(config.lints.select_star, Some(LintLevel::Warn));
         assert_eq!(config.lints.dynamic_query, Some(LintLevel::Deny));
         assert_eq!(config.lints.permission_gated_field, Some(LintLevel::Warn));
+    }
+
+    #[test]
+    fn lints_table_accepts_specific_codes_and_family_wildcards() {
+        let config = WorkspaceConfig::from_toml_str(
+            r#"
+[lints]
+E1002 = "allow"
+"7xxx" = "warn"
+W7002 = "deny"
+"#,
+        )
+        .expect("config parses");
+
+        // A specific non-lint code resolves to its FindingCode.
+        assert_eq!(
+            config.lints.levels.get(&FindingCode::from_number(1002)),
+            Some(&LintLevel::Allow)
+        );
+        // The `7xxx` family expands to every catalog code in the 7-block...
+        assert_eq!(
+            config.lints.levels.get(&FindingCode::from_number(7001)),
+            Some(&LintLevel::Warn)
+        );
+        // ...but the specific `W7002` override wins over the family default.
+        assert_eq!(
+            config.lints.levels.get(&FindingCode::from_number(7002)),
+            Some(&LintLevel::Deny)
+        );
+    }
+
+    #[test]
+    fn lints_table_accepts_error_as_a_deny_alias() {
+        let config = WorkspaceConfig::from_toml_str("[lints]\nE1002 = \"error\"\n")
+            .expect("config parses");
+        assert_eq!(
+            config.lints.levels.get(&FindingCode::from_number(1002)),
+            Some(&LintLevel::Deny)
+        );
+    }
+
+    #[test]
+    fn lints_table_rejects_an_unknown_code() {
+        let error = WorkspaceConfig::from_toml_str("[lints]\nE9999 = \"allow\"\n")
+            .expect_err("an unknown catalog code must be rejected");
+        assert!(
+            error.message().contains("E9999"),
+            "error names the bad code: {}",
+            error.message()
+        );
+    }
+
+    #[test]
+    fn lints_table_rejects_an_unknown_key() {
+        let error = WorkspaceConfig::from_toml_str("[lints]\nnot_a_lint = \"allow\"\n")
+            .expect_err("an unrecognized key must be rejected");
+        assert!(error.message().contains("not_a_lint"));
+    }
+
+    #[test]
+    fn lints_table_rejects_an_invalid_level() {
+        let error = WorkspaceConfig::from_toml_str("[lints]\nE1002 = \"loud\"\n")
+            .expect_err("an invalid level must be rejected");
+        assert!(error.message().contains("expected allow, warn, deny, or error"));
+    }
+
+    #[test]
+    fn config_policy_applies_per_code_overrides_and_warnings_as_errors() {
+        use surrealguard_diagnostics::Severity;
+
+        let config = WorkspaceConfig::from_toml_str(
+            r#"
+[diagnostics]
+warnings_as_errors = true
+
+[lints]
+E1002 = "allow"
+W7002 = "deny"
+"#,
+        )
+        .expect("config parses");
+        let policy = config.policy();
+
+        // Allowed schema code is silenced.
+        assert_eq!(
+            policy.resolve_severity(FindingCode::from_number(1002), Severity::Error),
+            None
+        );
+        // Denied lint is promoted to an error.
+        assert_eq!(
+            policy.resolve_severity(FindingCode::from_number(7002), Severity::Hint),
+            Some(Severity::Error)
+        );
+        // warnings_as_errors still promotes an un-overridden warning.
+        assert_eq!(
+            policy.resolve_severity(FindingCode::from_number(6002), Severity::Warning),
+            Some(Severity::Error)
+        );
     }
 
     #[test]

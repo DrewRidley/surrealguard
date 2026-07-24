@@ -12,7 +12,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use surrealguard_diagnostics::{render_code, PolicyConfig, Severity};
+use surrealguard_diagnostics::{render_code, Severity};
 use surrealguard_workspace::config::WorkspaceConfig;
 use surrealguard_workspace::{analyze_workspace, Workspace};
 use walkdir::{DirEntry, WalkDir};
@@ -69,11 +69,14 @@ warnings_as_errors = false
 # Require a written reason on every inline suppression.
 require_suppression_reasons = false
 
-# Per-lint level overrides: "allow" | "warn" | "deny". Unset keeps the default.
+# Per-code lint levels: "allow" | "warn" | "deny" (or "error", an alias for
+# "deny"). Keys are diagnostic codes (E1002, W7002, or the bare number 7002),
+# whole-family wildcards ("7xxx" or "7*"), or the legacy named lints. A
+# specific code always wins over a family wildcard that also covers it.
 [lints]
-# select_star = "warn"
-# dynamic_query = "warn"
-# permission_gated_field = "warn"
+# E1002 = "allow"   # silence a specific diagnostic (unknown field)
+# "7xxx" = "warn"   # set every style lint (the 7-block) to warn
+# W7002 = "allow"   # ...but silence the LET-shadowing lint
 "#;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -199,10 +202,9 @@ fn run_check(start_dir: &Path) -> Result<CheckPassed, CheckFailed> {
     let analysis = analyze_workspace(&workspace);
 
     // Findings carry their intrinsic class; presentation policy
-    // (warnings-as-errors, lint levels, suppression) applies here, at the
-    // consumption edge.
-    let mut policy = PolicyConfig::default();
-    policy.set_warnings_as_errors(config.diagnostics.warnings_as_errors);
+    // (warnings-as-errors, per-code/family lint levels, suppression) applies
+    // here, at the consumption edge — built once, shared with the LSP.
+    let policy = config.policy();
     let resolved: Vec<_> = analysis
         .diagnostics
         .iter()

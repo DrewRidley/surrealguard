@@ -21,8 +21,8 @@ pub enum LintLevel {
     Deny,
 }
 
-/// A consumer's severity policy: warnings-as-errors plus per-code lint
-/// levels, resolved against each finding's intrinsic class at the edge.
+/// A consumer's severity policy: warnings-as-errors plus per-code level
+/// overrides, resolved against each finding's intrinsic class at the edge.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicyConfig {
     warnings_as_errors: bool,
@@ -35,12 +35,15 @@ impl PolicyConfig {
         self.warnings_as_errors = enabled;
     }
 
-    /// Override the level for one lint code, replacing its default `Warn`.
+    /// Override the level for one code (any family, not only lints),
+    /// replacing whatever this surface would otherwise report.
     pub fn set_lint_level(&mut self, code: FindingCode, level: LintLevel) {
         self.lint_levels.insert(code, level);
     }
 
-    /// Lints default to `Warn` — visible until individually allowed.
+    /// The configured level for `code`. Lints default to `Warn` — visible
+    /// until individually allowed; other families report `Warn` here only
+    /// as the "no explicit override" sentinel.
     pub fn resolve_lint_level(&self, code: FindingCode) -> LintLevel {
         self.lint_levels
             .get(&code)
@@ -49,20 +52,30 @@ impl PolicyConfig {
     }
 
     /// Resolves a finding's effective severity for this surface, or `None`
-    /// when policy silences it. Lint codes follow their [`LintLevel`];
-    /// other codes are promoted per `warnings_as_errors` and otherwise keep
-    /// their intrinsic `default_severity`.
+    /// when policy silences it.
+    ///
+    /// An explicit per-code override (from `[lints]`) wins for *any* family:
+    /// `allow` silences, `warn` reports as a warning, `deny`/`error` promotes
+    /// to an error. With no override, lint codes default to `Warn` (reported
+    /// as a warning), and every other family keeps its intrinsic
+    /// `default_severity`, promoted to an error only when `warnings_as_errors`
+    /// is set.
     pub fn resolve_severity(
         &self,
         code: FindingCode,
         default_severity: Severity,
     ) -> Option<Severity> {
-        if code.category() == FindingCategory::Lint {
-            return match self.resolve_lint_level(code) {
+        if let Some(level) = self.lint_levels.get(&code).copied() {
+            return match level {
                 LintLevel::Allow => None,
                 LintLevel::Warn => Some(Severity::Warning),
                 LintLevel::Deny => Some(Severity::Error),
             };
+        }
+
+        if code.category() == FindingCategory::Lint {
+            // Lints default to Warn — visible until individually allowed.
+            return Some(Severity::Warning);
         }
 
         if self.warnings_as_errors && default_severity == Severity::Warning {
@@ -100,6 +113,27 @@ mod tests {
         config.set_lint_level(code, LintLevel::Deny);
         assert_eq!(
             config.resolve_severity(code, Severity::Hint),
+            Some(Severity::Error)
+        );
+    }
+
+    #[test]
+    fn per_code_override_applies_to_non_lint_families() {
+        // `E1002 = "allow"` must silence a schema-family error, and a `deny`
+        // override must be honored — per-code overrides are not lint-only.
+        let mut config = PolicyConfig::default();
+        let schema_code = FindingCode::schema(1002);
+
+        assert_eq!(
+            config.resolve_severity(schema_code, Severity::Error),
+            Some(Severity::Error)
+        );
+        config.set_lint_level(schema_code, LintLevel::Allow);
+        assert_eq!(config.resolve_severity(schema_code, Severity::Error), None);
+
+        config.set_lint_level(FindingCode::type_error(2005), LintLevel::Deny);
+        assert_eq!(
+            config.resolve_severity(FindingCode::type_error(2005), Severity::Warning),
             Some(Severity::Error)
         );
     }
