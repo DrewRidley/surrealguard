@@ -169,6 +169,7 @@ contract violation.
 | 4020 | RETURN mode meaningless for the statement | `CREATE ... RETURN BEFORE` (always NONE) | W | ✅ (verify DELETE/AFTER semantics first) |
 | 4021 | SHOW CHANGES on a table without CHANGEFEED | | E | ✅ |
 | 4022 | SELECT from a DROP table | rows are never retained | W | ✅ |
+| 4023 | count() without GROUP BY yields 1 per row, not a total | add GROUP ALL for a total | W | ✅ |
 
 Folded by the contract audit (2026-07-09): 4008, 4015 → 4007. Deleted:
 4014 — no statable contract (RETURN is legal at top level and in blocks).

@@ -468,6 +468,7 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
 /// parser and ours reject the syntax.)
 fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
     check_clause_values(stmt, ctx);
+    check_count_without_group(stmt, ctx);
 
     let has_wildcard = stmt
         .projections
@@ -545,6 +546,41 @@ fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContex
             ));
         }
     }
+}
+
+/// A bare zero-argument `count()` in a projection is an aggregate only under
+/// a GROUP clause. Without one, SurrealDB evaluates it *per row*, so every
+/// row's `count` is the constant `1` — never the row total the author
+/// intended. A guard built on the result (`IF $rows = 0 { THROW ... }`) then
+/// silently never fires (4023). `GROUP ALL` / `GROUP BY` make it a real
+/// aggregate and clear the finding.
+fn check_count_without_group(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
+    if stmt.group.is_some() {
+        return;
+    }
+    for projection in &stmt.projections {
+        let ast::Projection::Expr { expr, .. } = projection else {
+            continue;
+        };
+        let ast::Expr::Call(call) = &expr.node else {
+            continue;
+        };
+        if is_bare_count(call) {
+            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                span,
+                4023,
+                "count() without GROUP BY yields 1 per row, not a total; add GROUP ALL for a total"
+                    .to_string(),
+            ));
+        }
+    }
+}
+
+/// The zero-argument row-counting form of `count`. Lowering does not fold
+/// `count` into `count::count`, so both spellings are accepted.
+fn is_bare_count(call: &ast::Call) -> bool {
+    call.args.is_empty() && matches!(call.path.node.as_str(), "count" | "count::count")
 }
 
 /// Whether a kind can transitively hold record links (making FETCH
@@ -859,6 +895,12 @@ fn computed_kind(
     table: &TableDef,
     ctx: &mut AnalysisContext<'_>,
 ) -> Kind {
+    // An aggregate over a projected column receives the *collected* column,
+    // not one row's value — infer it as such so its `array` argument
+    // contract is satisfied rather than false-positived.
+    if let Some(kind) = column_aggregate_kind(expr, table, ctx) {
+        return kind;
+    }
     // Re-resolve the table from the schema so the borrow carries the
     // context's lifetime rather than the caller's.
     let table = ctx.schema().tables.get(&table.name);
@@ -866,6 +908,71 @@ fn computed_kind(
         crate::analyzer::expression::check::check_value_expression(ctx, expr);
         infer_expression_fact(expr, ctx).kind.unwrap_or(Kind::Any)
     })
+}
+
+/// Aggregate functions collapse a *column collected across rows* into a
+/// single value. In a projection the author writes one row's value
+/// (`math::sum(size_bytes)`), but the aggregate is handed the whole column —
+/// so a scalar column is promoted to `array<column>` before the signature
+/// runs. Without this, the per-row `int` reading of `size_bytes` violates
+/// the `array` argument contract and false-positives (5002).
+///
+/// The promotion is deliberately narrow: it fires only for a single bare
+/// column argument whose kind is a scalar. A column that is already a
+/// collection keeps the ordinary element-wise reading (`array::len(tags)`),
+/// and anything but a plain field falls through to normal inference.
+fn column_aggregate_kind(
+    expr: &ast::Spanned<ast::Expr>,
+    table: &TableDef,
+    ctx: &mut AnalysisContext<'_>,
+) -> Option<Kind> {
+    let ast::Expr::Call(call) = &expr.node else {
+        return None;
+    };
+    if !is_column_aggregate(call.path.node.as_str()) {
+        return None;
+    }
+    let [arg] = call.args.as_slice() else {
+        return None;
+    };
+    let ast::Expr::Idiom(idiom) = &arg.node else {
+        return None;
+    };
+    let segments = plain_field_segments(idiom)?;
+    let column = kind_for_path(table, &segments)?;
+    // Already a collection: the ordinary element-wise contract already fits.
+    let base = crate::kinds::literal_base_kind(&column).unwrap_or_else(|| column.clone());
+    if matches!(base, Kind::Array(_, _) | Kind::Set(_, _)) {
+        return None;
+    }
+    let collected = Kind::Array(Box::new(column), None);
+    Some(crate::analyzer::function::analyze_builtin_function(
+        ctx,
+        call,
+        &[collected],
+    ))
+}
+
+/// Aggregate functions that reduce a numeric column to one scalar. These all
+/// take `array<number>` and return a scalar `number`, so a scalar projected
+/// column must be collected first.
+fn is_column_aggregate(path: &str) -> bool {
+    matches!(
+        path,
+        "math::sum"
+            | "math::mean"
+            | "math::min"
+            | "math::max"
+            | "math::median"
+            | "math::mode"
+            | "math::product"
+            | "math::stddev"
+            | "math::variance"
+            | "math::spread"
+            | "math::midhinge"
+            | "math::trimean"
+            | "math::interquartile"
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1761,5 +1868,98 @@ mod tests {
         let schema = SchemaIndex::default();
 
         assert_eq!(analyze(&schema, "SELECT * FROM $tbl;"), Kind::Any);
+    }
+
+    /// Analyzes a SELECT and returns both its response kind and every
+    /// finding it emitted.
+    fn analyze_diagnostics(
+        schema: &SchemaIndex,
+        query: &str,
+    ) -> (Kind, Vec<surrealguard_diagnostics::Finding>) {
+        let parsed = parse(query);
+        let stmt = lower_select(&parsed);
+        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        let mut ctx = AnalysisContext::scoped(
+            schema,
+            parsed.source_id().clone(),
+            parsed.text(),
+            &mut diagnostics,
+            StatementEnv::default(),
+            None,
+        );
+        let kind = select_response_kind(&stmt, &mut ctx);
+        (kind, diagnostics)
+    }
+
+    fn codes(diagnostics: &[surrealguard_diagnostics::Finding]) -> Vec<u16> {
+        diagnostics.iter().map(|d| d.code().number()).collect()
+    }
+
+    #[test]
+    fn bare_count_without_group_warns_that_it_counts_per_row() {
+        let schema = schema_from(
+            "DEFINE TABLE employee_of SCHEMAFULL;\nDEFINE FIELD status ON employee_of TYPE string;",
+        );
+
+        let (_, diagnostics) =
+            analyze_diagnostics(&schema, "SELECT count() FROM employee_of WHERE status = 'active';");
+        assert!(
+            codes(&diagnostics).contains(&4023),
+            "expected 4023, got {:?}",
+            codes(&diagnostics)
+        );
+    }
+
+    #[test]
+    fn bare_count_with_group_all_is_a_real_aggregate() {
+        let schema = schema_from(
+            "DEFINE TABLE employee_of SCHEMAFULL;\nDEFINE FIELD status ON employee_of TYPE string;",
+        );
+
+        let (_, diagnostics) = analyze_diagnostics(
+            &schema,
+            "SELECT count() FROM employee_of WHERE status = 'active' GROUP ALL;",
+        );
+        assert!(
+            !codes(&diagnostics).contains(&4023),
+            "GROUP ALL count() is a total, not per-row"
+        );
+    }
+
+    #[test]
+    fn aggregate_over_scalar_column_infers_number_without_argument_finding() {
+        let schema = schema_from(
+            "DEFINE TABLE file SCHEMAFULL;\nDEFINE FIELD size_bytes ON file TYPE int;\nDEFINE FIELD status ON file TYPE string;",
+        );
+
+        let (kind, diagnostics) = analyze_diagnostics(
+            &schema,
+            "SELECT VALUE math::sum(size_bytes) FROM file WHERE status = 'active';",
+        );
+        // The column is collected into `array<int>`, so the `array`
+        // argument contract holds — no 5002 false positive.
+        assert!(
+            !codes(&diagnostics).contains(&5002),
+            "aggregate over a scalar column should not trip the argument check: {:?}",
+            codes(&diagnostics)
+        );
+        assert_eq!(kind, Kind::Array(Box::new(Kind::Number), None));
+    }
+
+    #[test]
+    fn aggregate_promotion_leaves_already_collection_columns_alone() {
+        // `scores` is already `array<int>`; the ordinary element-wise
+        // reading fits, so the promotion must not fire (and no 5002).
+        let schema = schema_from(
+            "DEFINE TABLE team SCHEMAFULL;\nDEFINE FIELD scores ON team TYPE array<int>;",
+        );
+
+        let (_, diagnostics) =
+            analyze_diagnostics(&schema, "SELECT VALUE math::sum(scores) FROM team;");
+        assert!(
+            !codes(&diagnostics).contains(&5002),
+            "sum over an array column is already well-typed: {:?}",
+            codes(&diagnostics)
+        );
     }
 }

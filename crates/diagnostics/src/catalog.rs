@@ -81,6 +81,11 @@ const ENTRIES: &[(u16, &str, Severity)] = &[
     (4020, "RETURN mode meaningless for the statement", Severity::Warning),
     (4021, "SHOW CHANGES on a table without CHANGEFEED", Severity::Error),
     (4022, "SELECT from a DROP table", Severity::Warning),
+    (
+        4023,
+        "count() without GROUP BY yields 1 per row, not a total",
+        Severity::Warning,
+    ),
     (5001, "a call resolves to a function that exists", Severity::Error),
     (5002, "a call matches the function's signature", Severity::Error),
     (5005, "a const argument satisfies the function's value contract", Severity::Error),
