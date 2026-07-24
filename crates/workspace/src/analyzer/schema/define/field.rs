@@ -79,6 +79,15 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
 
     check_default_satisfies_assert(ctx, stmt);
 
+    // Each `PERMISSIONS FOR <action> WHERE <expr>` predicate is evaluated
+    // against a row of this table; `$value` is the field's declared kind.
+    super::permissions::analyze_permission_predicates(
+        ctx,
+        &stmt.table.node,
+        declared.clone().unwrap_or(Kind::Any),
+        &stmt.permissions,
+    );
+
     Kind::None
 }
 

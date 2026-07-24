@@ -15,6 +15,7 @@ pub mod field;
 pub mod function;
 pub mod index;
 pub mod param;
+pub mod permissions;
 pub mod table;
 
 pub(crate) fn analyze_define(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineStmt) -> Kind {

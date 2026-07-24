@@ -1,10 +1,13 @@
 //! Statements.
 //!
 //! Statement structs model exactly what type analysis consumes. Clauses that
-//! cannot affect a statement's response type (permissions, comments,
-//! timeouts, index hints, ...) are consumed by lowering without record;
-//! statements containing broken syntax lower to [`Statement::Partial`], so
-//! analyzers never see a half-parsed structure.
+//! cannot affect a statement's response type (comments, timeouts, index
+//! hints, ...) are consumed by lowering without record; statements containing
+//! broken syntax lower to [`Statement::Partial`], so analyzers never see a
+//! half-parsed structure. `PERMISSIONS` predicate expressions are the
+//! exception: they are analyzed (undefined fields/functions, always-false and
+//! non-boolean predicates), so lowering retains each `FOR <action> WHERE
+//! <expr>` predicate.
 
 use super::{
     DataClause, Expr, GroupClause, Idiom, OrderClause, PartialNode, Projection, ReturnMode,
@@ -291,6 +294,11 @@ pub struct DefineTable {
     pub drop: bool,
     /// `DEFINE TABLE ... CHANGEFEED <duration>`.
     pub changefeed: bool,
+    /// `PERMISSIONS FOR <action> WHERE <expr>` predicate expressions. Each
+    /// `WHERE` predicate — from either the basic (`PERMISSIONS WHERE`) or the
+    /// per-action (`PERMISSIONS FOR select ... WHERE`) form — is retained so
+    /// the analyzer can walk it; `NONE`/`FULL` carry no predicate.
+    pub permissions: Vec<Spanned<Expr>>,
 }
 
 /// The `IN`/`OUT` endpoint tables of a relation table.
@@ -324,6 +332,10 @@ pub struct DefineField {
     pub assert: Option<Spanned<Expr>>,
     /// `READONLY` — writable only at creation.
     pub readonly: bool,
+    /// `PERMISSIONS FOR <action> WHERE <expr>` predicate expressions. Each
+    /// `WHERE` predicate is retained so the analyzer can walk it against the
+    /// row; `NONE`/`FULL` carry no predicate.
+    pub permissions: Vec<Spanned<Expr>>,
 }
 
 /// `DEFINE INDEX`.

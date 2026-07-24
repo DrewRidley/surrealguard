@@ -3,7 +3,7 @@
 //! A table is defined once: redefining it without `OVERWRITE` is a
 //! duplicate definition (1022).
 
-use surrealdb_types::Kind;
+use surrealdb_types::{Kind, Table};
 use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
@@ -17,5 +17,16 @@ pub(crate) fn analyze_define_table(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
             format!("duplicate table definition `{}`", stmt.name.node),
         ));
     }
+
+    // Each `PERMISSIONS FOR <action> WHERE <expr>` predicate is evaluated
+    // against a row of this table; `$value` is that record.
+    let record = Kind::Record(vec![Table::from(stmt.name.node.as_str())]);
+    super::permissions::analyze_permission_predicates(
+        ctx,
+        &stmt.name.node,
+        record,
+        &stmt.permissions,
+    );
+
     Kind::None
 }

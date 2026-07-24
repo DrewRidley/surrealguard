@@ -309,6 +309,38 @@ fn collect_clause_idioms(node: Node<'_>, text: &str, out: &mut Vec<Spanned<Idiom
     }
 }
 
+/// Collects the predicate expressions from a `PERMISSIONS` clause. `NONE` and
+/// `FULL` carry no predicate; the basic form contributes its `WHERE <expr>`,
+/// and the per-action form contributes each `FOR <action> WHERE <expr>`
+/// group's predicate. Every predicate is a plain condition SurrealDB evaluates
+/// against the row (`core/src/doc/check.rs`), so the analyzer walks them like
+/// any `WHERE` clause.
+fn lower_permission_predicates(
+    clause: Node<'_>,
+    text: &str,
+    out: &mut Vec<Spanned<crate::ast::Expr>>,
+) {
+    for child in named_children(clause) {
+        match child.kind() {
+            "WhereClause" => {
+                if let Some(expr) = clause_expr(child, text) {
+                    out.push(expr);
+                }
+            }
+            "PermissionGroup" => {
+                for group_child in named_children(child) {
+                    if group_child.kind() == "WhereClause" {
+                        if let Some(expr) = clause_expr(group_child, text) {
+                            out.push(expr);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// The single expression of a clause like `WHERE <e>` / `LIMIT <e>`.
 fn clause_expr(clause: Node<'_>, text: &str) -> Option<Spanned<crate::ast::Expr>> {
     named_children(clause)
@@ -980,6 +1012,7 @@ fn lower_define_table(node: Node<'_>, text: &str) -> DefineTable {
         relation: None,
         drop: false,
         changefeed: false,
+        permissions: Vec::new(),
     };
     let mut named = false;
 
@@ -1001,11 +1034,10 @@ fn lower_define_table(node: Node<'_>, text: &str) -> DefineTable {
                 named = true;
             }
             "TableTypeClause" => def.relation = lower_relation_def(child, text),
-            "PermissionsBasicClause"
-            | "PermissionsForClause"
-            | "CommentClause"
-            | "TableViewClause"
-            | "IfNotExistsClause" => {
+            "PermissionsBasicClause" | "PermissionsForClause" => {
+                lower_permission_predicates(child, text, &mut def.permissions);
+            }
+            "CommentClause" | "TableViewClause" | "IfNotExistsClause" => {
                 // Recognized but not modeled for type inference.
             }
             _ if child.is_error() || child.is_missing() => {}
@@ -1073,6 +1105,7 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
         value: None,
         assert: None,
         readonly: false,
+        permissions: Vec::new(),
     };
 
     for child in named_children(node) {
@@ -1113,10 +1146,10 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
                     })
                     .map(|ty| super::expr::lower_type_expr(ty, text));
             }
-            "PermissionsBasicClause"
-            | "PermissionsForClause"
-            | "CommentClause"
-            | "ReferenceClause" => {}
+            "PermissionsBasicClause" | "PermissionsForClause" => {
+                lower_permission_predicates(child, text, &mut def.permissions);
+            }
+            "CommentClause" | "ReferenceClause" => {}
             _ if child.is_error() || child.is_missing() => {}
             _ => {}
         }

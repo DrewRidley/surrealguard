@@ -242,15 +242,29 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
     use crate::analyzer::expression::infer::idiom_prefix_kinds;
 
     // Idioms containing graph steps get the traversal contract checks,
-    // from wherever they stand (the row table).
+    // from wherever they stand (the row table). The row-table origin only
+    // holds when the traversal starts *from the row*: an idiom rooted at a
+    // leading value (`$auth->employee_of`, `(SELECT ...)->edge`) traverses
+    // from that value's record type, not the row, so attributing the step to
+    // the row table would misfire — e.g. flagging a valid `$auth->employee_of`
+    // in `SELECT ... FROM member_of WHERE in = $auth->employee_of` as
+    // stepping from `member_of`. That leading value is generally an open
+    // record (a session param), so its true origin is unknown; leave it
+    // lenient rather than misattribute.
     if idiom
         .parts
         .iter()
         .any(|part| matches!(part.node, ast::IdiomPart::Graph { .. }))
     {
-        if let Some(table) = ctx.row_table() {
-            let name = table.name.clone();
-            crate::analyzer::data::graph::check_graph_idiom(ctx, &name, idiom);
+        let rooted_at_value = matches!(
+            idiom.parts.first().map(|p| &p.node),
+            Some(ast::IdiomPart::Start(_))
+        );
+        if !rooted_at_value {
+            if let Some(table) = ctx.row_table() {
+                let name = table.name.clone();
+                crate::analyzer::data::graph::check_graph_idiom(ctx, &name, idiom);
+            }
         }
         return;
     }
