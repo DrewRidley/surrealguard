@@ -55,6 +55,21 @@
       <a class="btn btn-ghost" href="#playground">Try it live</a>
     </div>
     <div class="cmd reveal"><span class="dollar">$</span> surrealguard check <button data-copy="surrealguard check">Copy</button></div>
+
+    <!-- live Guard: the real WASM analyzer catching bugs in a curated stream -->
+    <div class="guard reveal" id="guard" role="img" aria-label="Live demonstration of the SurrealGuard analyzer checking SurrealQL statements against a schema.">
+      <div class="guard-top">
+        <span class="guard-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>guard</span>
+        <span class="guard-schema">schema: user · post · follows · wrote</span>
+        <span class="guard-state booting" id="guardState">booting analyzer…</span>
+      </div>
+      <div class="guard-stage" id="guardStage">
+        <pre class="guard-code" id="guardCode"></pre>
+        <div class="guard-diag" id="guardDiag"></div>
+      </div>
+      <div class="guard-dots" id="guardDots"></div>
+      <div class="guard-hint" id="guardHint">hover to inspect · click to freeze</div>
+    </div>
   </div>
 </section>
 
@@ -270,8 +285,287 @@ surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }</pre></
   ai.querySelector('[data-ai="chatgpt"]').href = "https://chatgpt.com/?q=" + encodeURIComponent(AI_PROMPT);
   ai.querySelector('[data-ai="claude"]').href = "https://claude.ai/new?q=" + encodeURIComponent(AI_PROMPT);
 
-  // interactive playground — the REAL SurrealGuard engine compiled to WASM,
-  // analyzing arbitrary schema + query live in the browser.
+  // =====================================================================
+  //  Shared engine loader + SurrealQL highlighter, then the live hero and
+  //  the interactive playground — both driven by the REAL SurrealGuard
+  //  analyzer compiled to WebAssembly.
+  // =====================================================================
+
+  // ---- shared: lazy, single-instance WASM analyzer --------------------
+  let analyzerPromise = null, analyzerReady = false;
+  function getAnalyzer() {
+    if (!analyzerPromise) {
+      analyzerPromise = (async () => {
+        const [{ createAnalyzer }, bytes] = await Promise.all([
+          import("/playground/sg-analyzer.mjs"),
+          fetch("/playground/surrealguard_wasm.wasm").then((r) => r.arrayBuffer()),
+        ]);
+        const a = await createAnalyzer(bytes);
+        analyzerReady = true;
+        return a;
+      })();
+    }
+    return analyzerPromise;
+  }
+
+  // ---- shared: SurrealQL syntax highlighter ---------------------------
+  // Keywords are matched case-sensitively as UPPERCASE and types as
+  // lowercase, so lowercase identifiers (table/field names like `user`,
+  // `age`) are never mis-coloured even when they spell a keyword (USER…).
+  const SG_KW = new Set((
+    "SELECT VALUE OMIT FROM WHERE SPLIT GROUP BY ORDER ASC DESC COLLATE NUMERIC LIMIT START FETCH " +
+    "TIMEOUT PARALLEL EXPLAIN WITH INDEX NOINDEX WITHINDEX UPDATE UPSERT CREATE INSERT INTO DELETE " +
+    "RELATE CONTENT SET MERGE PATCH REPLACE RETURN BEFORE AFTER DIFF NONE DEFINE REMOVE ALTER TABLE " +
+    "FIELD EVENT ANALYZER TOKENIZER FILTERS FUNCTION PARAM USER TOKEN SCOPE ACCESS NAMESPACE DATABASE " +
+    "SCHEMAFULL SCHEMALESS PERMISSIONS FLEXIBLE READONLY DEFAULT ASSERT TYPE COMMENT OVERWRITE IF NOT " +
+    "EXISTS DROP CHANGEFEED RELATION IN OUT ENFORCED UNIQUE SEARCH LET FOR END THEN ELSE BEGIN COMMIT " +
+    "CANCEL TRANSACTION LIVE KILL SHOW CHANGES SINCE AND OR IS CONTAINS CONTAINSNOT CONTAINSALL " +
+    "CONTAINSANY CONTAINSNONE INSIDE NOTINSIDE ALLINSIDE ANYINSIDE NONEINSIDE OUTSIDE INTERSECTS AS ON " +
+    "TRUE FALSE NULL FULL"
+  ).split(/\s+/));
+  const SG_TY = new Set((
+    "any bool bytes datetime decimal duration float int number object point string uuid record " +
+    "geometry array set option range future regex closure"
+  ).split(/\s+/));
+  const SG_RULES = [
+    [/\/\*[\s\S]*?\*\//y, "c"],
+    [/--[^\n]*/y, "c"],
+    [/\/\/[^\n]*/y, "c"],
+    [/'(?:[^'\\]|\\.)*'/y, "s"],
+    [/"(?:[^"\\]|\\.)*"/y, "s"],
+    [/`(?:[^`\\]|\\.)*`/y, "s"],
+    [/\$[A-Za-z_]\w*/y, "p"],
+    [/[A-Za-z_]\w*:[A-Za-z0-9_]+/y, "r"],
+    [/\d+(?:\.\d+)?(?:ns|us|ms|s|m|h|d|w|y)?\b/y, "n"],
+    [/[A-Za-z_]\w*(?=\s*\()/y, "fn"],
+    [/[A-Za-z_]\w*/y, "word"],
+  ];
+  function sgEsc(s) { return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+  function sgHighlight(src) {
+    let out = "", i = 0;
+    const n = src.length;
+    outer: while (i < n) {
+      for (const [re, cls] of SG_RULES) {
+        re.lastIndex = i;
+        const m = re.exec(src);
+        if (m) {
+          const text = m[0];
+          if (!text.length) break;
+          let c = cls;
+          if (cls === "word") {
+            if (SG_KW.has(text)) c = "k";
+            else if (SG_TY.has(text)) c = "t";
+            else c = null;
+          }
+          out += c ? `<span class="${c}">${sgEsc(text)}</span>` : sgEsc(text);
+          i += text.length;
+          continue outer;
+        }
+      }
+      out += sgEsc(src[i]); i++;
+    }
+    return out;
+  }
+  function sgMsg(m) { return sgEsc(String(m)).replace(/`([^`]+)`/g, "<code>$1</code>"); }
+
+  // =====================================================================
+  //  Live Guard hero — a curated stream of SurrealQL, analyzed for real.
+  // =====================================================================
+  (function () {
+    const guard = document.getElementById("guard");
+    if (!guard) return;
+    const stage = document.getElementById("guardStage"),
+          codeEl = document.getElementById("guardCode"),
+          diagEl = document.getElementById("guardDiag"),
+          stateEl = document.getElementById("guardState"),
+          dotsEl = document.getElementById("guardDots");
+
+    // Shared schema (matches the engine output the curated set was built from).
+    const HERO_SCHEMA =
+      "DEFINE TABLE user SCHEMAFULL;\n" +
+      "DEFINE FIELD name ON user TYPE string;\n" +
+      "DEFINE FIELD age ON user TYPE int;\n" +
+      "DEFINE FIELD email ON user TYPE string;\n" +
+      "DEFINE FIELD manager ON user TYPE record<user>;\n" +
+      "DEFINE TABLE post SCHEMAFULL;\n" +
+      "DEFINE FIELD title ON post TYPE string;\n" +
+      "DEFINE FIELD author ON post TYPE record<user>;\n" +
+      "DEFINE TABLE follows TYPE RELATION IN user OUT user;\n" +
+      "DEFINE TABLE wrote TYPE RELATION IN user OUT post;";
+
+    // Curated statements. `code`/`message`/`span`/`severity` all come from the
+    // real engine at runtime; only the `help:` line is authored copy (the WASM
+    // build returns code + message + span + severity, no help field).
+    const STMTS = [
+      { q: "SELECT name, ssn FROM user;",
+        help: "`user` declares name, age, email, manager — did you mean one of those, or DEFINE FIELD ssn ON user?" },
+      { q: "UPDATE user SET age = 'old' WHERE id = user:ada;",
+        help: "`age` is TYPE int. Assign a number, or widen the field's declared type." },
+      { q: "CREATE user SET name = 'Ada';",
+        help: "A SCHEMAFULL row must satisfy every required field — set age, email and manager, or give them DEFAULTs." },
+      { q: "SELECT ->follows->post FROM user;",
+        help: "`follows` runs user → user. To reach posts, traverse ->wrote->post instead." },
+      { q: "DELETE user;",
+        help: "An unfiltered DELETE removes every row. Add a WHERE clause or target a record id." },
+      { q: "SELECT age + name FROM user;",
+        help: "`+` needs compatible operands. Cast with <string> or combine fields of the same kind." },
+      { q: "SELECT name, age FROM user WHERE age > 18;", help: null },
+      { q: "SELECT title, author.name FROM post;", help: null },
+    ];
+
+    const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const small = matchMedia("(max-width: 640px)").matches;
+    const staticMode = reduced || small;
+
+    function sevClass(sev) { return sev === "warning" ? "warn" : sev === "hint" ? "hint" : "err"; }
+    function sevColor(sev) { return sev === "warning" ? "var(--amber)" : sev === "hint" ? "var(--accent-2)" : "var(--red)"; }
+
+    // Highlight a statement, wrapping the first diagnostic's byte span in a
+    // squiggle. Segment boundaries are token boundaries, so each slice is
+    // highlighted cleanly on its own.
+    function highlightWithSquiggle(q, diags) {
+      if (!diags || !diags.length) return sgHighlight(q);
+      const d = diags[0];
+      const s = Math.max(0, Math.min(d.start | 0, q.length));
+      const e = Math.max(s, Math.min(d.end | 0, q.length));
+      return sgHighlight(q.slice(0, s)) +
+        '<span class="squiggle ' + sevClass(d.severity) + '">' + sgHighlight(q.slice(s, e)) + "</span>" +
+        sgHighlight(q.slice(e));
+    }
+
+    function diagHTML(st, diags) {
+      if (!diags || !diags.length) {
+        return { cls: "guard-diag ok", html: '<div class="guard-ok">' + CHECK + " type-checks — no problems</div>" };
+      }
+      const d = diags[0];
+      const more = diags.length > 1 ? '<span class="more">+' + (diags.length - 1) + " more</span>" : "";
+      const help = st.help ? '<div class="gd-help">' + sgEsc(st.help) + "</div>" : "";
+      return {
+        cls: "guard-diag " + d.severity, sev: d.severity,
+        html: '<div class="gd ' + d.severity + '">' +
+          '<div class="gd-row"><span class="gd-code">' + sgEsc(d.code) + "</span>" +
+          '<span class="gd-msg">' + sgMsg(d.message) + "</span>" + more + "</div>" + help + "</div>",
+      };
+    }
+
+    // ---- static fallback (reduced motion / small screens) -------------
+    function renderStatic() {
+      guard.classList.add("static", "expanded");
+      stateEl.textContent = "8 checks";
+      stateEl.className = "guard-state";
+      dotsEl.remove();
+      const pick = staticMode && small ? [0, 2, 3, 5, 6] : STMTS.map((_, i) => i);
+      stage.innerHTML = pick.map((i) =>
+        '<div class="guard-item"><pre class="guard-code">' + sgHighlight(STMTS[i].q) +
+        '</pre><div class="guard-diag" data-i="' + i + '"></div></div>'
+      ).join("");
+      getAnalyzer().then((a) => {
+        stateEl.textContent = "checked";
+        stage.querySelectorAll(".guard-item").forEach((item, k) => {
+          const i = pick[k], st = STMTS[i];
+          let diags = [];
+          try { diags = a.analyze(HERO_SCHEMA, st.q) || []; } catch (e) {}
+          item.querySelector(".guard-code").innerHTML = highlightWithSquiggle(st.q, diags);
+          const dd = diagHTML(st, diags), slot = item.querySelector(".guard-diag");
+          slot.className = dd.cls; slot.innerHTML = dd.html;
+        });
+      }).catch(() => { stateEl.textContent = "engine offline"; });
+    }
+
+    // ---- live cycling mode --------------------------------------------
+    let idx = 0, gen = 0, hovered = false, frozen = false;
+    const paused = () => hovered || frozen;
+
+    function setState(cls, text) { stateEl.className = "guard-state " + cls; stateEl.textContent = text; }
+
+    function buildDots() {
+      dotsEl.innerHTML = "";
+      STMTS.forEach((_, i) => {
+        const d = document.createElement("i");
+        d.addEventListener("click", () => { frozen = true; guard.classList.add("frozen", "expanded"); step(i); });
+        dotsEl.appendChild(d);
+      });
+    }
+    function markDot(i) { [...dotsEl.children].forEach((d, k) => d.classList.toggle("on", k === i)); }
+
+    function typeInto(q, my, done) {
+      if (reduced) { codeEl.innerHTML = sgHighlight(q); done(); return; }
+      let k = 0;
+      (function tick() {
+        if (my !== gen) return;
+        codeEl.innerHTML = sgHighlight(q.slice(0, k)) + '<span class="guard-caret"></span>';
+        if (k < q.length) { k++; setTimeout(tick, 22 + Math.random() * 26); }
+        else { codeEl.innerHTML = sgHighlight(q); done(); }
+      })();
+    }
+
+    function analyzeAndShow(st, my) {
+      setState("analyzing", analyzerReady ? "analyzing…" : "booting analyzer…");
+      setTimeout(async () => {
+        if (my !== gen) return;
+        let diags = [];
+        try { const a = await getAnalyzer(); if (my !== gen) return; diags = a.analyze(HERO_SCHEMA, st.q) || []; }
+        catch (e) { setState("", "engine offline"); }
+        if (my !== gen) return;
+        codeEl.innerHTML = highlightWithSquiggle(st.q, diags);
+        const dd = diagHTML(st, diags);
+        diagEl.className = dd.cls; diagEl.innerHTML = dd.html;
+        if (diags.length) {
+          setState(diags[0].severity === "warning" ? "warning" : "rejected",
+                   diags[0].severity === "warning" ? "warning" : "rejected");
+          requestAnimationFrame(() => {
+            const sq = codeEl.querySelector(".squiggle");
+            if (sq) {
+              diagEl.style.setProperty("--x", (sq.offsetLeft + Math.min(sq.offsetWidth, 64) / 2) + "px");
+              diagEl.style.setProperty("--dc", sevColor(diags[0].severity));
+            }
+          });
+        } else {
+          setState("accepted", "accepted");
+        }
+        scheduleNext(my);
+      }, reduced ? 0 : 440);
+    }
+
+    function scheduleNext(my) {
+      const start = Date.now(), hold = 3600;
+      (function wait() {
+        if (my !== gen) return;
+        if (paused() || Date.now() - start < hold) { setTimeout(wait, 150); return; }
+        step((idx + 1) % STMTS.length);
+      })();
+    }
+
+    function step(i) {
+      const my = ++gen;
+      idx = i; markDot(i);
+      diagEl.className = "guard-diag"; diagEl.innerHTML = "";
+      typeInto(STMTS[i].q, my, () => { if (my === gen) analyzeAndShow(STMTS[i], my); });
+    }
+
+    function startLive() {
+      buildDots();
+      guard.addEventListener("mouseenter", () => { hovered = true; guard.classList.add("expanded"); });
+      guard.addEventListener("mouseleave", () => { hovered = false; if (!frozen) guard.classList.remove("expanded"); });
+      guard.addEventListener("click", (e) => {
+        if (e.target.closest(".guard-dots")) return;
+        frozen = !frozen;
+        guard.classList.toggle("frozen", frozen);
+        guard.classList.toggle("expanded", frozen || hovered);
+      });
+      step(0);
+    }
+
+    if (staticMode) renderStatic(); else startLive();
+    // warm the engine during idle time so the hero comes "online" promptly
+    (window.requestIdleCallback || ((f) => setTimeout(f, 1200)))(() => getAnalyzer().catch(() => {}));
+  })();
+
+  // =====================================================================
+  //  Interactive playground — editable schema + query, real diagnostics,
+  //  with a syntax-highlighted overlay behind each textarea.
+  // =====================================================================
   (function () {
     const SCHEMA = "DEFINE TABLE user SCHEMAFULL;\nDEFINE FIELD name ON user TYPE string;\nDEFINE FIELD age ON user TYPE int;";
     const PRESETS = [
@@ -285,12 +579,40 @@ surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }</pre></
           diag = document.getElementById("demoDiag");
     let analyzer = null;
 
+    // Wrap a plain textarea with a highlighted <pre> overlay (caret stays
+    // visible; text is transparent so the highlight shows through). Returns a
+    // refresh() to call whenever the value is set programmatically.
+    function attachOverlay(ta) {
+      const wrap = document.createElement("div");
+      wrap.className = "sg-editor";
+      ta.parentNode.insertBefore(wrap, ta);
+      const pre = document.createElement("pre");
+      pre.className = "sg-hl-pre"; pre.setAttribute("aria-hidden", "true");
+      const code = document.createElement("code");
+      pre.appendChild(code); wrap.appendChild(pre); wrap.appendChild(ta);
+      const sync = () => { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; };
+      const refresh = () => {
+        // trailing newline needs a filler so the last line renders in the <pre>
+        code.innerHTML = sgHighlight(ta.value) + (ta.value.endsWith("\n") ? "\n" : "");
+        sync();
+      };
+      ta.addEventListener("input", refresh);
+      ta.addEventListener("scroll", sync);
+      refresh();
+      return refresh;
+    }
+    const refreshSchema = attachOverlay(schemaIn), refreshQuery = attachOverlay(queryIn);
+
     PRESETS.forEach((p) => {
       const b = document.createElement("button"); b.className = "demo-preset"; b.textContent = p.label;
-      b.addEventListener("click", () => { schemaIn.value = p.schema; queryIn.value = p.query; run(); });
+      b.addEventListener("click", () => {
+        schemaIn.value = p.schema; queryIn.value = p.query;
+        refreshSchema(); refreshQuery(); run();
+      });
       tabs.insertBefore(b, status);
     });
     schemaIn.value = PRESETS[0].schema; queryIn.value = PRESETS[0].query;
+    refreshSchema(); refreshQuery();
 
     function render(list) {
       if (!Array.isArray(list) || list.length === 0) {
@@ -309,18 +631,10 @@ surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }</pre></
     }, 220); }
     schemaIn.addEventListener("input", run); queryIn.addEventListener("input", run);
 
-    let loading = false;
     async function load() {
-      if (loading || analyzer) return; loading = true;
-      try {
-        const [{ createAnalyzer }, bytes] = await Promise.all([
-          import("/playground/sg-analyzer.mjs"),
-          fetch("/playground/surrealguard_wasm.wasm").then((r) => r.arrayBuffer()),
-        ]);
-        analyzer = await createAnalyzer(bytes);
-        status.innerHTML = 'wasm ready';
-        run();
-      } catch (e) { status.textContent = "engine failed to load"; }
+      if (analyzer) return;
+      try { analyzer = await getAnalyzer(); status.innerHTML = "wasm ready"; run(); }
+      catch (e) { status.textContent = "engine failed to load"; }
     }
     // lazy-load the ~4MB engine only when the playground scrolls into view
     const lio = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { load(); lio.disconnect(); } }), { rootMargin: "300px" });
