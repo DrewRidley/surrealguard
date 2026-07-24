@@ -77,6 +77,9 @@
 <span class="fn">query</span>&lt;Q <span class="k">extends</span> <span class="t">string</span>&gt;(query: Q, ...args: <span class="t">ArgsOf</span>&lt;Q&gt;): <span class="t">QueryBuilder</span> &amp; Promise&lt;<span class="t">QueryResultOf</span>&lt;Q&gt;&gt;;</pre>
     <p>The package also exports <code>RecordId&lt;T&gt;</code>, <code>GeoJSON</code>, <code>ArgsOf</code>, <code>QueryResultOf</code>, <code>SurqlRegistry</code>, <code>SurqlQueryShape</code>, and <code>ParamsArg</code>.</p>
 
+    <h3>Typed live queries</h3>
+    <p><code>db.live(query)</code> describes a live query and returns a typed <code>LiveDescriptor&lt;Row&gt;</code> the framework adapters consume; the row type resolves from the same registry as <code>query</code>. Pass the query as an <strong>argument</strong> (the parentheses) rather than a tagged template — a tagged template widens the text to <code>string</code> and loses the row type. The <code>LIVE</code> prefix is added for you, so <code>db.live(`SELECT * FROM user`).sql</code> is <code>"LIVE SELECT * FROM user"</code>.</p>
+
     <h2>surrealguard generate</h2>
     <p><code>surrealguard generate</code> scans your host files for embedded SurrealQL, analyzes each query against the schema, and emits one TypeScript file that <strong>re-exports a ready <code>SurrealGuardClient</code></strong> and <strong>augments its <code>SurqlRegistry</code></strong> — one entry per analyzed query, keyed by its exact text.</p>
     <pre class="code"><span class="k">import type</span> { RecordId, GeoJSON } <span class="k">from</span> <span class="s">"@surrealguard/client"</span>;
@@ -112,29 +115,38 @@
     <p>State is <code>{ data: Row[], status: "loading" | "success" | "error", error? }</code>. The framework packages are thin bindings over the <code>Observable</code> returned here.</p>
 
     <h2>@surrealguard/next</h2>
-    <p>A React <code>useLiveQuery</code> hook. Server components fetch typed data with <code>client.query(...)</code> and pass it as <code>initialData</code>; the client component seeds from it (no hydration gap), subscribes on mount, reconciles live notifications, and releases the reference-counted subscription on unmount.</p>
-    <pre class="code"><span class="k">import</span> { useLiveQuery } <span class="k">from</span> <span class="s">"@surrealguard/next"</span>;
-
-<span class="k">function</span> <span class="fn">Users</span>({ qc, initial }) {
-  <span class="k">const</span> { data, status } = <span class="fn">useLiveQuery</span>(qc, <span class="s">"LIVE SELECT * FROM user"</span>, {
-    initialData: initial,
-  });
-  <span class="k">return</span> data.<span class="fn">map</span>((u) =&gt; &lt;<span class="t">li</span> key={u.id}&gt;{u.name}&lt;/<span class="t">li</span>&gt;);
+    <p>Provide the typed client once with <code>&lt;SurrealGuardProvider client={db}&gt;</code>, then call <code>useLiveQuery</code> in a client component. It passes the client to a callback that returns a <code>db.live(...)</code> descriptor — the row type is inferred from the query — and returns <code>{ data, status, error }</code> backed by <code>useSyncExternalStore</code>. The reference-counted subscription is released on unmount.</p>
+    <pre class="code"><span class="c">// app/providers.tsx</span>
+<span class="s">"use client"</span>;
+<span class="k">import</span> { SurrealGuardProvider } <span class="k">from</span> <span class="s">"@surrealguard/next"</span>;
+<span class="k">import</span> { db } <span class="k">from</span> <span class="s">"@/lib/db"</span>;
+<span class="k">export function</span> <span class="fn">Providers</span>({ children }) {
+  <span class="k">return</span> &lt;<span class="t">SurrealGuardProvider</span> client={db}&gt;{children}&lt;/<span class="t">SurrealGuardProvider</span>&gt;;
 }</pre>
-    <p>Built on <code>useSyncExternalStore</code>; it re-observes only when the query or its params change, and the server snapshot is the seeded state.</p>
+    <pre class="code"><span class="c">// app/users/users-list.tsx</span>
+<span class="s">"use client"</span>;
+<span class="k">import</span> { useLiveQuery } <span class="k">from</span> <span class="s">"@surrealguard/next"</span>;
+
+<span class="k">function</span> <span class="fn">Users</span>({ initialData }) {
+  <span class="c">// db comes from context; the row type is inferred from the query.</span>
+  <span class="k">const</span> { data, status } = <span class="fn">useLiveQuery</span>((db) =&gt; db.<span class="fn">live</span>(<span class="s">`SELECT * FROM user`</span>), { initialData });
+  <span class="k">if</span> (status === <span class="s">"loading"</span>) <span class="k">return</span> &lt;<span class="t">Spinner</span> /&gt;;
+  <span class="k">return</span> data.<span class="fn">map</span>((u) =&gt; &lt;<span class="t">li</span> key={<span class="fn">String</span>(u.id)}&gt;{u.name}&lt;/<span class="t">li</span>&gt;);
+}</pre>
+    <p>For SSR/RSC, <code>@surrealguard/next/server</code> is server-safe: a Server Component runs <code>queryServer(db, db.live(`…`))</code> once and passes the rows as <code>initialData</code>, so the first client render has no gap before it upgrades to live. <code>db.live(...)</code> takes the query as an argument (note the parentheses) so its literal type — and the row type — is preserved.</p>
 
     <h2>@surrealguard/svelte</h2>
-    <p>A <code>liveQuery</code> store for SvelteKit. A <code>+page.server.ts</code> <code>load</code> fetches typed data and returns it; the page seeds the store with <code>initial</code>, which subscribes on mount and unsubscribes on destroy — Svelte stores tear down automatically when the last subscriber leaves.</p>
+    <p>Svelte 5 (runes) bindings. Provide the client once with <code>setClient(db)</code> in <code>+layout.svelte</code>, then call <code>liveQuery</code> with a callback that returns a <code>db.live(...)</code> descriptor. It returns a runes-reactive object you read <strong>directly</strong> — <code>users.data</code>, no store <code>$</code> prefix — and the row type is inferred from the query. The subscription is reference-counted and torn down when the component is destroyed.</p>
     <pre class="code">&lt;<span class="k">script</span>&gt;
   <span class="k">import</span> { liveQuery } <span class="k">from</span> <span class="s">"@surrealguard/svelte"</span>;
-  <span class="k">export let</span> data;
-  <span class="k">const</span> users = <span class="fn">liveQuery</span>(qc, <span class="s">"LIVE SELECT * FROM user"</span>, { initial: data.users });
+  <span class="c">// db comes from context (setClient in +layout.svelte)</span>
+  <span class="k">const</span> users = <span class="fn">liveQuery</span>((db) =&gt; db.<span class="fn">live</span>(<span class="s">`SELECT * FROM user`</span>));
 &lt;/<span class="k">script</span>&gt;
 
-{#each $users.data <span class="k">as</span> user (user.id)}
+{#each users.data <span class="k">as</span> user (user.id)}
   &lt;<span class="t">li</span>&gt;{user.name}&lt;/<span class="t">li</span>&gt;   <span class="c">// reconciled live: CREATE / UPDATE / DELETE by id</span>
 {/each}</pre>
-    <p>Returns a <code>Readable&lt;QueryState&lt;Row&gt;&gt;</code>; the underlying subscription is reference-counted and released when the store loses its last subscriber.</p>
+    <p>For gap-free SSR, seed from a <code>load</code> with <code>loadLive(db, db.live(`…`))</code> and pass the rows as <code>liveQuery(fn, { initial })</code>; the client subscribes and upgrades to live in place. <code>db.live(...)</code> takes the query as an argument (note the parentheses) so its literal type — and the row type — is preserved.</p>
 
     <div class="docs-pager">
       <a href="/docs/rust.html">

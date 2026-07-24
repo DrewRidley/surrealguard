@@ -48,7 +48,8 @@
     <h1>Rust · surrealguard-rs</h1>
     <p class="lead-p">Compile-time-checked, typed SurrealQL for Rust. The <code>query!</code> macro runs the SurrealGuard analyzer against your schema <em>during compilation</em> — a wrong table, unknown field, bad arity, or kind mismatch is a <code>cargo check</code> error, and the result type is generated from the inferred response. No build script, no language server, no runtime schema fetch.</p>
 
-    <pre class="code"><span class="dollar">$</span> cargo add surrealguard-rs</pre>
+    <pre class="code"><span class="cmt"># until the crates.io release, depend on it by git in Cargo.toml</span>
+surrealguard-rs = { git = <span class="s">"https://github.com/DrewRidley/surrealguard"</span> }</pre>
 
     <h2>The macros</h2>
     <p><code>surrealguard-rs</code> re-exports two proc-macros; a crate using them only needs <code>surrealguard-rs</code> in scope (it re-exports every dependency the expansion references).</p>

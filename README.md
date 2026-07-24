@@ -96,11 +96,20 @@ like `db.query`. `@surrealguard/next` offers the same via a `useLiveQuery` hook
   object literals for known rows, unions from IF/ELSE, record-link and graph-edge
   shapes, the full builtin function table plus `fn::` declarations, closure and
   subquery inference, and constant-value evaluation.
-- **A contract catalog of ~80 diagnostics** in families (1xxx schema references,
+- **A contract catalog of ~85 diagnostics** in families (1xxx schema references,
   2xxx types, 3xxx graph, 4xxx statement misuse, 5xxx functions, 6xxx parameters,
   7xxx lints, 8xxx version compatibility). Severities are intrinsic to each
   finding; consumers apply policy (warnings-as-errors, lint levels) at their edge,
-  rustc-style.
+  rustc-style. Messages are rust-analyzer style — they lead with the consequence,
+  attach `help:` fixes and `note:` spans pointing at the relevant definition.
+- **Flow-sensitive checks** — control-flow type narrowing (occurrence typing that
+  narrows `option<T>` and `record<A|B>` unions via `= NONE` guards and
+  `type::table()` discriminants, field paths included), PERMISSIONS-predicate
+  analysis (undefined field / undefined `fn::` / non-boolean / always-false inside
+  a `PERMISSIONS FOR` clause), comparison footguns (`= NONE`/`= NULL` on a kind
+  that excludes it, `IN`/`CONTAINS` element-kind mismatch, disjoint record-link
+  equality), aggregate `count()` without `GROUP`, `record<UndefinedTable>`,
+  `DEFAULT` violating a field's own `ASSERT`, and unreachable code.
 - **Parameter constraints** — every `$param` a source reads is exported with the
   kind and value domain its uses imply (`UPDATE user SET age = $age` → `age: int`;
   `LIMIT $n` → non-negative int).
@@ -110,10 +119,19 @@ like `db.query`. `@surrealguard/next` offers the same via a `useLiveQuery` hook
 
 - **CLI** — `surrealguard check` analyzes a workspace (`--json` for machine
   output; exit code reflects post-policy errors); `surrealguard generate` emits
-  the TypeScript types; `surrealguard init` writes a starter config.
+  the TypeScript types; `surrealguard init` writes a starter config. Lint policy
+  lives in `surrealguard.toml`'s `[lints]` table, which takes per-code levels
+  (`E1002 = "allow"`), whole-family wildcards (`"7xxx" = "warn"`), and the
+  levels `allow` / `warn` / `deny`.
 - **Editors (LSP)** — `surrealguard-lsp` publishes diagnostics over stdio for
   `.surql` files *and* for SurrealQL embedded in host files (TypeScript, Svelte,
-  Vue, Astro) — squiggles land on the exact token inside your inline query.
+  Vue, Astro) — squiggles land on the exact token inside your inline query. It
+  also serves **inlay type hints** (grey inferred types on `LET` bindings),
+  **hover** on context params (`$value`/`$event`/`$before`/`$after`/`$auth`), on
+  `LET` variables, and on table names (with the table's field list), and greys out
+  dead code. It reads `surrealguard.toml`, so your `[lints]` levels apply live in
+  the editor. Works in Zed via the [`DrewRidley/zed-surreal`](https://github.com/DrewRidley/zed-surreal)
+  extension.
 - **Rust** — the `surrealguard-rs` crate re-exports the `query!` / `surql!` macros.
 - **TypeScript** — `@surrealguard/client`, `@surrealguard/query`,
   `@surrealguard/next`, `@surrealguard/svelte`.
@@ -123,15 +141,17 @@ like `db.query`. `@surrealguard/next` offers the same via a `useLiveQuery` hook
 ```
 surrealguard/
 ├── crates/
-│   ├── syntax/        # tree-sitter parsing, typed span-carrying AST, lowering
-│   ├── diagnostics/   # finding types, code catalog, severity/lint policy
-│   ├── workspace/     # schema index, analyzers, inference, analysis pipeline
-│   ├── codegen/       # Kind → TypeScript generation
-│   ├── embed/         # embedded-SurrealQL extraction from host files
-│   ├── macros/        # the surql! / query! proc-macros
-│   ├── rs/            # surrealguard-rs runtime (typed results)
-│   ├── cli/           # the `surrealguard` binary
-│   └── lsp/           # the `surrealguard-lsp` binary
+│   ├── syntax/               # tree-sitter parsing, typed span-carrying AST, lowering
+│   ├── tree-sitter-surrealql/ # the vendored SurrealQL grammar
+│   ├── diagnostics/          # finding types, code catalog, severity/lint policy
+│   ├── workspace/            # schema index, analyzers, inference, analysis pipeline
+│   ├── codegen/              # Kind → TypeScript generation
+│   ├── embed/                # embedded-SurrealQL extraction from host files
+│   ├── macros/               # the surql! / query! proc-macros
+│   ├── rs/                   # surrealguard-rs runtime (typed results)
+│   ├── cli/                  # the `surrealguard` binary
+│   ├── lsp/                  # the `surrealguard-lsp` binary
+│   └── wasm/                 # the browser-playground analyzer build
 ├── packages/          # @surrealguard/{client,query,next,svelte} (pnpm workspace)
 └── docs/              # DESIGN.md + design plans (incl. the diagnostic catalog)
 ```
@@ -156,7 +176,7 @@ visible to the queries that follow them.
 
 ## Status
 
-The engine (typed AST, full inference, ~80 contract diagnostics, parameter
+The engine (typed AST, full inference, ~85 contract diagnostics, parameter
 constraints), the CLI, the LSP, the Rust `surql!` / `query!` macros, and the
 TypeScript packages are all built and tested with CI green.
 

@@ -66,6 +66,10 @@
     <pre class="code"><span class="c">-- surrealguard: allow(E1001) reason="table created by a migration tool at runtime"</span>
 <span class="k">SELECT</span> * <span class="k">FROM</span> external_table;</pre>
 
+    <div class="callout">
+      <strong>Flow-sensitive analysis.</strong> Several contracts are checked with occurrence typing rather than a purely local rule. The analyzer narrows <code>option&lt;T&gt;</code> and <code>record&lt;A|B&gt;</code> unions through <code>= NONE</code> guards and <code>type::table()</code> discriminants (including along field paths), so a branch sees the narrowed type and code after a diverging branch is flagged as unreachable (<code>4006</code>). It also reads inside <code>PERMISSIONS FOR</code> clauses — undefined fields, undefined <code>fn::</code> calls, non-boolean results, and always-false predicates — and catches comparison footguns: <code>= NONE</code>/<code>= NULL</code> against a kind that excludes it, <code>IN</code>/<code>CONTAINS</code> element-kind mismatches, and equality between record links whose tables can't overlap.
+    </div>
+
     <h2>The code scheme</h2>
     <p>Codes are <code>&lt;family&gt;&lt;3 digits&gt;</code>, families numbered by category. The <code>E</code>/<code>W</code>/<code>I</code> prefix comes from severity at render time, not the code itself.</p>
     <div class="pill-row">
@@ -79,7 +83,7 @@
       <span class="p">7xxx lints</span>
       <span class="p">8xxx compat</span>
     </div>
-    <p>Roughly 80 contracts span eight families (0xxx syntax is emitted by the parser). Representative codes below — the catalog folds message variants into one code per contract, so numbers you don't see are usually variants, not gaps.</p>
+    <p>Roughly 85 contracts span eight families (0xxx syntax is emitted by the parser). Representative codes below — the catalog folds message variants into one code per contract, so numbers you don't see are usually variants, not gaps.</p>
 
     <h2>1xxx — Schema references</h2>
     <p>Contract: every name a query uses must resolve against the schema, wherever the schema constrains it.</p>
@@ -92,7 +96,9 @@
         <tr><td>1021</td><td>W</td><td>REMOVE removes something that exists.</td></tr>
         <tr><td>1022</td><td>W</td><td>A definition does not silently redefine (use OVERWRITE to state intent).</td></tr>
         <tr><td>1023</td><td>E</td><td>FETCH names something that can hold records.</td></tr>
+        <tr><td>1025</td><td>E</td><td>A subfield is declared under an object-shaped parent.</td></tr>
         <tr><td>1027</td><td>E</td><td>An index-backed operator has its supporting index (<code>@@</code>/search needs a SEARCH index; <code>&lt;|k|&gt;</code> needs MTREE/HNSW).</td></tr>
+        <tr><td>1032</td><td>E</td><td>DEFINE ANALYZER components name known tokenizers, filters, and languages.</td></tr>
       </tbody>
     </table></div>
 
@@ -106,8 +112,13 @@
         <tr><td>2007</td><td>E</td><td>A cast names a known type (<code>&lt;ghost&gt; x</code>).</td></tr>
         <tr><td>2008</td><td>E</td><td>A conversion can succeed (<code>&lt;int&gt; 'abc'</code>, <code>type::int('x')</code>).</td></tr>
         <tr><td>2018</td><td>E</td><td>LIMIT/START take a non-negative integer.</td></tr>
+        <tr><td>2019</td><td>E</td><td>TIMEOUT takes a duration.</td></tr>
+        <tr><td>2020</td><td>E</td><td>KILL takes a live-query uuid.</td></tr>
+        <tr><td>2021</td><td>E</td><td>SHOW SINCE takes a versionstamp or datetime.</td></tr>
         <tr><td>2025</td><td>E</td><td>READONLY fields are written only at creation.</td></tr>
         <tr><td>2034</td><td>E</td><td>Required fields are provided at creation (<code>CREATE person;</code> with a non-optional, no-DEFAULT field).</td></tr>
+        <tr><td>2035</td><td>E</td><td>DEFINE ANALYZER filter arguments are valid.</td></tr>
+        <tr><td>2037</td><td>E</td><td>A field's DEFAULT satisfies its own ASSERT.</td></tr>
       </tbody>
     </table></div>
 
@@ -132,8 +143,14 @@
         <tr><td>4003</td><td>E</td><td>ONLY on a table-wide target needs LIMIT 1 (deterministic <code>SingleOnlyOutput</code> error).</td></tr>
         <tr><td>4005</td><td>E</td><td>BREAK/CONTINUE only inside a loop.</td></tr>
         <tr><td>4007</td><td>E</td><td>Transaction pairing: BEGIN opens exactly one transaction that COMMIT/CANCEL closes.</td></tr>
+        <tr><td>4009</td><td>E</td><td>LIVE SELECT with an unsupported clause.</td></tr>
         <tr><td>4010</td><td>W</td><td>No duplicate SET target in one statement.</td></tr>
+        <tr><td>4012</td><td>W</td><td>OMIT without a wildcard projection.</td></tr>
+        <tr><td>4013</td><td>W</td><td>GROUP BY field not in projections.</td></tr>
+        <tr><td>4016</td><td>I</td><td>Empty block.</td></tr>
+        <tr><td>4020</td><td>W</td><td>RETURN mode meaningless for the statement.</td></tr>
         <tr><td>4022</td><td>W</td><td>SELECT from a DROP table (rows are never retained).</td></tr>
+        <tr><td>4023</td><td>W</td><td><code>count()</code> without GROUP BY yields 1 per row, not a total.</td></tr>
       </tbody>
     </table></div>
 
@@ -155,6 +172,7 @@
       <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
       <tbody>
         <tr><td>6001</td><td>E</td><td>Constraints on one param unify — <code>WHERE $x &gt; 3 AND $x = 'abc'</code> has no satisfying value.</td></tr>
+        <tr><td>6003</td><td>I</td><td>Unresolvable dynamic construct (analyzer limitation).</td></tr>
         <tr><td>6004</td><td>W</td><td>A param is not used before its LET in source order.</td></tr>
         <tr><td>6005</td><td>E</td><td>A context param is used inside its context (<code>$before</code> outside an event, <code>$parent</code> outside a subquery).</td></tr>
         <tr><td>6007</td><td>E</td><td>No assignment to a protected parameter (<code>$auth</code>, <code>$session</code>, <code>$token</code>, <code>$this</code>, …).</td></tr>

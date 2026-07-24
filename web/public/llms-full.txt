@@ -20,8 +20,9 @@ shorter overview lives at `/llms.txt`. Human docs: https://surrealguard.dev/docs
 7. Rust: `surrealguard-rs` (`query!` / `surql!`), schema resolution, Kind->Rust
 8. TypeScript: `@surrealguard/client`, `generate`, `@surrealguard/query`,
  `@surrealguard/next`, `@surrealguard/svelte`
-9. Using SurrealGuard with a coding agent
-10. Links
+9. Editors and the language server (LSP)
+10. Using SurrealGuard with a coding agent
+11. Links
 
 ---
 
@@ -65,7 +66,13 @@ What it analyzes:
  literals for known rows, IF/ELSE unions, record-link and graph-edge shapes,
  the full builtin function table plus `fn::` declarations, closure and subquery
  inference, and constant-value evaluation.
-- **~80 contract diagnostics** across eight families.
+- **~85 contract diagnostics** across eight families, with rust-analyzer-style
+ messages (lead with the consequence, `help:` fixes, `note:` definition spans).
+- **Flow-sensitive analysis** - control-flow type narrowing (occurrence typing
+ that narrows `option<T>` and `record<A|B>` unions via `= NONE` guards and
+ `type::table()` discriminants, field paths included), PERMISSIONS-predicate
+ checks, and comparison footguns (`= NONE`/`= NULL` on a kind that excludes it,
+ `IN`/`CONTAINS` element-kind mismatch, disjoint record-link equality).
 - **Parameter constraints** - every `$param` a source reads is exported with the
  kind and value domain its uses imply.
 - **Byte-precise spans** on every finding.
@@ -75,21 +82,22 @@ What it analyzes:
 ## 2. Install
 
 ```bash
-# zero-install (Node) - ideal for CI & agents
-npx surrealguard check --json
-
-# prebuilt binary, no compile
-cargo binstall surrealguard
-
-# from crates.io
-cargo install surrealguard
-
-# from source (until the crates.io release)
+# CLI, from source (the crates.io publish is next; there is no `npx surrealguard` yet)
 cargo install --path crates/cli
 
-# libraries
-cargo add surrealguard-rs # Rust query!/surql! macros
-npm i @surrealguard/client # TypeScript typed client
+# the language server, from source
+cargo install --path crates/lsp
+
+# TypeScript typed client (published on npm)
+npm i @surrealguard/client # + @surrealguard/{query,next,svelte}
+```
+
+The Rust macro crate is a git dependency until the crates.io release:
+
+```toml
+# Cargo.toml
+[dependencies]
+surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }
 ```
 
 Release note: the crates.io publish is gated on the tree-sitter SurrealQL
@@ -220,9 +228,14 @@ warnings_as_errors = false # promote every warning to an error
 require_suppression_reasons = false # require a reason on every inline suppression
 
 [lints]
-select_star = "warn" # allow | warn | deny
-dynamic_query = "warn" # allow | warn | deny
-permission_gated_field = "warn" # allow | warn | deny
+# levels are allow | warn | deny; keys can be a named lint, a specific code
+# (`E1002` or the bare number `7002`), or a whole-family wildcard (`"7xxx"`).
+# A specific code always overrides a family wildcard that also covers it.
+select_star = "warn"          # named lint
+dynamic_query = "warn"        # named lint
+permission_gated_field = "warn"
+"7xxx" = "warn"               # every 7xxx lint at warn...
+E1002 = "allow"               # ...but silence this specific code
 ```
 
 In-source suppression is separate from config policy - it is source-authored
@@ -245,12 +258,22 @@ severity at render time, and parse-level findings keep an `S` prefix. Severity
 classes: **error** (provably fails or misbehaves), **warning** (provably
 suspicious but executable), **hint** (analyzer limitation or style note).
 Severity is intrinsic data; consumers apply policy at their edge. Errors are
-never demotable; lints are fully configurable. Roughly 80 contracts span the
-eight families below (0xxx syntax is emitted by the parser).
+never demotable; lints are fully configurable. Roughly 85 contracts span the
+eight families below (0xxx syntax is emitted by the parser). The listing below is
+representative, not exhaustive; the full catalog is in
+`crates/diagnostics/src/catalog.rs`.
 
 Families: 0xxx syntax - 1xxx schema references - 2xxx types - 3xxx graph -
 4xxx statement misuse - 5xxx functions - 6xxx parameters - 7xxx lints -
 8xxx version compatibility.
+
+Some codes fire from cross-cutting passes rather than a single statement kind.
+Control-flow narrowing (occurrence typing on `option<T>` and `record<A|B>` unions
+via `= NONE` guards and `type::table()` discriminants) feeds the comparison and
+field-access checks. PERMISSIONS predicates are lowered and walked in a
+row-scoped child env, so `1002` (undefined field), `5001` (undefined `fn::`),
+`2004`/`7005` (always-false), and `2005` (non-boolean) all fire inside a
+`PERMISSIONS FOR ...` clause just as they do in a normal expression.
 
 ### 1xxx - Schema references
 
@@ -262,6 +285,8 @@ Contract: every name a query uses must resolve against the schema.
  (schemafull only; FLEXIBLE subtrees exempt).
 - `1012` (E) - a schema-object reference names a known object of that kind
  (REMOVE/REBUILD INDEX, REMOVE EVENT, analyzers).
+- `1025` (E) - a subfield is declared under an object-shaped parent (not a scalar).
+- `1032` (E) - DEFINE ANALYZER components name known tokenizers/filters/languages.
 - `1021` (W) - REMOVE removes something that exists.
 - `1022` (W) - a definition does not silently redefine (use OVERWRITE).
 - `1023` (E) - FETCH names something that can hold records.
@@ -280,8 +305,13 @@ Contract: every name a query uses must resolve against the schema.
 - `2005` (W) - a condition position expects a boolean (IF, ASSERT, bare WHERE).
 - `2007` (E) - a cast names a known type (`<ghost> x`).
 - `2008` (E) - a conversion can succeed (`<int> 'abc'`, `type::int('x')`).
+- `2012` (E) - a body returns what it declares (DEFINE FUNCTION / closure return type).
+- `2015` (W) - a value-requiring position gets a value that is always present.
 - `2017` (E) - ORDER BY keys name fields available on the result rows (or RAND()).
 - `2018` (E) - LIMIT/START take a non-negative integer.
+- `2019` (E) - TIMEOUT takes a duration.
+- `2020` (E) - KILL takes a live-query uuid.
+- `2021` (E) - SHOW SINCE takes a versionstamp or datetime.
 - `2022` (E) - FOR iterates something iterable.
 - `2025` (E) - READONLY fields are written only at creation.
 - `2026` (W) - computed (VALUE-clause) fields are not hand-assigned.
@@ -290,7 +320,10 @@ Contract: every name a query uses must resolve against the schema.
 - `2032` (E) - literal content is valid for its kind (`d'2024-13-45'`, `u'not-a-uuid'`).
 - `2033` (E) - PATCH operations are well-formed.
 - `2034` (E) - required fields are provided at creation.
+- `2035` (E) - DEFINE ANALYZER filter arguments are valid.
 - `2036` (E) - GeoJSON literals have their declared shape.
+- `2037` (E) - a field's DEFAULT satisfies its own ASSERT (a DEFAULT that folds
+ to a value the ASSERT rejects fails every default-applied CREATE).
 
 ### 3xxx - Graph and relations
 
@@ -310,16 +343,23 @@ Contract: a traversal or RELATE must use relations as declared (`in`->edge->`out
 - `4003` (E) - ONLY on a table-wide target needs LIMIT 1 (`SingleOnlyOutput`).
 - `4004` (E) - INSERT tuple column/value count matches.
 - `4005` (E) - BREAK/CONTINUE only inside a loop.
-- `4006` (W) - no unreachable statements after RETURN/BREAK/THROW.
+- `4006` (W) - no unreachable statements after RETURN/BREAK/THROW, or after an
+ IF/ELSE (or nested block) whose every branch diverges.
 - `4007` (E) - transaction pairing: BEGIN opens exactly one transaction that
  COMMIT/CANCEL closes.
+- `4009` (E) - LIVE SELECT with an unsupported clause.
 - `4010` (W) - no duplicate SET target in one statement.
 - `4011` (W) - no duplicate projection key/alias.
+- `4012` (W) - OMIT without a wildcard projection.
+- `4013` (W) - GROUP BY field not in the projections.
+- `4016` (I) - empty block.
 - `4017` (W) - a block ending with LET has value NONE.
 - `4018` (W) - no side-effecting subquery in read position.
 - `4019` (W) - CREATE/INSERT on a relation table sets `in`/`out`.
+- `4020` (W) - RETURN mode meaningless for the statement.
 - `4021` (E) - SHOW CHANGES only on a table with CHANGEFEED.
 - `4022` (W) - SELECT from a DROP table (rows are never retained).
+- `4023` (W) - a bare `count()` without GROUP yields 1 per row, not a total.
 
 ### 5xxx - Functions and closures
 
@@ -352,9 +392,13 @@ Contract: a traversal or RELATE must use relations as declared (`in`->edge->`out
 - `7003` (I) - mixed-kind array literal (`[1, 'a']`).
 - `7004` (W) - control flow decided by a constant (`IF true`, `WHERE 1 = 1`,
  `FOR $x IN []`).
-- `7005` (W) - a comparison against a closed literal set can never match
- (`WHEN $event = 'CRATE'`).
-- `7006` (W) - empty IN/CONTAINS list.
+- `7005` (W) - an `=`/`!=` that is provably constant: a comparison against a
+ closed literal set (`WHEN $event = 'CRATE'`), a `NONE`/`NULL` sentinel against a
+ kind that excludes it (`option<datetime> = NULL`), or two record links with
+ disjoint table sets (`record<file> = record<folder>`).
+- `7006` (W) - a membership test (`IN`/`CONTAINS`/`INSIDE`) that can never match:
+ an empty collection, or an element whose kind is incompatible with the
+ collection's element kind (`array<string> CONTAINS 5`).
 - `7007` (I) - `SELECT *` alongside explicit fields.
 - `7008` (I) - schemaless table in a typed workspace.
 - `7009` (W) - whole-table UPDATE/DELETE without WHERE.
@@ -412,10 +456,11 @@ type-check and using one outside its context is `6005`:
 
 ## 7. Rust - `surrealguard-rs`
 
-Compile-time-checked, typed SurrealQL. `cargo add surrealguard-rs`. The crate
-re-exports two proc-macros; a crate using them only needs `surrealguard-rs` in
-scope (it re-exports every dependency the expansion references: `serde`,
-`chrono`, `uuid`, `serde_json`).
+Compile-time-checked, typed SurrealQL. Add it via git until the crates.io
+release: `surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }`.
+The crate re-exports two proc-macros; a crate using them only needs
+`surrealguard-rs` in scope (it re-exports every dependency the expansion
+references: `serde`, `chrono`, `uuid`, `serde_json`).
 
 ### Macros
 
@@ -616,46 +661,91 @@ State shape: `QueryState<Row> = { data: Row[]; status: "loading" | "success" |
 
 ### `@surrealguard/next`
 
-```ts
-import { useLiveQuery } from "@surrealguard/next";
+Provide the client once via `<SurrealGuardProvider client={db}>`, then call
+`useLiveQuery` in a client component with a callback that returns a `db.live(...)`
+descriptor. The row type is inferred from the query.
 
-const { data, status } = useLiveQuery(qc, "LIVE SELECT * FROM user", {
- initialData: initial,
-});
+```tsx
+// app/providers.tsx
+"use client";
+import { SurrealGuardProvider } from "@surrealguard/next";
+import { db } from "@/lib/db";
+export function Providers({ children }) {
+ return <SurrealGuardProvider client={db}>{children}</SurrealGuardProvider>;
+}
+
+// app/users/users-list.tsx
+"use client";
+import { useLiveQuery } from "@surrealguard/next";
+function Users({ initialData }) {
+ const { data, status } = useLiveQuery((db) => db.live(`SELECT * FROM user`), { initialData });
+ if (status === "loading") return <Spinner />;
+ return data.map((u) => <li key={String(u.id)}>{u.name}</li>);
+}
 ```
 
-`useLiveQuery(client, sql, options)` returns `QueryState<Row>`. Built on
-`useSyncExternalStore`; seeds from `initialData` (no hydration gap), subscribes
-on mount, reconciles live notifications, releases the reference-counted
-subscription on unmount, and re-observes only when the query or its params
-change. Server components fetch typed data with `client.query(...)` and pass it
-as `initialData`.
+`useLiveQuery(fn, options?)` returns `{ data, status, error }`. Built on
+`useSyncExternalStore`; seeds from `initialData` (no hydration gap), subscribes on
+mount, reconciles live notifications, and releases the reference-counted
+subscription on unmount. `@surrealguard/next/server` is server-safe: a Server
+Component runs `queryServer(db, db.live(`...`))` once and passes the rows as
+`initialData`.
 
 ### `@surrealguard/svelte`
+
+Svelte 5 (runes). Provide the client once with `setClient(db)` in
+`+layout.svelte`, then call `liveQuery` with a callback returning a `db.live(...)`
+descriptor. It returns a runes-reactive object read directly as `users.data` (no
+store `$` prefix); the row type is inferred from the query.
 
 ```svelte
 <script>
  import { liveQuery } from "@surrealguard/svelte";
- export let data;
- const users = liveQuery(qc, "LIVE SELECT * FROM user", { initial: data.users });
+ // db comes from context (setClient in +layout.svelte)
+ const users = liveQuery((db) => db.live(`SELECT * FROM user`));
 </script>
-{#each $users.data as user (user.id)}<li>{user.name}</li>{/each}
+{#each users.data as user (user.id)}<li>{user.name}</li>{/each}
 ```
 
-`liveQuery(client, sql, options)` returns a `Readable<QueryState<Row>>`. A
-`+page.server.ts` `load` fetches typed data and returns it; the page seeds the
-store with `initial`. The subscription is reference-counted and released when the
-store loses its last subscriber (Svelte stores tear down automatically).
+For gap-free SSR, seed from a `load` with `loadLive(db, db.live(`...`))` and pass
+the rows as `liveQuery(fn, { initial })`; the client subscribes and upgrades to
+live in place. In both adapters `db.live(...)` takes the query as an argument
+(the parentheses) so its literal type - and the row type - is preserved.
 
 ---
 
-## 9. Using SurrealGuard with a coding agent
+## 9. Editors and the language server (LSP)
+
+`surrealguard-lsp` (install from source: `cargo install --path crates/lsp`)
+speaks LSP over stdio and drives the same analyzer as the CLI, so what an editor
+shows and what CI reports never diverge. It handles both `.surql` files and
+SurrealQL embedded in host files (TypeScript, Svelte, Vue, Astro) - findings land
+on the exact token inside the inline query.
+
+Editor features:
+
+- **Diagnostics** with byte-precise ranges, `help:` suggestions, and `note:`
+ related spans. It reads `surrealguard.toml`, so the workspace `[lints]` levels
+ (allow/warn/deny, per-code and per-family) apply live in the editor.
+- **Inlay type hints** - the inferred kind of each `LET` binding is shown inline
+ in grey, so you see what a query resolves to without hovering.
+- **Hover** resolves a type by span: context params (`$value`, `$event`,
+ `$before`, `$after`, `$auth`, ...), `LET` variables, and table names (hovering a
+ table lists its declared fields and their kinds).
+- **Dead code** is greyed out - findings that mark a span unnecessary (e.g.
+ unreachable statements) carry the LSP "unnecessary" tag.
+
+Zed: install the `DrewRidley/zed-surreal` extension, which launches the server
+for `.surql` files.
+
+## 10. Using SurrealGuard with a coding agent
 
 Paste-in setup prompt:
 
-> Set up SurrealGuard in this project. Run `npx surrealguard init`, point
+> Set up SurrealGuard in this project. Install the CLI from source with
+> `cargo install --path crates/cli`, run `surrealguard init`, point
 > surrealguard.toml at my .surql schema and query directories, then run
-> `npx surrealguard check --json` and fix any reported findings. Where I write
+> `surrealguard check --json` and fix any reported findings. Where I write
 > queries, use the Rust `query!` macro (surrealguard-rs) or the typed
 > `@surrealguard/client` db.query so they're checked against my schema.
 
@@ -681,7 +771,7 @@ Context files: `/llms.txt` (short overview) and `/llms-full.txt` (this file).
 
 ---
 
-## 10. Links
+## 11. Links
 
 - Docs: https://surrealguard.dev/docs/
 - Short overview for LLMs: https://surrealguard.dev/llms.txt

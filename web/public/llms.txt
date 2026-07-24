@@ -6,15 +6,17 @@ SurrealDB is permissive at runtime (cross-kind comparisons order by kind, coerci
 
 ## Using it with an agent
 
-- Run `npx surrealguard init` to create `surrealguard.toml`, point it at your `.surql` schema and query directories.
-- Run `npx surrealguard check --json` for machine-readable diagnostics (code, severity, message, byte span, help). Exit code reflects post-policy errors.
-- Run `npx surrealguard generate` to emit a TypeScript file that re-exports a ready `SurrealGuardClient` and augments its query registry (point `--out` at a `.ts`, e.g. `src/surrealguard.generated.ts`).
+- Install the CLI from source with `cargo install --path crates/cli` (the crates.io publish is next; there is no `npx surrealguard` yet).
+- Run `surrealguard init` to create `surrealguard.toml`, point it at your `.surql` schema and query directories.
+- Run `surrealguard check --json` for machine-readable diagnostics (code, severity, message, byte span, help, note). Exit code reflects post-policy errors.
+- Run `surrealguard generate` to emit a TypeScript file that re-exports a ready `SurrealGuardClient` and augments its query registry (point `--out` at a `.ts`, e.g. `src/surrealguard.generated.ts`).
 - In Rust, wrap queries in the `query!` macro (crate `surrealguard-rs`) - they are checked against your schema at compile time and fail `cargo check` on any violation.
-- In TypeScript, import `SurrealGuardClient` from the generated file (one import). It extends the `surrealdb` SDK's `Surreal` class, so `new SurrealGuardClient()` has every SDK method. Pass a string literal to `db.query("...")` - result and params are typed from the query text; the SDK returns one result per statement, so destructure the first: `const [rows] = await db.query("...")`.
+- In TypeScript, import `SurrealGuardClient` from the generated file (one import). It extends the `surrealdb` SDK's `Surreal` class, so `new SurrealGuardClient()` has every SDK method. Pass a string literal to `db.query("...")` - result and params are typed from the query text; the SDK returns one result per statement, so destructure the first: `const [rows] = await db.query("...")`. A typed `db.live(query)` returns typed rows for the framework adapters.
+- In editors, run `surrealguard-lsp` (`cargo install --path crates/lsp`): diagnostics for `.surql` and embedded SurrealQL, inlay type hints, hover on context params and table fields, greyed-out dead code, and live `[lints]` levels from `surrealguard.toml`. Zed: the `DrewRidley/zed-surreal` extension.
 
 ## Diagnostics
 
-Findings use codes in eight families: 1xxx schema references, 2xxx types, 3xxx graph, 4xxx statement misuse, 5xxx functions, 6xxx parameters, 7xxx lints, 8xxx version compatibility. Severity is intrinsic to each finding; consumers apply policy (warnings-as-errors, lint levels) at their edge.
+About 85 findings use codes in eight families: 1xxx schema references, 2xxx types, 3xxx graph, 4xxx statement misuse, 5xxx functions, 6xxx parameters, 7xxx lints, 8xxx version compatibility. Severity is intrinsic to each finding; consumers apply policy (warnings-as-errors, per-code and per-family lint levels) at their edge. Messages are rust-analyzer style: they lead with the consequence and attach `help:` fixes and `note:` spans. Analysis includes control-flow type narrowing, PERMISSIONS-predicate checks, and comparison footguns (`= NONE`/`= NULL`, `IN` element-kind, disjoint record equality).
 
 ## Links
 

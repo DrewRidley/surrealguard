@@ -60,7 +60,7 @@
 Created surrealguard.toml</pre>
 
     <h2>check</h2>
-    <p>Discovers every <code>.surql</code>/<code>.surrealql</code> file under the workspace root (the nearest ancestor directory containing <code>surrealguard.toml</code>), analyzes them in sorted path order against the schema they define, and reports findings. Severity is resolved through the workspace policy — <code>warnings_as_errors</code> promotion and per-lint levels apply here, at the consumption edge.</p>
+    <p>Discovers every <code>.surql</code>/<code>.surrealql</code> file under the workspace root (the nearest ancestor directory containing <code>surrealguard.toml</code>), analyzes them in sorted path order against the schema they define, and reports findings. Severity is resolved through the workspace policy — <code>warnings_as_errors</code> promotion and <code>[lints]</code> levels (named lints, specific codes like <code>E1002</code>, and family wildcards like <code>"7xxx"</code>) apply here, at the consumption edge.</p>
     <pre class="code"><span class="dollar">$</span> surrealguard check
 Checking SurrealQL sources...
 <span class="err">error[E1002]: unknown field `team` on table `user`</span>

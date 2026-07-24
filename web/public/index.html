@@ -54,7 +54,7 @@
       <a class="btn btn-primary" href="/docs/">Get started</a>
       <a class="btn btn-ghost" href="#playground">Try it live</a>
     </div>
-    <div class="cmd reveal"><span class="dollar">$</span> npx surrealguard check <button data-copy="npx surrealguard check">Copy</button></div>
+    <div class="cmd reveal"><span class="dollar">$</span> surrealguard check <button data-copy="surrealguard check">Copy</button></div>
   </div>
 </section>
 
@@ -132,15 +132,15 @@
 
     <div class="card card-split reveal">
       <div class="card-copy">
-        <div class="tag">SvelteKit · @surrealguard/svelte</div>
+        <div class="tag">Svelte 5 · @surrealguard/svelte</div>
         <h3>Live queries, zero lifecycle code</h3>
-        <p>Seed from SSR, subscribe on mount, reconcile change notifications by record id, and tear down on destroy — all handled. One shared subscription per query, refcounted. A <code>useLiveQuery</code> hook does the same for Next.js.</p>
+        <p>Seed from SSR, subscribe on mount, reconcile change notifications by record id, and tear down on destroy — all handled. One shared subscription per query, refcounted. <code>users.data</code> is a rune getter you read directly (no store <code>$</code> prefix); the row type is inferred from the query. A <code>useLiveQuery</code> hook does the same for Next.js.</p>
       </div>
-      <div class="code"><span class="k">const</span> users = <span class="fn">liveQuery</span>(qc, <span class="s">"LIVE SELECT * FROM user"</span>, {
-  initial: data.users,
-});
+      <div class="code"><span class="k">import</span> { liveQuery } <span class="k">from</span> <span class="s">"@surrealguard/svelte"</span>;
+<span class="c">// db comes from context (setClient in +layout.svelte)</span>
+<span class="k">const</span> users = <span class="fn">liveQuery</span>((db) =&gt; db.<span class="fn">live</span>(<span class="s">`SELECT * FROM user`</span>));
 
-<span class="c">// {#each $users.data as user (user.id)}</span>
+<span class="c">// {#each users.data as user (user.id)}</span>
 <span class="c">//   … reconciled live: CREATE / UPDATE / DELETE by id</span>
 <span class="c">// {/each}</span></div>
     </div>
@@ -162,8 +162,8 @@
           </ul>
         </div>
         <div class="prompt-box">
-          <button class="copy-prompt" data-copy="Set up SurrealGuard in this project. Run `npx surrealguard init`, point surrealguard.toml at my .surql schema and query directories, then run `npx surrealguard check --json` and fix any reported findings. Where I write queries, use the Rust `query!` macro (surrealguard-rs) or the typed `@surrealguard/client` db.query so they're checked against my schema.">Copy prompt</button>
-Set up SurrealGuard in this project. Run <span style="color:#86efac">`npx surrealguard init`</span>, point surrealguard.toml at my .surql schema and query directories, then run <span style="color:#86efac">`npx surrealguard check --json`</span> and fix any reported findings.
+          <button class="copy-prompt" data-copy="Set up SurrealGuard in this project. Install the CLI from source with `cargo install --path crates/cli`, run `surrealguard init`, point surrealguard.toml at my .surql schema and query directories, then run `surrealguard check --json` and fix any reported findings. Where I write queries, use the Rust `query!` macro (surrealguard-rs) or the typed `@surrealguard/client` db.query so they're checked against my schema.">Copy prompt</button>
+Set up SurrealGuard in this project. Install the CLI with <span style="color:#86efac">`cargo install --path crates/cli`</span>, run <span style="color:#86efac">`surrealguard init`</span>, point surrealguard.toml at my .surql schema and query directories, then run <span style="color:#86efac">`surrealguard check --json`</span> and fix any reported findings.
 
 Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> macro or the typed <span style="color:#c4b5fd">`@surrealguard/client`</span> db.query so they're checked against my schema.
         </div>
@@ -182,10 +182,10 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
     <div class="feat-grid">
       <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 16l9 5 9-5"/></svg></div><h4>Full statement coverage</h4><p>SELECT, the six mutations, RELATE, graph traversals, transactions, DEFINE/REMOVE/ALTER, LIVE/KILL — every statement lowers to a typed AST and is analyzed.</p></div>
       <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M8 4c-2 0-2 4-4 4 2 0 2 4 4 4"/><path d="M16 4c2 0 2 4 4 4-2 0-2 4-4 4"/><path d="M8 20c-2 0-2-4-4-4M16 20c2 0 2-4 4-4"/></svg></div><h4>Real type inference</h4><p>Response kinds as upstream <code>surrealdb_types::Kind</code>: object literals, IF/ELSE unions, record links, graph edges, function returns, closures, subqueries.</p></div>
-      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></svg></div><h4>~80 contract diagnostics</h4><p>One code per contract across eight families — schema refs, types, graph, statement misuse, functions, parameters, lints, version compat.</p></div>
+      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></svg></div><h4>~85 contract diagnostics</h4><p>One code per contract across eight families — schema refs, types, graph, statement misuse, functions, parameters, lints, version compat. Rust-analyzer-style messages with <code>help:</code> fixes and <code>note:</code> spans.</p></div>
       <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M9 15l6-6"/><path d="M10.5 6l1-1a4 4 0 016 6l-1 1"/><path d="M13.5 18l-1 1a4 4 0 01-6-6l1-1"/></svg></div><h4>Parameter constraints</h4><p>Every <code>$param</code> is exported with the kind and value domain its uses imply — <code>UPDATE user SET age = $age</code> → <code>age: int</code>.</p></div>
       <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="2"/></svg></div><h4>Byte-precise spans</h4><p>Every finding carries an exact byte range — squiggles land on the right token, even inside a query embedded in a host file.</p></div>
-      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M4 7l5 5-5 5"/><path d="M13 17h7"/></svg></div><h4>Editor LSP</h4><p>Diagnostics over stdio for <code>.surql</code> and for SurrealQL embedded in TypeScript, Svelte, Vue, and Astro.</p></div>
+      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M4 7l5 5-5 5"/><path d="M13 17h7"/></svg></div><h4>Editor LSP</h4><p>Diagnostics for <code>.surql</code> and SurrealQL embedded in TypeScript, Svelte, Vue, and Astro — plus inlay type hints, hover on context params and table fields, greyed-out dead code, and live <code>[lints]</code> levels. Runs in Zed.</p></div>
       <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg></div><h4>Rust <code>query!</code> macro</h4><p>Compile-time checked, typed SurrealQL. The compiler is the checker — no external step; results as nameless typed structs.</p></div>
       <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/><path d="M13 7h5M15.5 4.5v5"/></svg></div><h4>TypeScript packages</h4><p>A typed <code>db.query</code>, a reactive query core, and Next.js + SvelteKit adapters with live queries and SSR handled.</p></div>
       <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 4v4M8.5 14h.01M15.5 14h.01M9 18h6"/></svg></div><h4>Agent-friendly</h4><p>JSON diagnostics, <code>llms.txt</code>, <code>AGENTS.md</code>, and compile-time errors make SurrealGuard a first-class tool for AI agents and CI.</p></div>
@@ -197,18 +197,19 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
   <div class="wrap">
     <div class="sec-head">
       <div class="kicker">// install</div>
-      <h2 class="reveal">Ships everywhere</h2>
-      <p class="reveal">Zero-install for CI and agents, a prebuilt binary, or from source.</p>
+      <h2 class="reveal">Get it</h2>
+      <p class="reveal">The CLI and LSP install from source today; the TypeScript packages are on npm. crates.io publishes are next.</p>
     </div>
     <div class="install-grid">
-      <div class="install-card reveal"><div class="label">Node / CI / agents <span class="pill">npx</span></div><pre><span class="mut"># zero-install, great for CI &amp; agents</span>
-npx surrealguard check --json</pre></div>
-      <div class="install-card reveal"><div class="label">Prebuilt binary <span class="pill">binstall</span></div><pre><span class="mut"># fast, no compile</span>
-cargo binstall surrealguard</pre></div>
-      <div class="install-card reveal"><div class="label">From crates.io <span class="pill">cargo</span></div><pre>cargo install surrealguard
+      <div class="install-card reveal"><div class="label">CLI <span class="pill">cargo</span></div><pre><span class="mut"># from source, until the crates.io release</span>
+cargo install --path crates/cli
 surrealguard init &amp;&amp; surrealguard check</pre></div>
-      <div class="install-card reveal"><div class="label">Libraries <span class="pill">rust · npm</span></div><pre>cargo add surrealguard-rs
-npm i @surrealguard/client</pre></div>
+      <div class="install-card reveal"><div class="label">Editors / LSP <span class="pill">rust · zed</span></div><pre><span class="mut"># the language server (Zed: DrewRidley/zed-surreal)</span>
+cargo install --path crates/lsp</pre></div>
+      <div class="install-card reveal"><div class="label">Rust library <span class="pill">Cargo.toml</span></div><pre><span class="mut"># query! / surql!, via git until crates.io</span>
+surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }</pre></div>
+      <div class="install-card reveal"><div class="label">TypeScript <span class="pill">npm</span></div><pre>npm i @surrealguard/client
+<span class="mut"># + @surrealguard/{query,next,svelte}</span></pre></div>
     </div>
   </div>
 </section>

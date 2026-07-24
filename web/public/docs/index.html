@@ -62,7 +62,9 @@
     <ul>
       <li><strong>Full statement coverage</strong> — SELECT (projections, graph traversals, FETCH/SPLIT/GROUP/OMIT), the six mutations, RELATE, LET/RETURN/IF/FOR/blocks, transactions, DEFINE/REMOVE/ALTER, LIVE SELECT/KILL, and the rest.</li>
       <li><strong>Real type inference</strong> — response kinds as upstream <code>surrealdb_types::Kind</code>: closed object literals for known rows, IF/ELSE unions, record-link and graph-edge shapes, the full builtin function table plus <code>fn::</code> declarations, closure and subquery inference, and constant-value evaluation.</li>
-      <li><strong>~80 contract diagnostics</strong> across <a class="link" href="/docs/diagnostics.html">eight families</a> — schema references, types, graph, statement misuse, functions, parameters, lints, and version compatibility.</li>
+      <li><strong>~85 contract diagnostics</strong> across <a class="link" href="/docs/diagnostics.html">eight families</a> — schema references, types, graph, statement misuse, functions, parameters, lints, and version compatibility.</li>
+      <li><strong>Control-flow type narrowing</strong> — occurrence typing that narrows <code>option&lt;T&gt;</code> and <code>record&lt;A|B&gt;</code> unions through <code>= NONE</code> guards and <code>type::table()</code> discriminants (including nested field paths), so a branch sees the narrowed type and unreachable code after a diverging branch is flagged.</li>
+      <li><strong>PERMISSIONS-predicate analysis</strong> — the boolean inside a <code>PERMISSIONS FOR</code> clause is checked for undefined fields, undefined <code>fn::</code> calls, non-boolean results, and always-false predicates.</li>
       <li><strong>Parameter constraints</strong> — every <code>$param</code> a source reads is exported with the kind and value domain its uses imply (<code>UPDATE user SET age = $age</code> → <code>age: int</code>).</li>
       <li><strong>Byte-precise spans</strong> on every finding, so editor squiggles and inline edits land on the exact token — even inside a query embedded in a host file.</li>
     </ul>
@@ -91,17 +93,14 @@
 <span class="c">//     ^ Array&lt;{ name: string }&gt; — params required + typed from the text</span></pre>
 
     <h2>Install</h2>
-    <pre class="code"><span class="cmt"># zero-install, great for CI & agents</span>
-npx surrealguard check --json
+    <pre class="code"><span class="cmt"># CLI — build from source (until the crates.io release)</span>
+cargo install --path crates/cli
+surrealguard check --json
 
-<span class="cmt"># prebuilt binary</span>
-cargo binstall surrealguard
+<span class="cmt"># Rust library — git dependency in Cargo.toml (until the crates.io release)</span>
+<span class="cmt"># surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }</span>
 
-<span class="cmt"># from crates.io</span>
-cargo install surrealguard
-
-<span class="cmt"># libraries</span>
-cargo add surrealguard-rs
+<span class="cmt"># TypeScript packages — published on npm</span>
 npm i @surrealguard/client</pre>
     <p>See <a class="link" href="/docs/getting-started.html">Getting started</a> for a full walkthrough — <code>init</code>, <code>surrealguard.toml</code>, and your first check.</p>
 

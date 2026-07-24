@@ -8,9 +8,11 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
 
 ## Using SurrealGuard in a user's project
 
-1. **Set it up:** `npx surrealguard init`, then edit `surrealguard.toml` so
-   `[sources] schema` and `queries` globs point at the project's `.surql` files.
-2. **Check on every change:** `npx surrealguard check --json`. The JSON is
+1. **Set it up:** build the CLI from source with `cargo install --path crates/cli`
+   (until the crates.io release), run `surrealguard init`, then edit
+   `surrealguard.toml` so `[sources] schema` and `queries` globs point at the
+   project's `.surql` files.
+2. **Check on every change:** `surrealguard check --json`. The JSON is
    `{ summary, diagnostics[] }`; each diagnostic has `code`, `severity`
    (`error`/`warning`/`hint`), `source`, `range { start, end }` (byte offsets),
    `message`, and `help`. The process exit code is non-zero when errors remain
@@ -20,8 +22,10 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
    lints, 8xxx version compatibility. The `range` is a byte offset into `source`
    — apply edits there.
 4. **Type the queries:**
-   - Rust: wrap queries in the `query!` macro (`cargo add surrealguard-rs`). They
-     are checked at compile time; a violation fails `cargo check`.
+   - Rust: wrap queries in the `query!` macro (depend on `surrealguard-rs` by git
+     in `Cargo.toml` — `surrealguard-rs = { git =
+     "https://github.com/DrewRidley/surrealguard" }` — until the crates.io
+     release). They are checked at compile time; a violation fails `cargo check`.
    - TypeScript: run `surrealguard generate --out src/surrealguard.generated.ts`,
      import `SurrealGuardClient` from that file (it extends the `surrealdb` SDK),
      and pass string literals to `db.query("…")` — destructure the first result,
