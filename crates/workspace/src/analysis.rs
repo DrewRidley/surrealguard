@@ -1975,7 +1975,11 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
-    fn analyze_workspace_skips_statement_and_param_analysis_for_syntax_error_sources() {
+    fn syntax_error_statement_yields_no_typed_response_or_params() {
+        // A statement that fails to parse lowers to `Statement::Partial`: it
+        // reports its syntax diagnostic and contributes no typed response and
+        // no inferred params. (Its well-formed siblings, if any, still
+        // analyze — see the resilience tests below.)
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source("query".into(), "SELECT * FROM ;".into());
 
@@ -1983,8 +1987,107 @@ INSERT INTO person { name: 'Ada' };
         let source_output = &output.sources[&source];
 
         assert_eq!(source_output.diagnostics.len(), 1);
-        assert!(source_output.statements.is_empty());
+        assert!(source_output.response_kind.is_none());
+        assert!(source_output
+            .statements
+            .iter()
+            .all(|statement| statement.response_kind.is_none()));
         assert!(source_output.inferred_params.is_empty());
+    }
+
+    #[test]
+    fn resilient_editor_facts_survive_a_syntax_error_sibling() {
+        // A syntax error in one statement must not darken the well-formed ones:
+        // the LETs before and after the broken statement still bind and type.
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "LET $good_a = 1 + 2;\nSELECT name FROM ;\nLET $good_b = 3 + 4;\n".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let source_output = &output.sources[&source];
+
+        // The broken statement still reports its syntax diagnostic.
+        assert!(source_output
+            .diagnostics
+            .iter()
+            .any(|finding| finding.code().number() == 1));
+        // Both good LETs bind to `int`; the broken one contributes nothing.
+        let bound: std::collections::BTreeMap<&str, Option<&Kind>> = source_output
+            .let_bindings
+            .iter()
+            .map(|binding| (binding.name.as_str(), binding.kind.as_ref()))
+            .collect();
+        assert_eq!(bound.get("good_a"), Some(&Some(&Kind::Int)));
+        assert_eq!(bound.get("good_b"), Some(&Some(&Kind::Int)));
+    }
+
+    #[test]
+    fn resilient_editor_facts_survive_a_syntax_error_in_a_function_body() {
+        // A syntax error inside a DEFINE FUNCTION body must not darken the rest
+        // of the body: the LETs around the broken statement still bind and type,
+        // and hover/inlay resolve against them.
+        use crate::query::{hover_at, let_binding_hints};
+        let mut workspace = Workspace::default();
+        let text = "DEFINE FUNCTION fn::demo($p: int) {\n\
+            LET $good_a = 1 + 2;\n\
+            LET $bad = SELECT name FROM ;\n\
+            LET $good_b = $p + 1;\n\
+            RETURN $good_a;\n\
+        };";
+        let source = workspace.add_virtual_source("query".into(), text.into());
+        let analysis = analyze_workspace(&workspace);
+        let source_output = &analysis.sources[&source];
+
+        // Syntax diagnostic still fires on the broken body statement.
+        assert!(source_output
+            .diagnostics
+            .iter()
+            .any(|finding| finding.code().number() == 1));
+
+        let bound: std::collections::BTreeMap<&str, Option<&Kind>> = source_output
+            .let_bindings
+            .iter()
+            .map(|binding| (binding.name.as_str(), binding.kind.as_ref()))
+            .collect();
+        // The good bindings survive; the broken `$bad` contributes nothing.
+        assert_eq!(bound.get("good_a"), Some(&Some(&Kind::Int)));
+        assert_eq!(bound.get("good_b"), Some(&Some(&Kind::Int)));
+        assert!(bound.get("bad").is_none() || bound["bad"].is_none());
+
+        // Inlay hints render for both good bindings.
+        let hints = let_binding_hints(source_output);
+        assert_eq!(hints.len(), 2);
+
+        // Hover resolves on the good `$good_b` use in `RETURN`/its binding.
+        let offset = text.rfind("$good_b").expect("has $good_b") as u32 + 1;
+        let hover = hover_at(source_output, &analysis.schema, &source, text, offset)
+            .expect("hover resolves on a good binding beside a broken sibling");
+        assert!(hover.markdown.contains("int"));
+    }
+
+    #[test]
+    fn resilient_go_to_definition_survives_a_syntax_error_sibling() {
+        // Go-to-definition on a `$var` use still jumps to its binding even when
+        // a sibling statement in the same body has a syntax error.
+        use crate::query::definition_at;
+        let mut workspace = Workspace::default();
+        let text = "DEFINE FUNCTION fn::demo($p: int) {\n\
+            LET $good_a = 1 + 2;\n\
+            LET $bad = SELECT name FROM ;\n\
+            RETURN $good_a;\n\
+        };";
+        let source = workspace.add_virtual_source("query".into(), text.into());
+        let analysis = analyze_workspace(&workspace);
+        let source_output = &analysis.sources[&source];
+
+        // The `$good_a` in `RETURN $good_a` resolves to its `LET` binding site.
+        let use_offset = text.rfind("$good_a").expect("has RETURN use") as u32 + 1;
+        let target = definition_at(source_output, &analysis.schema, &source, text, use_offset)
+            .expect("go-to-def resolves beside a broken sibling");
+        let binding_offset = text.find("$good_a").expect("has binding") as u32;
+        assert_eq!(target.span.range().start(), binding_offset);
     }
 
     #[test]

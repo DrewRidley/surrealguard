@@ -57,11 +57,15 @@ pub(crate) fn analyze_sources_with(
 ) -> PipelineOutput {
     let mut output = PipelineOutput::default();
 
-    // Lower every parse-clean source once; the pre-passes and the ordered
-    // walk all reuse the same lowered statements.
+    // Lower every source once — including sources with syntax errors. The
+    // lowerer isolates each broken construct as `Statement::Partial` (inert in
+    // every pass below: no schema effect, no response kind, no diagnostics), so
+    // a syntax error in one statement no longer suppresses analysis of its
+    // well-formed siblings. That graceful degradation is what lets editor
+    // features (hover, inlay hints, go-to-definition) keep resolving the parts
+    // that parsed, while the syntax diagnostic still fires on the broken part.
     let sources: Vec<(&ParsedSource, Vec<ast::Spanned<ast::Statement>>)> = parsed_sources
         .iter()
-        .filter(|parsed| parsed.syntax_diagnostics().is_empty())
         .map(|parsed| (parsed, surrealguard_syntax::lower::lower_statements(parsed)))
         .collect();
 

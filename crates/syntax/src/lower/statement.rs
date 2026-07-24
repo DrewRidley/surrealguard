@@ -42,22 +42,65 @@ use crate::ast::{Expr, Literal};
 /// This is the one place consumers get statements from — they never walk
 /// the CST themselves.
 pub fn lower_statements(parsed: &crate::parse::ParsedSource) -> Vec<Spanned<Statement>> {
-    let mut nodes = Vec::new();
-    collect_statement_nodes(parsed.tree().root_node(), &mut nodes);
-    nodes
-        .into_iter()
-        .map(|node| lower_statement(node, parsed.text()))
-        .collect()
+    let root = parsed.tree().root_node();
+    let mut out = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if !child.is_named() || matches!(child.kind(), "Comment" | "BlockComment") {
+            continue;
+        }
+        recover_statement(child, parsed.text(), &mut out);
+    }
+    out
 }
 
-fn collect_statement_nodes<'tree>(node: Node<'tree>, statements: &mut Vec<Node<'tree>>) {
-    if node.kind().ends_with("Statement") {
-        statements.push(node);
+/// Whether a CST node sits in statement position (a `…Statement` or a `Block`).
+/// Used only when *salvaging* from a broken subtree — bare expressions in
+/// statement position (a block's trailing value) are lowered directly by
+/// [`recover_statement`], not salvaged.
+fn is_statement_node(node: Node<'_>) -> bool {
+    node.kind().ends_with("Statement") || node.kind() == "Block"
+}
+
+/// Lowers one container child (a top-level or block statement position),
+/// recovering the valid statements around a broken sibling.
+///
+/// tree-sitter's error recovery frequently *nests* the statement that follows
+/// a syntax error inside the broken statement's own subtree (e.g. a trailing
+/// `LET` absorbed after an `ERROR` token). A naive per-child lowering would
+/// lose every such following statement, darkening the whole block for editor
+/// features. Instead: a clean child (or a recoverable container, which
+/// localizes its own inner breakage) lowers whole via [`lower_statement`]
+/// (which also handles a bare trailing expression); a broken non-container
+/// statement lowers to a single `Partial` placeholder and its subtree is
+/// scanned for nested clean statements to salvage.
+pub(crate) fn recover_statement(node: Node<'_>, text: &str, out: &mut Vec<Spanned<Statement>>) {
+    if !node.has_error() || is_recoverable_container(node) {
+        out.push(lower_statement(node, text));
+        return;
+    }
+    // Broken non-container statement: one honest `Partial` for the broken
+    // region, then salvage any clean statements tree-sitter nested inside.
+    out.push(Spanned::new(Statement::Partial(partial(node)), node_range(node)));
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        salvage_statements(child, text, out);
+    }
+}
+
+/// Pulls clean statements (and recoverable containers) out of a broken
+/// region, without emitting further `Partial` placeholders for the broken
+/// wrappers along the way. Only genuine statement-position nodes are
+/// salvaged — a stray sub-expression inside the broken statement is left to
+/// its `Partial`.
+fn salvage_statements(node: Node<'_>, text: &str, out: &mut Vec<Spanned<Statement>>) {
+    if is_statement_node(node) && (!node.has_error() || is_recoverable_container(node)) {
+        out.push(lower_statement(node, text));
         return;
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_statement_nodes(child, statements);
+        salvage_statements(child, text, out);
     }
 }
 
@@ -68,7 +111,17 @@ fn collect_statement_nodes<'tree>(node: Node<'tree>, statements: &mut Vec<Node<'
 /// Internal to the crate; consumers reach statements through
 /// [`lower_statements`] or [`crate::lower::lower_first_statement`].
 pub(crate) fn lower_statement(node: Node<'_>, text: &str) -> Spanned<Statement> {
-    if node.has_error() {
+    // A broken subtree normally collapses the whole statement to `Partial`, so
+    // analyzers never type a half-parsed clause. But a *container* statement —
+    // one whose body is an independent statement list (a `DEFINE FUNCTION`
+    // body, a `{ }` block, a `FOR` body, an `IF/ELSE` branch) — can localize
+    // the breakage: its broken child lowers to `Partial` while its well-formed
+    // siblings lower and type normally. Descending into those keeps a single
+    // mistyped statement from darkening the entire function/block for editor
+    // features, without ever showing a guessed type (the broken child still
+    // contributes nothing). Every other statement folds its clauses into a
+    // response type, so an internal error there must still collapse it.
+    if node.has_error() && !is_recoverable_container(node) {
         return Spanned::new(Statement::Partial(partial(node)), node_range(node));
     }
 
@@ -126,6 +179,27 @@ pub(crate) fn lower_statement(node: Node<'_>, text: &str) -> Spanned<Statement> 
         _ => Statement::Partial(partial(node)),
     };
     Spanned::new(statement, node_range(node))
+}
+
+/// Whether a statement's breakage can be localized to an inner statement
+/// rather than collapsing the whole statement to `Partial`. True for the
+/// statement kinds whose body is an independent statement list — a `{ }`
+/// block, a `FOR` body, an `IF/ELSE` branch, and a `DEFINE FUNCTION` body
+/// (the only `DEFINE` that carries a `Block`). For these, lowering descends
+/// and each broken child statement lowers to `Partial` on its own, so a valid
+/// sibling `LET`/expression still lowers and types. Every other statement
+/// (SELECT/CREATE/… and the non-function DEFINEs) folds a parse error into its
+/// response type or schema effect, so it stays collapsed for soundness.
+fn is_recoverable_container(node: Node<'_>) -> bool {
+    match node.kind() {
+        "Block" | "ForStatement" | "IfElseStatement" => true,
+        "DefineStatement" => {
+            let mut cursor = node.walk();
+            let has_block = node.children(&mut cursor).any(|child| child.kind() == "Block");
+            has_block
+        }
+        _ => false,
+    }
 }
 
 fn lower_select(node: Node<'_>, text: &str) -> SelectStmt {

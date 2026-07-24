@@ -370,7 +370,10 @@ impl Lowerer<'_> {
             ) {
                 continue;
             }
-            statements.push(super::statement::lower_statement(child, self.text));
+            // Recover valid statements around a broken sibling: tree-sitter may
+            // nest the statement following a syntax error inside the broken
+            // one's subtree, so a plain per-child lowering would drop it.
+            super::statement::recover_statement(child, self.text, &mut statements);
         }
         Block { statements }
     }
