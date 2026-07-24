@@ -43,6 +43,8 @@ pub(crate) struct PipelineOutput {
 pub(crate) struct SourceAnalysis {
     pub statements: Vec<StatementAnalysis>,
     pub params: Vec<ParamInference>,
+    /// Every `LET`/`FOR` binding in the source, at every nesting depth.
+    pub let_bindings: Vec<LetBindingAnalysis>,
 }
 
 pub(crate) fn analyze_sources(parsed_sources: &[ParsedSource]) -> PipelineOutput {
@@ -159,17 +161,9 @@ pub(crate) fn analyze_sources_with(
                 kind
             };
 
-            // Read-only capture of the LET binding's inferred kind, for
-            // editor features. The analyzer just recorded it on the env;
-            // reading it back here changes no diagnostics.
-            let let_binding = capture_let_binding(parsed.source_id(), lowered, &analyzer_env);
-
-            source_analysis.statements.push(statement_analysis(
-                parsed.source_id(),
-                lowered,
-                kind,
-                let_binding,
-            ));
+            source_analysis
+                .statements
+                .push(statement_analysis(parsed.source_id(), lowered, kind));
 
             let span = || SourceSpan::new(parsed.source_id().clone(), lowered.span);
             match &lowered.node {
@@ -254,6 +248,9 @@ pub(crate) fn analyze_sources_with(
         // Recording already skipped LET-bound uses, so everything left is
         // host-supplied — including forward uses that a later LET shadows.
         source_analysis.params = analyzer_env.params();
+        // Every LET/FOR binding recorded during the walk (all nesting
+        // depths), drained up to this top-level env.
+        source_analysis.let_bindings = analyzer_env.let_bindings().to_vec();
         output
             .sources
             .insert(parsed.source_id().clone(), source_analysis);
@@ -280,26 +277,6 @@ pub(crate) fn analyze_sources_with(
     output
 }
 
-/// The LET binding a statement introduces, if it is a `LET`, paired with
-/// the kind the analyzer just recorded for it on `env`. Read-only: it
-/// consults facts already computed and emits nothing.
-fn capture_let_binding(
-    source: &SourceId,
-    lowered: &ast::Spanned<ast::Statement>,
-    env: &StatementEnv,
-) -> Option<LetBindingAnalysis> {
-    let ast::Statement::Let(let_stmt) = &lowered.node else {
-        return None;
-    };
-    Some(LetBindingAnalysis {
-        name: let_stmt.name.node.clone(),
-        name_span: SourceSpan::new(source.clone(), let_stmt.name.span),
-        kind: env
-            .let_fact(&let_stmt.name.node)
-            .and_then(|fact| fact.kind.clone()),
-    })
-}
-
 /// The per-statement record consumers see: its span, a stable kind name,
 /// the response kind where the statement has one, and SELECT's clause
 /// modifiers.
@@ -307,7 +284,6 @@ fn statement_analysis(
     source: &SourceId,
     lowered: &ast::Spanned<ast::Statement>,
     kind: Kind,
-    let_binding: Option<LetBindingAnalysis>,
 ) -> StatementAnalysis {
     use ast::Statement as S;
     let (name, has_response): (&str, bool) = match &lowered.node {
@@ -366,7 +342,6 @@ fn statement_analysis(
         kind: name.to_string(),
         response_kind: has_response.then_some(kind),
         select_modifiers,
-        let_binding,
     }
 }
 

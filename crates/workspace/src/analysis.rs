@@ -38,6 +38,11 @@ pub struct AnalysisOutput {
     pub statements: Vec<StatementAnalysis>,
     /// The host-supplied parameters the source reads.
     pub inferred_params: Vec<ParamInference>,
+    /// Every `LET` binding the source introduces, in source order and at
+    /// every nesting depth (top-level, block, DEFINE FUNCTION body, FOR-loop
+    /// body). Editor features (inlay hints, hover, go-to-def) read this to
+    /// show and locate a binding's inferred type wherever it lives.
+    pub let_bindings: Vec<LetBindingAnalysis>,
     /// The source's response kind — present only when exactly one
     /// statement responds.
     pub response_kind: Option<Kind>,
@@ -68,15 +73,13 @@ pub struct StatementAnalysis {
     pub response_kind: Option<Kind>,
     /// SELECT clause modifiers; empty for other statement kinds.
     pub select_modifiers: Vec<SelectModifierAnalysis>,
-    /// For a `LET $name = <expr>` statement, the binding it introduces and
-    /// the kind inference gave it; `None` for every other statement kind.
-    pub let_binding: Option<LetBindingAnalysis>,
 }
 
-/// A `LET $name = <expr>` binding as consumers see it: the variable name,
-/// the span of the `$name` token, and the kind inference gave the bound
-/// value. Editor features (inlay hints, hover) read this to show a
-/// binding's inferred type where its source has none written.
+/// A `LET $name = <expr>` binding (or a `FOR $name IN ...` loop variable) as
+/// consumers see it: the variable name, the span of the `$name` token, and
+/// the kind inference gave the bound value. Editor features (inlay hints,
+/// hover) read this to show a binding's inferred type where its source has
+/// none written.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LetBindingAnalysis {
     /// The bound variable name, without the leading `$`.
@@ -217,14 +220,13 @@ pub fn analyze_source(workspace: &Workspace, source: SourceId) -> AnalysisOutput
                 output.response_kind = single_response_kind(&analysis.statements);
                 output.statements = analysis.statements;
                 output.inferred_params = analysis.params;
+                output.let_bindings = analysis.let_bindings;
             }
             output
         }
         Err(error) => AnalysisOutput {
             diagnostics: vec![parse_error_to_finding(source, error)],
-            statements: Vec::new(),
-            inferred_params: Vec::new(),
-            response_kind: None,
+            ..AnalysisOutput::default()
         },
     }
 }
@@ -289,6 +291,7 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
             source_output.response_kind = single_response_kind(&analysis.statements);
             source_output.statements = analysis.statements;
             source_output.inferred_params = analysis.params;
+            source_output.let_bindings = analysis.let_bindings;
         }
     }
     for diagnostic in &pipeline_output.diagnostics {

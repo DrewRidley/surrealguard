@@ -23,21 +23,58 @@ pub struct TypeHint {
     pub label: String,
 }
 
-/// Inferred-type inlay hints for every `LET` binding whose kind analysis
-/// could determine. Bindings with an undeterminable kind produce no hint.
+/// The character budget past which an inlay label's rendered kind is elided
+/// with `…`. Keeps a long object/union kind from dominating the line while
+/// still signalling its shape.
+const INLAY_LABEL_MAX: usize = 48;
+
+/// Inferred-type inlay hints for every `LET` binding (and `FOR` loop
+/// variable) whose kind analysis could determine — at every nesting depth
+/// (top-level, `{ }` blocks, DEFINE FUNCTION bodies, FOR-loop bodies).
+///
+/// The label form is `: <kind>` placed right after the `$name` token
+/// (rust-analyzer's grey inferred-type style), which the LSP anchors at the
+/// name's end. Low-noise: bindings whose kind is undeterminable or `any`
+/// produce no hint, and an over-long rendered kind is elided with `…`.
+/// Duplicate bindings at the same span (should not occur, but re-inference
+/// could) are emitted once.
 pub fn let_binding_hints(output: &AnalysisOutput) -> Vec<TypeHint> {
+    let mut seen: std::collections::HashSet<(SourceId, u32, u32)> = std::collections::HashSet::new();
     output
-        .statements
+        .let_bindings
         .iter()
-        .filter_map(|statement| {
-            let binding = statement.let_binding.as_ref()?;
+        .filter_map(|binding| {
             let kind = binding.kind.as_ref()?;
+            // Low-FP / low-noise: `any` (and its `none` degenerate) carry no
+            // information worth an inline annotation.
+            if matches!(kind, Kind::Any) {
+                return None;
+            }
+            let range = binding.name_span.range();
+            if !seen.insert((
+                binding.name_span.source().clone(),
+                range.start(),
+                range.end(),
+            )) {
+                return None;
+            }
             Some(TypeHint {
                 name_span: binding.name_span.clone(),
-                label: format!(": {}", render_kind(kind)),
+                label: format!(": {}", elide_label(&render_kind(kind))),
             })
         })
         .collect()
+}
+
+/// Truncates a rendered kind to [`INLAY_LABEL_MAX`] characters, appending `…`
+/// when it overruns. Operates on chars so a multibyte boundary is never split.
+fn elide_label(rendered: &str) -> String {
+    if rendered.chars().count() <= INLAY_LABEL_MAX {
+        return rendered.to_string();
+    }
+    let mut out: String = rendered.chars().take(INLAY_LABEL_MAX).collect();
+    out.push('…');
+    out
 }
 
 /// A resolved hover: the covered symbol's span and a markdown popover
@@ -88,13 +125,22 @@ pub fn hover_at(
         }
     };
 
-    // `LET $x` binding sites.
-    for statement in &output.statements {
-        if let Some(binding) = &statement.let_binding {
-            consider(
-                &binding.name_span,
-                symbol_markdown(&format!("${}", binding.name), binding.kind.as_ref(), schema),
-            );
+    // `LET $x` / `FOR $x` binding sites (every nesting depth).
+    for binding in &output.let_bindings {
+        consider(
+            &binding.name_span,
+            symbol_markdown(&format!("${}", binding.name), binding.kind.as_ref(), schema),
+        );
+    }
+
+    // The kind of each `LET`/`FOR` variable, by name, for resolving `$var`
+    // uses and `$var[i].field` idioms anywhere in the source. A name bound
+    // more than once keeps the last binding's kind (source-order shadowing).
+    let mut let_kinds: std::collections::HashMap<String, Kind> =
+        std::collections::HashMap::new();
+    for binding in &output.let_bindings {
+        if let Some(kind) = &binding.kind {
+            let_kinds.insert(binding.name.clone(), kind.clone());
         }
     }
 
@@ -134,6 +180,7 @@ pub fn hover_at(
             schema,
             source,
             offset,
+            let_kinds: &let_kinds,
             out: Vec::new(),
         };
         for statement in &statements {
@@ -193,12 +240,10 @@ pub fn definition_at(
     // Resolved against the walked `$name` tokens below.
     let mut bindings: std::collections::HashMap<String, SourceSpan> =
         std::collections::HashMap::new();
-    for statement in &output.statements {
-        if let Some(binding) = &statement.let_binding {
-            bindings
-                .entry(binding.name.clone())
-                .or_insert_with(|| binding.name_span.clone());
-        }
+    for binding in &output.let_bindings {
+        bindings
+            .entry(binding.name.clone())
+            .or_insert_with(|| binding.name_span.clone());
     }
     for param in schema.params.values() {
         bindings
@@ -406,6 +451,9 @@ struct SchemaHovers<'a> {
     schema: &'a SchemaIndex,
     source: &'a SourceId,
     offset: u32,
+    /// The inferred kind of each `LET`/`FOR` variable in scope, by name,
+    /// for hovering `$var` uses and `$var[i].field` idioms.
+    let_kinds: &'a std::collections::HashMap<String, Kind>,
     out: Vec<(SourceSpan, String)>,
 }
 
@@ -622,6 +670,14 @@ impl SchemaHovers<'_> {
                     self.walk_expr(root, expr);
                 }
             }
+            // A DEFINE FUNCTION body is ordinary statement territory: its
+            // `LET`/`FOR` var uses, `fn::` calls, and idioms all resolve the
+            // same as at top level, so walk it.
+            DefineStmt::Function(func) => {
+                if let Some(body) = &func.body {
+                    self.walk_block(body);
+                }
+            }
             _ => {}
         }
     }
@@ -690,6 +746,7 @@ impl SchemaHovers<'_> {
         match &expr.node {
             Expr::Table(name) => self.table_ref(name),
             Expr::RecordId { table, .. } => self.table_ref(table),
+            Expr::Param(name) => self.param_use(expr.span, name),
             Expr::Idiom(idiom) => self.walk_idiom(root, idiom),
             Expr::Binary { lhs, rhs, .. } => {
                 self.walk_expr(root, lhs);
@@ -697,6 +754,7 @@ impl SchemaHovers<'_> {
             }
             Expr::Prefix { expr, .. } | Expr::Cast { expr, .. } => self.walk_expr(root, expr),
             Expr::Call(call) => {
+                self.call_signature(call);
                 for arg in &call.args {
                     self.walk_expr(root, arg);
                 }
@@ -718,10 +776,161 @@ impl SchemaHovers<'_> {
         }
     }
 
+    /// A bare `$var` use whose `LET`/`FOR` kind is known → its inferred type.
+    fn param_use(&mut self, span: ByteRange, name: &str) {
+        if !self.covers(span) {
+            return;
+        }
+        if let Some(kind) = self.let_kinds.get(name) {
+            let source_span = SourceSpan::new(self.source.clone(), span);
+            self.out
+                .push((source_span, symbol_markdown(&format!("${name}"), Some(kind), self.schema)));
+        }
+    }
+
+    /// A `fn::` call whose path the cursor is over → a signature popover
+    /// (`fn::name($p: kind, ...) -> return`) built from the `DEFINE FUNCTION`.
+    fn call_signature(&mut self, call: &ast::Call) {
+        if !self.covers(call.path.span) {
+            return;
+        }
+        if let Some(func) = self.schema.function(&call.path.node) {
+            let span = SourceSpan::new(self.source.clone(), call.path.span);
+            self.out.push((span, function_signature_markdown(func)));
+        }
+    }
+
+    /// Resolves an idiom rooted in a known-kind `$var` (`$direct[0].role`):
+    /// steps a value kind through subscripts (into the array/set element) and
+    /// fields (into a literal object's entry, or across a single `record<>`
+    /// link into schema-resolved fields), emitting a hover for the `$var`
+    /// token and each resolvable segment. Returns whether it consumed the
+    /// idiom (so the table-based walker can skip it).
+    fn resolve_value_idiom(&mut self, name: &str, name_span: ByteRange, idiom: &ast::Idiom) {
+        use ast::IdiomPart;
+        // Hover the leading `$var` token itself.
+        let Some(root_kind) = self.let_kinds.get(name).cloned() else {
+            return;
+        };
+        if self.covers(name_span) {
+            let span = SourceSpan::new(self.source.clone(), name_span);
+            self.out.push((
+                span,
+                symbol_markdown(&format!("${name}"), Some(&root_kind), self.schema),
+            ));
+        }
+        // `current` is a value kind; once traversal crosses a `record<>` link
+        // it switches to `table` mode and the schema-based resolver takes
+        // over (the same code path the row-table walker uses).
+        let mut current = Some(root_kind);
+        let mut table: Option<String> = None;
+        let mut segments: Vec<String> = Vec::new();
+        for part in idiom.parts.iter().skip(1) {
+            match &part.node {
+                IdiomPart::Index(inner) => {
+                    self.walk_expr(None, inner);
+                    current = current.as_ref().and_then(element_kind);
+                    table = None;
+                    segments.clear();
+                }
+                IdiomPart::All | IdiomPart::Last => {
+                    current = current.as_ref().and_then(element_kind);
+                    table = None;
+                    segments.clear();
+                }
+                IdiomPart::Field(field) => {
+                    // A value kind that is a single `record<>` link enters its
+                    // schema table before this field resolves.
+                    if table.is_none() {
+                        if let Some(linked) = current.as_ref().and_then(record_link_target) {
+                            table = Some(linked);
+                            segments.clear();
+                            current = None;
+                        }
+                    }
+                    // Schema-table mode: resolve the field against the table.
+                    if let Some(current_table) = table.clone() {
+                        self.resolve_table_field(
+                            &current_table,
+                            &mut segments,
+                            field,
+                            part.span,
+                            &mut table,
+                        );
+                        continue;
+                    }
+                    // Object-value mode: index into a literal object's entry.
+                    let Some(kind) = current.clone() else {
+                        return;
+                    };
+                    let next = field_kind(&kind, field);
+                    if self.covers(part.span) {
+                        if let Some(next) = &next {
+                            let span = SourceSpan::new(self.source.clone(), part.span);
+                            self.out
+                                .push((span, symbol_markdown(field, Some(next), self.schema)));
+                        }
+                    }
+                    current = next;
+                }
+                // Anything else (methods, graph steps, where) is opaque here.
+                _ => return,
+            }
+        }
+    }
+
+    /// Resolves `field` under `table`/`segments` (a schema table reached
+    /// across a record link), emitting its hover and advancing scope
+    /// (`out_table` re-roots on a further link; `segments` grows on a nested
+    /// object; both clear when the shape goes opaque).
+    fn resolve_table_field(
+        &mut self,
+        table: &str,
+        segments: &mut Vec<String>,
+        field: &str,
+        span: ByteRange,
+        out_table: &mut Option<String>,
+    ) {
+        let Some(def) = self.schema.table(table) else {
+            *out_table = None;
+            return;
+        };
+        let mut path = segments.clone();
+        path.push(field.to_string());
+        let kind = crate::analyzer::data::select::kind_for_path(def, &path);
+        if self.covers(span) {
+            if let Some(kind) = &kind {
+                let source_span = SourceSpan::new(self.source.clone(), span);
+                self.out
+                    .push((source_span, symbol_markdown(field, Some(kind), self.schema)));
+            }
+        }
+        match kind.as_ref().and_then(record_link_target) {
+            Some(linked) => {
+                *out_table = Some(linked);
+                segments.clear();
+            }
+            None if kind.is_some() => *segments = path,
+            None => *out_table = None,
+        }
+    }
+
     /// Walks an idiom's field parts, resolving each against the table in scope
     /// and re-rooting on `record<>` links so linked-table fields type too.
     fn walk_idiom(&mut self, root: Option<&str>, idiom: &ast::Idiom) {
         use ast::IdiomPart;
+        // An idiom rooted in a known-kind `$var` (`$direct[0].role`) resolves
+        // through value kinds, not the row table.
+        if let Some(first) = idiom.parts.first() {
+            if let IdiomPart::Start(inner) = &first.node {
+                if let ast::Expr::Param(name) = &inner.node {
+                    if self.let_kinds.contains_key(name) {
+                        self.resolve_value_idiom(name, inner.span, idiom);
+                        return;
+                    }
+                }
+            }
+        }
         let mut table = root.map(str::to_string);
         // Field segments accumulated relative to the current `table`.
         let mut segments: Vec<String> = Vec::new();
@@ -1013,6 +1222,14 @@ impl SchemaDefs<'_> {
                     self.walk_expr(root, expr);
                 }
             }
+            // A DEFINE FUNCTION body is ordinary statement territory: its
+            // `LET`/`FOR` var uses, `fn::` calls, and idioms all resolve the
+            // same as at top level, so walk it.
+            DefineStmt::Function(func) => {
+                if let Some(body) = &func.body {
+                    self.walk_block(body);
+                }
+            }
             _ => {}
         }
     }
@@ -1207,6 +1424,61 @@ fn expr_table_name(expr: &ast::Expr) -> Option<&str> {
         ast::Expr::RecordId { table, .. } => Some(table.node.as_str()),
         _ => None,
     }
+}
+
+/// The element kind of an array/set (`array<T>` → `T`), unwrapping an
+/// `option<array<T>>` to the same. Anything else has no element kind, so a
+/// subscript into it resolves to nothing (low-FP).
+fn element_kind(kind: &Kind) -> Option<Kind> {
+    match kind {
+        Kind::Array(inner, _) | Kind::Set(inner, _) => Some((**inner).clone()),
+        Kind::Either(variants) => variants
+            .iter()
+            .filter(|variant| !matches!(variant, Kind::None | Kind::Null))
+            .find_map(element_kind),
+        _ => None,
+    }
+}
+
+/// The kind of `field` within a literal-object value kind (`{ role: string }`
+/// → `.role` is `string`), unwrapping `option<{...}>`. Records resolve their
+/// fields via the schema, not here; a plain `object` is opaque. Returns
+/// nothing when the field is absent or the shape carries no field map.
+fn field_kind(kind: &Kind, field: &str) -> Option<Kind> {
+    match kind {
+        Kind::Literal(KindLiteral::Object(entries)) => entries
+            .iter()
+            .find(|(name, _)| name.as_str() == field)
+            .map(|(_, kind)| kind.clone()),
+        Kind::Either(variants) => variants
+            .iter()
+            .filter(|variant| !matches!(variant, Kind::None | Kind::Null))
+            .find_map(|variant| field_kind(variant, field)),
+        _ => None,
+    }
+}
+
+/// A `fn::` signature popover:
+/// `fn::name($p: kind, ...) -> return`. Built from the `DEFINE FUNCTION`'s
+/// declared params and its declared/inferred return kind (the `-> ...` is
+/// omitted when the return kind is unknown).
+fn function_signature_markdown(func: &crate::schema::FunctionDef) -> String {
+    let params: Vec<String> = func
+        .args
+        .iter()
+        .map(|param| {
+            let kind = param
+                .kind
+                .as_ref()
+                .map_or_else(|| "any".to_string(), render_kind);
+            format!("${}: {kind}", param.name)
+        })
+        .collect();
+    let mut signature = format!("{}({})", func.name, params.join(", "));
+    if let Some(return_kind) = &func.return_kind {
+        signature.push_str(&format!(" -> {}", render_kind(return_kind)));
+    }
+    format!("```surql\n{signature}\n```")
 }
 
 /// The single linked table a `record<T>` (or `option<record<T>>`) points at,
@@ -1566,4 +1838,128 @@ mod tests {
             assert!(!hover.markdown.contains("record<"), "got: {}", hover.markdown);
         }
     }
+
+    /// The DEFINE FUNCTION whose body drives the body-level tests below:
+    /// `employee_of` rows expose `role`/`unit`, and `fn::org::unit` returns a
+    /// `record<unit>`.
+    const BODY_FIXTURE: &str = "DEFINE TABLE employee_of SCHEMAFULL;\n\
+         DEFINE FIELD role ON employee_of TYPE string;\n\
+         DEFINE FIELD unit ON employee_of TYPE record<unit>;\n\
+         DEFINE TABLE unit SCHEMAFULL;\n\
+         DEFINE FIELD label ON unit TYPE string;\n\
+         DEFINE FUNCTION fn::org::unit($organization: record<unit>) -> record<unit> {\n\
+             RETURN $organization;\n\
+         };\n\
+         DEFINE FUNCTION fn::org::report($organization: record<unit>, $auth: record<unit>) {\n\
+             LET $direct = SELECT role, unit FROM employee_of WHERE unit = $organization;\n\
+             LET $u = fn::org::unit($organization);\n\
+             RETURN $direct[0].role;\n\
+         };";
+
+    #[test]
+    fn hover_resolves_a_body_level_let_binding_and_its_use() {
+        let (output, schema, source) = analyze(BODY_FIXTURE);
+
+        // Binding site: `LET $direct = SELECT role, unit FROM ...` → the
+        // SELECT's row shape as an array of `{ role, unit }`.
+        let bind_offset = BODY_FIXTURE.find("$direct").expect("binding present") as u32 + 1;
+        let bind = hover_at(&output, &schema, &source, BODY_FIXTURE, bind_offset)
+            .expect("hover over body LET binding");
+        assert!(bind.markdown.contains("$direct: array<"), "got: {}", bind.markdown);
+        assert!(bind.markdown.contains("role: string"), "got: {}", bind.markdown);
+
+        // Use site: `$direct[0].role` — the `$direct` token resolves to the
+        // same array kind.
+        let use_offset = BODY_FIXTURE.rfind("$direct").expect("use present") as u32 + 1;
+        let used = hover_at(&output, &schema, &source, BODY_FIXTURE, use_offset)
+            .expect("hover over body LET use");
+        assert!(used.markdown.contains("$direct: array<"), "got: {}", used.markdown);
+    }
+
+    #[test]
+    fn hover_over_a_subscript_idiom_resolves_the_element_field() {
+        let (output, schema, source) = analyze(BODY_FIXTURE);
+        // `$direct[0].role`: index into the array element `{ role, unit }`,
+        // then `.role` is `string`.
+        let role_use = BODY_FIXTURE.rfind(".role").expect("subscript present") as u32 + 1;
+        let hover = hover_at(&output, &schema, &source, BODY_FIXTURE, role_use)
+            .expect("hover over subscript field");
+        assert!(hover.markdown.contains("role: string"), "got: {}", hover.markdown);
+    }
+
+    #[test]
+    fn hover_over_a_function_call_shows_its_signature() {
+        let (output, schema, source) = analyze(BODY_FIXTURE);
+        // The `fn::org::unit(...)` call in the body → its declared signature.
+        let call = BODY_FIXTURE
+            .find("fn::org::unit($organization)")
+            .expect("call present") as u32
+            + 2;
+        let hover =
+            hover_at(&output, &schema, &source, BODY_FIXTURE, call).expect("hover over fn call");
+        assert!(
+            hover.markdown.contains("fn::org::unit($organization: record<unit>) -> record<unit>"),
+            "got: {}",
+            hover.markdown
+        );
+    }
+
+    #[test]
+    fn inlay_hints_cover_body_level_lets() {
+        let (output, _schema, _source) = analyze(BODY_FIXTURE);
+        let hints = let_binding_hints(&output);
+        // Both body LETs (`$direct`, `$u`) get a hint; the SELECT one is an
+        // array, the call one a record.
+        let labels: Vec<&str> = hints.iter().map(|hint| hint.label.as_str()).collect();
+        assert!(
+            labels.iter().any(|label| label.starts_with(": array<")),
+            "expected an array hint, got: {labels:?}"
+        );
+        assert!(
+            labels.iter().any(|label| label.contains("record<unit>")),
+            "expected the fn-call record hint, got: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn inlay_hints_include_for_loop_variables_and_skip_any() {
+        let text = "DEFINE FUNCTION fn::each($xs: array<int>) {\n\
+             FOR $item IN $xs { RETURN $item; };\n\
+         };";
+        let (output, _schema, _source) = analyze(text);
+        let hints = let_binding_hints(&output);
+        // `$item` is the element kind `int` of `array<int>`.
+        assert!(
+            hints.iter().any(|hint| hint.label == ": int"),
+            "expected the FOR var hint, got: {:?}",
+            hints.iter().map(|h| &h.label).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn definition_of_a_body_level_let_use_points_at_its_binding() {
+        let (output, schema, source) = analyze(BODY_FIXTURE);
+        // Go-to-def on the `$direct` use jumps to its body `LET` binding.
+        let use_offset = BODY_FIXTURE.rfind("$direct").expect("use present") as u32 + 1;
+        let target = definition_at(&output, &schema, &source, BODY_FIXTURE, use_offset)
+            .expect("definition of body let var");
+        let expected = BODY_FIXTURE.find("$direct").expect("binding present") as u32;
+        assert_eq!(target.span.range().start(), expected);
+    }
+
+    #[test]
+    fn inlay_label_elides_an_over_long_object_kind() {
+        // A wide literal-object kind is truncated with `…` so it never
+        // dominates the line.
+        let wide = Kind::Literal(KindLiteral::Object(
+            (0..12)
+                .map(|i| (format!("field_number_{i}"), Kind::String))
+                .collect(),
+        ));
+        assert!(render_kind(&wide).chars().count() > INLAY_LABEL_MAX);
+        let elided = elide_label(&render_kind(&wide));
+        assert!(elided.ends_with('…'), "got: {elided}");
+        assert!(elided.chars().count() <= INLAY_LABEL_MAX + 1);
+    }
+
 }

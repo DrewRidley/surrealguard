@@ -130,6 +130,12 @@ impl<'a> AnalysisContext<'a> {
         self.env.define_let(name, fact);
     }
 
+    /// Records a `LET`/`FOR` binding for editor features (inlay hints, hover,
+    /// go-to-def). Read-only w.r.t. diagnostics.
+    pub fn record_let_binding(&mut self, binding: crate::analysis::LetBindingAnalysis) {
+        self.env.record_let_binding(binding);
+    }
+
     /// Records (or clears) that `binding` holds `type::table($param)`, for
     /// indirect record-discriminant narrowing.
     pub fn set_table_discriminant(&mut self, binding: String, param: Option<String>) {

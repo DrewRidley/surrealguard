@@ -68,7 +68,19 @@ pub(crate) fn analyze_for_loop(ctx: &mut AnalysisContext<'_>, stmt: &ast::ForStm
     ctx.with_child_env(|ctx| {
         let mut binding =
             ExpressionFact::new(iterable.span.clone(), ExpressionValueClass::Variable);
-        binding.kind = element_kind;
+        binding.kind = element_kind.clone();
+        // Record the loop variable (element kind of the iterated collection)
+        // for editor features, so `$parent` in `FOR $parent IN ...` hovers
+        // and gets an inlay hint the same as a LET.
+        let name_span = surrealguard_syntax::span::SourceSpan::new(
+            ctx.source().clone(),
+            stmt.binding.span,
+        );
+        ctx.record_let_binding(crate::analysis::LetBindingAnalysis {
+            name: stmt.binding.node.clone(),
+            name_span,
+            kind: element_kind,
+        });
         ctx.define_local(stmt.binding.node.clone(), binding);
         ctx.with_loop(|ctx| crate::analyzer::flow::block::analyze_block(ctx, &stmt.body))
     });

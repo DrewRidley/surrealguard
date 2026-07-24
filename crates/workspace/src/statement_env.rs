@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use surrealguard_syntax::span::SourceSpan;
 
-use crate::analysis::ParamInference;
+use crate::analysis::{LetBindingAnalysis, ParamInference};
 use crate::expression::ExpressionFact;
 
 /// The bindings in scope for a statement: `LET` facts, param defaults, and
@@ -29,6 +29,11 @@ pub struct StatementEnv {
     /// declared `option<record<folder>>`. Keyed on the `param.field.field`
     /// path; only the exact path narrows (never the base param or siblings).
     narrowed_paths: BTreeMap<String, surrealdb_types::Kind>,
+    /// Every `LET` binding (and `FOR` loop variable) analysis has seen in
+    /// this scope and its already-merged children, in source order. Pure
+    /// editor-feature output: recorded as bodies are walked and drained up to
+    /// the source's top-level env, never read by any diagnostic.
+    let_bindings: Vec<LetBindingAnalysis>,
 }
 
 impl StatementEnv {
@@ -43,7 +48,22 @@ impl StatementEnv {
             params: BTreeMap::new(),
             table_discriminants: self.table_discriminants.clone(),
             narrowed_paths: self.narrowed_paths.clone(),
+            // Child records are collected fresh and drained back on merge, so
+            // the parent's already-recorded bindings are not re-emitted.
+            let_bindings: Vec::new(),
         }
+    }
+
+    /// Records a `LET`/`FOR` binding for editor features. Read-only w.r.t.
+    /// diagnostics: nothing consults this during checking.
+    pub fn record_let_binding(&mut self, binding: LetBindingAnalysis) {
+        self.let_bindings.push(binding);
+    }
+
+    /// Every `LET`/`FOR` binding recorded in this scope (and merged from
+    /// children), in source order.
+    pub fn let_bindings(&self) -> &[LetBindingAnalysis] {
+        &self.let_bindings
     }
 
     /// Records that the idiom path `key` (a `param.field.field` string) is
@@ -135,8 +155,11 @@ impl StatementEnv {
     }
 
     /// Folds a child scope's param uses back into this one, unifying kinds
-    /// and domains and unioning the `required` flag and spans.
-    pub fn merge_param_uses_from(&mut self, child: StatementEnv) {
+    /// and domains and unioning the `required` flag and spans. Also drains
+    /// the child's recorded `LET`/`FOR` bindings up so the whole source's
+    /// bindings collect at the top-level env.
+    pub fn merge_param_uses_from(&mut self, mut child: StatementEnv) {
+        self.let_bindings.append(&mut child.let_bindings);
         for param in child.params.into_values() {
             let entry = self
                 .params

@@ -46,6 +46,16 @@ pub(crate) fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) ->
     }
 
     let fact = crate::analyzer::expression::expr_fact(ctx, &stmt.value);
+    // Record the binding (name span + inferred kind) for editor features,
+    // at whatever nesting depth this LET sits. Drained to the source's
+    // top-level env; changes no diagnostics.
+    let name_span =
+        surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.name.span);
+    ctx.record_let_binding(crate::analysis::LetBindingAnalysis {
+        name: stmt.name.node.clone(),
+        name_span,
+        kind: fact.kind.clone(),
+    });
     ctx.define_local(stmt.name.node.clone(), fact);
     // Track `LET $t = type::table($x)` so a later `IF $t = 'table'` guard
     // narrows `$x` (indirect record discriminant).
