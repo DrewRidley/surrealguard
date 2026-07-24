@@ -1,0 +1,21 @@
+{
+  "name": "@surrealguard-example/sveltekit",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "SvelteKit / Svelte 5 SurrealGuard example: typed liveQuery + db.query.",
+  "scripts": {
+    "generate": "surrealguard generate --out surrealguard.generated.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@surrealguard/client": "workspace:*",
+    "@surrealguard/query": "workspace:*",
+    "@surrealguard/svelte": "workspace:*",
+    "surrealdb": "2.0.8"
+  },
+  "devDependencies": {
+    "svelte": "^5.1.0",
+    "typescript": "^5.6.0"
+  }
+}

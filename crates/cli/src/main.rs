@@ -12,7 +12,9 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use surrealguard_diagnostics::{render_code, Severity};
+use surrealguard_diagnostics::{render_code, Finding, Severity};
+use surrealguard_syntax::source::SourceId;
+use surrealguard_syntax::span::{ByteRange, SourceSpan};
 use surrealguard_workspace::config::WorkspaceConfig;
 use surrealguard_workspace::{analyze_workspace, Workspace};
 use walkdir::{DirEntry, WalkDir};
@@ -280,9 +282,84 @@ struct CheckPassed {
     rendered: Vec<String>,
 }
 
+/// A successful `generate`: the registry path and any warning/hint blocks
+/// (host-mapped) that survived policy on the clean run.
+#[derive(Debug)]
+struct GenerateReport {
+    path: std::path::PathBuf,
+    warnings: Vec<String>,
+}
+
+/// `generate` refused to write because an embedded query has an error-severity
+/// finding. Carries every finding rendered at its real `host_file:line` so the
+/// user can fix the query the client actually runs.
+#[derive(Debug)]
+struct GenerateFailed {
+    /// rustc-style blocks for every finding on the failing run (errors first,
+    /// then any warnings/hints), host-mapped to `file:line`.
+    rendered: Vec<String>,
+    errors: usize,
+}
+
+impl fmt::Display for GenerateFailed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for block in &self.rendered {
+            writeln!(f, "{block}")?;
+        }
+        write!(
+            f,
+            "generate failed: {} error(s) in embedded queries — registry not written",
+            self.errors
+        )
+    }
+}
+
+impl Error for GenerateFailed {}
+
+/// Rebuilds a finding whose span is in embedded-query coordinates so it points
+/// at the host file: spans belonging to the embedded query (`embed_source`) are
+/// mapped through its segment map and re-sourced to `host_id` (so rendering
+/// resolves `host_file:line`); spans in other sources (e.g. a schema file the
+/// query references) are left as-is.
+fn remap_finding_to_host(
+    finding: &Finding,
+    query: &surrealguard_embed::EmbeddedQuery,
+    embed_source: &SourceId,
+    host_id: &str,
+) -> Finding {
+    let host_sid = SourceId::new(host_id);
+    let map_span = |span: &SourceSpan| -> SourceSpan {
+        if span.source() != embed_source {
+            return span.clone();
+        }
+        let range = span.range();
+        let mapped = query.host_span(range.start() as usize..range.end() as usize);
+        let byte_range = ByteRange::new(mapped.start as u32, mapped.end as u32)
+            .unwrap_or_else(|_| ByteRange::new(0, 1).expect("0..1 is ordered"));
+        SourceSpan::new(host_sid.clone(), byte_range)
+    };
+
+    let mut rebuilt = Finding::new(
+        map_span(finding.span()),
+        finding.code(),
+        finding.severity(),
+        finding.message(),
+    );
+    for help in finding.help() {
+        rebuilt = rebuilt.with_help(help.message.clone());
+    }
+    for related in finding.related() {
+        rebuilt = rebuilt.with_related(map_span(&related.span), related.message.clone());
+    }
+    rebuilt
+}
+
 /// Scans host sources for embedded queries, analyzes them against the
-/// workspace schema, and writes the typed registry.
-fn run_generate(root: &Path, out: Option<&Path>) -> Result<std::path::PathBuf, Box<dyn Error>> {
+/// workspace schema, and writes the typed registry. Findings raised on the
+/// embedded queries are reported at their host `file:line`: warnings/hints are
+/// printed but do not block generation, while any error-severity finding
+/// aborts before writing so a broken registry never overwrites a good one.
+fn run_generate(root: &Path, out: Option<&Path>) -> Result<GenerateReport, Box<dyn Error>> {
     let config = load_workspace_config(root)?;
     let mut workspace = surrealguard_workspace::analysis::Workspace::new(config.clone());
     for path in discover_surrealql_sources(root, &config) {
@@ -309,27 +386,63 @@ fn run_generate(root: &Path, out: Option<&Path>) -> Result<std::path::PathBuf, B
         paths
     };
 
+    // Retain each host file's text so findings render against real source.
+    let mut host_texts: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
     let mut queries = Vec::new();
     for path in host_paths {
         let Ok(text) = fs::read_to_string(&path) else {
             continue;
         };
-        for (index, query) in surrealguard_embed::extract(&path.display().to_string(), &text)
-            .into_iter()
-            .enumerate()
-        {
-            let source_id = workspace.add_virtual_source(
-                format!("embedded://{}#{index}", path.display()),
-                query.text.clone(),
-            );
-            queries.push((source_id, query));
+        let host_id = path.display().to_string();
+        let embedded = surrealguard_embed::extract(&host_id, &text);
+        if embedded.is_empty() {
+            continue;
         }
+        for (index, query) in embedded.into_iter().enumerate() {
+            let source_id = workspace
+                .add_virtual_source(format!("embedded://{host_id}#{index}"), query.text.clone());
+            queries.push((source_id, query, host_id.clone()));
+        }
+        host_texts.insert(host_id, text);
     }
 
     let analysis = analyze_workspace(&workspace);
+
+    // Map each embedded query's findings back onto its host file, resolving
+    // presentation severity through the same policy the check path uses.
+    let policy = config.policy();
+    let mut rendered_errors = Vec::new();
+    let mut rendered_warnings = Vec::new();
+    for (source_id, query, host_id) in &queries {
+        let Some(output) = analysis.sources.get(source_id) else {
+            continue;
+        };
+        for finding in &output.diagnostics {
+            let Some(severity) = policy.resolve_severity(finding.code(), finding.severity()) else {
+                continue;
+            };
+            let host_finding = remap_finding_to_host(finding, query, source_id, host_id);
+            let block = render::render_finding(&host_finding, severity, &host_texts);
+            if severity == Severity::Error {
+                rendered_errors.push(block);
+            } else {
+                rendered_warnings.push(block);
+            }
+        }
+    }
+
+    if !rendered_errors.is_empty() {
+        // Don't overwrite a good registry with a broken one — bail before writing.
+        let errors = rendered_errors.len();
+        let mut rendered = rendered_errors;
+        rendered.extend(rendered_warnings);
+        return Err(Box::new(GenerateFailed { rendered, errors }));
+    }
+
     let entries: Vec<surrealguard_codegen::QueryEntry> = queries
         .iter()
-        .filter_map(|(source_id, query)| {
+        .filter_map(|(source_id, query, _host_id)| {
             let output = analysis.sources.get(source_id)?;
             let result_type = output
                 .response_kind
@@ -345,7 +458,10 @@ fn run_generate(root: &Path, out: Option<&Path>) -> Result<std::path::PathBuf, B
 
     let out_path = out.map_or_else(|| root.join("surrealguard.generated.ts"), Path::to_path_buf);
     fs::write(&out_path, surrealguard_codegen::render_registry(&entries))?;
-    Ok(out_path)
+    Ok(GenerateReport {
+        path: out_path,
+        warnings: rendered_warnings,
+    })
 }
 
 fn render_check_json(
@@ -464,9 +580,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Commands::Generate { out } => {
             let root = find_workspace_root(&env::current_dir()?);
-            let written = run_generate(&root, out.as_deref())?;
-            println!("Generated {}", written.display());
-            Ok(())
+            match run_generate(&root, out.as_deref()) {
+                Ok(report) => {
+                    // Warnings/hints don't block generation; surface them on stderr
+                    // so the written registry stays the only thing on stdout.
+                    for block in &report.warnings {
+                        eprint!("{block}");
+                    }
+                    println!("Generated {}", report.path.display());
+                    Ok(())
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
+            }
         }
         Commands::Check { json } => {
             if !json {
@@ -704,6 +832,99 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "E1001" && diagnostic.severity == "error"));
+    }
+
+    #[test]
+    fn generate_fails_on_embedded_query_error_and_names_host_file() {
+        // A host file whose `db.query("...")` targets a missing table must fail
+        // generation, name the host file, and leave no registry behind.
+        let root = temp_project_dir("generate-bad-embed");
+        fs::create_dir_all(root.join("schema")).expect("schema dir");
+        fs::create_dir_all(root.join("src")).expect("src dir");
+        fs::write(
+            root.join("surrealguard.toml"),
+            "[sources]\nschema = [\"schema/**/*.surql\"]\n",
+        )
+        .expect("write config");
+        fs::write(
+            root.join("schema/person.surql"),
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;",
+        )
+        .expect("write schema");
+        fs::write(
+            root.join("src/app.ts"),
+            "const [rows] = await db.query(\"SELECT nope FROM missing\");",
+        )
+        .expect("write host source");
+
+        let out = root.join("surrealguard.generated.ts");
+        let err = run_generate(&root, Some(&out))
+            .expect_err("an error-severity embedded query must fail generate");
+        let message = err.to_string();
+        // The finding must map back to the host file at a real line:col (not the
+        // degraded `file:start..end` offset form), with the query's table underlined.
+        assert!(
+            message.contains("app.ts:1:"),
+            "findings must map to the host file at line:col: {message}"
+        );
+        assert!(
+            message.contains("db.query(\"SELECT nope FROM missing\")"),
+            "the rendered snippet must show the host source line: {message}"
+        );
+        assert!(
+            message.contains("^"),
+            "the rendered snippet must underline the offending span: {message}"
+        );
+        assert!(
+            message.contains("registry not written"),
+            "failure must explain the registry was withheld: {message}"
+        );
+        assert!(
+            !out.exists(),
+            "a broken registry must never be written on an error finding"
+        );
+    }
+
+    #[test]
+    fn generate_writes_registry_for_clean_embedded_queries() {
+        // A clean `db.query("...")` resolves its result and params from the
+        // schema and lands in the registry, keyed by the exact query text.
+        let root = temp_project_dir("generate-clean-embed");
+        fs::create_dir_all(root.join("schema")).expect("schema dir");
+        fs::create_dir_all(root.join("src")).expect("src dir");
+        fs::write(
+            root.join("surrealguard.toml"),
+            "[sources]\nschema = [\"schema/**/*.surql\"]\n",
+        )
+        .expect("write config");
+        fs::write(
+            root.join("schema/person.surql"),
+            "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD name ON person TYPE string;\n\
+             DEFINE FIELD team ON person TYPE record<team>;\n\
+             DEFINE TABLE team SCHEMAFULL;\n\
+             DEFINE FIELD name ON team TYPE string;",
+        )
+        .expect("write schema");
+        fs::write(
+            root.join("src/app.ts"),
+            "const [rows] = await db.query(\"SELECT name FROM person WHERE team = $team\", { team });",
+        )
+        .expect("write host source");
+
+        let out = root.join("surrealguard.generated.ts");
+        let report =
+            run_generate(&root, Some(&out)).expect("a clean embedded query should generate");
+        assert_eq!(report.path, out);
+        let written = fs::read_to_string(&out).expect("registry file written");
+        assert!(
+            written.contains("SELECT name FROM person WHERE team = $team"),
+            "registry must key the embedded query by its exact text:\n{written}"
+        );
+        assert!(
+            written.contains("params: { team: RecordId<\"team\"> }"),
+            "the $team param must be typed from the schema record link:\n{written}"
+        );
     }
 
     fn temp_project_dir(name: &str) -> std::path::PathBuf {

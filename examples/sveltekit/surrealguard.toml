@@ -1,0 +1,11 @@
+# SurrealGuard workspace config for the SvelteKit example.
+
+[sources]
+schema = ["schema/**/*.surql"]
+queries = ["queries/**/*.surql"]
+# .svelte-kit holds generated route types; never scan it (or deps) for queries.
+ignore = ["node_modules/**", ".svelte-kit/**", "target/**", ".git/**"]
+
+[analysis]
+strict = false
+surrealdb_version = "2"

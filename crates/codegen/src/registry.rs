@@ -71,6 +71,8 @@ pub fn render_registry(entries: &[QueryEntry]) -> String {
 import type {{ RecordId, GeoJSON }} from "@surrealguard/client";
 
 export {{ SurrealGuardClient }} from "@surrealguard/client";
+// Re-exported so a query result using them needs only this one import.
+export type {{ RecordId, GeoJSON }} from "@surrealguard/client";
 
 declare module "@surrealguard/client" {{
   interface SurqlRegistry {{
@@ -139,6 +141,10 @@ mod tests {
         assert!(
             rendered.contains("export { SurrealGuardClient } from \"@surrealguard/client\""),
             "generated file re-exports the client for a single-import DX"
+        );
+        assert!(
+            rendered.contains("export type { RecordId, GeoJSON } from \"@surrealguard/client\""),
+            "generated file re-exports RecordId/GeoJSON so results need one import"
         );
     }
 

@@ -1,0 +1,13 @@
+# SurrealGuard workspace config for the vanilla-TS example.
+
+[sources]
+# The schema catalog — its DEFINEs are in scope for every analyzed query.
+schema = ["schema/**/*.surql"]
+# Analyzed as queries; this example embeds them in `.ts` host files instead.
+queries = ["queries/**/*.surql"]
+# Never scanned (neither for schema nor for embedded host queries).
+ignore = ["node_modules/**", "target/**", ".git/**"]
+
+[analysis]
+strict = false
+surrealdb_version = "2"

@@ -827,11 +827,17 @@ fn value_projection_kind(
     match &expr.node {
         ast::Expr::Idiom(idiom) if starts_with_graph(idiom) => {
             crate::analyzer::data::graph::check_graph_idiom(ctx, row_table_name, idiom);
+            validate_graph_destructure(ctx, row_table_name, idiom);
             graph_projection_kind(row_table_name, idiom, ctx.schema(), false)
         }
         ast::Expr::Idiom(idiom) => {
             let segments = plain_field_segments(idiom)?;
-            kind_for_path(table, &segments)
+            // Resolve (crossing record links); validate only when it resolves,
+            // so an unresolved head falls through to the object path — which
+            // emits E1002 once — rather than double-reporting here.
+            let kind = resolve_field_path(ctx.schema(), table, &segments)?;
+            validate_field_path(ctx, table, &segments, expr.span, 1002);
+            Some(kind)
         }
         _ => Some(computed_kind(expr, table, ctx)),
     }
@@ -887,6 +893,9 @@ fn project_expr(
     if let ast::Expr::Idiom(idiom) = &expr.node {
         if starts_with_graph(idiom) {
             crate::analyzer::data::graph::check_graph_idiom(ctx, row_table_name, idiom);
+            // A `.{…}` destructure tail selects fields on the resolved graph
+            // target; each must exist there (E1002), independent of alias.
+            validate_graph_destructure(ctx, row_table_name, idiom);
             // `->likes->post.{title, id}` without an alias fans out into
             // nested per-field arrays.
             if alias_name.is_none() {
@@ -919,8 +928,10 @@ fn project_expr(
                 return;
             }
         } else if let Some((prefix, selected)) = row_destructure_parts(idiom) {
-            // `profile.{email, city}` selects sub-fields of a row field.
-            if let Some(outputs) = destructure_kinds(table, &prefix, &selected) {
+            // `profile.{email, city}` (row object) / `team.{label}` (record
+            // link) selects sub-fields; each must exist on the target (E1002).
+            validate_row_destructure(ctx, table, &prefix, &selected);
+            if let Some(outputs) = destructure_kinds(ctx.schema(), table, &prefix, &selected) {
                 match &alias_name {
                     Some(alias) => {
                         let object: BTreeMap<String, Kind> = outputs
@@ -940,7 +951,10 @@ fn project_expr(
                 return;
             }
         } else if let Some(segments) = plain_field_segments(idiom) {
-            if let Some(kind) = kind_for_path(table, &segments) {
+            // Validate the path, crossing record links (`team.label` checks
+            // `label` on `team`); a valid path is a no-op here.
+            validate_field_path(ctx, table, &segments, expr.span, 1002);
+            if let Some(kind) = resolve_field_path(ctx.schema(), table, &segments) {
                 match &alias_name {
                     Some(alias) => {
                         fields.insert(alias.clone(), kind);
@@ -949,8 +963,8 @@ fn project_expr(
                 }
                 return;
             }
-            // Known-plain path that doesn't resolve: poison entry + finding.
-            crate::analyzer::data::check_field_path(ctx, table, &segments, expr.span, 1002);
+            // Known-plain path that doesn't resolve: poison entry (the finding
+            // was already emitted by `validate_field_path`).
             fields.insert(alias_name.unwrap_or_else(|| segments.join(".")), Kind::Any);
             return;
         }
@@ -1123,7 +1137,12 @@ pub(crate) fn graph_projection_kind(
                 for sub in selected {
                     let segments = plain_field_segments(&sub.node)?;
                     let name = segments.join(".");
-                    object.insert(name, kind_for_path(target, &segments)?);
+                    // A field absent on the target still projects (as `Any`);
+                    // validation reports it separately.
+                    object.insert(
+                        name,
+                        resolve_field_path(schema, target, &segments).unwrap_or(Kind::Any),
+                    );
                 }
                 object_literal(object)
             } else {
@@ -1161,7 +1180,9 @@ fn graph_destructure_output(
     let mut outputs = Vec::new();
     for sub in selected {
         let segments = plain_field_segments(&sub.node)?;
-        let selected_kind = kind_for_path(target, &segments)?;
+        // A field absent on the target still projects (as `Any`); the field
+        // validation runs separately via `validate_graph_destructure`.
+        let selected_kind = resolve_field_path(schema, target, &segments).unwrap_or(Kind::Any);
         let mut output_segments = graph_segments.clone();
         output_segments.extend(segments);
         outputs.push((output_segments, Kind::Array(Box::new(selected_kind), None)));
@@ -1221,6 +1242,7 @@ fn row_destructure_parts(
 }
 
 fn destructure_kinds(
+    schema: &SchemaIndex,
     table: &TableDef,
     prefix: &[String],
     selected: &[ast::Spanned<ast::Idiom>],
@@ -1230,10 +1252,60 @@ fn destructure_kinds(
         let sub_segments = plain_field_segments(&sub.node)?;
         let mut segments = prefix.to_vec();
         segments.extend(sub_segments);
-        let kind = kind_for_path(table, &segments)?;
+        // A field absent on the target still projects (as `Any`);
+        // `validate_row_destructure` reports it separately.
+        let kind = resolve_field_path(schema, table, &segments).unwrap_or(Kind::Any);
         outputs.push((segments, kind));
     }
     Some(outputs)
+}
+
+/// Validates each selected sub-field of a `.{…}` destructure on a graph target
+/// (`->friend->user.{name, aeg}`): resolves the traversal's target table and
+/// checks each field there (E1002), crossing record links. Silent when the
+/// target can't be resolved or isn't in the schema (no false positives).
+fn validate_graph_destructure(
+    ctx: &mut AnalysisContext<'_>,
+    row_table_name: &str,
+    idiom: &ast::Idiom,
+) {
+    let (graphs, tail) = graph_split(idiom);
+    let [tail_part] = tail else {
+        return;
+    };
+    let ast::IdiomPart::Destructure(selected) = &tail_part.node else {
+        return;
+    };
+    let schema = ctx.schema();
+    let Some(target_name) = resolve_graph_chain(row_table_name, graphs, schema) else {
+        return;
+    };
+    let Some(target) = schema.tables.get(&target_name) else {
+        return;
+    };
+    for sub in selected {
+        if let Some(segments) = plain_field_segments(&sub.node) {
+            validate_field_path(ctx, target, &segments, sub.span, 1002);
+        }
+    }
+}
+
+/// Validates each selected sub-field of a row-field destructure
+/// (`profile.{email, nope}`, `team.{label}`) against the target table,
+/// crossing record links. Emits E1002 for a field absent on a known target.
+fn validate_row_destructure(
+    ctx: &mut AnalysisContext<'_>,
+    table: &TableDef,
+    prefix: &[String],
+    selected: &[ast::Spanned<ast::Idiom>],
+) {
+    for sub in selected {
+        if let Some(sub_segments) = plain_field_segments(&sub.node) {
+            let mut segments = prefix.to_vec();
+            segments.extend(sub_segments);
+            validate_field_path(ctx, table, &segments, sub.span, 1002);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1448,6 +1520,131 @@ pub(crate) fn kind_for_path(table: &TableDef, segments: &[String]) -> Option<Kin
         Some(kind @ Kind::Record(_)) if rest.is_empty() => Some(kind),
         Some(Kind::Record(_)) => Some(Kind::Any),
         _ => None,
+    }
+}
+
+/// Schema-aware field-path resolver: like [`kind_for_path`], but when a path
+/// segment resolves to a record link (a declared `record<T>` field or an
+/// implicit `id`/`in`/`out`) and trailing segments remain, it crosses into the
+/// linked table `T` and keeps resolving there — recursively, for multi-hop
+/// `a.b.c`. Union links (`record<a | b>`) resolve the remainder on every
+/// variant: a single common kind is used, anything else widens to `Kind::Any`.
+/// An empty (`record<>`) or unknown/schemaless target, or a remainder absent on
+/// a variant, also widens to `Kind::Any` — this resolver never invents a field.
+/// `None` only when the head is absent from `table` and no link was crossed,
+/// exactly as `kind_for_path` would report.
+pub(crate) fn resolve_field_path(
+    schema: &SchemaIndex,
+    table: &TableDef,
+    segments: &[String],
+) -> Option<Kind> {
+    for split in 1..segments.len() {
+        let (prefix, rest) = segments.split_at(split);
+        if let Some(targets) = record_link_targets_at(table, prefix) {
+            return Some(resolve_across_link(schema, &targets, rest));
+        }
+    }
+    kind_for_path(table, segments)
+}
+
+/// The linked tables when `prefix` names a record link on `table` — a declared
+/// `record<...>` field (leaf) or, for a single head segment, an implicit
+/// `id`/`in`/`out`. `None` when `prefix` is not a record link, so callers keep
+/// resolving within the same table.
+fn record_link_targets_at(
+    table: &TableDef,
+    prefix: &[String],
+) -> Option<Vec<surrealdb_types::Table>> {
+    if let Some(field) = table.fields.get(&prefix.join(".")) {
+        return match &field.kind {
+            Some(Kind::Record(targets)) => Some(targets.clone()),
+            _ => None,
+        };
+    }
+    if let [head] = prefix {
+        if let Some(Kind::Record(targets)) = table.implicit_field_kind(head) {
+            return Some(targets);
+        }
+    }
+    None
+}
+
+/// Resolves `rest` across a record link to `targets`, widening to `Kind::Any`
+/// whenever the answer isn't provable: an empty (`record<>`) or unknown target,
+/// or variants that disagree on the remainder's kind.
+fn resolve_across_link(
+    schema: &SchemaIndex,
+    targets: &[surrealdb_types::Table],
+    rest: &[String],
+) -> Kind {
+    if targets.is_empty() {
+        return Kind::Any;
+    }
+    let mut resolved: Option<Kind> = None;
+    for target in targets {
+        let Some(table) = schema.tables.get(&target.to_string()) else {
+            return Kind::Any;
+        };
+        let Some(kind) = resolve_field_path(schema, table, rest) else {
+            return Kind::Any;
+        };
+        match &resolved {
+            None => resolved = Some(kind),
+            Some(prev) if *prev == kind => {}
+            Some(_) => return Kind::Any,
+        }
+    }
+    resolved.unwrap_or(Kind::Any)
+}
+
+/// Validates a (possibly link-crossing) field path against the schema, emitting
+/// `code` (E1002) at the table where a segment is genuinely absent. When the
+/// path crosses a record link into a single *known* table, validation continues
+/// there — so `team.badfield` reports against `team`, with its `DEFINE TABLE`
+/// note. A `record<>`, an unknown/dangling target (already E1001 elsewhere), or
+/// a union link (multiple targets) suppresses the finding: reporting those
+/// would double-report or risk a false positive.
+pub(crate) fn validate_field_path(
+    ctx: &mut AnalysisContext<'_>,
+    table: &TableDef,
+    segments: &[String],
+    span: surrealguard_syntax::span::ByteRange,
+    code: u16,
+) {
+    for split in 1..segments.len() {
+        let (prefix, rest) = segments.split_at(split);
+        if let Some(targets) = record_link_targets_at(table, prefix) {
+            let [only] = targets.as_slice() else {
+                return;
+            };
+            if let Some(linked) = ctx.schema().tables.get(&only.to_string()) {
+                validate_field_path(ctx, linked, rest, span, code);
+            }
+            return;
+        }
+        // An intermediate segment that is a concrete declared field but NOT a
+        // resolvable known record link is opaque: its kind is `Any`/`None`
+        // (e.g. a `COMPUTED`/`VALUE` field with no `TYPE`) or a scalar, so we
+        // cannot enumerate what lies past it and cannot prove the remainder
+        // absent. Suppress — soundness over completeness, mirroring the
+        // `record<>`/dangling/union rule. (A prefix that is a *nested-object*
+        // parent, or names nothing at all, is not opaque and keeps resolving.)
+        if field_is_opaque_boundary(table, prefix) {
+            return;
+        }
+    }
+    crate::analyzer::data::check_field_path(ctx, table, segments, span, code);
+}
+
+/// Whether `prefix` names a concrete declared *leaf* field on `table` that is
+/// not a resolvable known record link — traversing past it is unprovable, so a
+/// field finding on the remainder would be unsound. A nested-object prefix (no
+/// leaf field at `prefix`, only deeper declarations) and a prefix that names no
+/// field at all are both *not* opaque: their absence/children are enumerable.
+fn field_is_opaque_boundary(table: &TableDef, prefix: &[String]) -> bool {
+    match table.fields.get(&prefix.join(".")) {
+        Some(field) => !matches!(&field.kind, Some(Kind::Record(_))),
+        None => false,
     }
 }
 
@@ -2042,6 +2239,311 @@ mod tests {
         assert!(
             !codes(&diagnostics).contains(&5002),
             "sum over an array column is already well-typed: {:?}",
+            codes(&diagnostics)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Record-link field traversal in projections (`team.label`)
+    // -----------------------------------------------------------------------
+
+    fn user_with_team_schema() -> SchemaIndex {
+        schema_from(
+            "DEFINE TABLE team SCHEMAFULL;\n\
+             DEFINE FIELD label ON team TYPE string;\n\
+             DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE FIELD name ON user TYPE string;\n\
+             DEFINE FIELD team ON user TYPE record<team>;",
+        )
+    }
+
+    #[test]
+    fn record_link_field_traversal_resolves_the_linked_field_kind() {
+        let schema = user_with_team_schema();
+
+        // `team` is `record<team>`; `.label` crosses into `team` and resolves
+        // to the linked field's kind, nested under `team`.
+        let kind = analyze(&schema, "SELECT team.label FROM user;");
+        let fields = object_fields(array_element(&kind));
+        let team = object_fields(&fields["team"]);
+        assert_eq!(team["label"], Kind::String);
+    }
+
+    #[test]
+    fn record_link_traversal_to_absent_field_emits_1002_at_linked_table() {
+        let schema = user_with_team_schema();
+
+        let (_, diagnostics) = analyze_diagnostics(&schema, "SELECT team.badfield FROM user;");
+        let finding = diagnostics
+            .iter()
+            .find(|f| f.code().number() == 1002)
+            .expect("expected 1002 for the absent linked field");
+        // The message names the *linked* table, and a related note points at
+        // `team`'s definition.
+        assert!(
+            finding.message().contains("`team` has no field `badfield`"),
+            "unexpected message: {}",
+            finding.message()
+        );
+        assert!(
+            !finding.related().is_empty(),
+            "expected a `defined here` note at team's DEFINE TABLE"
+        );
+    }
+
+    #[test]
+    fn multi_hop_record_link_traversal_resolves_the_leaf_kind() {
+        let schema = schema_from(
+            "DEFINE TABLE c SCHEMAFULL;\n\
+             DEFINE FIELD label ON c TYPE string;\n\
+             DEFINE TABLE b SCHEMAFULL;\n\
+             DEFINE FIELD c ON b TYPE record<c>;\n\
+             DEFINE TABLE a SCHEMAFULL;\n\
+             DEFINE FIELD b ON a TYPE record<b>;",
+        );
+
+        // `a.b.c.label` hops a -> b -> c, then reads `label`.
+        let kind = analyze(&schema, "SELECT VALUE b.c.label FROM a;");
+        assert_eq!(kind, Kind::Array(Box::new(Kind::String), None));
+    }
+
+    #[test]
+    fn union_record_link_resolves_a_field_common_to_every_variant() {
+        let schema = schema_from(
+            "DEFINE TABLE cat SCHEMAFULL;\n\
+             DEFINE FIELD legs ON cat TYPE int;\n\
+             DEFINE FIELD purrs ON cat TYPE bool;\n\
+             DEFINE TABLE dog SCHEMAFULL;\n\
+             DEFINE FIELD legs ON dog TYPE int;\n\
+             DEFINE TABLE owner SCHEMAFULL;\n\
+             DEFINE FIELD pet ON owner TYPE record<cat | dog>;",
+        );
+
+        // `legs` exists on both with a common kind -> int.
+        let kind = analyze(&schema, "SELECT VALUE pet.legs FROM owner;");
+        assert_eq!(kind, Kind::Array(Box::new(Kind::Int), None));
+
+        // `purrs` exists only on `cat` -> widen to Any (never invent), and no
+        // 1002 (a union is too ambiguous to report without a false positive).
+        let (kind, diagnostics) = analyze_diagnostics(&schema, "SELECT VALUE pet.purrs FROM owner;");
+        assert_eq!(kind, Kind::Array(Box::new(Kind::Any), None));
+        assert!(
+            !codes(&diagnostics).contains(&1002),
+            "a union-link traversal must not emit 1002: {:?}",
+            codes(&diagnostics)
+        );
+    }
+
+    #[test]
+    fn dangling_record_link_traversal_emits_no_1002() {
+        // `team` links to a table absent from the schema — that is E1001's job,
+        // not a new E1002 field finding.
+        let schema = schema_from(
+            "DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE FIELD team ON user TYPE record<ghost>;",
+        );
+
+        let (_, diagnostics) = analyze_diagnostics(&schema, "SELECT team.label FROM user;");
+        assert!(
+            !codes(&diagnostics).contains(&1002),
+            "a dangling record link must not emit 1002: {:?}",
+            codes(&diagnostics)
+        );
+    }
+
+    #[test]
+    fn fetch_still_expands_a_record_link_field() {
+        // Capability #1 must not disturb FETCH: a bare link projection still
+        // materializes to the target object type under FETCH.
+        let schema = user_with_team_schema();
+
+        let kind = analyze(&schema, "SELECT team FROM user FETCH team;");
+        let fields = object_fields(array_element(&kind));
+        let team = object_fields(&fields["team"]);
+        assert_eq!(team["label"], Kind::String);
+    }
+
+    // -----------------------------------------------------------------------
+    // `.{…}` destructure field validation
+    // -----------------------------------------------------------------------
+
+    fn person_friend_user_schema() -> SchemaIndex {
+        schema_from(
+            "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD name ON person TYPE string;\n\
+             DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE FIELD name ON user TYPE string;\n\
+             DEFINE FIELD age ON user TYPE int;\n\
+             DEFINE TABLE friend TYPE RELATION IN person OUT user;",
+        )
+    }
+
+    #[test]
+    fn graph_destructure_types_each_selected_field() {
+        let schema = person_friend_user_schema();
+
+        let (kind, diagnostics) =
+            analyze_diagnostics(&schema, "SELECT ->friend->user.{name, age} FROM person;");
+        let fields = object_fields(array_element(&kind));
+        let friend = object_fields(&fields["->friend"]);
+        let user = object_fields(&friend["->user"]);
+        assert_eq!(user["name"], Kind::Array(Box::new(Kind::String), None));
+        assert_eq!(user["age"], Kind::Array(Box::new(Kind::Int), None));
+        assert!(
+            !codes(&diagnostics).contains(&1002),
+            "a valid destructure must not emit 1002: {:?}",
+            codes(&diagnostics)
+        );
+    }
+
+    #[test]
+    fn graph_destructure_absent_field_emits_1002_and_still_projects_valid_fields() {
+        let schema = person_friend_user_schema();
+
+        let (kind, diagnostics) =
+            analyze_diagnostics(&schema, "SELECT ->friend->user.{name, aeg} FROM person;");
+        // `name` still projects.
+        let fields = object_fields(array_element(&kind));
+        let friend = object_fields(&fields["->friend"]);
+        let user = object_fields(&friend["->user"]);
+        assert_eq!(user["name"], Kind::Array(Box::new(Kind::String), None));
+
+        // `aeg` is absent on `user` -> 1002 naming `user`, with its note.
+        let finding = diagnostics
+            .iter()
+            .find(|f| f.code().number() == 1002)
+            .expect("expected 1002 for the absent destructure field");
+        assert!(
+            finding.message().contains("`user` has no field `aeg`"),
+            "unexpected message: {}",
+            finding.message()
+        );
+        assert!(!finding.related().is_empty(), "expected user's definition note");
+    }
+
+    #[test]
+    fn row_destructure_absent_field_emits_1002() {
+        let schema = schema_from(
+            "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD profile.email ON person TYPE string;\n\
+             DEFINE FIELD profile.city ON person TYPE string;",
+        );
+
+        let (kind, diagnostics) =
+            analyze_diagnostics(&schema, "SELECT profile.{email, nope} FROM person;");
+        // `email` still projects.
+        let fields = object_fields(array_element(&kind));
+        let profile = object_fields(&fields["profile"]);
+        assert_eq!(profile["email"], Kind::String);
+
+        let finding = diagnostics
+            .iter()
+            .find(|f| f.code().number() == 1002)
+            .expect("expected 1002 for the absent row-destructure field");
+        assert!(
+            finding.message().contains("`person` has no field `profile.nope`"),
+            "unexpected message: {}",
+            finding.message()
+        );
+    }
+
+    #[test]
+    fn record_link_destructure_validates_against_the_linked_table() {
+        let schema = user_with_team_schema();
+
+        // `team.{label}` is a record-link destructure: `label` resolves on
+        // `team`; a bogus field reports against `team`.
+        let (kind, _) = analyze_diagnostics(&schema, "SELECT team.{label} FROM user;");
+        let fields = object_fields(array_element(&kind));
+        let team = object_fields(&fields["team"]);
+        assert_eq!(team["label"], Kind::String);
+
+        let (_, diagnostics) = analyze_diagnostics(&schema, "SELECT team.{nope} FROM user;");
+        let finding = diagnostics
+            .iter()
+            .find(|f| f.code().number() == 1002)
+            .expect("expected 1002 for the absent linked destructure field");
+        assert!(
+            finding.message().contains("`team` has no field `nope`"),
+            "unexpected message: {}",
+            finding.message()
+        );
+    }
+
+    #[test]
+    fn destructure_against_schemaless_target_emits_no_1002() {
+        // `user` here has no declared fields (schemaless): field-level checks
+        // are skipped by design, so a destructure emits no false positive.
+        let schema = schema_from(
+            "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD name ON person TYPE string;\n\
+             DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE TABLE friend TYPE RELATION IN person OUT user;",
+        );
+
+        let (_, diagnostics) =
+            analyze_diagnostics(&schema, "SELECT ->friend->user.{whatever} FROM person;");
+        assert!(
+            !codes(&diagnostics).contains(&1002),
+            "a schemaless destructure target must not emit 1002: {:?}",
+            codes(&diagnostics)
+        );
+    }
+
+    #[test]
+    fn traversal_through_an_opaque_field_emits_no_1002() {
+        // `account.person` is COMPUTED with no explicit TYPE, so its kind is
+        // unknown (`None`/`Any`). We cannot cross it to a concrete table, so we
+        // cannot prove `first_name`/`last_name` absent — suppress (no FP). This
+        // is the workshop-oracle repro (schema/organization/employee_of.surql).
+        let schema = schema_from(
+            "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD first_name ON person TYPE string;\n\
+             DEFINE FIELD last_name ON person TYPE string;\n\
+             DEFINE TABLE account SCHEMAFULL;\n\
+             DEFINE FIELD settings ON account TYPE string;\n\
+             DEFINE FIELD person ON account COMPUTED <~person[0];",
+        );
+
+        // Sanity: the field exists but has no resolvable kind.
+        let account = &schema.tables["account"];
+        assert!(account.fields.contains_key("person"));
+        assert!(
+            !matches!(account.fields["person"].kind, Some(Kind::Record(_))),
+            "the COMPUTED field must not resolve to a concrete record link"
+        );
+
+        // Row-destructure through the opaque field: no 1002.
+        let (_, diagnostics) = analyze_diagnostics(
+            &schema,
+            "SELECT id, person.{first_name, last_name}, settings FROM ONLY account WHERE id = account:x;",
+        );
+        assert!(
+            !codes(&diagnostics).contains(&1002),
+            "destructure through an opaque field must not emit 1002: {:?}",
+            codes(&diagnostics)
+        );
+
+        // Plain traversal through the opaque field: no 1002 either.
+        let (_, diagnostics) =
+            analyze_diagnostics(&schema, "SELECT person.first_name FROM account;");
+        assert!(
+            !codes(&diagnostics).contains(&1002),
+            "plain traversal through an opaque field must not emit 1002: {:?}",
+            codes(&diagnostics)
+        );
+    }
+
+    #[test]
+    fn opacity_suppression_still_reports_a_genuinely_typed_absent_link_field() {
+        // Guard against over-suppression: a properly typed record link to an
+        // absent field must still emit 1002 (the opacity carve-out is narrow).
+        let schema = user_with_team_schema();
+
+        let (_, diagnostics) = analyze_diagnostics(&schema, "SELECT team.{nope} FROM user;");
+        assert!(
+            codes(&diagnostics).contains(&1002),
+            "a typed link to an absent field must still emit 1002: {:?}",
             codes(&diagnostics)
         );
     }
