@@ -6,4 +6,5 @@
 node_modules/
 dist/
 *.tsbuildinfo
+.svelte-kit/
 .claude/

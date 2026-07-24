@@ -19,7 +19,7 @@
  * thin bindings over the {@link Observable} returned here.
  */
 
-import type { SurrealGuardClient } from "@surrealguard/client";
+import type { LiveDescriptor, SurrealGuardClient } from "@surrealguard/client";
 import type { LiveMessage, LiveSubscription, Uuid } from "surrealdb";
 
 export type QueryStatus = "loading" | "success" | "error";
@@ -119,6 +119,22 @@ export class QueryClient {
     };
   }
 
+  /**
+   * Observe a typed {@link LiveDescriptor} produced by `db.live(...)`. The row
+   * type is carried from the descriptor's phantom — no runtime constraint, so a
+   * degraded (`unknown`) row still works. This is the entry point the framework
+   * adapters use.
+   */
+  observeLive<R>(
+    descriptor: LiveDescriptor<R>,
+    options: { params?: Record<string, unknown>; initialData?: R[] } = {},
+  ): Observable<R> {
+    return this.observe(descriptor.sql, {
+      params: options.params ?? descriptor.params,
+      initialData: options.initialData as Row[] | undefined,
+    }) as unknown as Observable<R>;
+  }
+
   /** Run a one-shot query outside the reactive layer (e.g. in SSR `load`). */
   async fetch<R extends Row = Row>(
     sql: string,
@@ -127,6 +143,24 @@ export class QueryClient {
     const [rows] = await this.client.query(sql, params);
     const data = ((rows as R[] | undefined) ?? []) as R[];
     this.commit(queryKey(sql, params), { data, status: "success" });
+    return data;
+  }
+
+  /**
+   * Run a live descriptor's underlying `SELECT` once (stripping `LIVE`) and
+   * cache the rows under the live key, so a later {@link observe}/{@link
+   * observeLive} of the same query renders gap-free, then upgrades to live. This
+   * is the server-side seed used by the framework `load` / server helpers.
+   */
+  async prime<R>(
+    descriptor: LiveDescriptor<R>,
+    params?: Record<string, unknown>,
+  ): Promise<R[]> {
+    const selectSql = descriptor.sql.replace(/^\s*live\s+/i, "");
+    const merged = params ?? descriptor.params;
+    const [rows] = await this.client.query(selectSql, merged);
+    const data = ((rows as R[] | undefined) ?? []) as R[];
+    this.commit(queryKey(descriptor.sql, merged), { data: data as Row[], status: "success" });
     return data;
   }
 
@@ -224,4 +258,22 @@ export class QueryClient {
         started: false,
       });
   }
+}
+
+/**
+ * One {@link QueryClient} per underlying {@link SurrealGuardClient}, cached so
+ * every component sharing a client shares its subscription cache — the
+ * reference-counting that dedups live subscriptions only works if there is a
+ * single reactive core per connection. The framework adapters resolve their
+ * reactive core through this.
+ */
+const queryClients = new WeakMap<object, QueryClient>();
+
+export function getQueryClient(client: SurrealGuardClient): QueryClient {
+  let qc = queryClients.get(client);
+  if (!qc) {
+    qc = new QueryClient(client);
+    queryClients.set(client, qc);
+  }
+  return qc;
 }

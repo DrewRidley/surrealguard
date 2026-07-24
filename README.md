@@ -75,14 +75,17 @@ SSR hydration and live-query lifetimes:
 ```svelte
 <script>
   import { liveQuery } from "@surrealguard/svelte";
-  const users = liveQuery(qc, "LIVE SELECT * FROM user", { initial: data.users });
+  // `db` comes from Svelte context (setClient in +layout.svelte); `users` is
+  // runes-reactive — read it directly, no store `$` prefix.
+  const users = liveQuery((db) => db.live(`SELECT * FROM user`));
 </script>
-{#each $users.data as user (user.id)}<li>{user.name}</li>{/each}
+{#each users.data as user (user.id)}<li>{user.name}</li>{/each}
 ```
 
-`LIVE SELECT` opens one shared, reference-counted subscription and reconciles
-change notifications by record id; `@surrealguard/next` offers the same via a
-`useLiveQuery` hook.
+`db.live(...)` opens one shared, reference-counted `LIVE SELECT` subscription and
+reconciles change notifications by record id, with the row type inferred just
+like `db.query`. `@surrealguard/next` offers the same via a `useLiveQuery` hook
+(`const { data } = useLiveQuery((db) => db.live(`…`))`).
 
 ## What it analyzes
 

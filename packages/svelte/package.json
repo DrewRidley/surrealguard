@@ -1,7 +1,7 @@
 {
   "name": "@surrealguard/svelte",
   "version": "0.2.0",
-  "description": "Svelte / SvelteKit bindings for SurrealGuard: typed queries, live stores, SSR hydration.",
+  "description": "Svelte 5 / SvelteKit bindings for SurrealGuard: typed live queries as runes, SSR hydration.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
   "author": "Drew Ridley",
@@ -10,14 +10,16 @@
     "url": "https://github.com/DrewRidley/surrealguard",
     "directory": "packages/svelte"
   },
-  "keywords": ["surrealdb", "surrealql", "svelte", "sveltekit", "live-query"],
+  "keywords": ["surrealdb", "surrealql", "svelte", "sveltekit", "runes", "live-query"],
   "sideEffects": false,
   "files": ["dist", "LICENSE-MIT", "LICENSE-APACHE"],
+  "svelte": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "svelte": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
   "publishConfig": {
@@ -28,17 +30,21 @@
     "@surrealguard/query": "workspace:*"
   },
   "peerDependencies": {
-    "svelte": ">=4",
+    "svelte": "^5",
     "surrealdb": "^2.0.8"
   },
   "devDependencies": {
+    "@sveltejs/package": "^2.5.8",
+    "@sveltejs/vite-plugin-svelte": "^4.0.4",
+    "@testing-library/svelte": "^5.2.4",
     "jsdom": "^25",
     "surrealdb": "2.0.8",
-    "svelte": "^4"
+    "svelte": "^5.1.0",
+    "svelte-check": "^4.0.0"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --clean --external svelte",
-    "typecheck": "tsc --noEmit",
+    "build": "svelte-package --input src --output dist",
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run"
   }
 }

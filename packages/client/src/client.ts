@@ -18,8 +18,9 @@
  * ```
  */
 
-import { Surreal, type BoundQuery } from "surrealdb";
+import { Surreal, type BoundQuery, type LiveResource } from "surrealdb";
 import type { ParamsArg, SurqlRegistry } from "./registry.js";
+import { buildLiveSql, ensureLive, type LiveDescriptor, type LiveRowOf } from "./live.js";
 
 /**
  * The parameters argument for a query text: required exactly when the query
@@ -65,5 +66,34 @@ export class SurrealGuardClient extends Surreal {
     return (
       typeof query === "string" ? super.query(query, bindings) : super.query(query)
     ) as QueryBuilder;
+  }
+
+  /**
+   * Describe a live query. Passed the query as a string / template-literal
+   * **argument** — `db.live(\`SELECT * FROM user\`)` — the row type is inferred
+   * from the generated registry exactly like {@link SurrealGuardClient.query} (a
+   * non-registered query degrades to `unknown`, never `any`), and the returned
+   * {@link LiveDescriptor} carries the `LIVE SELECT …` text for the framework
+   * adapters to observe. Written without the `LIVE` prefix; it is added
+   * automatically.
+   *
+   * Note the parentheses: this takes a string argument, not a *tagged* template.
+   * TypeScript widens a tagged template's cooked text to `string`, which would
+   * lose the row type, so `db.live(\`…\`)` / `db.live("…")` are the typed forms.
+   * A bare tagged call `db.live\`…\`` still runs but its row is `unknown`.
+   *
+   * The SDK's own `live(table)` subscription remains available — a non-string,
+   * non-template (table / record) argument passes straight through to it.
+   */
+  live<Q extends string>(query: Q): LiveDescriptor<LiveRowOf<Q>>;
+  live(strings: TemplateStringsArray, ...values: unknown[]): LiveDescriptor<unknown>;
+  live<T>(what: LiveResource): ReturnType<Surreal["live"]>;
+  live(
+    arg: string | TemplateStringsArray | LiveResource,
+    ...values: unknown[]
+  ): LiveDescriptor | ReturnType<Surreal["live"]> {
+    if (typeof arg === "string") return { sql: ensureLive(arg) };
+    if (Array.isArray(arg)) return { sql: buildLiveSql(arg, values) };
+    return super.live(arg as LiveResource);
   }
 }

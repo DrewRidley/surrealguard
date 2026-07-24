@@ -2,12 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { act, render, screen } from "@testing-library/react";
 import type { SurrealGuardClient } from "@surrealguard/client";
 import type { LiveMessage } from "surrealdb";
-import { QueryClient } from "@surrealguard/query";
-import { useLiveQuery } from "../src/index.js";
+import { SurrealGuardProvider, useLiveQuery } from "../src/index.js";
 
 const isLive = (sql: string) => /^\s*live\b/i.test(sql);
 
-/** A fake client: canned rows plus a capturable live handler. */
+/** A fake client with `.live()`, a canned `.query()`, and a capturable live handler. */
 function makeClient() {
   let handler: ((m: LiveMessage) => void) | null = null;
   const liveOf = vi.fn(async () => ({
@@ -21,6 +20,9 @@ function makeClient() {
     async kill() {},
   }));
   const client = {
+    live(sql: string) {
+      return { sql: isLive(sql) ? sql : `LIVE ${sql}` };
+    },
     async query(sql: string) {
       return isLive(sql) ? ["live-1"] : [[{ id: "user:1", name: "ada" }]];
     },
@@ -34,13 +36,14 @@ const change = (action: "CREATE" | "UPDATE" | "DELETE", id: string, value: Recor
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function Users({ client }: { client: QueryClient }) {
-  const state = useLiveQuery(client, "LIVE SELECT * FROM user", {
-    initialData: [{ id: "user:1", name: "ada" }],
+/** Resolves its client from context (via useClient), no explicit override. */
+function Users() {
+  const { data } = useLiveQuery((db) => db.live(`SELECT * FROM user`), {
+    initialData: [{ id: "user:1", name: "ada" }] as Array<Record<string, unknown>>,
   });
   return (
     <ul>
-      {state.data.map((u) => (
+      {data.map((u) => (
         <li key={String(u.id)}>{String(u.name)}</li>
       ))}
     </ul>
@@ -48,11 +51,14 @@ function Users({ client }: { client: QueryClient }) {
 }
 
 describe("useLiveQuery", () => {
-  it("renders seeded data and re-renders on a live CREATE notification", async () => {
+  it("renders seeded data from context client and re-renders on a live CREATE", async () => {
     const { client, emit } = makeClient();
-    const qc = new QueryClient(client);
 
-    render(<Users client={qc} />);
+    render(
+      <SurrealGuardProvider client={client}>
+        <Users />
+      </SurrealGuardProvider>,
+    );
 
     // Seeded initialData is visible on the first render, no hydration gap.
     expect(screen.getByText("ada")).toBeTruthy();
@@ -63,7 +69,7 @@ describe("useLiveQuery", () => {
       await flush();
     });
 
-    // A live CREATE pushes through the QueryClient and re-renders the hook.
+    // A live CREATE pushes through the core and re-renders the hook.
     await act(async () => {
       emit(change("CREATE", "user:2", { name: "lin" }));
     });
