@@ -1038,7 +1038,7 @@ impl SchemaHovers<'_> {
         };
         let mut path = segments.clone();
         path.push(field.to_string());
-        let kind = crate::analyzer::data::select::kind_for_path(def, &path);
+        let kind = crate::analyzer::data::select::resolve_field_path(self.schema, def, &path);
         if self.covers(span) {
             if let Some(kind) = &kind {
                 let source_span = SourceSpan::new(self.source.clone(), span);
@@ -1100,7 +1100,8 @@ impl SchemaHovers<'_> {
                     };
                     let mut path = segments.clone();
                     path.push(name.clone());
-                    let kind = crate::analyzer::data::select::kind_for_path(def, &path);
+                    let kind =
+                        crate::analyzer::data::select::resolve_field_path(self.schema, def, &path);
                     if self.covers(part.span) {
                         if let Some(kind) = &kind {
                             let span = SourceSpan::new(self.source.clone(), part.span);
@@ -1541,7 +1542,8 @@ impl SchemaDefs<'_> {
                     };
                     let mut path = segments.clone();
                     path.push(name.clone());
-                    let kind = crate::analyzer::data::select::kind_for_path(def, &path);
+                    let kind =
+                        crate::analyzer::data::select::resolve_field_path(self.schema, def, &path);
                     if self.covers(part.span) {
                         if let Some(field) = def.fields.get(&path.join(".")) {
                             self.out.push((part.span, field.name_span.clone()));
@@ -1869,6 +1871,30 @@ mod tests {
         let name_offset = text.rfind("name").expect("linked field present") as u32 + 1;
         let name_hover =
             hover_at(&output, &schema, &source, text, name_offset).expect("hover over linked field");
+        assert!(
+            name_hover.markdown.contains("name: string"),
+            "got: {}",
+            name_hover.markdown
+        );
+    }
+
+    #[test]
+    fn hover_crosses_a_union_record_link_to_the_linked_field() {
+        // A union link `record<user | admin>` can't be re-rooted one segment at
+        // a time (two targets), so the field past it must resolve through the
+        // link-crossing resolver. Both variants agree on `name: string`.
+        let text = "DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE FIELD name ON user TYPE string;\n\
+             DEFINE TABLE admin SCHEMAFULL;\n\
+             DEFINE FIELD name ON admin TYPE string;\n\
+             DEFINE TABLE post SCHEMAFULL;\n\
+             DEFINE FIELD author ON post TYPE record<user | admin>;\n\
+             SELECT author.name FROM post;";
+        let (output, schema, source) = analyze(text);
+
+        let name_offset = text.rfind("name").expect("linked field present") as u32 + 1;
+        let name_hover = hover_at(&output, &schema, &source, text, name_offset)
+            .expect("hover over union-linked field");
         assert!(
             name_hover.markdown.contains("name: string"),
             "got: {}",

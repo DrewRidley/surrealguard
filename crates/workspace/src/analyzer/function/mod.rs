@@ -90,7 +90,14 @@ pub(crate) fn analyze_builtin_function(
             Some(function) => {
                 let function = function.clone();
                 check_custom_call(ctx, call, &function, args);
-                function.return_kind.clone().unwrap_or(Kind::Any)
+                // The declared `-> T` is authoritative; when the definition
+                // omits it, fall back to the kind inferred from the body so
+                // untyped `fn::` helpers still propagate a real type.
+                function
+                    .return_kind
+                    .clone()
+                    .or_else(|| function.inferred_return.clone())
+                    .unwrap_or(Kind::Any)
             }
             None => {
                 if !is_synthetic(call) {
@@ -424,6 +431,60 @@ mod tests {
                 let _ = analyze_builtin_function(&mut ctx, &call, args);
             }
         }
+    }
+
+    /// The response kind of `query` analyzed as a standalone source.
+    fn response_kind_of(query: &str) -> Option<Kind> {
+        let mut workspace = crate::analysis::Workspace::default();
+        crate::analysis::analyze_query(&mut workspace, query).response_kind
+    }
+
+    /// The findings raised for `query` analyzed as a standalone source.
+    fn diagnostics_of(query: &str) -> Vec<Finding> {
+        let mut workspace = crate::analysis::Workspace::default();
+        crate::analysis::analyze_query(&mut workspace, query).diagnostics
+    }
+
+    #[test]
+    fn untyped_udf_call_resolves_to_its_inferred_body_kind() {
+        // No `-> T`: the caller sees the body's inferred `int`, not `Any`.
+        let query = "DEFINE FUNCTION fn::double($x: int) { RETURN $x * 2; };\n\
+                     RETURN fn::double(3);";
+        assert_eq!(response_kind_of(query), Some(Kind::Int));
+        assert_eq!(diagnostics_of(query), Vec::new());
+    }
+
+    #[test]
+    fn declared_return_wins_over_the_inferred_body_kind() {
+        // The declared `-> string` is authoritative at the call site.
+        let query = "DEFINE FUNCTION fn::greet($n: string) -> string { RETURN $n; };\n\
+                     RETURN fn::greet('hi');";
+        assert_eq!(response_kind_of(query), Some(Kind::String));
+        assert_eq!(diagnostics_of(query), Vec::new());
+    }
+
+    #[test]
+    fn genuinely_untyped_udf_call_stays_any() {
+        // The body returns an untyped param, so the call is honestly `Any`.
+        let query = "DEFINE FUNCTION fn::opaque($x: any) { RETURN $x; };\n\
+                     RETURN fn::opaque(3);";
+        assert_eq!(response_kind_of(query), Some(Kind::Any));
+        assert_eq!(diagnostics_of(query), Vec::new());
+    }
+
+    #[test]
+    fn udf_calling_another_udf_resolves_or_safely_falls_back() {
+        // `fn::wrap` delegates to `fn::base`; the call resolves through the
+        // callee's inferred return, or safely degrades to `Any` — never wrong.
+        let query = "DEFINE FUNCTION fn::base($x: int) { RETURN $x * 2; };\n\
+                     DEFINE FUNCTION fn::wrap($y: int) { RETURN fn::base($y); };\n\
+                     RETURN fn::wrap(3);";
+        assert!(
+            matches!(response_kind_of(query), Some(Kind::Int) | Some(Kind::Any)),
+            "cross-udf call must resolve to int or fall back to any, got {:?}",
+            response_kind_of(query),
+        );
+        assert_eq!(diagnostics_of(query), Vec::new());
     }
 
     fn collect_dispatch_arms(

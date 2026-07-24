@@ -767,7 +767,19 @@ fn array_fact(
         .collect();
     let max_len = Some(facts.len() as u64);
 
-    let element_kind = homogeneous(facts.iter().filter_map(|f| f.kind.clone()));
+    // The element type is the union of the element kinds: a single distinct
+    // kind collapses to `array<T>` (`Kind::either` dedupes), disagreeing kinds
+    // become `array<T | U>`. An element of unknown kind (`Any`) poisons the
+    // whole element type — no union can be narrower than `any`. An empty array
+    // (or one whose elements are all unresolved) keeps the `array<any>` default.
+    let element_kinds: Vec<Kind> = facts.iter().filter_map(|f| f.kind.clone()).collect();
+    let element_kind: Option<Kind> = if element_kinds.is_empty() {
+        None
+    } else if element_kinds.iter().any(|kind| matches!(kind, Kind::Any)) {
+        Some(Kind::Any)
+    } else {
+        Some(Kind::either(element_kinds))
+    };
 
     let mut fact = ExpressionFact::new(span, ExpressionValueClass::Array).with_kind(Kind::Array(
         Box::new(element_kind.clone().unwrap_or(Kind::Any)),
@@ -777,10 +789,6 @@ fn array_fact(
         .iter()
         .flat_map(|f| f.partial.iter().cloned())
         .collect();
-    if facts.len() > 1 && element_kind.is_none() {
-        fact.partial
-            .push(PartialReason::UnsupportedSyntax("mixed array".into()));
-    }
     if let Some(values) = facts
         .iter()
         .map(|f| f.value.clone())
@@ -918,11 +926,6 @@ fn merged_element(a: &Kind, b: &Kind) -> Kind {
 
 pub fn is_numeric(kind: &Kind) -> bool {
     matches!(kind, Kind::Int | Kind::Float | Kind::Decimal | Kind::Number)
-}
-
-fn homogeneous<T: PartialEq>(mut values: impl Iterator<Item = T>) -> Option<T> {
-    let first = values.next()?;
-    values.all(|value| value == first).then_some(first)
 }
 
 fn merge_dependencies(fact: &mut ExpressionFact, deps: crate::expression::ExpressionDependencies) {
@@ -1122,6 +1125,38 @@ mod tests {
         assert_eq!(fields["who"], Kind::String);
         assert_eq!(fields["ok"], Kind::Bool);
         assert_eq!(fields["tags"], Kind::Array(Box::new(Kind::String), Some(2)));
+    }
+
+    #[test]
+    fn array_literals_infer_the_union_of_their_element_kinds() {
+        let env = StatementEnv::default();
+
+        // Homogeneous elements collapse to a single element kind.
+        let parsed = parse("RETURN [1, 2, 3];");
+        let fact = infer_first(&parsed, "Array", None, &env);
+        assert_eq!(fact.kind, Some(Kind::Array(Box::new(Kind::Int), Some(3))));
+        assert!(fact.partial.is_empty());
+
+        // Mixed elements infer the union `array<int | string>` — no partial.
+        let parsed = parse("RETURN [1, 'a'];");
+        let fact = infer_first(&parsed, "Array", None, &env);
+        assert_eq!(
+            fact.kind,
+            Some(Kind::Array(
+                Box::new(Kind::Either(vec![Kind::Int, Kind::String])),
+                Some(2)
+            ))
+        );
+        assert!(
+            fact.partial.is_empty(),
+            "mixed array no longer punts to a partial: {:?}",
+            fact.partial
+        );
+
+        // An empty array keeps the `array<any>` default.
+        let parsed = parse("RETURN [];");
+        let fact = infer_first(&parsed, "Array", None, &env);
+        assert_eq!(fact.kind, Some(Kind::Array(Box::new(Kind::Any), Some(0))));
     }
 
     #[test]

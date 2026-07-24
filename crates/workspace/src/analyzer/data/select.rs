@@ -280,7 +280,9 @@ fn check_fetch_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analy
         if let Some(segments) = plain_field_segments(&idiom.node) {
             crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
             // FETCH substitutes records; fetching a scalar does nothing.
-            if let Some(kind) = kind_for_path(table, &segments) {
+            // Resolve across record links so `FETCH team.owner` reads the
+            // linked field's kind rather than the opaque `Any` boundary.
+            if let Some(kind) = resolve_field_path(ctx.schema(), table, &segments) {
                 if kind != Kind::Any && !kind_may_hold_record(&kind) {
                     let span = surrealguard_syntax::span::SourceSpan::new(
                         ctx.source().clone(),
@@ -310,8 +312,9 @@ fn check_split_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analy
     for idiom in &stmt.split {
         if let Some(segments) = plain_field_segments(&idiom.node) {
             crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
-            // SPLIT fans rows out over a collection field.
-            if let Some(kind) = kind_for_path(table, &segments) {
+            // SPLIT fans rows out over a collection field. Resolve across
+            // record links so a linked collection field types precisely.
+            if let Some(kind) = resolve_field_path(ctx.schema(), table, &segments) {
                 let base = crate::kinds::literal_base_kind(&kind).unwrap_or_else(|| kind.clone());
                 if !matches!(base, Kind::Array(_, _) | Kind::Set(_, _) | Kind::Any) {
                     let span = surrealguard_syntax::span::SourceSpan::new(
@@ -2101,6 +2104,36 @@ mod tests {
         // `array` (untargeted) scalarizes to its element kind — Any here.
         assert_eq!(fields["tags"], Kind::Any);
         assert_eq!(fields["name"], Kind::String);
+    }
+
+    #[test]
+    fn fetch_resolves_across_a_record_link_to_judge_the_target_field() {
+        // `team` on `user` is a record link; the FETCH check must cross it to
+        // type the trailing segment. `team.label` is a scalar (FETCH does
+        // nothing → 1023); `team.owner` is itself a link (FETCH is meaningful
+        // → no finding). Before link-crossing both stayed `Any` and neither
+        // fired.
+        let schema = schema_from(
+            "DEFINE TABLE team SCHEMAFULL;\n\
+             DEFINE FIELD label ON team TYPE string;\n\
+             DEFINE FIELD owner ON team TYPE record<user>;\n\
+             DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE FIELD team ON user TYPE record<team>;",
+        );
+
+        let (_, scalar) = analyze_diagnostics(&schema, "SELECT * FROM user FETCH team.label;");
+        assert!(
+            codes(&scalar).contains(&1023),
+            "FETCH over a linked scalar should fire 1023, got {:?}",
+            codes(&scalar)
+        );
+
+        let (_, linked) = analyze_diagnostics(&schema, "SELECT * FROM user FETCH team.owner;");
+        assert!(
+            !codes(&linked).contains(&1023),
+            "FETCH over a linked record must not fire 1023, got {:?}",
+            codes(&linked)
+        );
     }
 
     #[test]

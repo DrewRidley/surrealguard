@@ -11,16 +11,21 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::expression::{ExpressionFact, ExpressionValueClass};
 
-pub(crate) fn analyze_define_function(
+/// Analyzes a `DEFINE FUNCTION` body with its parameters bound to their
+/// declared kinds (untyped params bind as `Any`) and returns the body's
+/// response kind. Returns `None` when the definition has no body.
+///
+/// Running the body here is what surfaces the usual expression/statement
+/// diagnostics inside it, and the returned kind is both what the `-> T`
+/// contract (2012) is checked against and what an untyped function's callers
+/// infer (persisted on [`crate::schema::FunctionDef::inferred_return`]).
+pub(crate) fn infer_function_body_kind(
     ctx: &mut AnalysisContext<'_>,
-    stmt: &ast::DefineFunction,
-) -> Kind {
-    let Some(body) = &stmt.body else {
-        return Kind::None;
-    };
-
-    let body_kind = ctx.with_child_env(|ctx| {
-        for (name, ty) in &stmt.params {
+    def: &ast::DefineFunction,
+) -> Option<Kind> {
+    let body = def.body.as_ref()?;
+    let kind = ctx.with_child_env(|ctx| {
+        for (name, ty) in &def.params {
             let kind = ty
                 .as_ref()
                 .and_then(|ty| crate::schema::kind_from_type_expr(&ty.node, ctx.source_text()).kind)
@@ -32,6 +37,16 @@ pub(crate) fn analyze_define_function(
         }
         crate::analyzer::flow::block::analyze_block(ctx, body)
     });
+    Some(kind)
+}
+
+pub(crate) fn analyze_define_function(
+    ctx: &mut AnalysisContext<'_>,
+    stmt: &ast::DefineFunction,
+) -> Kind {
+    let Some(body_kind) = infer_function_body_kind(ctx, stmt) else {
+        return Kind::None;
+    };
 
     if let Some(return_ty) = &stmt.return_ty {
         if let Some(declared) =

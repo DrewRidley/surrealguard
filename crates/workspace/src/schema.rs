@@ -61,8 +61,16 @@ pub struct FunctionDef {
     pub args: Vec<FunctionParam>,
     /// `fn::` paths called from the body, for cycle detection.
     pub callees: Vec<String>,
-    /// The declared or inferred return kind, when known.
+    /// The declared return kind (`-> T`), when the definition annotates one.
+    /// Authoritative: the body is checked against it (2012), and call sites
+    /// resolve to it before falling back to [`Self::inferred_return`].
     pub return_kind: Option<Kind>,
+    /// The return kind inferred from the body, populated only when the
+    /// definition omits an explicit `-> T` and the body's response kind is a
+    /// concrete (non-`Any`) type. Call sites fall back to this so untyped
+    /// `fn::` helpers still propagate a real type. `None` when a return is
+    /// declared (declared wins) or the body is genuinely untyped.
+    pub inferred_return: Option<Kind>,
     /// The source the definition lives in.
     pub source: SourceId,
     /// Span of the function name.
@@ -508,7 +516,17 @@ pub(crate) fn apply_schema_statement_effects(
             }
             ast::DefineStmt::Param(def) => schema.insert_param(param_def_from_ast(def, source)),
             ast::DefineStmt::Function(def) => {
-                schema.insert_function(function_def_from_ast(def, source, text, stmt.span));
+                let mut function = function_def_from_ast(def, source, text, stmt.span);
+                // The accumulated catalog is now visible: re-infer an untyped
+                // body against it so a call to an already-defined `fn::` helper
+                // resolves (the standalone build above only sees params). Only
+                // upgrade a concrete result — never overwrite with `Any`.
+                if function.return_kind.is_none() {
+                    if let Some(inferred) = infer_untyped_return(def, source, text, Some(&*schema)) {
+                        function.inferred_return = Some(inferred);
+                    }
+                }
+                schema.insert_function(function);
             }
             ast::DefineStmt::Analyzer(def) => {
                 schema.insert_analyzer(analyzer_def_from_ast(def, source));
@@ -718,6 +736,17 @@ pub(crate) fn function_def_from_ast(
         None => (None, None),
     };
 
+    // When the definition omits `-> T`, infer the body's response kind so
+    // callers get a real type instead of `Any`. This standalone path has no
+    // surrounding schema, so a body that leans on tables or other `fn::`
+    // helpers degrades to `Any` (persisted as `None`); the schema-aware walk
+    // path (`apply_schema_statement_effects`) upgrades those where it can.
+    let inferred_return = if return_kind.is_none() {
+        infer_untyped_return(def, source, text, None)
+    } else {
+        None
+    };
+
     // Body callees for cycle detection (5009) — a text scan over everything
     // after the function name is enough: a false positive requires `fn::name`
     // inside a string literal, which is vanishingly rare in function bodies.
@@ -744,9 +773,46 @@ pub(crate) fn function_def_from_ast(
         args,
         callees,
         return_kind,
+        inferred_return,
         source: source.clone(),
         name_span: span(source, def.name.span),
         return_span,
+    }
+}
+
+/// Infers an untyped `DEFINE FUNCTION`'s return kind from its body, for
+/// [`FunctionDef::inferred_return`]. Returns `None` when there is no body, a
+/// return type is declared (declared wins — never inferred over), or the body
+/// resolves to `Kind::Any` (no false precision).
+///
+/// `schema` scopes the inference: `None` uses an empty catalog (param-only
+/// bodies still resolve; anything referencing tables or other functions
+/// degrades to `Any`), while `Some(schema)` lets a body that calls an
+/// already-visible `fn::` helper resolve to that helper's return. The body is
+/// analyzed here only to read its type — a scratch diagnostics sink is
+/// discarded, so this never emits findings (the walk's `DEFINE FUNCTION`
+/// analyzer owns the body's real diagnostics).
+fn infer_untyped_return(
+    def: &ast::DefineFunction,
+    source: &SourceId,
+    text: &str,
+    schema: Option<&SchemaIndex>,
+) -> Option<Kind> {
+    if def.return_ty.is_some() || def.body.is_none() {
+        return None;
+    }
+    let empty = SchemaIndex::default();
+    let schema = schema.unwrap_or(&empty);
+    let mut scratch: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+    let mut ctx = crate::analyzer::context::AnalysisContext::new(
+        schema,
+        source.clone(),
+        text,
+        &mut scratch,
+    );
+    match crate::analyzer::schema::define::function::infer_function_body_kind(&mut ctx, def) {
+        Some(Kind::Any) | None => None,
+        Some(kind) => Some(kind),
     }
 }
 
@@ -994,6 +1060,8 @@ mod tests {
         assert_eq!(function.args[0].name, "age");
         assert_eq!(function.args[0].kind, Some(Kind::Int));
         assert_eq!(function.return_kind, Some(Kind::Int));
+        // A declared `-> int` is authoritative; the body is never inferred over it.
+        assert_eq!(function.inferred_return, None);
 
         let analyzer = extraction
             .schema
@@ -1002,6 +1070,76 @@ mod tests {
         assert_eq!(analyzer.name, "ascii");
         assert_eq!(analyzer.tokenizers, vec!["blank", "class"]);
         assert_eq!(analyzer.filters, vec!["lowercase", "snowball(english)"]);
+    }
+
+    #[test]
+    fn untyped_function_persists_its_inferred_body_return_kind() {
+        let parsed = parse_source(
+            SourceId::new("schema:inferred-return"),
+            "DEFINE FUNCTION fn::double($x: int) { RETURN $x * 2; };",
+        )
+        .expect("schema parses");
+
+        let extraction = extract_schema(&[parsed]);
+        assert_eq!(extraction.diagnostics, Vec::new());
+
+        let function = extraction
+            .schema
+            .function("fn::double")
+            .expect("function is indexed");
+        // No `-> T` annotation, so the declared return is absent...
+        assert_eq!(function.return_kind, None);
+        // ...but the body's `int * int` is inferred and persisted for callers.
+        assert_eq!(function.inferred_return, Some(Kind::Int));
+    }
+
+    #[test]
+    fn genuinely_untyped_function_body_persists_no_inferred_return() {
+        // The body returns an untyped param, so the response kind is `Any`:
+        // no false precision — the inferred return stays absent.
+        let parsed = parse_source(
+            SourceId::new("schema:opaque-return"),
+            "DEFINE FUNCTION fn::opaque($x: any) { RETURN $x; };",
+        )
+        .expect("schema parses");
+
+        let extraction = extract_schema(&[parsed]);
+        assert_eq!(extraction.diagnostics, Vec::new());
+
+        let function = extraction
+            .schema
+            .function("fn::opaque")
+            .expect("function is indexed");
+        assert_eq!(function.return_kind, None);
+        assert_eq!(function.inferred_return, None);
+    }
+
+    #[test]
+    fn function_calling_another_untyped_function_resolves_its_inferred_return() {
+        // `fn::wrap` has no `-> T`; its body delegates to `fn::base`, whose own
+        // inferred return (`int`) is visible through the schema-aware walk.
+        let parsed = parse_source(
+            SourceId::new("schema:cross-fn-return"),
+            "DEFINE FUNCTION fn::base($x: int) { RETURN $x * 2; };\n\
+             DEFINE FUNCTION fn::wrap($y: int) { RETURN fn::base($y); };",
+        )
+        .expect("schema parses");
+
+        let extraction = extract_schema(&[parsed]);
+        assert_eq!(extraction.diagnostics, Vec::new());
+
+        let wrap = extraction
+            .schema
+            .function("fn::wrap")
+            .expect("function is indexed");
+        assert_eq!(wrap.return_kind, None);
+        // Resolves through the callee; a safe fallback would be `None` (`Any`),
+        // never a wrong type.
+        assert!(
+            matches!(wrap.inferred_return, Some(Kind::Int) | None),
+            "cross-fn inferred return must resolve to int or safely fall back, got {:?}",
+            wrap.inferred_return
+        );
     }
 
     #[test]
@@ -1123,3 +1261,4 @@ mod tests {
         assert!(extraction.schema.table("person").is_none());
     }
 }
+
