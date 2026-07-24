@@ -45,16 +45,23 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
             if kind != Kind::Any && !crate::kinds::kind_is_assignable_to(&kind, declared) {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
-                    span,
-                    2001,
-                    format!(
-                        "`{}`'s value is `{}`, but the field is declared `{}`",
-                        idiom_text(&stmt.path.node),
-                        crate::render_kind(&kind),
-                        crate::render_kind(declared),
-                    ),
-                ));
+                let field_name = idiom_text(&stmt.path.node);
+                let def_span = surrealguard_syntax::span::SourceSpan::new(
+                    ctx.source().clone(),
+                    stmt.path.span,
+                );
+                ctx.emit(
+                    surrealguard_diagnostics::catalog::finding(
+                        span,
+                        2001,
+                        format!(
+                            "`{field_name}`'s value is `{}`, but the field is declared `{}`",
+                            crate::render_kind(&kind),
+                            crate::render_kind(declared),
+                        ),
+                    )
+                    .with_related(def_span, format!("`{field_name}` is defined here")),
+                );
             }
         }
     }
@@ -179,14 +186,17 @@ fn check_field_definition(
 
     match ctx.schema().table(&stmt.table.node) {
         None => {
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
+            let finding = surrealguard_diagnostics::catalog::finding(
                 surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.table.span),
                 1001,
                 format!(
                     "`{field_key}` is defined on `{}`, which is not a defined table",
                     stmt.table.node
                 ),
-            ));
+            );
+            let finding =
+                crate::analyzer::data::with_table_suggestion(finding, ctx, &stmt.table.node);
+            ctx.emit(finding);
         }
         Some(table) if !stmt.overwrite && field_is_duplicate(table, &stmt.path.node, &field_key) => {
             let mut finding = surrealguard_diagnostics::catalog::finding(

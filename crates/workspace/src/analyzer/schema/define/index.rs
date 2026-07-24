@@ -16,14 +16,16 @@ pub(crate) fn analyze_define_index(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
     let source = ctx.source().clone();
 
     let Some(table) = ctx.schema().table(&stmt.table.node) else {
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
+        let finding = surrealguard_diagnostics::catalog::finding(
             SourceSpan::new(source, stmt.table.span),
             1001,
             format!(
                 "index `{}` is defined on `{}`, which is not a defined table",
                 stmt.name.node, stmt.table.node
             ),
-        ));
+        );
+        let finding = crate::analyzer::data::with_table_suggestion(finding, ctx, &stmt.table.node);
+        ctx.emit(finding);
         return Kind::None;
     };
 
@@ -56,21 +58,25 @@ pub(crate) fn analyze_define_index(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
         .map(|other| other.name.clone());
 
     let table_name_span = table.name_span.clone();
+    let field_keys: Vec<String> = table.fields.keys().cloned().collect();
     for (text, span) in unknown_fields {
-        ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
-                span,
-                1002,
-                format!(
-                    "`{}` has no field `{text}` (used by index `{}`)",
-                    stmt.table.node, stmt.name.node
-                ),
-            )
-            .with_related(
-                table_name_span.clone(),
-                format!("`{}` is defined here", stmt.table.node),
+        let mut finding = surrealguard_diagnostics::catalog::finding(
+            span,
+            1002,
+            format!(
+                "`{}` has no field `{text}` (used by index `{}`)",
+                stmt.table.node, stmt.name.node
             ),
         );
+        if let Some(nearest) = crate::suggest::closest(&text, field_keys.iter().map(String::as_str))
+        {
+            finding = finding.with_help(format!("did you mean `{nearest}`?"));
+        }
+        finding = finding.with_related(
+            table_name_span.clone(),
+            format!("`{}` is defined here", stmt.table.node),
+        );
+        ctx.emit(finding);
     }
 
     if let Some(existing) = duplicate {

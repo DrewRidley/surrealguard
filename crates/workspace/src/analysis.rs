@@ -1469,12 +1469,12 @@ INSERT INTO person { name: 'Ada' };
         );
 
         let output = analyze_workspace(&workspace);
-        let message = output.sources[&source]
+        let finding = output.sources[&source]
             .diagnostics
             .iter()
             .find(|finding| finding.code().number() == 5002)
-            .map(|finding| finding.message().to_string())
             .expect("a 5002 argument-type finding");
+        let message = finding.message().to_string();
 
         assert!(
             message.contains("declared `option<string>`"),
@@ -1485,6 +1485,15 @@ INSERT INTO person { name: 'Ada' };
             "expected the passed kind, got: {message}"
         );
         assert!(!message.contains("none |"), "raw union leaked: {message}");
+        // The arg-mismatch note points back at the DEFINE FUNCTION.
+        assert!(
+            finding
+                .related()
+                .iter()
+                .any(|note| note.message == "`fn::greet` is defined here"),
+            "expected a related note at the function definition, got: {:?}",
+            finding.related()
+        );
     }
 
     #[test]

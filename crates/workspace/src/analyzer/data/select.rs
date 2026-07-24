@@ -390,11 +390,16 @@ fn check_order_clause(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analys
             if !keys.contains(&name) {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), key.expr.span);
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                let mut finding = surrealguard_diagnostics::catalog::finding(
                     span,
                     2017,
                     format!("ORDER BY `{name}` doesn't name a field of this query's rows"),
-                ));
+                );
+                if let Some(def) = table.fields.get(&name) {
+                    finding = finding
+                        .with_related(def.name_span.clone(), format!("`{name}` is defined here"));
+                }
+                ctx.emit(finding);
             }
         }
     }

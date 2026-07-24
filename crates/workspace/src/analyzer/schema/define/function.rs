@@ -43,16 +43,26 @@ pub(crate) fn analyze_define_function(
                     ctx.source().clone(),
                     return_ty.span,
                 );
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
-                    span,
-                    2012,
-                    format!(
-                        "`{}` declares `-> {}` but its body returns `{}`",
-                        stmt.name.node,
-                        crate::render_kind(&declared),
-                        crate::render_kind(&body_kind)
+                let name_span = surrealguard_syntax::span::SourceSpan::new(
+                    ctx.source().clone(),
+                    stmt.name.span,
+                );
+                ctx.emit(
+                    surrealguard_diagnostics::catalog::finding(
+                        span,
+                        2012,
+                        format!(
+                            "`{}` declares `-> {}` but its body returns `{}`",
+                            stmt.name.node,
+                            crate::render_kind(&declared),
+                            crate::render_kind(&body_kind)
+                        ),
+                    )
+                    .with_related(
+                        name_span,
+                        format!("`{}` is defined here", stmt.name.node),
                     ),
-                ));
+                );
             }
         }
     }

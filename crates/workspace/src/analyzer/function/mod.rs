@@ -127,11 +127,18 @@ pub(crate) fn analyze_builtin_function(
 pub(crate) fn unknown_function(ctx: &mut AnalysisContext<'_>, call: &ast::Call) -> Kind {
     if !is_synthetic(call) {
         let span = SourceSpan::new(ctx.source().clone(), call.path.span);
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
+        let mut finding = surrealguard_diagnostics::catalog::finding(
             span,
             5001,
             format!("`{}` is not a known function", call.path.node),
-        ));
+        );
+        if let Some(nearest) = crate::suggest::closest(
+            call.path.node.as_str(),
+            ctx.schema().functions.keys().map(String::as_str),
+        ) {
+            finding = finding.with_help(format!("did you mean `{nearest}`?"));
+        }
+        ctx.emit(finding);
     }
     Kind::Any
 }

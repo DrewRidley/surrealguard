@@ -26,21 +26,29 @@ pub(crate) fn check_table_reference(
         return true;
     }
     let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
-    let mut finding = surrealguard_diagnostics::catalog::finding(
+    let finding = surrealguard_diagnostics::catalog::finding(
         span,
         1001,
         format!("`{name}` is not a defined table"),
     );
-    match crate::suggest::closest(name, ctx.schema().tables.keys().map(String::as_str)) {
-        Some(nearest) => {
-            finding = finding.with_help(format!("did you mean `{nearest}`?"));
-        }
-        None => {
-            finding = finding.with_help(format!("no `DEFINE TABLE {name}` exists in the workspace"));
-        }
-    }
+    let finding = with_table_suggestion(finding, ctx, name);
     ctx.emit(finding);
     false
+}
+
+/// Appends the standard 1001 "did you mean `<closest>`?" help to a finding
+/// about an unknown table `name` — or, when no near name exists, the
+/// "no `DEFINE TABLE <name>` exists" note. Shared so every emit site that
+/// reports a missing table offers the same suggestion.
+pub(crate) fn with_table_suggestion(
+    finding: surrealguard_diagnostics::Finding,
+    ctx: &crate::analyzer::context::AnalysisContext<'_>,
+    name: &str,
+) -> surrealguard_diagnostics::Finding {
+    match crate::suggest::closest(name, ctx.schema().tables.keys().map(String::as_str)) {
+        Some(nearest) => finding.with_help(format!("did you mean `{nearest}`?")),
+        None => finding.with_help(format!("no `DEFINE TABLE {name}` exists in the workspace")),
+    }
 }
 
 /// Emits `code` when a plain field path does not resolve on `table`,

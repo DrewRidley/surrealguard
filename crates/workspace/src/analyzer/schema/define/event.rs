@@ -77,14 +77,17 @@ pub(crate) fn analyze_define_event(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
 /// `$event.<field>` references on it (1002).
 fn check_event_references(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineEvent) {
     if !ctx.schema().tables.contains_key(&stmt.table.node) {
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
+        let finding = surrealguard_diagnostics::catalog::finding(
             SourceSpan::new(ctx.source().clone(), stmt.table.span),
             1001,
             format!(
                 "event `{}` targets unknown table `{}`",
                 stmt.name.node, stmt.table.node
             ),
-        ));
+        );
+        let finding =
+            crate::analyzer::data::with_table_suggestion(finding, ctx, &stmt.table.node);
+        ctx.emit(finding);
         return;
     }
 
@@ -93,23 +96,38 @@ fn check_event_references(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineEvent
         collect_event_field_refs(clause, &mut refs);
     }
 
-    let unknown: Vec<(String, ByteRange)> = {
+    let (unknown, table_name_span, field_keys): (Vec<(String, ByteRange)>, SourceSpan, Vec<String>) = {
         let table = &ctx.schema().tables[&stmt.table.node];
-        refs.iter()
+        let unknown = refs
+            .iter()
             .filter(|(path, _, _)| !crate::schema::index_field_path_exists_on_table(table, path))
             .map(|(_, text, span)| (text.clone(), *span))
-            .collect()
+            .collect();
+        (
+            unknown,
+            table.name_span.clone(),
+            table.fields.keys().cloned().collect(),
+        )
     };
     let source = ctx.source().clone();
     for (text, span) in unknown {
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
+        let mut finding = surrealguard_diagnostics::catalog::finding(
             SourceSpan::new(source.clone(), span),
             1002,
             format!(
                 "event `{}` references unknown field `{}` on table `{}`",
                 stmt.name.node, text, stmt.table.node
             ),
-        ));
+        );
+        if let Some(nearest) = crate::suggest::closest(&text, field_keys.iter().map(String::as_str))
+        {
+            finding = finding.with_help(format!("did you mean `{nearest}`?"));
+        }
+        finding = finding.with_related(
+            table_name_span.clone(),
+            format!("`{}` is defined here", stmt.table.node),
+        );
+        ctx.emit(finding);
     }
 }
 
@@ -188,5 +206,47 @@ fn collect_event_field_refs_stmt(
         S::Expr(e) => collect_event_field_refs(e, out),
         S::Block(block) => collect_event_field_refs_block(block, out),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::analysis::{analyze_query, Workspace};
+
+    #[test]
+    fn event_unknown_field_1002_carries_suggestion_and_definition_note() {
+        let query = concat!(
+            "DEFINE TABLE person SCHEMAFULL;\n",
+            "DEFINE FIELD name ON person TYPE string;\n",
+            "DEFINE EVENT greet ON person WHEN $event = 'CREATE' THEN {\n",
+            "  RETURN $event.naem;\n",
+            "};\n",
+        );
+        let mut workspace = Workspace::default();
+        let output = analyze_query(&mut workspace, query);
+        let finding = output
+            .diagnostics
+            .iter()
+            .find(|finding| finding.code().number() == 1002)
+            .expect("a 1002 unknown-field finding on the event path");
+
+        // "did you mean `name`?" over the table's fields.
+        assert!(
+            finding
+                .help()
+                .iter()
+                .any(|help| help.message == "did you mean `name`?"),
+            "expected a did-you-mean suggestion, got: {:?}",
+            finding.help()
+        );
+        // note: pointing at the DEFINE TABLE.
+        assert!(
+            finding
+                .related()
+                .iter()
+                .any(|note| note.message == "`person` is defined here"),
+            "expected a related note at the table definition, got: {:?}",
+            finding.related()
+        );
     }
 }

@@ -22,16 +22,17 @@ pub(crate) fn relate_response_kind(stmt: &ast::RelateStmt, ctx: &mut AnalysisCon
             if !ctx.schema().tables.contains_key(&endpoint_table) {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), endpoint.span);
-                ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
-                        span,
-                        1001,
-                        format!("`{endpoint_table}` is not a defined table"),
-                    )
-                    .with_help(format!(
-                        "no `DEFINE TABLE {endpoint_table}` exists in the workspace"
-                    )),
+                let finding = surrealguard_diagnostics::catalog::finding(
+                    span,
+                    1001,
+                    format!("`{endpoint_table}` is not a defined table"),
                 );
+                let finding = crate::analyzer::data::with_table_suggestion(
+                    finding,
+                    ctx,
+                    &endpoint_table,
+                );
+                ctx.emit(finding);
             }
         }
     }
