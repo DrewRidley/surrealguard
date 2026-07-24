@@ -57,6 +57,7 @@ const ENTRIES: &[(u16, &str, Severity)] = &[
     (2034, "required fields are provided at creation", Severity::Error),
     (2035, "DEFINE ANALYZER filter arguments are valid", Severity::Error),
     (2036, "GeoJSON literals have their declared shape", Severity::Error),
+    (2037, "a field's DEFAULT satisfies its own ASSERT", Severity::Error),
     (3001, "a step traverses a relation table", Severity::Error),
     (3002, "the usage matches the relation's declared shape (`in`->edge->`out`)", Severity::Error),
     (3004, "a FROM-position chain is complete (edge->target pairs)", Severity::Error),

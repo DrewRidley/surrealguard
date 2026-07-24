@@ -1037,7 +1037,11 @@ mod tests {
 
         let parsed = parse_source(
             SourceId::new("schema:object-record-union"),
-            "DEFINE TABLE thing;\n\
+            "DEFINE TABLE team;\n\
+             DEFINE TABLE user;\n\
+             DEFINE TABLE organization;\n\
+             DEFINE TABLE account;\n\
+             DEFINE TABLE thing;\n\
              DEFINE FIELD address ON thing TYPE { street: string, zip: int };\n\
              DEFINE FIELD owner ON thing TYPE record<team | user | organization>;\n\
              DEFINE FIELD maybe ON thing TYPE option<record<account | team>>;",

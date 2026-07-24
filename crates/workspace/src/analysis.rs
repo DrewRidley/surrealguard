@@ -568,6 +568,168 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn record_field_referencing_undefined_table_fires_1001() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD owner ON t TYPE record<ghost>;"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 1001), 1);
+        let finding = output
+            .diagnostics
+            .iter()
+            .find(|f| f.code().number() == 1001)
+            .expect("a 1001 finding");
+        assert!(finding.message().contains("ghost"));
+    }
+
+    #[test]
+    fn record_field_referencing_defined_tables_is_clean() {
+        let mut workspace = Workspace::default();
+        // Defined targets, including through option/array/union wrappers, must
+        // never fire 1001.
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE TABLE org SCHEMAFULL;\n\
+             DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD owner ON t TYPE record<user>;\n\
+             DEFINE FIELD maybe ON t TYPE option<record<user>>;\n\
+             DEFINE FIELD many ON t TYPE array<record<user | org>>;"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 1001), 0, "unexpected: {:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn default_violating_own_assert_fires_2037() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD status ON t TYPE string \
+                 DEFAULT 'activ' ASSERT $value IN ['active', 'inactive'];"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 2037), 1, "unexpected: {:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn default_satisfying_own_assert_is_clean() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD status ON t TYPE string \
+                 DEFAULT 'active' ASSERT $value IN ['active', 'inactive'];\n\
+             DEFINE FIELD score ON t TYPE int DEFAULT 5 ASSERT $value >= 0 AND $value <= 10;"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 2037), 0, "unexpected: {:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn non_const_default_or_assert_does_not_fire_2037() {
+        let mut workspace = Workspace::default();
+        // A non-const DEFAULT (function call) and a non-foldable ASSERT term
+        // must both BAIL — never guess.
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD created ON t TYPE datetime \
+                 DEFAULT time::now() ASSERT $value < time::now();\n\
+             DEFINE FIELD name ON t TYPE string \
+                 DEFAULT 'x' ASSERT string::len($value) > 0;"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 2037), 0, "unexpected: {:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn bare_count_resolves_without_unknown_function() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE person SCHEMAFULL;".into(),
+        );
+
+        // Bare `count()` must resolve to the builtin (no spurious 5001), and a
+        // grouped count is a real aggregate (no 4023 either).
+        let output = analyze_query(
+            &mut workspace,
+            "SELECT count() AS n FROM person GROUP ALL;",
+        );
+
+        assert_eq!(
+            output
+                .diagnostics
+                .iter()
+                .filter(|f| f.code().number() == 5001)
+                .count(),
+            0,
+            "unexpected 5001: {:?}",
+            output.diagnostics
+        );
+        assert_eq!(
+            output
+                .diagnostics
+                .iter()
+                .filter(|f| f.code().number() == 4023)
+                .count(),
+            0,
+        );
+    }
+
+    #[test]
+    fn ungrouped_bare_count_fires_4023_not_5001() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE person SCHEMAFULL;".into(),
+        );
+
+        let output = analyze_query(&mut workspace, "SELECT count() AS n FROM person;");
+
+        assert_eq!(
+            output
+                .diagnostics
+                .iter()
+                .filter(|f| f.code().number() == 5001)
+                .count(),
+            0,
+            "unexpected 5001: {:?}",
+            output.diagnostics
+        );
+        assert_eq!(
+            output
+                .diagnostics
+                .iter()
+                .filter(|f| f.code().number() == 4023)
+                .count(),
+            1,
+            "expected 4023: {:?}",
+            output.diagnostics
+        );
+    }
+
+    #[test]
     fn unique_and_plain_index_over_the_same_fields_are_not_redundant() {
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(

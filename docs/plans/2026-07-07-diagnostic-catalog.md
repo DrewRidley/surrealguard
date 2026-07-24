@@ -123,6 +123,7 @@ removed table unknown); 1028 → 1027.
 | 2034 | required fields are provided at creation | `CREATE person;` with non-optional, no-DEFAULT `name` | E | ✅ emitting |
 | 2035 | DEFINE ANALYZER filter arguments are valid | `edgengram(5, 2)` | E | ✅ emitting |
 | 2036 | GeoJSON literals have their declared shape | `{type: 'Pointt', ...}` | E | ✅ emitting |
+| 2037 | a field's DEFAULT satisfies its own ASSERT | `DEFAULT 'activ' ASSERT $value IN ['active','inactive']` | E | ✅ emitting |
 
 Folded by the contract audit (2026-07-09): 2002, 2003, 2009, 2010, 2027 →
 2001; 2006, 2011 → 2005; 2013 → 2012; 2014, 2029 → 2004; 2023 → 2008;
