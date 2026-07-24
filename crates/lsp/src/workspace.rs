@@ -9,8 +9,11 @@ use std::path::PathBuf;
 use tower_lsp::lsp_types::Url;
 
 use surrealguard_diagnostics::Finding;
+use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
-use surrealguard_workspace::{analyze_workspace, Workspace as AnalysisWorkspace};
+use surrealguard_workspace::{
+    analyze_workspace, AnalysisOutput, SchemaIndex, Workspace as AnalysisWorkspace,
+};
 
 /// A tracked document in the workspace.
 #[derive(Debug, Clone)]
@@ -191,6 +194,62 @@ impl Workspace {
             .collect()
     }
 
+    /// Full analysis of a `.surql` document for editor features (inlay
+    /// hints, hover): the target source's analysis output, the shared
+    /// schema, its analysis source id, and its text. Returns `None` for
+    /// empty documents and for non-`.surql` host files (whose embedded
+    /// queries feed diagnostics only).
+    pub fn feature_analysis(&self, uri: &Url) -> Option<FeatureAnalysis> {
+        let target = self.documents.get(uri)?;
+        if target.text.trim().is_empty() {
+            return None;
+        }
+
+        let (analysis_workspace, target_source) = self.surql_analysis_workspace(uri)?;
+        let workspace_output = analyze_workspace(&analysis_workspace);
+        let output = workspace_output.sources.get(&target_source)?.clone();
+
+        Some(FeatureAnalysis {
+            output,
+            schema: workspace_output.schema,
+            source: target_source,
+            text: target.text.clone(),
+        })
+    }
+
+    /// Builds the analysis workspace from every tracked `.surql` document,
+    /// returning it with the target document's analysis source id. `None`
+    /// when the target is not itself a `.surql` document.
+    fn surql_analysis_workspace(&self, uri: &Url) -> Option<(AnalysisWorkspace, SourceId)> {
+        if !is_surrealql_uri(uri) {
+            return None;
+        }
+
+        let mut analysis_workspace = AnalysisWorkspace::default();
+        let mut target_source = None;
+
+        let mut documents: Vec<_> = self
+            .documents
+            .values()
+            .filter(|doc| is_surrealql_uri(&doc.uri))
+            .collect();
+        documents.sort_by(|left, right| left.uri.as_str().cmp(right.uri.as_str()));
+
+        for doc in documents {
+            let source_id = match doc.uri.to_file_path() {
+                Ok(path) => analysis_workspace.add_file_source(path, doc.text.clone()),
+                Err(_) => {
+                    analysis_workspace.add_virtual_source(doc.uri.to_string(), doc.text.clone())
+                }
+            };
+            if doc.uri == *uri {
+                target_source = Some(source_id);
+            }
+        }
+
+        Some((analysis_workspace, target_source?))
+    }
+
     /// Scan workspace folders for `.surql` and `.surrealql` files and load them.
     pub fn scan_folders(&mut self) {
         for root in &self.roots.clone() {
@@ -247,6 +306,19 @@ fn respan_to_host(
         rebuilt = rebuilt.with_tag(*tag);
     }
     rebuilt
+}
+
+/// Full per-document analysis for editor features, carrying everything
+/// the inlay-hint and hover handlers need to resolve types by span.
+pub struct FeatureAnalysis {
+    /// The target document's analysis output (statements, params).
+    pub output: AnalysisOutput,
+    /// The schema shared across all `.surql` documents in the workspace.
+    pub schema: SchemaIndex,
+    /// The target document's analysis source id.
+    pub source: SourceId,
+    /// The target document's full text, for offset/position conversion.
+    pub text: String,
 }
 
 /// Diagnostics-only result from the shared workspace analysis facade.

@@ -56,7 +56,7 @@ pub fn workspace_finding_to_lsp_diagnostic(
         })
         .collect();
 
-    let tags: Vec<DiagnosticTag> = finding
+    let mut tags: Vec<DiagnosticTag> = finding
         .tags()
         .iter()
         .map(|tag| match tag {
@@ -64,6 +64,14 @@ pub fn workspace_finding_to_lsp_diagnostic(
             FindingTag::Deprecated => DiagnosticTag::DEPRECATED,
         })
         .collect();
+
+    // Dead-code and redundancy findings should render greyed even when the
+    // finding itself carries no tag: the code family is the signal. Editors
+    // dedupe, but avoid emitting the tag twice.
+    if marks_code_unnecessary(finding.code().number()) && !tags.contains(&DiagnosticTag::UNNECESSARY)
+    {
+        tags.push(DiagnosticTag::UNNECESSARY);
+    }
 
     Some(Diagnostic {
         range,
@@ -75,6 +83,16 @@ pub fn workspace_finding_to_lsp_diagnostic(
         tags: (!tags.is_empty()).then_some(tags),
         ..Diagnostic::default()
     })
+}
+
+/// Whether a finding's code marks the flagged span as unnecessary or
+/// redundant — dead code the editor should grey out. The `Finding` model
+/// has no intrinsic "redundant" category, so this maps the small set of
+/// catalog codes whose contract is "this code can be removed":
+/// unreachable statements (4006), duplicate SET targets (4010), duplicate
+/// projections (4011), and unused LET bindings (7001).
+fn marks_code_unnecessary(number: u16) -> bool {
+    matches!(number, 4006 | 4010 | 4011 | 7001)
 }
 
 #[cfg(test)]
@@ -127,6 +145,57 @@ mod tests {
         assert_eq!(related[0].location.range.start.character, 13);
         assert_eq!(related[0].message, "relation `likes` declared here");
         assert_eq!(diagnostic.tags, Some(vec![DiagnosticTag::UNNECESSARY]));
+    }
+
+    #[test]
+    fn dead_code_findings_are_tagged_unnecessary_by_code_family() {
+        // 4006 (unreachable) carries no tag at emission, but the LSP greys
+        // it out from the code alone.
+        let source = "RETURN 1;\nRETURN 2;";
+        let finding = Finding::new(
+            SourceSpan::new(
+                SourceId::new("file:///workspace/query.surql"),
+                ByteRange::new(10, 19).expect("valid range"),
+            ),
+            FindingCode::statement(4006),
+            Severity::Warning,
+            "unreachable statement",
+        );
+        assert!(finding.tags().is_empty(), "fixture has no intrinsic tag");
+
+        let diagnostic = workspace_finding_to_lsp_diagnostic(
+            source,
+            &finding,
+            &PolicyConfig::default(),
+            &BTreeMap::new(),
+        )
+        .expect("passes default policy");
+
+        assert_eq!(diagnostic.tags, Some(vec![DiagnosticTag::UNNECESSARY]));
+    }
+
+    #[test]
+    fn ordinary_findings_carry_no_unnecessary_tag() {
+        let source = "SELECT * FROM ghost;";
+        let finding = Finding::new(
+            SourceSpan::new(
+                SourceId::new("file:///workspace/query.surql"),
+                ByteRange::new(14, 19).expect("valid range"),
+            ),
+            FindingCode::schema(1001),
+            Severity::Error,
+            "unknown table `ghost`",
+        );
+
+        let diagnostic = workspace_finding_to_lsp_diagnostic(
+            source,
+            &finding,
+            &PolicyConfig::default(),
+            &BTreeMap::new(),
+        )
+        .expect("passes default policy");
+
+        assert_eq!(diagnostic.tags, None);
     }
 
     #[test]

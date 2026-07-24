@@ -23,6 +23,32 @@ pub fn offset_to_position(source: &str, offset: usize) -> Position {
     Position::new(line, character)
 }
 
+/// Convert an LSP Position (line, UTF-16 character) to a byte offset.
+/// Clamps past-end positions to the end of their line, or to `source.len()`
+/// past the last line.
+pub fn position_to_offset(source: &str, position: Position) -> usize {
+    let mut line = 0u32;
+    let mut character = 0u32;
+
+    for (byte, ch) in source.char_indices() {
+        if line == position.line && character >= position.character {
+            return byte;
+        }
+        if ch == '\n' {
+            if line == position.line {
+                // Target column is past this line's end; clamp to the newline.
+                return byte;
+            }
+            line += 1;
+            character = 0;
+        } else {
+            character += ch.len_utf16() as u32;
+        }
+    }
+
+    source.len()
+}
+
 /// Convert byte offsets to an LSP Range.
 pub fn byte_range_to_lsp(source: &str, start: usize, end: usize) -> Range {
     Range {
@@ -87,5 +113,26 @@ mod tests {
         let range = byte_range_to_lsp(source, 1, 5);
         assert_eq!(range.start, Position::new(0, 1));
         assert_eq!(range.end, Position::new(1, 1));
+    }
+
+    #[test]
+    fn position_to_offset_is_the_inverse_of_offset_to_position() {
+        let source = "LET $age = 42;\nRETURN $age;";
+        for offset in [0usize, 4, 8, 15, 22, source.len()] {
+            let position = offset_to_position(source, offset);
+            assert_eq!(position_to_offset(source, position), offset, "offset {offset}");
+        }
+    }
+
+    #[test]
+    fn position_to_offset_handles_multibyte_and_past_end_columns() {
+        // 'é' is one UTF-16 unit but two bytes: column 2 lands on the byte
+        // after it.
+        let source = "é_x\nyz";
+        assert_eq!(position_to_offset(source, Position::new(0, 2)), 3);
+        // A column past a line's end clamps to that line's newline byte.
+        assert_eq!(position_to_offset(source, Position::new(0, 99)), 4);
+        // A line past the last clamps to end of source.
+        assert_eq!(position_to_offset(source, Position::new(9, 0)), source.len());
     }
 }

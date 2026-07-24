@@ -106,6 +106,8 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
+                inlay_hint_provider: Some(OneOf::Left(true)),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -120,6 +122,77 @@ impl LanguageServer for Backend {
 
     async fn shutdown(&self) -> Result<()> {
         Ok(())
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let uri = params.text_document.uri;
+        let analysis = {
+            let ws = self.workspace.read().await;
+            ws.feature_analysis(&uri)
+        };
+        let Some(analysis) = analysis else {
+            return Ok(None);
+        };
+
+        let hints = surrealguard_workspace::let_binding_hints(&analysis.output)
+            .into_iter()
+            .map(|hint| {
+                // The grey `: <kind>` sits right after the `$name` token.
+                let position = crate::text::offset_to_position(
+                    &analysis.text,
+                    hint.name_span.range().end() as usize,
+                );
+                InlayHint {
+                    position,
+                    label: InlayHintLabel::String(hint.label),
+                    kind: Some(InlayHintKind::TYPE),
+                    text_edits: None,
+                    tooltip: None,
+                    padding_left: Some(true),
+                    padding_right: Some(false),
+                    data: None,
+                }
+            })
+            .collect();
+
+        Ok(Some(hints))
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let analysis = {
+            let ws = self.workspace.read().await;
+            ws.feature_analysis(&uri)
+        };
+        let Some(analysis) = analysis else {
+            return Ok(None);
+        };
+
+        let offset = crate::text::position_to_offset(&analysis.text, position) as u32;
+        let Some(info) = surrealguard_workspace::hover_at(
+            &analysis.output,
+            &analysis.schema,
+            &analysis.source,
+            offset,
+        ) else {
+            return Ok(None);
+        };
+
+        let range = info.span.range();
+        let range = crate::text::byte_range_to_lsp(
+            &analysis.text,
+            range.start() as usize,
+            range.end() as usize,
+        );
+
+        Ok(Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: info.markdown,
+            }),
+            range: Some(range),
+        }))
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {

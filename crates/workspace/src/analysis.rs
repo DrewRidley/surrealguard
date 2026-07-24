@@ -68,6 +68,23 @@ pub struct StatementAnalysis {
     pub response_kind: Option<Kind>,
     /// SELECT clause modifiers; empty for other statement kinds.
     pub select_modifiers: Vec<SelectModifierAnalysis>,
+    /// For a `LET $name = <expr>` statement, the binding it introduces and
+    /// the kind inference gave it; `None` for every other statement kind.
+    pub let_binding: Option<LetBindingAnalysis>,
+}
+
+/// A `LET $name = <expr>` binding as consumers see it: the variable name,
+/// the span of the `$name` token, and the kind inference gave the bound
+/// value. Editor features (inlay hints, hover) read this to show a
+/// binding's inferred type where its source has none written.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LetBindingAnalysis {
+    /// The bound variable name, without the leading `$`.
+    pub name: String,
+    /// Where the `$name` token sits in its source.
+    pub name_span: SourceSpan,
+    /// The inferred kind of the bound value; `None` when undeterminable.
+    pub kind: Option<Kind>,
 }
 
 /// A SELECT clause modifier fact: which clause, where, whether it
