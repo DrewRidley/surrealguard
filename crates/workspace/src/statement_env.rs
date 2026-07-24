@@ -23,6 +23,12 @@ pub struct StatementEnv {
     /// `IF $t = 'table'` guard narrows `$x` the same as the direct
     /// `type::table($x) = 'table'` form.
     table_discriminants: BTreeMap<String, String>,
+    /// Flow-narrowed field paths: a guard like `$file.folder != NONE`
+    /// records `"file.folder" -> record<folder>`, so a downstream read of
+    /// that exact idiom path resolves to the narrowed kind rather than the
+    /// declared `option<record<folder>>`. Keyed on the `param.field.field`
+    /// path; only the exact path narrows (never the base param or siblings).
+    narrowed_paths: BTreeMap<String, surrealdb_types::Kind>,
 }
 
 impl StatementEnv {
@@ -36,7 +42,19 @@ impl StatementEnv {
             param_defaults: self.param_defaults.clone(),
             params: BTreeMap::new(),
             table_discriminants: self.table_discriminants.clone(),
+            narrowed_paths: self.narrowed_paths.clone(),
         }
+    }
+
+    /// Records that the idiom path `key` (a `param.field.field` string) is
+    /// flow-narrowed to `kind` in this scope. Only the exact path narrows.
+    pub fn set_narrowed_path(&mut self, key: String, kind: surrealdb_types::Kind) {
+        self.narrowed_paths.insert(key, kind);
+    }
+
+    /// The flow-narrowed kind for the idiom path `key`, if a guard proved one.
+    pub fn narrowed_path(&self, key: &str) -> Option<&surrealdb_types::Kind> {
+        self.narrowed_paths.get(key)
     }
 
     /// Records that `binding` holds `type::table($param)`, so an equality

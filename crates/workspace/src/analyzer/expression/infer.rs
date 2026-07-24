@@ -379,7 +379,54 @@ pub fn method_result(
     method_return_kind(receiver, method, args, ctx)
 }
 
+/// The `param.field.field` key of a simple idiom path (`$param` followed by
+/// one or more plain `Field` parts), if the idiom is one. This is the shape a
+/// flow guard can narrow (`$file.folder != NONE`); anything with an index,
+/// method, graph step, etc. is not a narrowable path.
+pub(crate) fn simple_idiom_path_key(idiom: &ast::Idiom) -> Option<String> {
+    let mut parts = idiom.parts.iter();
+    let ast::IdiomPart::Start(start) = &parts.next()?.node else {
+        return None;
+    };
+    let ast::Expr::Param(param) = &start.node else {
+        return None;
+    };
+    let mut key = param.clone();
+    let mut had_field = false;
+    for part in parts {
+        let ast::IdiomPart::Field(name) = &part.node else {
+            return None;
+        };
+        key.push('.');
+        key.push_str(name);
+        had_field = true;
+    }
+    had_field.then_some(key)
+}
+
+/// Steps a base kind through a chain of field segments via the schema —
+/// `record<file>` then `folder` reaches `option<record<folder>>`. Used to
+/// resolve a guarded field path's declared kind before narrowing it.
+pub(crate) fn step_field_path(
+    base: &Kind,
+    fields: &[String],
+    schema: &SchemaIndex,
+) -> Option<Kind> {
+    let mut current = base.clone();
+    for field in fields {
+        current = field_of_kind(&current, field, schema)?;
+    }
+    Some(current)
+}
+
 fn step_idiom_kind(idiom: &ast::Idiom, ctx: &mut AnalysisContext<'_>) -> Option<Kind> {
+    // A guard may have flow-narrowed this exact path (`$file.folder` proven
+    // non-none). The narrowed kind supersedes the declared one.
+    if let Some(key) = simple_idiom_path_key(idiom) {
+        if let Some(kind) = ctx.env().narrowed_path(&key) {
+            return Some(kind.clone());
+        }
+    }
     let mut parts = idiom.parts.iter();
     let mut current: Kind = match &parts.next()?.node {
         ast::IdiomPart::Start(expr) => infer_expression_fact(expr, ctx).kind?,
@@ -499,8 +546,8 @@ fn binary_fact(
     // likewise `$x != NONE AND <rhs>`. Infer the rhs with `$x` narrowed to its
     // non-none kind so `option<string>` reads as `string` there (a guarded
     // `string::len($value)` / `string::is_email($value)` type-checks).
-    let rhs_fact = match none_guarded_param(&op.node, lhs) {
-        Some(param) => infer_rhs_with_narrowed_param(param, rhs, ctx),
+    let rhs_fact = match none_guarded_path(&op.node, lhs) {
+        Some(path) => with_guard_narrowed(&path, ctx, |ctx| infer_expression_fact(rhs, ctx)),
         None => infer_expression_fact(rhs, ctx),
     };
 
@@ -521,14 +568,14 @@ fn binary_fact(
     fact.with_partial(PartialReason::UnsupportedSyntax("BinaryExpression".into()))
 }
 
-/// The parameter narrowed by a `= NONE OR` / `!= NONE AND` guard on the
-/// *left* operand: `$x = NONE` under `OR`, or `$x != NONE` under `AND`.
-/// Returns the parameter name whose non-none kind the right operand may
-/// assume.
-pub(crate) fn none_guarded_param<'a>(
+/// The param/path narrowed by a `= NONE OR` / `!= NONE AND` guard on the
+/// *left* operand: `$x = NONE` under `OR`, or `$x != NONE` under `AND`. The
+/// guarded target is a bare param (`$x`) or a simple field path
+/// (`$file.folder`) whose non-none kind the right operand may assume.
+pub(crate) fn none_guarded_path(
     op: &ast::BinaryOp,
-    lhs: &'a ast::Spanned<ast::Expr>,
-) -> Option<&'a str> {
+    lhs: &ast::Spanned<ast::Expr>,
+) -> Option<crate::analyzer::flow::narrow::GuardPath> {
     let want_eq = match op {
         ast::BinaryOp::Or => true,
         ast::BinaryOp::And => false,
@@ -550,37 +597,53 @@ pub(crate) fn none_guarded_param<'a>(
     if !matches_op {
         return None;
     }
-    // One side is the parameter, the other the `NONE` literal.
+    // One side is the param/path, the other the `NONE` literal.
     let is_none = |e: &ast::Spanned<ast::Expr>| {
         matches!(&e.node, ast::Expr::Literal(ast::Literal::None))
     };
-    let param_of = |e: &'a ast::Spanned<ast::Expr>| match &e.node {
-        ast::Expr::Param(name) => Some(name.as_str()),
-        _ => None,
-    };
     if is_none(inner_rhs) {
-        param_of(inner_lhs)
+        crate::analyzer::flow::narrow::guard_path_of(&inner_lhs.node)
     } else if is_none(inner_lhs) {
-        param_of(inner_rhs)
+        crate::analyzer::flow::narrow::guard_path_of(&inner_rhs.node)
     } else {
         None
     }
 }
 
-/// Infers `rhs` with `param` rebound to its non-none kind, when it currently
-/// resolves to an `option<...>` (`none | t`).
-fn infer_rhs_with_narrowed_param(
-    param: &str,
-    rhs: &ast::Spanned<ast::Expr>,
+/// Runs `f` with the guard's target narrowed to its non-none kind
+/// (`none | t` → `t`). A bare param rebinds its binding; a field path records
+/// a per-path override. A missing base or an unresolvable path leaves the
+/// environment unchanged. Shared by inference (this module) and checking
+/// (`super::check`), so both sides of a `= NONE OR` / `!= NONE AND` guard read
+/// the narrowed kind.
+pub(crate) fn with_guard_narrowed<T>(
+    path: &crate::analyzer::flow::narrow::GuardPath,
     ctx: &mut AnalysisContext<'_>,
-) -> ExpressionFact {
-    with_none_narrowed(param, ctx, |ctx| infer_expression_fact(rhs, ctx))
+    f: impl FnOnce(&mut AnalysisContext<'_>) -> T,
+) -> T {
+    if path.is_bare() {
+        return with_none_narrowed(&path.param, ctx, f);
+    }
+    // Resolve the path's declared kind, strip none, and override that exact
+    // path for the duration of `f`.
+    let narrowed = ctx
+        .env()
+        .let_fact(&path.param)
+        .and_then(|fact| fact.kind.clone())
+        .and_then(|base| step_field_path(&base, &path.fields, ctx.schema()))
+        .map(|kind| narrow_out_none(&kind));
+    match narrowed {
+        Some(kind) => ctx.with_child_env(|ctx| {
+            ctx.define_narrowed_path(path.key(), kind);
+            f(ctx)
+        }),
+        None => f(ctx),
+    }
 }
 
-/// Runs `f` with `param` rebound to its non-none kind (`none | t` → `t`). A
-/// missing or non-optional binding leaves the environment unchanged. Shared
-/// by inference (this module) and checking (`super::check`), so both sides of
-/// a `= NONE OR` / `!= NONE AND` guard read the narrowed kind.
+/// Runs `f` with bare param `param` rebound to its non-none kind
+/// (`none | t` → `t`). A missing or non-optional binding leaves the
+/// environment unchanged.
 pub(crate) fn with_none_narrowed<T>(
     param: &str,
     ctx: &mut AnalysisContext<'_>,

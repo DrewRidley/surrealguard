@@ -37,11 +37,47 @@ pub(crate) enum Narrowing {
     NotTable(String),
 }
 
-/// A `(param, refinement)` a guard yields for one param.
+/// The target of a narrowing: a bare param (`$x`) or a param plus a short
+/// field path (`$file.folder`, `$a.b.c`). Bare params rebind their binding;
+/// field paths record a per-path override keyed on the exact `param.field…`
+/// string — only that path narrows, never the base param or a sibling.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GuardPath {
+    /// The base param name (without `$`).
+    pub param: String,
+    /// The field segments after the param; empty means a bare param.
+    pub fields: Vec<String>,
+}
+
+impl GuardPath {
+    /// A bare-param target.
+    pub(crate) fn bare(param: String) -> Self {
+        Self {
+            param,
+            fields: Vec::new(),
+        }
+    }
+
+    /// Whether this targets the bare param (no field path).
+    pub(crate) fn is_bare(&self) -> bool {
+        self.fields.is_empty()
+    }
+
+    /// The `param.field.field` lookup key (just `param` when bare).
+    pub(crate) fn key(&self) -> String {
+        if self.fields.is_empty() {
+            self.param.clone()
+        } else {
+            format!("{}.{}", self.param, self.fields.join("."))
+        }
+    }
+}
+
+/// A `(path, refinement)` a guard yields for one param or field path.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Effect {
-    /// The narrowed param's name (without `$`).
-    pub param: String,
+    /// The narrowed target (bare param or field path).
+    pub path: GuardPath,
     /// The refinement to apply to it.
     pub narrowing: Narrowing,
 }
@@ -102,9 +138,10 @@ fn leaf_effect(
     positive: bool,
     env: &StatementEnv,
 ) -> Option<Effect> {
-    // NONE guard: `$x = NONE` / `$x IS NONE` / `$x != NONE` / `$x IS NOT NONE`.
+    // NONE guard: `$x = NONE` / `$x IS NONE` / `$x != NONE` / `$x IS NOT NONE`,
+    // on a bare param or a simple field path (`$file.folder != NONE`).
     if let Some(equals_none) = none_test_polarity(op) {
-        if let Some(param) = none_guard_param(lhs, rhs) {
+        if let Some(path) = none_guard_path(lhs, rhs) {
             // `$x = NONE` true ⇒ None; `$x != NONE` true ⇒ NotNone.
             let when_true = if equals_none {
                 Narrowing::None
@@ -112,16 +149,13 @@ fn leaf_effect(
                 Narrowing::NotNone
             };
             let narrowing = if positive { when_true } else { when_true.flip_none() };
-            return Some(Effect {
-                param: param.to_string(),
-                narrowing,
-            });
+            return Some(Effect { path, narrowing });
         }
     }
     // Discriminant guard: `type::table($x) = 'lit'` / `!= 'lit'`, either the
     // direct call form or a `LET`-bound `$table = 'lit'` (indirect).
     if matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::NotEq) {
-        if let Some((param, table)) = table_discriminant(lhs, rhs, env) {
+        if let Some((path, table)) = table_discriminant(lhs, rhs, env) {
             let is_eq = matches!(op, ast::BinaryOp::Eq);
             // `= 'lit'` true ⇒ Table(lit); `!= 'lit'` true ⇒ NotTable(lit).
             let when_true = if is_eq {
@@ -134,7 +168,7 @@ fn leaf_effect(
             } else {
                 when_true.flip_table(&table)
             };
-            return Some(Effect { param, narrowing });
+            return Some(Effect { path, narrowing });
         }
     }
     None
@@ -178,46 +212,83 @@ fn none_test_polarity(op: &ast::BinaryOp) -> Option<bool> {
     }
 }
 
-/// The param compared against a `NONE` literal, from either side of the guard.
-fn none_guard_param<'a>(lhs: &'a ast::Expr, rhs: &'a ast::Expr) -> Option<&'a str> {
+/// The param/path compared against a `NONE` literal, from either side.
+fn none_guard_path(lhs: &ast::Expr, rhs: &ast::Expr) -> Option<GuardPath> {
     let is_none = |e: &ast::Expr| matches!(e, ast::Expr::Literal(ast::Literal::None));
     if is_none(rhs) {
-        param_name(lhs)
+        guard_path_of(lhs)
     } else if is_none(lhs) {
-        param_name(rhs)
+        guard_path_of(rhs)
     } else {
         None
     }
 }
 
-/// The `(param, table_literal)` of a table discriminant compared to a string
+/// The narrowable target an expression names: a bare `$param`, or a simple
+/// idiom path `$param.field.field` (plain field parts only). Shared by both
+/// the statement/branch guards here and the in-expression `!= NONE AND` /
+/// `= NONE OR` narrowing (`infer`).
+pub(crate) fn guard_path_of(expr: &ast::Expr) -> Option<GuardPath> {
+    match expr {
+        ast::Expr::Param(name) => Some(GuardPath::bare(name.clone())),
+        ast::Expr::Idiom(idiom) => idiom_guard_path(idiom),
+        _ => None,
+    }
+}
+
+/// The `$param.field.field` path of a simple idiom (a param start followed by
+/// one or more plain field segments), if it is one.
+fn idiom_guard_path(idiom: &ast::Idiom) -> Option<GuardPath> {
+    let mut parts = idiom.parts.iter();
+    let ast::IdiomPart::Start(start) = &parts.next()?.node else {
+        return None;
+    };
+    let ast::Expr::Param(param) = &start.node else {
+        return None;
+    };
+    let mut fields = Vec::new();
+    for part in parts {
+        let ast::IdiomPart::Field(name) = &part.node else {
+            return None;
+        };
+        fields.push(name.clone());
+    }
+    (!fields.is_empty()).then(|| GuardPath {
+        param: param.clone(),
+        fields,
+    })
+}
+
+/// The `(path, table_literal)` of a table discriminant compared to a string
 /// literal, from either side. The discriminated side is either a direct
-/// `type::table($param)` call or a `LET`-bound `$table` that holds one
+/// `type::table($path)` call or a `LET`-bound `$table` that holds one
 /// (resolved through `env`).
 fn table_discriminant(
     lhs: &ast::Expr,
     rhs: &ast::Expr,
     env: &StatementEnv,
-) -> Option<(String, String)> {
+) -> Option<(GuardPath, String)> {
     let of = |disc_side: &ast::Expr, lit_side: &ast::Expr| {
-        let param = discriminated_param(disc_side, env)?;
+        let path = discriminated_path(disc_side, env)?;
         let table = string_literal(lit_side)?;
-        Some((param.to_string(), table))
+        Some((path, table))
     };
     of(lhs, rhs).or_else(|| of(rhs, lhs))
 }
 
-/// The record param a discriminant expression tests: a `type::table($param)`
+/// The record param/path a discriminant expression tests: a `type::table(...)`
 /// call directly, or a `$binding` the env records as one.
-fn discriminated_param<'a>(expr: &'a ast::Expr, env: &'a StatementEnv) -> Option<&'a str> {
-    type_table_param(expr).or_else(|| match expr {
-        ast::Expr::Param(binding) => env.table_discriminant(binding),
+fn discriminated_path(expr: &ast::Expr, env: &StatementEnv) -> Option<GuardPath> {
+    type_table_path(expr).or_else(|| match expr {
+        ast::Expr::Param(binding) => {
+            env.table_discriminant(binding).map(|p| GuardPath::bare(p.to_string()))
+        }
         _ => None,
     })
 }
 
-/// The param of a `type::table($param)` call, borrowed.
-fn type_table_param(expr: &ast::Expr) -> Option<&str> {
+/// The param/path argument of a `type::table(...)` call.
+fn type_table_path(expr: &ast::Expr) -> Option<GuardPath> {
     let ast::Expr::Call(call) = expr else {
         return None;
     };
@@ -227,13 +298,17 @@ fn type_table_param(expr: &ast::Expr) -> Option<&str> {
     let [arg] = call.args.as_slice() else {
         return None;
     };
-    param_name(&arg.node)
+    guard_path_of(&arg.node)
 }
 
-/// The param name, when `expr` is a `type::table($param)` call — used to seed
-/// the indirect-discriminant map from `LET $t = type::table($param)`.
+/// The param name, when `expr` is a bare `type::table($param)` call — used to
+/// seed the indirect-discriminant map from `LET $t = type::table($param)`.
+/// (Only bare params are recorded as indirect discriminants.)
 pub(crate) fn type_table_arg(expr: &ast::Expr) -> Option<String> {
-    type_table_param(expr).map(str::to_string)
+    match type_table_path(expr) {
+        Some(path) if path.is_bare() => Some(path.param),
+        _ => None,
+    }
 }
 
 /// The string a literal holds, if `expr` is a plain string literal.
@@ -244,32 +319,42 @@ fn string_literal(expr: &ast::Expr) -> Option<String> {
     }
 }
 
-/// The param name, if `expr` is a bare `$name`.
-fn param_name(expr: &ast::Expr) -> Option<&str> {
-    match expr {
-        ast::Expr::Param(name) => Some(name.as_str()),
-        _ => None,
-    }
-}
-
-/// Rebinds each effect's param to its narrowed kind in the current scope.
-/// Unbound params (host params, context-only names) and refinements that
-/// don't apply to the current kind are skipped, so narrowing only ever
-/// tightens a known binding.
+/// Applies each effect's refinement to the current scope. A bare param
+/// rebinds its binding to the narrowed kind; a field path records a per-path
+/// override keyed on the exact `param.field…` string. Unbound bases and
+/// refinements that don't tighten the current kind are skipped, so narrowing
+/// only ever tightens a known kind — and never touches the base param or a
+/// sibling path.
 pub(crate) fn apply_effects(ctx: &mut AnalysisContext<'_>, effects: &[Effect]) {
     for effect in effects {
-        let Some(fact) = ctx.env().let_fact(&effect.param).cloned() else {
+        let Some(base) = ctx.env().let_fact(&effect.path.param).cloned() else {
             continue;
         };
-        let Some(kind) = fact.kind.as_ref() else {
+        let Some(base_kind) = base.kind.clone() else {
             continue;
         };
-        let Some(narrowed) = narrow_kind(kind, &effect.narrowing) else {
-            continue;
-        };
-        let mut new_fact = fact;
-        new_fact.kind = Some(narrowed);
-        ctx.define_local(effect.param.clone(), new_fact);
+        if effect.path.is_bare() {
+            let Some(narrowed) = narrow_kind(&base_kind, &effect.narrowing) else {
+                continue;
+            };
+            let mut new_fact = base;
+            new_fact.kind = Some(narrowed);
+            ctx.define_local(effect.path.param.clone(), new_fact);
+        } else {
+            // Resolve the path's declared kind through the schema, then narrow
+            // and record it under the exact path key.
+            let Some(current) = crate::analyzer::expression::infer::step_field_path(
+                &base_kind,
+                &effect.path.fields,
+                ctx.schema(),
+            ) else {
+                continue;
+            };
+            let Some(narrowed) = narrow_kind(&current, &effect.narrowing) else {
+                continue;
+            };
+            ctx.define_narrowed_path(effect.path.key(), narrowed);
+        }
     }
 }
 
@@ -364,7 +449,7 @@ mod tests {
             assert_eq!(
                 positive_effects(&c, &env),
                 vec![Effect {
-                    param: "x".into(),
+                    path: GuardPath::bare("x".into()),
                     narrowing: pos
                 }],
                 "positive: {query}"
@@ -372,12 +457,37 @@ mod tests {
             assert_eq!(
                 negative_effects(&c, &env),
                 vec![Effect {
-                    param: "x".into(),
+                    path: GuardPath::bare("x".into()),
                     narrowing: neg
                 }],
                 "negative: {query}"
             );
         }
+    }
+
+    #[test]
+    fn none_guard_on_a_field_path_narrows_that_exact_path() {
+        // `$file.folder != NONE` narrows the path `file.folder`, not `$file`.
+        let env = StatementEnv::default();
+        let path = GuardPath {
+            param: "file".into(),
+            fields: vec!["folder".into()],
+        };
+        let c = cond("RETURN $file.folder != NONE;");
+        assert_eq!(
+            positive_effects(&c, &env),
+            vec![Effect {
+                path: path.clone(),
+                narrowing: Narrowing::NotNone
+            }]
+        );
+        assert_eq!(
+            negative_effects(&c, &env),
+            vec![Effect {
+                path,
+                narrowing: Narrowing::None
+            }]
+        );
     }
 
     #[test]
@@ -387,14 +497,14 @@ mod tests {
         assert_eq!(
             positive_effects(&c, &env),
             vec![Effect {
-                param: "r".into(),
+                path: GuardPath::bare("r".into()),
                 narrowing: Narrowing::Table("folder".into())
             }]
         );
         assert_eq!(
             negative_effects(&c, &env),
             vec![Effect {
-                param: "r".into(),
+                path: GuardPath::bare("r".into()),
                 narrowing: Narrowing::NotTable("folder".into())
             }]
         );
@@ -410,7 +520,7 @@ mod tests {
         assert_eq!(
             positive_effects(&c, &env),
             vec![Effect {
-                param: "r".into(),
+                path: GuardPath::bare("r".into()),
                 narrowing: Narrowing::Table("folder".into())
             }]
         );
@@ -430,11 +540,11 @@ mod tests {
             negative_effects(&c, &env),
             vec![
                 Effect {
-                    param: "a".into(),
+                    path: GuardPath::bare("a".into()),
                     narrowing: Narrowing::NotNone
                 },
                 Effect {
-                    param: "b".into(),
+                    path: GuardPath::bare("b".into()),
                     narrowing: Narrowing::NotNone
                 }
             ]
@@ -552,5 +662,70 @@ mod tests {
              }};"
         );
         assert_eq!(code_count(&indirect, 5002), 0);
+    }
+
+    // --- Field-path narrowing (`$file.folder != NONE`) ---------------------
+
+    /// `file` has an optional `folder` link and a sibling optional link; the
+    /// callee wants the non-optional `record<folder>`.
+    const FIELD_PATH_TABLES: &str = "DEFINE TABLE folder SCHEMAFULL;\n\
+         DEFINE TABLE file SCHEMAFULL;\n\
+         DEFINE FIELD folder ON file TYPE option<record<folder>>;\n\
+         DEFINE FIELD sibling ON file TYPE option<record<folder>>;\n\
+         DEFINE FUNCTION fn::folder_only($f: record<folder>) { RETURN true; };\n";
+
+    #[test]
+    fn field_path_none_guard_narrows_the_and_right_operand() {
+        // `$file.folder != NONE AND fn::folder_only($file.folder)` — the right
+        // conjunct only runs when the path is non-none, so it type-checks.
+        let guarded = format!(
+            "{FIELD_PATH_TABLES}\
+             DEFINE FUNCTION fn::caller($file: record<file>) {{\n\
+                IF $file.folder != NONE AND fn::folder_only($file.folder) THEN RETURN true END;\n\
+                RETURN false;\n\
+             }};"
+        );
+        assert_eq!(code_count(&guarded, 5002), 0, "AND-right sees the narrowed path");
+
+        // The same call WITHOUT the guard genuinely fails against the
+        // `option<record<folder>>` argument — proving the guard is what clears it.
+        let unguarded = format!(
+            "{FIELD_PATH_TABLES}\
+             DEFINE FUNCTION fn::caller($file: record<file>) {{\n\
+                RETURN fn::folder_only($file.folder);\n\
+             }};"
+        );
+        assert_eq!(code_count(&unguarded, 5002), 1, "unguarded must fire");
+    }
+
+    #[test]
+    fn field_path_none_guard_narrows_the_then_branch() {
+        // `IF $file.folder != NONE THEN ... END` narrows the path in the body.
+        let guarded = format!(
+            "{FIELD_PATH_TABLES}\
+             DEFINE FUNCTION fn::caller($file: record<file>) {{\n\
+                IF $file.folder != NONE THEN RETURN fn::folder_only($file.folder) END;\n\
+                RETURN false;\n\
+             }};"
+        );
+        assert_eq!(code_count(&guarded, 5002), 0, "THEN body sees the narrowed path");
+    }
+
+    #[test]
+    fn field_path_guard_does_not_narrow_a_sibling_path() {
+        // The must-not-narrow boundary: guarding `$file.folder` proves nothing
+        // about `$file.sibling`, which is still `option<record<folder>>`.
+        let sibling = format!(
+            "{FIELD_PATH_TABLES}\
+             DEFINE FUNCTION fn::caller($file: record<file>) {{\n\
+                IF $file.folder != NONE AND fn::folder_only($file.sibling) THEN RETURN true END;\n\
+                RETURN false;\n\
+             }};"
+        );
+        assert_eq!(
+            code_count(&sibling, 5002),
+            1,
+            "the sibling path must not be narrowed"
+        );
     }
 }

@@ -136,6 +136,13 @@ impl<'a> AnalysisContext<'a> {
         self.env.set_table_discriminant(binding, param);
     }
 
+    /// Flow-narrows the idiom path `key` (a `param.field.field` string) to
+    /// `kind` in the current scope, so a downstream read of that exact path
+    /// resolves to the narrowed kind.
+    pub fn define_narrowed_path(&mut self, key: String, kind: surrealdb_types::Kind) {
+        self.env.set_narrowed_path(key, kind);
+    }
+
     /// Looks up the fact for `LET` local `name`, or `None` if it is not bound
     /// in scope (in which case `$name` is a host parameter).
     pub fn local(&self, name: &str) -> Option<&ExpressionFact> {

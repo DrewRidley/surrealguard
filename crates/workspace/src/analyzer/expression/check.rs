@@ -22,9 +22,9 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
             // The right operand of `$x = NONE OR ...` / `$x != NONE AND ...`
             // runs only when `$x` is non-none, so check it (and the operator
             // itself, which re-reads the rhs kind) with `$x` narrowed.
-            match crate::analyzer::expression::infer::none_guarded_param(&op.node, lhs) {
-                Some(param) => {
-                    crate::analyzer::expression::infer::with_none_narrowed(param, ctx, |ctx| {
+            match crate::analyzer::expression::infer::none_guarded_path(&op.node, lhs) {
+                Some(path) => {
+                    crate::analyzer::expression::infer::with_guard_narrowed(&path, ctx, |ctx| {
                         check_value_expression(ctx, rhs);
                         check_binary(ctx, expr, lhs, &op.node, rhs);
                     });
