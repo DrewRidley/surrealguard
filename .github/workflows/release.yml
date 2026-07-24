@@ -13,13 +13,18 @@ env:
   CARGO_TERM_COLOR: always
 
 # ASSET NAMING SCHEME (must stay identical to the npm launcher
-# npm/surrealguard/bin/surrealguard.cjs and crates/cli Cargo.toml
-# [package.metadata.binstall]):
+# npm/surrealguard/bin/surrealguard.cjs, crates/cli Cargo.toml
+# [package.metadata.binstall], and the Zed extension's downloader in
+# DrewRidley/zed-surreal src/lib.rs):
 #
 #   tag:     v{version}
-#   archive: surrealguard-{version}-{target}.tar.gz   (unix)
-#            surrealguard-{version}-{target}.zip       (windows)
-#   binary:  surrealguard | surrealguard.exe           (at archive root)
+#   archives (both, per target):
+#     CLI:  surrealguard-{version}-{target}.tar.gz      (unix)
+#           surrealguard-{version}-{target}.zip          (windows)
+#     LSP:  surrealguard-lsp-{version}-{target}.tar.gz   (unix)
+#           surrealguard-lsp-{version}-{target}.zip       (windows)
+#   binary at archive root: surrealguard | surrealguard.exe
+#                           surrealguard-lsp | surrealguard-lsp.exe
 
 jobs:
   build:
@@ -72,28 +77,40 @@ jobs:
           echo "CC_${{ matrix.target }}=${{ matrix.gcc-cross }}-gcc" >> "$GITHUB_ENV"
           echo "CXX_${{ matrix.target }}=${{ matrix.gcc-cross }}-g++" >> "$GITHUB_ENV"
 
-      - name: Build
-        run: cargo build --release -p surrealguard --target ${{ matrix.target }}
+      - name: Build CLI + LSP
+        run: cargo build --release -p surrealguard -p surrealguard-lsp --target ${{ matrix.target }}
 
       - name: Package (unix)
         if: runner.os != 'Windows'
         run: |
           version="${GITHUB_REF_NAME#v}"
-          asset="surrealguard-${version}-${{ matrix.target }}.tar.gz"
-          tar -czf "$asset" -C "target/${{ matrix.target }}/release" surrealguard
-          echo "ASSET=${asset}" >> "$GITHUB_ENV"
+          bindir="target/${{ matrix.target }}/release"
+          cli="surrealguard-${version}-${{ matrix.target }}.tar.gz"
+          lsp="surrealguard-lsp-${version}-${{ matrix.target }}.tar.gz"
+          tar -czf "$cli" -C "$bindir" surrealguard
+          tar -czf "$lsp" -C "$bindir" surrealguard-lsp
+          {
+            echo "ASSET_CLI=${cli}"
+            echo "ASSET_LSP=${lsp}"
+          } >> "$GITHUB_ENV"
 
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
-          $asset = "surrealguard-$version-${{ matrix.target }}.zip"
-          Compress-Archive -Path "target/${{ matrix.target }}/release/surrealguard.exe" -DestinationPath $asset -Force
-          "ASSET=$asset" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $bindir = "target/${{ matrix.target }}/release"
+          $cli = "surrealguard-$version-${{ matrix.target }}.zip"
+          $lsp = "surrealguard-lsp-$version-${{ matrix.target }}.zip"
+          Compress-Archive -Path "$bindir/surrealguard.exe" -DestinationPath $cli -Force
+          Compress-Archive -Path "$bindir/surrealguard-lsp.exe" -DestinationPath $lsp -Force
+          "ASSET_CLI=$cli" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "ASSET_LSP=$lsp" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.ASSET }}
+          files: |
+            ${{ env.ASSET_CLI }}
+            ${{ env.ASSET_LSP }}
           fail_on_unmatched_files: true
