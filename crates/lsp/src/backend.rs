@@ -138,6 +138,7 @@ impl LanguageServer for Backend {
                 )),
                 inlay_hint_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                definition_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -224,6 +225,51 @@ impl LanguageServer for Backend {
             }),
             range: Some(range),
         }))
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let analysis = {
+            let ws = self.workspace.read().await;
+            ws.feature_analysis(&uri)
+        };
+        let Some(analysis) = analysis else {
+            return Ok(None);
+        };
+
+        let offset = crate::text::position_to_offset(&analysis.text, position) as u32;
+        let Some(target) = surrealguard_workspace::definition_at(
+            &analysis.output,
+            &analysis.schema,
+            &analysis.source,
+            &analysis.text,
+            offset,
+        ) else {
+            return Ok(None);
+        };
+
+        // The definition may live in another `.surql` file; map its source id
+        // back to that document's URI and text to build the location.
+        let source_key = target.span.source().to_string();
+        let Some((def_uri, def_text)) = analysis.sources.get(&source_key) else {
+            return Ok(None);
+        };
+
+        let range = target.span.range();
+        let range = crate::text::byte_range_to_lsp(
+            def_text,
+            range.start() as usize,
+            range.end() as usize,
+        );
+
+        Ok(Some(GotoDefinitionResponse::Scalar(Location {
+            uri: def_uri.clone(),
+            range,
+        })))
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {

@@ -147,6 +147,89 @@ pub fn hover_at(
     best.map(|(_, info)| info)
 }
 
+/// A resolved go-to-definition target: the span of the DEFINE construct a
+/// reference under the cursor points at. The span carries its own source id,
+/// so the definition may live in a different `.surql` file than the reference.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DefinitionTarget {
+    /// The span of the definition's name (the `DEFINE TABLE`/`DEFINE FIELD`/
+    /// `DEFINE FUNCTION` name, or a `LET`/`DEFINE PARAM` binding site).
+    pub span: SourceSpan,
+}
+
+/// Resolves a go-to-definition at byte `offset` in `source`: maps the cursor to
+/// the smallest covering reference and returns the span of the definition it
+/// points at. Mirrors [`hover_at`]'s position→symbol logic but yields a
+/// location instead of markdown.
+///
+/// Resolves table references (FROM, `record<T>`, `DEFINE … ON`, targets, graph
+/// endpoints) to their `DEFINE TABLE` name, field references (projections,
+/// WHERE, SET, idioms, across `record<>` links) to the owning `DEFINE FIELD`
+/// name, `fn::` calls to their `DEFINE FUNCTION`, and `$param`/`LET` uses to
+/// their binding site. Returns `None` when the definition span isn't known —
+/// a schemaless field, an unknown table, an implicit `id`/`in`/`out`, or an
+/// opaque traversal — so a cmd-click never jumps to the wrong place.
+pub fn definition_at(
+    output: &AnalysisOutput,
+    schema: &SchemaIndex,
+    source: &SourceId,
+    text: &str,
+    offset: u32,
+) -> Option<DefinitionTarget> {
+    let mut best: Option<(u32, SourceSpan)> = None;
+    let mut consider = |cover: ByteRange, target: SourceSpan| {
+        if offset < cover.start() || offset > cover.end() {
+            return;
+        }
+        let width = cover.end().saturating_sub(cover.start());
+        let is_smaller = best.as_ref().map_or(true, |(best_width, _)| width < *best_width);
+        if is_smaller {
+            best = Some((width, target));
+        }
+    };
+
+    // `$param` / `LET` variable binding sites, keyed by name: a `LET $name`
+    // binding in this output takes precedence over a global `DEFINE PARAM`.
+    // Resolved against the walked `$name` tokens below.
+    let mut bindings: std::collections::HashMap<String, SourceSpan> =
+        std::collections::HashMap::new();
+    for statement in &output.statements {
+        if let Some(binding) = &statement.let_binding {
+            bindings
+                .entry(binding.name.clone())
+                .or_insert_with(|| binding.name_span.clone());
+        }
+    }
+    for param in schema.params.values() {
+        bindings
+            .entry(param.name.clone())
+            .or_insert_with(|| param.name_span.clone());
+    }
+
+    // Table, field, and `fn::` references resolved by walking a freshly-lowered
+    // statement tree — the analyzed statements carry no per-reference spans, so
+    // (as hover does) the identifier under the cursor is located here and
+    // resolved against the schema. Only definitely-known definitions produce a
+    // target; anything uncertain is skipped (low-FP).
+    if let Ok(parsed) = parse_source(source.clone(), text) {
+        let statements = surrealguard_syntax::lower::lower_statements(&parsed);
+        let mut collector = SchemaDefs {
+            schema,
+            offset,
+            bindings: &bindings,
+            out: Vec::new(),
+        };
+        for statement in &statements {
+            collector.walk_statement(statement);
+        }
+        for (cover, target) in collector.out {
+            consider(cover, target);
+        }
+    }
+
+    best.map(|(_, span)| DefinitionTarget { span })
+}
+
 /// Markdown for a variable/parameter symbol: a fenced type line plus,
 /// when the kind resolves to records or a literal object, its field list.
 fn symbol_markdown(name: &str, kind: Option<&Kind>, schema: &SchemaIndex) -> String {
@@ -706,6 +789,406 @@ impl SchemaHovers<'_> {
     }
 }
 
+/// Collects go-to-definition targets by walking a freshly-lowered statement
+/// tree — the definition twin of [`SchemaHovers`]. Each candidate is a
+/// `(reference-span, definition-span)` pair the caller feeds through the
+/// smallest-covering `consider` closure. Table/field/`fn::` scope tracking is
+/// identical to hover's; only the leaf emission differs (a definition location
+/// instead of markdown), and only definitely-declared symbols emit.
+struct SchemaDefs<'a> {
+    schema: &'a SchemaIndex,
+    offset: u32,
+    /// `$name` (no sigil) → its binding site, for resolving param/LET uses.
+    bindings: &'a std::collections::HashMap<String, SourceSpan>,
+    out: Vec<(ByteRange, SourceSpan)>,
+}
+
+impl SchemaDefs<'_> {
+    fn covers(&self, span: ByteRange) -> bool {
+        self.offset >= span.start() && self.offset <= span.end()
+    }
+
+    /// A table reference → its `DEFINE TABLE` name span, for tables the schema
+    /// knows.
+    fn table_ref(&mut self, name: &ast::Spanned<String>) {
+        if !self.covers(name.span) {
+            return;
+        }
+        if let Some(def) = self.schema.table(&name.node) {
+            self.out.push((name.span, def.name_span.clone()));
+        }
+    }
+
+    fn walk_statement(&mut self, statement: &ast::Spanned<ast::Statement>) {
+        use ast::Statement;
+        match &statement.node {
+            Statement::Select(select) => {
+                let root = single_table(&select.from);
+                for source in &select.from {
+                    self.walk_expr(None, source);
+                }
+                for projection in &select.projections {
+                    if let ast::Projection::Expr { expr, .. } = projection {
+                        self.walk_expr(root, expr);
+                    }
+                }
+                if let Some(where_clause) = &select.where_clause {
+                    self.walk_expr(root, where_clause);
+                }
+                if let Some(group) = &select.group {
+                    for key in &group.keys {
+                        self.walk_idiom(root, &key.node);
+                    }
+                }
+                if let Some(order) = &select.order {
+                    for key in &order.keys {
+                        self.walk_expr(root, &key.expr);
+                    }
+                }
+                for idiom in select.omit.iter().chain(&select.split).chain(&select.fetch) {
+                    self.walk_idiom(root, &idiom.node);
+                }
+                for extra in [&select.limit, &select.start, &select.timeout].into_iter().flatten() {
+                    self.walk_expr(None, extra);
+                }
+            }
+            Statement::Create(create) => {
+                let root = single_table(&create.targets);
+                for target in &create.targets {
+                    self.walk_expr(None, target);
+                }
+                self.walk_data(root, create.data.as_ref());
+            }
+            Statement::Update(update) => {
+                let root = single_table(&update.targets);
+                for target in &update.targets {
+                    self.walk_expr(None, target);
+                }
+                self.walk_data(root, update.data.as_ref());
+                if let Some(where_clause) = &update.where_clause {
+                    self.walk_expr(root, where_clause);
+                }
+            }
+            Statement::Upsert(upsert) => {
+                let root = single_table(&upsert.targets);
+                for target in &upsert.targets {
+                    self.walk_expr(None, target);
+                }
+                self.walk_data(root, upsert.data.as_ref());
+                if let Some(where_clause) = &upsert.where_clause {
+                    self.walk_expr(root, where_clause);
+                }
+            }
+            Statement::Delete(delete) => {
+                let root = single_table(&delete.targets);
+                for target in &delete.targets {
+                    self.walk_expr(None, target);
+                }
+                if let Some(where_clause) = &delete.where_clause {
+                    self.walk_expr(root, where_clause);
+                }
+            }
+            Statement::Insert(insert) => {
+                let root = insert
+                    .target
+                    .as_ref()
+                    .and_then(|target| expr_table_name(&target.node));
+                if let Some(target) = &insert.target {
+                    self.walk_expr(None, target);
+                }
+                self.walk_insert_data(root, &insert.data);
+            }
+            Statement::Relate(relate) => {
+                for endpoint in [&relate.from, &relate.edge, &relate.to].into_iter().flatten() {
+                    self.walk_expr(None, endpoint);
+                }
+                let root = relate.edge.as_ref().and_then(|edge| expr_table_name(&edge.node));
+                self.walk_data(root, relate.data.as_ref());
+            }
+            Statement::Define(define) => self.walk_define(define),
+            Statement::Remove(remove) => match &remove.target {
+                ast::RemoveTarget::Table(name) => self.table_ref(name),
+                ast::RemoveTarget::Field { field, table } => {
+                    self.table_ref(table);
+                    self.walk_idiom(Some(table.node.as_str()), &field.node);
+                }
+                ast::RemoveTarget::Index { table, .. } => self.table_ref(table),
+                ast::RemoveTarget::Other(_) => {}
+            },
+            Statement::Alter(alter) => {
+                if let Some(table) = &alter.table {
+                    self.table_ref(table);
+                }
+            }
+            Statement::LiveSelect(live) => {
+                if let Some(table) = &live.table {
+                    self.table_ref(table);
+                }
+            }
+            Statement::Info(info) => {
+                if let Some(table) = &info.table {
+                    self.table_ref(table);
+                }
+            }
+            Statement::Show(show) => {
+                if let Some(table) = &show.table {
+                    self.table_ref(table);
+                }
+            }
+            Statement::Rebuild(rebuild) => {
+                if let Some(table) = &rebuild.table {
+                    self.table_ref(table);
+                }
+            }
+            Statement::Let(let_stmt) => self.walk_expr(None, &let_stmt.value),
+            Statement::Return(ret) => {
+                if let Some(value) = &ret.value {
+                    self.walk_expr(None, value);
+                }
+            }
+            Statement::Throw(throw) => {
+                if let Some(value) = &throw.value {
+                    self.walk_expr(None, value);
+                }
+            }
+            Statement::Kill(kill) => {
+                if let Some(id) = &kill.id {
+                    self.walk_expr(None, id);
+                }
+            }
+            Statement::IfElse(if_else) => {
+                for branch in &if_else.branches {
+                    self.walk_expr(None, &branch.condition);
+                    self.walk_block(&branch.body);
+                }
+                if let Some(else_branch) = &if_else.else_branch {
+                    self.walk_block(else_branch);
+                }
+            }
+            Statement::For(for_stmt) => {
+                self.walk_expr(None, &for_stmt.iterable);
+                self.walk_block(&for_stmt.body);
+            }
+            Statement::Block(block) => self.walk_block(block),
+            Statement::Expr(expr) => self.walk_expr(None, expr),
+            _ => {}
+        }
+    }
+
+    fn walk_define(&mut self, define: &ast::DefineStmt) {
+        use ast::DefineStmt;
+        match define {
+            DefineStmt::Field(field) => {
+                self.table_ref(&field.table);
+                self.walk_idiom(Some(field.table.node.as_str()), &field.path.node);
+                let root = Some(field.table.node.as_str());
+                for expr in [&field.default, &field.value, &field.assert].into_iter().flatten() {
+                    self.walk_expr(root, expr);
+                }
+                for predicate in &field.permissions {
+                    self.walk_expr(root, predicate);
+                }
+            }
+            DefineStmt::Table(table) => {
+                if let Some(relation) = &table.relation {
+                    for endpoint in relation.in_tables.iter().chain(&relation.out_tables) {
+                        self.table_ref(endpoint);
+                    }
+                }
+                let root = Some(table.name.node.as_str());
+                for predicate in &table.permissions {
+                    self.walk_expr(root, predicate);
+                }
+            }
+            DefineStmt::Index(index) => {
+                self.table_ref(&index.table);
+                for idiom in &index.fields {
+                    self.walk_idiom(Some(index.table.node.as_str()), &idiom.node);
+                }
+            }
+            DefineStmt::Event(event) => {
+                self.table_ref(&event.table);
+                let root = Some(event.table.node.as_str());
+                for expr in [&event.when, &event.then].into_iter().flatten() {
+                    self.walk_expr(root, expr);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn walk_block(&mut self, block: &ast::Block) {
+        for statement in &block.statements {
+            self.walk_statement(statement);
+        }
+    }
+
+    fn walk_data(&mut self, root: Option<&str>, data: Option<&ast::DataClause>) {
+        use ast::DataClause;
+        match data {
+            Some(DataClause::Set(assignments)) => {
+                for assignment in assignments {
+                    self.walk_idiom(root, &assignment.target.node);
+                    self.walk_expr(root, &assignment.value);
+                }
+            }
+            Some(DataClause::Unset(idioms)) => {
+                for idiom in idioms {
+                    self.walk_idiom(root, &idiom.node);
+                }
+            }
+            Some(
+                DataClause::Content(expr)
+                | DataClause::Merge(expr)
+                | DataClause::Patch(expr)
+                | DataClause::Replace(expr)
+                | DataClause::Single(expr),
+            ) => self.walk_expr(root, expr),
+            _ => {}
+        }
+    }
+
+    fn walk_insert_data(&mut self, root: Option<&str>, data: &ast::InsertData) {
+        use ast::InsertData;
+        match data {
+            InsertData::Values(exprs) => {
+                for expr in exprs {
+                    self.walk_expr(root, expr);
+                }
+            }
+            InsertData::Rows { rows, .. } => {
+                for row in rows {
+                    for (column, value) in row {
+                        self.walk_idiom(root, &column.node);
+                        self.walk_expr(root, value);
+                    }
+                }
+            }
+            InsertData::Assignments(assignments) => {
+                for (column, value) in assignments {
+                    self.walk_idiom(root, &column.node);
+                    self.walk_expr(root, value);
+                }
+            }
+            InsertData::Partial(_) => {}
+        }
+    }
+
+    fn walk_expr(&mut self, root: Option<&str>, expr: &ast::Spanned<ast::Expr>) {
+        use ast::Expr;
+        match &expr.node {
+            Expr::Table(name) => self.table_ref(name),
+            Expr::RecordId { table, .. } => self.table_ref(table),
+            Expr::Param(name) => {
+                // A `$param` / `LET` variable use → its binding site.
+                if self.covers(expr.span) {
+                    if let Some(target) = self.bindings.get(name) {
+                        self.out.push((expr.span, target.clone()));
+                    }
+                }
+            }
+            Expr::Idiom(idiom) => self.walk_idiom(root, idiom),
+            Expr::Binary { lhs, rhs, .. } => {
+                self.walk_expr(root, lhs);
+                self.walk_expr(root, rhs);
+            }
+            Expr::Prefix { expr, .. } | Expr::Cast { expr, .. } => self.walk_expr(root, expr),
+            Expr::Call(call) => {
+                // A `fn::` call → its `DEFINE FUNCTION` name span.
+                if self.covers(call.path.span) {
+                    if let Some(func) = self.schema.function(&call.path.node) {
+                        self.out.push((call.path.span, func.name_span.clone()));
+                    }
+                }
+                for arg in &call.args {
+                    self.walk_expr(root, arg);
+                }
+            }
+            Expr::Object(entries) => {
+                for (_, value) in entries {
+                    self.walk_expr(root, value);
+                }
+            }
+            Expr::Array(items) => {
+                for item in items {
+                    self.walk_expr(root, item);
+                }
+            }
+            Expr::Subquery(statement) => self.walk_statement(statement),
+            Expr::Block(block) => self.walk_block(block),
+            Expr::Closure(closure) => self.walk_expr(root, &closure.body),
+            _ => {}
+        }
+    }
+
+    /// Walks an idiom's field parts, resolving each against the table in scope
+    /// (re-rooting on `record<>` links exactly as hover does) and emitting the
+    /// owning `DEFINE FIELD`'s name span. Only a directly-declared field emits;
+    /// object prefixes, implicit `id`/`in`/`out`, and schemaless fields have no
+    /// declaration to jump to.
+    fn walk_idiom(&mut self, root: Option<&str>, idiom: &ast::Idiom) {
+        use ast::IdiomPart;
+        let mut table = root.map(str::to_string);
+        let mut segments: Vec<String> = Vec::new();
+        for part in &idiom.parts {
+            match &part.node {
+                IdiomPart::Start(inner) => {
+                    self.walk_expr(root, inner);
+                    table = None;
+                    segments.clear();
+                }
+                IdiomPart::Field(name) => {
+                    let Some(current) = table.clone() else {
+                        continue;
+                    };
+                    let Some(def) = self.schema.table(&current) else {
+                        table = None;
+                        continue;
+                    };
+                    let mut path = segments.clone();
+                    path.push(name.clone());
+                    let kind = crate::analyzer::data::select::kind_for_path(def, &path);
+                    if self.covers(part.span) {
+                        if let Some(field) = def.fields.get(&path.join(".")) {
+                            self.out.push((part.span, field.name_span.clone()));
+                        }
+                    }
+                    match kind.as_ref().and_then(record_link_target) {
+                        Some(linked) => {
+                            table = Some(linked);
+                            segments.clear();
+                        }
+                        None if kind.is_some() => segments = path,
+                        None => table = None,
+                    }
+                }
+                IdiomPart::Index(inner) | IdiomPart::Where(inner) => self.walk_expr(root, inner),
+                IdiomPart::Method { args, .. } => {
+                    for arg in args {
+                        self.walk_expr(root, arg);
+                    }
+                }
+                IdiomPart::Graph { step, .. } => {
+                    for target in &step.targets {
+                        self.table_ref(target);
+                    }
+                    if let Some(where_clause) = &step.where_clause {
+                        self.walk_expr(root, where_clause);
+                    }
+                    table = None;
+                    segments.clear();
+                }
+                IdiomPart::Destructure(idioms) => {
+                    for sub in idioms {
+                        self.walk_idiom(table.as_deref(), &sub.node);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 /// The table a set of source/target expressions names, when it is exactly one
 /// plain table (or record id). Any other shape — none, several, a subquery —
 /// leaves the row table unknown so field paths stay unresolved.
@@ -952,6 +1435,122 @@ mod tests {
         let (output, schema, source) = analyze(text);
         let offset = text.rfind("nickname").expect("field present") as u32 + 1;
         assert!(hover_at(&output, &schema, &source, text, offset).is_none());
+    }
+
+    #[test]
+    fn definition_of_a_from_table_points_at_its_define_table_name() {
+        let text = "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD name ON person TYPE string;\n\
+             SELECT name FROM person;";
+        let (output, schema, source) = analyze(text);
+        // Cursor on the `person` in `FROM person` (last occurrence).
+        let offset = text.rfind("person").expect("FROM table present") as u32 + 1;
+        let target =
+            definition_at(&output, &schema, &source, text, offset).expect("definition of table");
+
+        let expected = text.find("person").expect("DEFINE TABLE name present") as u32;
+        assert_eq!(target.span.source(), &source);
+        assert_eq!(target.span.range().start(), expected);
+    }
+
+    #[test]
+    fn definition_of_a_projected_field_points_at_its_define_field_name() {
+        let text = "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD name ON person TYPE string;\n\
+             SELECT name FROM person;";
+        let (output, schema, source) = analyze(text);
+        // Cursor on the projected `name`.
+        let offset = text.rfind("name").expect("projected field present") as u32 + 1;
+        let target =
+            definition_at(&output, &schema, &source, text, offset).expect("definition of field");
+
+        // Jumps to the `name` in the DEFINE FIELD statement.
+        let expected = text.find("name ON person").expect("DEFINE FIELD name present") as u32;
+        assert_eq!(target.span.source(), &source);
+        assert_eq!(target.span.range().start(), expected);
+    }
+
+    #[test]
+    fn definition_of_a_linked_field_follows_the_record_link() {
+        let text = "DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE FIELD name ON user TYPE string;\n\
+             DEFINE TABLE post SCHEMAFULL;\n\
+             DEFINE FIELD author ON post TYPE record<user>;\n\
+             SELECT author.name FROM post;";
+        let (output, schema, source) = analyze(text);
+        // Cursor on the `name` reached through the `author` record link.
+        let offset = text.rfind("name").expect("linked field present") as u32 + 1;
+        let target = definition_at(&output, &schema, &source, text, offset)
+            .expect("definition of linked field");
+
+        let expected = text.find("name ON user").expect("DEFINE FIELD name present") as u32;
+        assert_eq!(target.span.range().start(), expected);
+    }
+
+    #[test]
+    fn definition_of_a_function_call_points_at_its_define_function() {
+        let text = "DEFINE FUNCTION fn::greet($who: string) -> string { RETURN $who; };\n\
+             RETURN fn::greet('ada');";
+        let (output, schema, source) = analyze(text);
+        let offset = text.rfind("fn::greet").expect("call present") as u32 + 2;
+        let target = definition_at(&output, &schema, &source, text, offset)
+            .expect("definition of function");
+
+        let expected = text.find("fn::greet").expect("DEFINE FUNCTION name present") as u32;
+        assert_eq!(target.span.range().start(), expected);
+    }
+
+    #[test]
+    fn definition_of_a_let_variable_use_points_at_its_binding() {
+        let text = "LET $x = 42;\nRETURN $x + 1;";
+        let (output, schema, source) = analyze(text);
+        let offset = text.rfind("$x").expect("use present") as u32 + 1;
+        let target =
+            definition_at(&output, &schema, &source, text, offset).expect("definition of let var");
+
+        let expected = text.find("$x").expect("binding present") as u32;
+        assert_eq!(target.span.range().start(), expected);
+    }
+
+    #[test]
+    fn definition_of_a_schemaless_field_returns_none() {
+        // Low-FP: an undeclared field on a schemaless table has no DEFINE to
+        // jump to.
+        let text = "DEFINE TABLE person;\nSELECT nickname FROM person;";
+        let (output, schema, source) = analyze(text);
+        let offset = text.rfind("nickname").expect("field present") as u32 + 1;
+        assert!(definition_at(&output, &schema, &source, text, offset).is_none());
+    }
+
+    #[test]
+    fn definition_resolves_a_field_across_files() {
+        // The schema lives in one source; the query that references it in
+        // another. The definition target must point back into the schema
+        // source, not the query source.
+        let mut workspace = Workspace::default();
+        let schema_source = workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;".into(),
+        );
+        let query_text = "SELECT name FROM person;";
+        let query_source = workspace.add_virtual_source("query".into(), query_text.into());
+        let output = analyze_workspace(&workspace);
+        let analysis = output.sources[&query_source].clone();
+
+        // Field reference → DEFINE FIELD in the schema source.
+        let field_offset = query_text.find("name").expect("field present") as u32 + 1;
+        let field_target =
+            definition_at(&analysis, &output.schema, &query_source, query_text, field_offset)
+                .expect("cross-file field definition");
+        assert_eq!(field_target.span.source(), &schema_source);
+
+        // Table reference → DEFINE TABLE in the schema source.
+        let table_offset = query_text.find("person").expect("table present") as u32 + 1;
+        let table_target =
+            definition_at(&analysis, &output.schema, &query_source, query_text, table_offset)
+                .expect("cross-file table definition");
+        assert_eq!(table_target.span.source(), &schema_source);
+        assert_eq!(table_target.span.range().start(), 13);
     }
 
     #[test]

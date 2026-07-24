@@ -59,6 +59,34 @@ impl Server {
         }
     }
 
+    /// Sends one request and returns its decoded result value, draining
+    /// client-bound messages while it runs.
+    async fn request(
+        &mut self,
+        method: &'static str,
+        id: i64,
+        params: serde_json::Value,
+    ) -> serde_json::Value {
+        let request = Request::build(method).id(id).params(params).finish();
+        let service = self.service.ready().await.expect("service ready");
+        let call = service.call(request);
+        tokio::pin!(call);
+        loop {
+            tokio::select! {
+                outcome = &mut call => {
+                    let response: Response = outcome.expect("call succeeds").expect("has response");
+                    let (_, result) = response.into_parts();
+                    return result.expect("result present");
+                }
+                message = self.socket.next() => {
+                    if let Some(message) = message {
+                        self.buffered.push(message);
+                    }
+                }
+            }
+        }
+    }
+
     /// The next buffered or incoming publishDiagnostics notification.
     async fn next_publish(&mut self) -> PublishDiagnosticsParams {
         loop {
@@ -189,6 +217,71 @@ async fn schema_in_one_document_resolves_queries_in_another() {
         "cross-document schema resolves: {:?}",
         published.diagnostics
     );
+}
+
+#[tokio::test]
+async fn goto_definition_jumps_from_a_reference_into_the_schema_file() {
+    let mut server = Server::started().await;
+    let schema_uri = Url::parse("file:///workspace/a_schema.surql").expect("valid url");
+    let query_uri = Url::parse("file:///workspace/b_query.surql").expect("valid url");
+
+    server
+        .call(
+            "textDocument/didOpen",
+            None,
+            did_open(
+                &schema_uri,
+                "DEFINE TABLE user;\nDEFINE FIELD name ON user TYPE string;\n",
+            ),
+        )
+        .await;
+    let _ = server.next_publish().await;
+
+    let query = "SELECT name FROM user;\n";
+    server
+        .call("textDocument/didOpen", None, did_open(&query_uri, query))
+        .await;
+    let _ = server.next_publish().await;
+
+    // Cmd-click on `user` in `FROM user` → the DEFINE TABLE in the schema file.
+    let table_char = query.find("user").expect("table present") as u32;
+    let table_location: Location = serde_json::from_value(
+        server
+            .request(
+                "textDocument/definition",
+                2,
+                json!({
+                    "textDocument": {"uri": query_uri},
+                    "position": {"line": 0, "character": table_char},
+                }),
+            )
+            .await,
+    )
+    .expect("definition returns a Location");
+    assert_eq!(table_location.uri, schema_uri);
+    // `user` is the DEFINE TABLE name at columns 12..16 of line 0.
+    assert_eq!(table_location.range.start.line, 0);
+    assert_eq!(table_location.range.start.character, 13);
+
+    // Cmd-click on the projected `name` → the DEFINE FIELD in the schema file.
+    let field_char = query.find("name").expect("field present") as u32;
+    let field_location: Location = serde_json::from_value(
+        server
+            .request(
+                "textDocument/definition",
+                3,
+                json!({
+                    "textDocument": {"uri": query_uri},
+                    "position": {"line": 0, "character": field_char},
+                }),
+            )
+            .await,
+    )
+    .expect("definition returns a Location");
+    assert_eq!(field_location.uri, schema_uri);
+    // `name` is the DEFINE FIELD name on line 1, at columns 12..16.
+    assert_eq!(field_location.range.start.line, 1);
+    assert_eq!(field_location.range.start.character, 13);
 }
 
 #[tokio::test]

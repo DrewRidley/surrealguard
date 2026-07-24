@@ -205,7 +205,7 @@ impl Workspace {
             return None;
         }
 
-        let (analysis_workspace, target_source) = self.surql_analysis_workspace(uri)?;
+        let (analysis_workspace, target_source, sources) = self.surql_analysis_workspace(uri)?;
         let workspace_output = analyze_workspace(&analysis_workspace);
         let output = workspace_output.sources.get(&target_source)?.clone();
 
@@ -214,19 +214,26 @@ impl Workspace {
             schema: workspace_output.schema,
             source: target_source,
             text: target.text.clone(),
+            sources,
         })
     }
 
     /// Builds the analysis workspace from every tracked `.surql` document,
-    /// returning it with the target document's analysis source id. `None`
-    /// when the target is not itself a `.surql` document.
-    fn surql_analysis_workspace(&self, uri: &Url) -> Option<(AnalysisWorkspace, SourceId)> {
+    /// returning it with the target document's analysis source id and a map
+    /// from each source id (stringified) to its `(uri, text)`, so a definition
+    /// span in ANY tracked document resolves back to a document location.
+    /// `None` when the target is not itself a `.surql` document.
+    fn surql_analysis_workspace(
+        &self,
+        uri: &Url,
+    ) -> Option<(AnalysisWorkspace, SourceId, HashMap<String, (Url, String)>)> {
         if !is_surrealql_uri(uri) {
             return None;
         }
 
         let mut analysis_workspace = AnalysisWorkspace::default();
         let mut target_source = None;
+        let mut sources = HashMap::new();
 
         let mut documents: Vec<_> = self
             .documents
@@ -242,12 +249,13 @@ impl Workspace {
                     analysis_workspace.add_virtual_source(doc.uri.to_string(), doc.text.clone())
                 }
             };
+            sources.insert(source_id.to_string(), (doc.uri.clone(), doc.text.clone()));
             if doc.uri == *uri {
                 target_source = Some(source_id);
             }
         }
 
-        Some((analysis_workspace, target_source?))
+        Some((analysis_workspace, target_source?, sources))
     }
 
     /// Scan workspace folders for `.surql` and `.surrealql` files and load them.
@@ -319,6 +327,10 @@ pub struct FeatureAnalysis {
     pub source: SourceId,
     /// The target document's full text, for offset/position conversion.
     pub text: String,
+    /// Every tracked `.surql` document keyed by its analysis source id
+    /// (stringified), for resolving a definition span that points into another
+    /// file back to its URI and text.
+    pub sources: HashMap<String, (Url, String)>,
 }
 
 /// Diagnostics-only result from the shared workspace analysis facade.

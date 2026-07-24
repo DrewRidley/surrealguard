@@ -20,7 +20,9 @@ pub use analysis::{
     ParamInference, SelectModifierAnalysis, StatementAnalysis, Workspace, WorkspaceAnalysis,
 };
 pub use expression::{ExpressionFact, ExpressionValueClass, PartialReason};
-pub use query::{hover_at, let_binding_hints, render_kind, HoverInfo, TypeHint};
+pub use query::{
+    definition_at, hover_at, let_binding_hints, render_kind, DefinitionTarget, HoverInfo, TypeHint,
+};
 pub use schema::{
     AnalyzerDef, FieldDef, FieldPath, FunctionDef, ParamDef, RelationDef, SchemaIndex, TableDef,
 };
