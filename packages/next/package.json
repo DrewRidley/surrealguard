@@ -1,6 +1,6 @@
 {
   "name": "@surrealguard/next",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Next.js / React bindings for SurrealGuard: typed live queries as hooks, App Router SSR seeding.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
@@ -10,9 +10,19 @@
     "url": "https://github.com/DrewRidley/surrealguard",
     "directory": "packages/next"
   },
-  "keywords": ["surrealdb", "surrealql", "next", "react", "live-query"],
+  "keywords": [
+    "surrealdb",
+    "surrealql",
+    "next",
+    "react",
+    "live-query"
+  ],
   "sideEffects": false,
-  "files": ["dist", "LICENSE-MIT", "LICENSE-APACHE"],
+  "files": [
+    "dist",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

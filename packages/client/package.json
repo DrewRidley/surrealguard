@@ -1,6 +1,6 @@
 {
   "name": "@surrealguard/client",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Typed SurrealQL client — literal queries resolve their result and params from generated types.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
@@ -10,9 +10,18 @@
     "url": "https://github.com/DrewRidley/surrealguard",
     "directory": "packages/client"
   },
-  "keywords": ["surrealdb", "surrealql", "typescript", "types"],
+  "keywords": [
+    "surrealdb",
+    "surrealql",
+    "typescript",
+    "types"
+  ],
   "sideEffects": false,
-  "files": ["dist", "LICENSE-MIT", "LICENSE-APACHE"],
+  "files": [
+    "dist",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

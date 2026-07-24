@@ -1,6 +1,6 @@
 {
   "name": "@surrealguard/svelte",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Svelte 5 / SvelteKit bindings for SurrealGuard: typed live queries as runes, SSR hydration.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
@@ -10,9 +10,20 @@
     "url": "https://github.com/DrewRidley/surrealguard",
     "directory": "packages/svelte"
   },
-  "keywords": ["surrealdb", "surrealql", "svelte", "sveltekit", "runes", "live-query"],
+  "keywords": [
+    "surrealdb",
+    "surrealql",
+    "svelte",
+    "sveltekit",
+    "runes",
+    "live-query"
+  ],
   "sideEffects": false,
-  "files": ["dist", "LICENSE-MIT", "LICENSE-APACHE"],
+  "files": [
+    "dist",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
   "svelte": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
