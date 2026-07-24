@@ -8,10 +8,11 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
 
 ## Using SurrealGuard in a user's project
 
-1. **Set it up:** build the CLI from source with `cargo install --path crates/cli`
-   (until the crates.io release), run `surrealguard init`, then edit
-   `surrealguard.toml` so `[sources] schema` and `queries` globs point at the
-   project's `.surql` files.
+1. **Set it up:** run the CLI with `npx surrealguard` (published on npm — no
+   toolchain needed; or install from source with
+   `cargo install --git https://github.com/DrewRidley/surrealguard surrealguard`).
+   Run `npx surrealguard init`, then edit `surrealguard.toml` so `[sources]
+   schema` and `queries` globs point at the project's `.surql` files.
 2. **Check on every change:** `surrealguard check --json`. The JSON is
    `{ summary, diagnostics[] }`; each diagnostic has `code`, `severity`
    (`error`/`warning`/`hint`), `source`, `range { start, end }` (byte offsets),

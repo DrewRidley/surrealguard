@@ -49,12 +49,14 @@
     <p class="lead-p">Install the CLI, scaffold a config, and check your schema and queries in under a minute. SurrealGuard needs no running database — it analyzes your <code>.surql</code> files statically.</p>
 
     <h2>Install</h2>
-    <p>Until the crates.io release, build the <code>surrealguard</code> CLI from source. It needs no running database — it analyzes your <code>.surql</code> files statically.</p>
-    <pre class="code"><span class="cmt"># build the CLI from source (until the crates.io release)</span>
-cargo install --path crates/cli
-surrealguard check</pre>
+    <p>Run the <code>surrealguard</code> CLI with <code>npx</code> — it's published on npm, so there's no toolchain to set up. It needs no running database either; it analyzes your <code>.surql</code> files statically.</p>
+    <pre class="code"><span class="cmt"># zero install via npm</span>
+npx surrealguard check
+
+<span class="cmt"># or install from source (Rust)</span>
+cargo install --git https://github.com/DrewRidley/surrealguard surrealguard</pre>
     <div class="callout">
-      <strong>Preview note.</strong> The crates.io publish is gated on the tree-sitter SurrealQL grammar being published upstream. Until then, install from source with <code>cargo install --path crates/cli</code>. The <code>@surrealguard/*</code> TypeScript packages are already published on npm.
+      <strong>Preview note.</strong> The CLI is published on npm — run it with <code>npx surrealguard</code>. A Rust install from source (<code>cargo install --git https://github.com/DrewRidley/surrealguard surrealguard</code>) works too; the crates.io publish is gated on the tree-sitter SurrealQL grammar being published upstream. The <code>@surrealguard/*</code> TypeScript packages are already on npm.
     </div>
 
     <h2>Scaffold a config</h2>

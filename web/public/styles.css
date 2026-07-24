@@ -154,6 +154,27 @@ h1 .grad {
 .code .mut { color: var(--faint); }
 .code .hl { background: rgba(248,113,113,0.10); display: inline-block; width: 100%; }
 
+/* TypeScript framework variant card (tabbed: Client / Next.js / Svelte) */
+.ts-card { display: block; }
+.ts-head { padding: 34px 34px 22px; }
+.ts-head .tag { font-family: var(--mono); font-size: 12.5px; color: var(--accent-2); margin-bottom: 12px; }
+.ts-head h3 { font-size: 23px; letter-spacing: -0.01em; margin-bottom: 12px; font-weight: 640; }
+.ts-head p { color: var(--muted); font-size: 15.5px; max-width: 720px; }
+.ts-tablist {
+  display: flex; gap: 4px; padding: 0 24px; border-bottom: 1px solid var(--border-soft);
+  background: #0f1116; overflow-x: auto;
+}
+.ts-tab {
+  font-family: var(--mono); font-size: 13px; color: var(--muted); background: transparent;
+  border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 12px 14px;
+  cursor: pointer; white-space: nowrap; transition: color .15s, border-color .15s; margin-bottom: -1px;
+}
+.ts-tab:hover { color: var(--text); }
+.ts-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.ts-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
+.ts-panel .code { border-left: none; border-top: none; }
+.ts-panel[hidden] { display: none; }
+
 /* agent section */
 .agent { border: 1px solid rgba(139,124,255,0.28); border-radius: 16px; background: linear-gradient(180deg, rgba(139,124,255,0.06), rgba(139,124,255,0.02)); padding: 40px; }
 .agent-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; align-items: center; }

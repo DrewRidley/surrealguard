@@ -54,7 +54,7 @@
       <a class="btn btn-primary" href="/docs/">Get started</a>
       <a class="btn btn-ghost" href="#playground">Try it live</a>
     </div>
-    <div class="cmd reveal"><span class="dollar">$</span> surrealguard check <button data-copy="surrealguard check">Copy</button></div>
+    <div class="cmd reveal"><span class="dollar">$</span> npx surrealguard check <button data-copy="npx surrealguard check">Copy</button></div>
 
     <!-- live Guard: the real WASM analyzer catching bugs in a curated stream -->
     <div class="guard reveal" id="guard" role="img" aria-label="Live demonstration of the SurrealGuard analyzer checking SurrealQL statements against a schema.">
@@ -128,36 +128,44 @@
 //   [E1002] unknown field `ssn` on table `user`</span></div>
     </div>
 
-    <div class="card card-split reveal">
-      <div class="code"><span class="k">const</span> db = <span class="k">new</span> <span class="fn">SurrealGuardClient</span>();  <span class="c">// extends the SurrealDB SDK</span>
-<span class="k">const</span> [users] = <span class="k">await</span> db.<span class="fn">query</span>(
-  <span class="s">"SELECT name FROM user WHERE team = $team"</span>,
-  { team: <span class="s">"red"</span> }
-);
-<span class="c">//     ^ Array&lt;{ name: string }&gt; — params typed from the text</span>
-
-<span class="k">await</span> db.<span class="fn">query</span>(<span class="s">"SELECT name FROM user WHERE team = $team"</span>);
-<span class="err">//    ✗ Expected 2 arguments, but got 1.</span></div>
-      <div class="card-copy">
-        <div class="tag">TypeScript · @surrealguard/client</div>
-        <h3>Typed queries, no wrapper</h3>
-        <p><code>SurrealGuardClient</code> extends the SurrealDB SDK, so <code>new SurrealGuardClient()</code> has every SDK method plus typed queries. Pass a literal to <code>db.query</code> and its result (the per-statement tuple — destructure the first) and params are inferred from the query text. Missing or wrong params are compile errors. Dynamic strings degrade to <code>unknown[]</code> and still run.</p>
+    <div class="card ts-card reveal">
+      <div class="ts-head">
+        <div class="tag">TypeScript · @surrealguard/{client, next, svelte}</div>
+        <h3>Typed queries in every framework</h3>
+        <p>One typed <code>db.query</code> that extends the SurrealDB SDK, plus reactive live-query adapters for Next.js and Svelte 5. The row type is always inferred from the query text — dynamic strings degrade to <code>unknown[]</code> and still run.</p>
       </div>
-    </div>
-
-    <div class="card card-split reveal">
-      <div class="card-copy">
-        <div class="tag">Svelte 5 · @surrealguard/svelte</div>
-        <h3>Live queries, zero lifecycle code</h3>
-        <p>Seed from SSR, subscribe on mount, reconcile change notifications by record id, and tear down on destroy — all handled. One shared subscription per query, refcounted. <code>users.data</code> is a rune getter you read directly (no store <code>$</code> prefix); the row type is inferred from the query. A <code>useLiveQuery</code> hook does the same for Next.js.</p>
+      <div class="ts-tablist" role="tablist" aria-label="TypeScript framework variants" id="tsTabs">
+        <button class="ts-tab active" role="tab" id="tstab-client" aria-controls="tspanel-client" aria-selected="true" tabindex="0">Client</button>
+        <button class="ts-tab" role="tab" id="tstab-next" aria-controls="tspanel-next" aria-selected="false" tabindex="-1">Next.js</button>
+        <button class="ts-tab" role="tab" id="tstab-svelte" aria-controls="tspanel-svelte" aria-selected="false" tabindex="-1">Svelte 5</button>
       </div>
-      <div class="code"><span class="k">import</span> { liveQuery } <span class="k">from</span> <span class="s">"@surrealguard/svelte"</span>;
-<span class="c">// db comes from context (setClient in +layout.svelte)</span>
-<span class="k">const</span> users = <span class="fn">liveQuery</span>((db) =&gt; db.<span class="fn">live</span>(<span class="s">`SELECT * FROM user`</span>));
 
-<span class="c">// {#each users.data as user (user.id)}</span>
+      <div class="ts-panel" role="tabpanel" id="tspanel-client" aria-labelledby="tstab-client">
+        <div class="code"><span class="k">const</span> db = <span class="k">new</span> <span class="fn">SurrealGuardClient</span>();  <span class="c">// extends the SurrealDB SDK</span>
+<span class="k">const</span> [rows] = <span class="k">await</span> db.<span class="fn">query</span>(<span class="s">`SELECT name FROM user`</span>);
+<span class="c">//     ^ Array&lt;{ name: string }&gt; — inferred from the query text</span>
+
+<span class="k">const</span> [x] = <span class="k">await</span> db.<span class="fn">query</span>(<span class="s">`SELECT name, ssn FROM user`</span>);
+<span class="err">//    ✗ unknown field `ssn` on table `user`</span></div>
+      </div>
+
+      <div class="ts-panel" role="tabpanel" id="tspanel-next" aria-labelledby="tstab-next" hidden>
+        <div class="code"><span class="c">// app/providers.tsx — wrap once</span>
+&lt;<span class="fn">SurrealGuardProvider</span> client={db}&gt;{children}&lt;/<span class="fn">SurrealGuardProvider</span>&gt;
+
+<span class="c">// any client component:</span>
+<span class="k">const</span> { data } = <span class="fn">useLiveQuery</span>((db) =&gt; db.<span class="fn">live</span>(<span class="s">`SELECT * FROM user`</span>));
+<span class="c">//      ^ live Array&lt;{ … }&gt; — reconciled by record id, SSR-seeded</span></div>
+      </div>
+
+      <div class="ts-panel" role="tabpanel" id="tspanel-svelte" aria-labelledby="tstab-svelte" hidden>
+        <div class="code"><span class="k">const</span> users = <span class="fn">liveQuery</span>((db) =&gt; db.<span class="fn">live</span>(<span class="s">`SELECT * FROM user`</span>));
+<span class="c">// users.data is a rune getter — read it directly, no store $ prefix</span>
+
+<span class="c">// {#each users.data as u (u.id)}</span>
 <span class="c">//   … reconciled live: CREATE / UPDATE / DELETE by id</span>
 <span class="c">// {/each}</span></div>
+      </div>
     </div>
   </div>
 </section>
@@ -177,8 +185,8 @@
           </ul>
         </div>
         <div class="prompt-box">
-          <button class="copy-prompt" data-copy="Set up SurrealGuard in this project. Install the CLI from source with `cargo install --path crates/cli`, run `surrealguard init`, point surrealguard.toml at my .surql schema and query directories, then run `surrealguard check --json` and fix any reported findings. Where I write queries, use the Rust `query!` macro (surrealguard-rs) or the typed `@surrealguard/client` db.query so they're checked against my schema.">Copy prompt</button>
-Set up SurrealGuard in this project. Install the CLI with <span style="color:#86efac">`cargo install --path crates/cli`</span>, run <span style="color:#86efac">`surrealguard init`</span>, point surrealguard.toml at my .surql schema and query directories, then run <span style="color:#86efac">`surrealguard check --json`</span> and fix any reported findings.
+          <button class="copy-prompt" data-copy="Set up SurrealGuard in this project. Run the CLI with `npx surrealguard init`, point surrealguard.toml at my .surql schema and query directories, then run `npx surrealguard check --json` and fix any reported findings. Where I write queries, use the Rust `query!` macro (surrealguard-rs) or the typed `@surrealguard/client` db.query so they're checked against my schema.">Copy prompt</button>
+Set up SurrealGuard in this project. Run the CLI with <span style="color:#86efac">`npx surrealguard init`</span>, point surrealguard.toml at my .surql schema and query directories, then run <span style="color:#86efac">`npx surrealguard check --json`</span> and fix any reported findings.
 
 Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> macro or the typed <span style="color:#c4b5fd">`@surrealguard/client`</span> db.query so they're checked against my schema.
         </div>
@@ -213,27 +221,32 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
     <div class="sec-head">
       <div class="kicker">// install</div>
       <h2 class="reveal">Get it</h2>
-      <p class="reveal">The CLI and LSP install from source today; the TypeScript packages are on npm. crates.io publishes are next.</p>
+      <p class="reveal">Run the CLI with <code>npx surrealguard</code> — zero install. A Zed extension brings live diagnostics to your editor; the TypeScript packages are on npm. crates.io publishes are next.</p>
     </div>
     <div class="install-grid">
       <div class="install-card reveal">
-        <div class="label">CLI <span class="pill">cargo</span></div>
+        <div class="label">CLI <span class="pill">npx · zero-install</span></div>
         <div class="term">
           <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">surrealguard — cli</span></div>
           <div class="term-body">
-            <div class="term-line comment"># from source, until the crates.io release</div>
-            <div class="term-line"><span class="prompt">$</span><code>cargo install --path crates/cli</code><button class="term-copy" data-copy="cargo install --path crates/cli">Copy</button></div>
-            <div class="term-line"><span class="prompt">$</span><code>surrealguard init &amp;&amp; surrealguard check</code><button class="term-copy" data-copy="surrealguard init &amp;&amp; surrealguard check">Copy</button></div>
+            <div class="term-line comment"># zero-install via npm — no toolchain needed</div>
+            <div class="term-line"><span class="prompt">$</span><code>npx surrealguard init</code><button class="term-copy" data-copy="npx surrealguard init">Copy</button></div>
+            <div class="term-line"><span class="prompt">$</span><code>npx surrealguard check</code><button class="term-copy" data-copy="npx surrealguard check">Copy</button></div>
+            <div class="term-line"><span class="prompt">$</span><code>npx surrealguard generate</code><button class="term-copy" data-copy="npx surrealguard generate">Copy</button></div>
+            <div class="term-line comment"># or from source (Rust):</div>
+            <div class="term-line"><span class="prompt">$</span><code>cargo install --git https://github.com/DrewRidley/surrealguard surrealguard</code><button class="term-copy" data-copy="cargo install --git https://github.com/DrewRidley/surrealguard surrealguard">Copy</button></div>
           </div>
         </div>
       </div>
       <div class="install-card reveal">
-        <div class="label">Editors / LSP <span class="pill">rust · zed</span></div>
+        <div class="label">Editor <span class="pill">zed</span></div>
         <div class="term">
-          <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">language server</span></div>
+          <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">zed extension</span></div>
           <div class="term-body">
-            <div class="term-line comment"># the language server (Zed: DrewRidley/zed-surreal)</div>
-            <div class="term-line"><span class="prompt">$</span><code>cargo install --path crates/lsp</code><button class="term-copy" data-copy="cargo install --path crates/lsp">Copy</button></div>
+            <div class="term-line comment"># syntax highlighting + live diagnostics + hover / inlay</div>
+            <div class="term-line comment"># install as a Zed dev extension from the repo —</div>
+            <div class="term-line comment"># it auto-downloads the LSP binary for you</div>
+            <div class="term-line"><span class="prompt">›</span><code>github.com/DrewRidley/zed-surreal</code><button class="term-copy" data-copy="https://github.com/DrewRidley/zed-surreal">Copy</button></div>
           </div>
         </div>
       </div>
@@ -316,6 +329,34 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
   const AI_PROMPT = "I want to use SurrealGuard (static analysis and type inference for SurrealQL) in my project. First read its full reference at https://surrealguard.dev/llms-full.txt, then help me install it, point it at my schema, and get typed, statically-checked queries working. Ask whether I'm on Rust or TypeScript if it changes the steps.";
   ai.querySelector('[data-ai="chatgpt"]').href = "https://chatgpt.com/?q=" + encodeURIComponent(AI_PROMPT);
   ai.querySelector('[data-ai="claude"]').href = "https://claude.ai/new?q=" + encodeURIComponent(AI_PROMPT);
+
+  // TypeScript framework variant tabs (Client / Next.js / Svelte) — keyboard-accessible
+  (function () {
+    const tablist = document.getElementById("tsTabs");
+    if (!tablist) return;
+    const tabs = [...tablist.querySelectorAll('[role="tab"]')];
+    function select(tab, focus) {
+      tabs.forEach((t) => {
+        const on = t === tab;
+        t.setAttribute("aria-selected", on);
+        t.tabIndex = on ? 0 : -1;
+        t.classList.toggle("active", on);
+        document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+      });
+      if (focus) tab.focus();
+    }
+    tabs.forEach((tab, i) => {
+      tab.addEventListener("click", () => select(tab));
+      tab.addEventListener("keydown", (e) => {
+        let j = null;
+        if (e.key === "ArrowRight" || e.key === "ArrowDown") j = (i + 1) % tabs.length;
+        else if (e.key === "ArrowLeft" || e.key === "ArrowUp") j = (i - 1 + tabs.length) % tabs.length;
+        else if (e.key === "Home") j = 0;
+        else if (e.key === "End") j = tabs.length - 1;
+        if (j !== null) { e.preventDefault(); select(tabs[j], true); }
+      });
+    });
+  })();
 
   // =====================================================================
   //  Shared engine loader + SurrealQL highlighter, then the live hero and

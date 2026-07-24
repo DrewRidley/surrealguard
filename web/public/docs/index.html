@@ -93,9 +93,11 @@
 <span class="c">//     ^ Array&lt;{ name: string }&gt; — params required + typed from the text</span></pre>
 
     <h2>Install</h2>
-    <pre class="code"><span class="cmt"># CLI — build from source (until the crates.io release)</span>
-cargo install --path crates/cli
-surrealguard check --json
+    <pre class="code"><span class="cmt"># CLI — zero install via npm</span>
+npx surrealguard check --json
+
+<span class="cmt"># or install from source (Rust)</span>
+cargo install --git https://github.com/DrewRidley/surrealguard surrealguard
 
 <span class="cmt"># Rust library — git dependency in Cargo.toml (until the crates.io release)</span>
 <span class="cmt"># surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }</span>

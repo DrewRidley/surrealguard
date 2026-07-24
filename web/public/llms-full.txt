@@ -82,11 +82,14 @@ What it analyzes:
 ## 2. Install
 
 ```bash
-# CLI, from source (the crates.io publish is next; there is no `npx surrealguard` yet)
-cargo install --path crates/cli
+# CLI, via npm - zero install, no toolchain needed
+npx surrealguard check
 
-# the language server, from source
-cargo install --path crates/lsp
+# or install the CLI from source (Rust)
+cargo install --git https://github.com/DrewRidley/surrealguard surrealguard
+
+# editor support: install the Zed extension - it auto-downloads the LSP for you
+# https://github.com/DrewRidley/zed-surreal
 
 # TypeScript typed client (published on npm)
 npm i @surrealguard/client # + @surrealguard/{query,next,svelte}
@@ -716,9 +719,9 @@ live in place. In both adapters `db.live(...)` takes the query as an argument
 
 ## 9. Editors and the language server (LSP)
 
-`surrealguard-lsp` (install from source: `cargo install --path crates/lsp`)
-speaks LSP over stdio and drives the same analyzer as the CLI, so what an editor
-shows and what CI reports never diverge. It handles both `.surql` files and
+The SurrealGuard language server speaks LSP over stdio and drives the same
+analyzer as the CLI, so what an editor shows and what CI reports never diverge.
+You don't install it by hand - the Zed extension auto-downloads the binary. It handles both `.surql` files and
 SurrealQL embedded in host files (TypeScript, Svelte, Vue, Astro) - findings land
 on the exact token inside the inline query.
 
@@ -735,17 +738,17 @@ Editor features:
 - **Dead code** is greyed out - findings that mark a span unnecessary (e.g.
  unreachable statements) carry the LSP "unnecessary" tag.
 
-Zed: install the `DrewRidley/zed-surreal` extension, which launches the server
-for `.surql` files.
+Zed: install the `DrewRidley/zed-surreal` extension
+(https://github.com/DrewRidley/zed-surreal), which auto-downloads the language
+server and launches it for `.surql` files - no manual LSP install.
 
 ## 10. Using SurrealGuard with a coding agent
 
 Paste-in setup prompt:
 
-> Set up SurrealGuard in this project. Install the CLI from source with
-> `cargo install --path crates/cli`, run `surrealguard init`, point
-> surrealguard.toml at my .surql schema and query directories, then run
-> `surrealguard check --json` and fix any reported findings. Where I write
+> Set up SurrealGuard in this project. Run the CLI with `npx surrealguard init`,
+> point surrealguard.toml at my .surql schema and query directories, then run
+> `npx surrealguard check --json` and fix any reported findings. Where I write
 > queries, use the Rust `query!` macro (surrealguard-rs) or the typed
 > `@surrealguard/client` db.query so they're checked against my schema.
 
