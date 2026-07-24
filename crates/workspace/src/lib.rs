@@ -5,6 +5,7 @@
 pub mod analysis;
 pub mod analyzer;
 pub mod config;
+pub mod context_params;
 pub mod expression;
 pub mod kinds;
 pub mod query;

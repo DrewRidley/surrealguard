@@ -204,6 +204,7 @@ impl LanguageServer for Backend {
             &analysis.output,
             &analysis.schema,
             &analysis.source,
+            &analysis.text,
             offset,
         ) else {
             return Ok(None);

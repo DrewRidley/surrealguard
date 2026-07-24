@@ -49,13 +49,16 @@ pub struct HoverInfo {
 }
 
 /// Resolves a hover at byte `offset` in `source`: maps the cursor to the
-/// smallest covering symbol among the `LET` bindings, parameter uses, and
-/// table declarations, and renders its inferred type. `None` when the
-/// cursor is over nothing typed.
+/// smallest covering symbol among the `LET` bindings, parameter uses, table
+/// declarations, and the context params (`$value`/`$event`/`$after`/...)
+/// bound by an enclosing DEFINE construct, and renders its inferred type.
+/// `None` when the cursor is over nothing typed. `text` is the source's full
+/// text, needed to locate the enclosing DEFINE construct for context params.
 pub fn hover_at(
     output: &AnalysisOutput,
     schema: &SchemaIndex,
     source: &SourceId,
+    text: &str,
     offset: u32,
 ) -> Option<HoverInfo> {
     let mut best: Option<(u32, HoverInfo)> = None;
@@ -104,6 +107,18 @@ pub fn hover_at(
     // `DEFINE TABLE` declaration names.
     for table in schema.tables.values() {
         consider(&table.name_span, table_markdown(table, schema));
+    }
+
+    // Context params (`$value`/`$event`/`$before`/...) bound by the DEFINE
+    // construct enclosing the cursor. Located lexically — the token under the
+    // cursor is looked up in the construct's binding map.
+    if let Some((name, range)) = crate::context_params::param_token_at(text, offset) {
+        if let Some(map) = crate::context_params::context_param_map(schema, source, text, offset) {
+            if let Some(kind) = map.get(&name) {
+                let span = SourceSpan::new(source.clone(), range);
+                consider(&span, symbol_markdown(&format!("${name}"), Some(kind), schema));
+            }
+        }
     }
 
     best.map(|(_, info)| info)
@@ -331,7 +346,7 @@ mod tests {
         let text = "LET $age = 42;";
         let (output, schema, source) = analyze(text);
         // Cursor on the `$age` token (offset 6 is inside `$age`).
-        let hover = hover_at(&output, &schema, &source, 6).expect("hover over $age");
+        let hover = hover_at(&output, &schema, &source, text, 6).expect("hover over $age");
 
         assert!(hover.markdown.contains("$age: int"));
         assert_eq!(hover.span.range().start(), 4);
@@ -344,7 +359,7 @@ mod tests {
         let text = "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nSELECT * FROM person WHERE age = $id;";
         let (output, schema, source) = analyze(text);
         let offset = text.find("$id").expect("param present") as u32 + 1;
-        let hover = hover_at(&output, &schema, &source, offset).expect("hover over $id");
+        let hover = hover_at(&output, &schema, &source, text, offset).expect("hover over $id");
 
         assert!(hover.markdown.contains("$id: int"), "got: {}", hover.markdown);
     }
@@ -355,7 +370,7 @@ mod tests {
         let (output, schema, source) = analyze(text);
         // Cursor on the `person` name in the DEFINE TABLE statement.
         let offset = text.find("person").expect("table name present") as u32 + 1;
-        let hover = hover_at(&output, &schema, &source, offset).expect("hover over table");
+        let hover = hover_at(&output, &schema, &source, text, offset).expect("hover over table");
 
         assert!(hover.markdown.contains("table person"), "got: {}", hover.markdown);
         assert!(hover.markdown.contains("name: string"), "got: {}", hover.markdown);
@@ -367,6 +382,58 @@ mod tests {
         let text = "LET $age = 42;";
         let (output, schema, source) = analyze(text);
         // Offset 0 is on the `LET` keyword.
-        assert!(hover_at(&output, &schema, &source, 0).is_none());
+        assert!(hover_at(&output, &schema, &source, text, 0).is_none());
+    }
+
+    #[test]
+    fn hover_resolves_value_context_param_in_a_define_field_assert() {
+        let text = "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD status ON t TYPE string ASSERT $value IN ['a', 'b'];";
+        let (output, schema, source) = analyze(text);
+        // The `$value` in the ASSERT clause takes the field's declared kind.
+        let offset = text.find("$value").expect("param present") as u32 + 1;
+        let hover = hover_at(&output, &schema, &source, text, offset).expect("hover over $value");
+
+        assert!(hover.markdown.contains("$value: string"), "got: {}", hover.markdown);
+    }
+
+    #[test]
+    fn hover_resolves_event_and_after_context_params_in_a_define_event() {
+        let text = "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD name ON t TYPE string;\n\
+             DEFINE EVENT ev ON t WHEN $event = 'CREATE' THEN { UPDATE t SET name = $after.name; };";
+        let (output, schema, source) = analyze(text);
+
+        let event_offset = text.find("$event").expect("$event present") as u32 + 1;
+        let event_hover =
+            hover_at(&output, &schema, &source, text, event_offset).expect("hover over $event");
+        assert!(
+            event_hover.markdown.contains("'CREATE' | 'UPDATE' | 'DELETE'"),
+            "got: {}",
+            event_hover.markdown
+        );
+
+        let after_offset = text.find("$after").expect("$after present") as u32 + 1;
+        let after_hover =
+            hover_at(&output, &schema, &source, text, after_offset).expect("hover over $after");
+        assert!(
+            after_hover.markdown.contains("$after: record<t>"),
+            "got: {}",
+            after_hover.markdown
+        );
+    }
+
+    #[test]
+    fn hover_over_value_outside_a_define_construct_returns_none() {
+        // `$value` is only a context param inside a DEFINE body; a bare use
+        // elsewhere is an ordinary (here unknown) param, not a context one.
+        let text = "RETURN $value + 1;";
+        let (output, schema, source) = analyze(text);
+        let offset = text.find("$value").expect("param present") as u32 + 1;
+        let hover = hover_at(&output, &schema, &source, text, offset);
+        // If anything resolves it must not claim the context-param field kind.
+        if let Some(hover) = hover {
+            assert!(!hover.markdown.contains("record<"), "got: {}", hover.markdown);
+        }
     }
 }
