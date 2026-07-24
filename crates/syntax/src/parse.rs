@@ -149,6 +149,12 @@ fn collect_syntax_diagnostics(
     source_id: &SourceId,
     diagnostics: &mut Vec<SyntaxDiagnostic>,
 ) {
+    // Captured before this node emits anything so the `has_error` fallback
+    // below fires only when neither this node nor any descendant produced a
+    // diagnostic — otherwise an `ERROR` node would be reported twice (once
+    // here, once by the fallback, since `has_error()` is true for it).
+    let diagnostics_before = diagnostics.len();
+
     if node.is_error() {
         diagnostics.push(SyntaxDiagnostic::new(
             SyntaxDiagnosticKind::ErrorNode,
@@ -165,13 +171,12 @@ fn collect_syntax_diagnostics(
         ));
     }
 
-    let diagnostics_before_children = diagnostics.len();
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         collect_syntax_diagnostics(child, source_id, diagnostics);
     }
 
-    if node.has_error() && diagnostics.len() == diagnostics_before_children {
+    if node.has_error() && diagnostics.len() == diagnostics_before {
         diagnostics.push(SyntaxDiagnostic::new(
             SyntaxDiagnosticKind::ErrorNode,
             node_source_span(node, source_id.clone()),

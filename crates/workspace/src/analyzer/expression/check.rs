@@ -19,8 +19,21 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
     match &expr.node {
         ast::Expr::Binary { lhs, op, rhs } => {
             check_value_expression(ctx, lhs);
-            check_value_expression(ctx, rhs);
-            check_binary(ctx, expr, lhs, &op.node, rhs);
+            // The right operand of `$x = NONE OR ...` / `$x != NONE AND ...`
+            // runs only when `$x` is non-none, so check it (and the operator
+            // itself, which re-reads the rhs kind) with `$x` narrowed.
+            match crate::analyzer::expression::infer::none_guarded_param(&op.node, lhs) {
+                Some(param) => {
+                    crate::analyzer::expression::infer::with_none_narrowed(param, ctx, |ctx| {
+                        check_value_expression(ctx, rhs);
+                        check_binary(ctx, expr, lhs, &op.node, rhs);
+                    });
+                }
+                None => {
+                    check_value_expression(ctx, rhs);
+                    check_binary(ctx, expr, lhs, &op.node, rhs);
+                }
+            }
         }
         ast::Expr::Prefix { op, expr: inner } => {
             check_value_expression(ctx, inner);
@@ -561,6 +574,15 @@ fn comparable(left: &Kind, right: &Kind) -> bool {
         || matches!(left, Kind::None | Kind::Null)
         || matches!(right, Kind::None | Kind::Null)
     {
+        return true;
+    }
+    // A table value compares equal to its name as a string — `type::table($x)
+    // = 'folder'` is the idiomatic record-discriminant guard.
+    if matches!(
+        (left, right),
+        (Kind::Table(_), Kind::String | Kind::Table(_))
+            | (Kind::String, Kind::Table(_))
+    ) {
         return true;
     }
     // Records compare across tables (id ordering); literals compare with

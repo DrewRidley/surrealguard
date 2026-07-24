@@ -57,14 +57,30 @@ impl Backend {
             .await;
     }
 
-    /// Publish diagnostics for all tracked documents.
+    /// Publish diagnostics for all tracked documents in a single workspace
+    /// analysis pass (avoids re-analyzing the whole workspace once per file).
     async fn publish_all_diagnostics(&self) {
-        let uris: Vec<Url> = {
+        let results = {
             let ws = self.workspace.read().await;
-            ws.documents().map(|d| d.uri.clone()).collect()
+            ws.analyze_all()
         };
-        for uri in uris {
-            self.publish_diagnostics(&uri).await;
+        let policy = surrealguard_diagnostics::PolicyConfig::default();
+        for (uri, result) in results {
+            let lsp_diagnostics: Vec<Diagnostic> = result
+                .diagnostics
+                .iter()
+                .filter_map(|d| {
+                    diagnostics::workspace_finding_to_lsp_diagnostic(
+                        &result.source,
+                        d,
+                        &policy,
+                        &result.texts,
+                    )
+                })
+                .collect();
+            self.client
+                .publish_diagnostics(uri, lsp_diagnostics, None)
+                .await;
         }
     }
 }

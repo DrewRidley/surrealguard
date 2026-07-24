@@ -302,7 +302,12 @@ impl Lowerer<'_> {
                     .collect();
                 TypeExpr::Union(variants)
             }
+            // `{ name: string, ... }` — an object type. The grammar nests it
+            // under `LiteralType`, but the field TYPE clause can also hand it
+            // to us directly, so handle both entry points.
+            "ObjectType" => self.object_type(node),
             "LiteralType" => match single_named_child(node) {
+                Some(value) if value.kind() == "ObjectType" => return self.type_expr(value),
                 Some(value) => match self.expr(value).node {
                     Expr::Literal(literal) => TypeExpr::Literal(literal),
                     _ => TypeExpr::Partial(partial(node)),
@@ -312,6 +317,33 @@ impl Lowerer<'_> {
             _ => TypeExpr::Partial(partial(node)),
         };
         self.spanned(node, ty)
+    }
+
+    /// Lowers an `ObjectType` node (`{ key: T, ... }`) to a structural
+    /// [`TypeExpr::Object`], recursing into each property's declared type.
+    fn object_type(&self, node: Node<'_>) -> TypeExpr {
+        let mut properties = Vec::new();
+        collect_object_type_properties(node, &mut |property| {
+            let Some(key_node) = first_descendant_of_kind(property, "ObjectKey") else {
+                return;
+            };
+            let key_leaf = single_named_child(key_node).unwrap_or(key_node);
+            let key = self.spanned(
+                key_leaf,
+                self.node_text(key_leaf)
+                    .trim_matches(['`', '"', '\''])
+                    .to_string(),
+            );
+            let value = named_children(property)
+                .into_iter()
+                .find(|child| !matches!(child.kind(), "ObjectKey" | "Colon"));
+            let value = match value {
+                Some(ty_node) => self.type_expr(ty_node),
+                None => self.spanned(property, TypeExpr::Partial(partial(property))),
+            };
+            properties.push((key, value));
+        });
+        TypeExpr::Object(properties)
     }
 
     fn subquery(&self, node: Node<'_>) -> Expr {
@@ -628,6 +660,16 @@ fn collect_object_properties(node: Node<'_>, visit: &mut impl FnMut(Node<'_>)) {
     }
 }
 
+fn collect_object_type_properties(node: Node<'_>, visit: &mut impl FnMut(Node<'_>)) {
+    for child in named_children(node) {
+        match child.kind() {
+            "ObjectTypeProperty" => visit(child),
+            "ObjectTypeContent" => collect_object_type_properties(child, visit),
+            _ => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -874,6 +916,48 @@ mod tests {
         assert_eq!(fields[0].1.node, Expr::Literal(Literal::String("a".into())));
         assert_eq!(fields[1].0.node, "age");
         assert_eq!(fields[1].1.node, Expr::Literal(Literal::Int(1)));
+    }
+
+    #[test]
+    fn lowers_object_and_record_union_field_types() {
+        // Object field types: `{ street: string, zip: int }` — the grammar
+        // nests the ObjectType under a LiteralType.
+        let parsed = parse("DEFINE FIELD address ON person TYPE { street: string, zip: int };");
+        let object_type =
+            find_first(parsed.tree().root_node(), "ObjectType").expect("has an ObjectType node");
+        let ty = lower_type_expr(object_type, parsed.text());
+        let TypeExpr::Object(properties) = &ty.node else {
+            panic!("expected object type, got {:?}", ty.node);
+        };
+        assert_eq!(properties.len(), 2);
+        assert_eq!(properties[0].0.node, "street");
+        assert!(matches!(&properties[0].1.node, TypeExpr::Name(n) if n.node == "string"));
+        assert_eq!(properties[1].0.node, "zip");
+        assert!(matches!(&properties[1].1.node, TypeExpr::Name(n) if n.node == "int"));
+
+        // Record unions: `record<team | user | organization>` nests the table
+        // names as a single UnionType argument.
+        let parsed =
+            parse("DEFINE FIELD owner ON thing TYPE record<team | user | organization>;");
+        let param = find_first(parsed.tree().root_node(), "ParameterizedType")
+            .expect("has a ParameterizedType node");
+        let ty = lower_type_expr(param, parsed.text());
+        let TypeExpr::Parameterized { name, args } = &ty.node else {
+            panic!("expected parameterized type, got {:?}", ty.node);
+        };
+        assert_eq!(name.node, "record");
+        assert_eq!(args.len(), 1);
+        let TypeExpr::Union(variants) = &args[0].node else {
+            panic!("expected union argument, got {:?}", args[0].node);
+        };
+        let names: Vec<_> = variants
+            .iter()
+            .map(|v| match &v.node {
+                TypeExpr::Name(n) => n.node.clone(),
+                other => panic!("expected table name, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(names, vec!["team", "user", "organization"]);
     }
 
     #[test]

@@ -141,6 +141,56 @@ impl Workspace {
         })
     }
 
+    /// Analyze every tracked `.surql` document in a SINGLE workspace pass and
+    /// return each document's findings keyed by URI. This is the batch path for
+    /// `publish_all` — it builds the analysis workspace and runs
+    /// [`analyze_workspace`] exactly once, instead of the per-file
+    /// [`Self::diagnostic_analysis`] which re-analyzes the whole workspace for
+    /// each file (O(n^2) over a large schema).
+    pub fn analyze_all(&self) -> Vec<(Url, DiagnosticAnalysisResult)> {
+        let mut analysis_workspace = AnalysisWorkspace::default();
+
+        let mut documents: Vec<_> = self
+            .documents
+            .values()
+            .filter(|doc| is_surrealql_uri(&doc.uri))
+            .collect();
+        documents.sort_by(|left, right| left.uri.as_str().cmp(right.uri.as_str()));
+
+        let mut texts = std::collections::BTreeMap::new();
+        let mut per_source: Vec<(surrealguard_syntax::source::SourceId, Url, String)> = Vec::new();
+        for doc in documents {
+            let source_id = match doc.uri.to_file_path() {
+                Ok(path) => analysis_workspace.add_file_source(path, doc.text.clone()),
+                Err(_) => {
+                    analysis_workspace.add_virtual_source(doc.uri.to_string(), doc.text.clone())
+                }
+            };
+            texts.insert(source_id.to_string(), (doc.uri.clone(), doc.text.clone()));
+            per_source.push((source_id, doc.uri.clone(), doc.text.clone()));
+        }
+
+        let workspace_output = analyze_workspace(&analysis_workspace);
+        per_source
+            .into_iter()
+            .map(|(source_id, uri, text)| {
+                let diagnostics = workspace_output
+                    .sources
+                    .get(&source_id)
+                    .map(|source_output| source_output.diagnostics.clone())
+                    .unwrap_or_default();
+                (
+                    uri,
+                    DiagnosticAnalysisResult {
+                        diagnostics,
+                        source: text,
+                        texts: texts.clone(),
+                    },
+                )
+            })
+            .collect()
+    }
+
     /// Scan workspace folders for `.surql` and `.surrealql` files and load them.
     pub fn scan_folders(&mut self) {
         for root in &self.roots.clone() {

@@ -7,5 +7,6 @@ pub mod continue_stmt;
 pub mod for_loop;
 pub mod if_else;
 pub mod let_stmt;
+pub mod narrow;
 pub mod return_stmt;
 pub mod throw;

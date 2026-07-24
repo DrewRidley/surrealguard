@@ -14,21 +14,10 @@ jobs:
     name: build · test · lint
     runs-on: ubuntu-latest
     steps:
-      # surrealguard-syntax depends on the tree-sitter-surrealql grammar via a
-      # path dependency (`../tree-sitter-surrealql`). Until that grammar is
-      # published to crates.io, CI checks it out at the expected sibling path.
-      # Once the fork is upstreamed and released, drop this step and switch the
-      # workspace dependency from `path` to a crates.io `version`.
+      # The SurrealQL grammar is vendored in-repo at
+      # `crates/tree-sitter-surrealql`, so a single checkout is all CI needs.
       - name: Check out surrealguard
         uses: actions/checkout@v4
-        with:
-          path: surrealguard
-
-      - name: Check out grammar
-        uses: actions/checkout@v4
-        with:
-          repository: DrewRidley/tree-sitter-surrealql-1
-          path: tree-sitter-surrealql
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -37,19 +26,14 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: surrealguard
 
       - name: Format check
-        working-directory: surrealguard
         run: cargo fmt --all --check
 
       - name: Clippy
-        working-directory: surrealguard
         run: cargo clippy --workspace --all-targets
 
       - name: Test
-        working-directory: surrealguard
         run: cargo test --workspace
 
   packages:

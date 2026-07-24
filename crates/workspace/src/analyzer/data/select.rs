@@ -510,8 +510,11 @@ fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContex
             .first()
             .filter(|from| matches!(from.node, ast::Expr::Table(_)));
         let limited_to_one = literal_limit(stmt).is_some_and(|limit| limit <= 1);
+        // A WHERE clause enforces single-row cardinality at runtime (a
+        // filtered `FROM ONLY <table>` selects the matching record), so it
+        // needs no explicit LIMIT 1.
         if let Some(from) = table_target {
-            if !limited_to_one {
+            if !limited_to_one && stmt.where_clause.is_none() {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from.span);
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
@@ -1233,10 +1236,29 @@ pub(crate) fn kind_for_path(table: &TableDef, segments: &[String]) -> Option<Kin
         return Some(object_kind_for_field_prefix(table, segments));
     }
 
-    table
+    if let Some(field) = table.fields.get(&segments.join(".")) {
+        return Some(field.kind.clone().unwrap_or(Kind::Any));
+    }
+
+    // Fall back to the implicit record fields (`id` on any table; `in`/`out`
+    // on relation edges) and record-link boundaries. When the head segment
+    // resolves to a record link — a declared `record<>` field or an implicit
+    // id/in/out — with trailing segments, the path crosses into the LINKED
+    // table, which validates its own fields; the traversed kind is opaque
+    // here (`Any`). A bare implicit field yields its own record kind.
+    let Some((head, rest)) = segments.split_first() else {
+        return None;
+    };
+    let head_kind = table
         .fields
-        .get(&segments.join("."))
-        .map(|field| field.kind.clone().unwrap_or(Kind::Any))
+        .get(head)
+        .and_then(|field| field.kind.clone())
+        .or_else(|| table.implicit_field_kind(head));
+    match head_kind {
+        Some(kind @ Kind::Record(_)) if rest.is_empty() => Some(kind),
+        Some(Kind::Record(_)) => Some(Kind::Any),
+        _ => None,
+    }
 }
 
 pub(crate) fn insert_kind_at_path(
@@ -1340,6 +1362,47 @@ mod tests {
             None,
         );
         select_response_kind(&stmt, &mut ctx)
+    }
+
+    fn diagnostics_for(schema: &SchemaIndex, query: &str) -> Vec<surrealguard_diagnostics::Finding> {
+        let parsed = parse(query);
+        let stmt = lower_select(&parsed);
+        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        {
+            let mut ctx = AnalysisContext::scoped(
+                schema,
+                parsed.source_id().clone(),
+                parsed.text(),
+                &mut diagnostics,
+                StatementEnv::default(),
+                None,
+            );
+            select_response_kind(&stmt, &mut ctx);
+        }
+        diagnostics
+    }
+
+    fn fires_4003(schema: &SchemaIndex, query: &str) -> bool {
+        diagnostics_for(schema, query)
+            .iter()
+            .any(|finding| finding.code().number() == 4003)
+    }
+
+    #[test]
+    fn only_whole_table_needs_a_single_row_guarantee() {
+        let schema = schema_from(
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;",
+        );
+
+        // Unfiltered `FROM ONLY <table>` has no cardinality guarantee: 4003.
+        assert!(fires_4003(&schema, "SELECT * FROM ONLY person;"));
+        // A WHERE clause enforces single-row cardinality at runtime: no 4003.
+        assert!(!fires_4003(
+            &schema,
+            "SELECT * FROM ONLY person WHERE name = 'A';"
+        ));
+        // LIMIT 1 still exempts it.
+        assert!(!fires_4003(&schema, "SELECT * FROM ONLY person LIMIT 1;"));
     }
 
     fn object_fields(kind: &Kind) -> &BTreeMap<String, Kind> {

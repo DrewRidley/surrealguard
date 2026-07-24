@@ -512,6 +512,139 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(duplicates[0].span().range().end(), 40);
     }
 
+    fn codes(output: &WorkspaceAnalysis, number: u16) -> usize {
+        output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code().number() == number)
+            .count()
+    }
+
+    #[test]
+    fn field_element_type_definition_is_not_a_duplicate_of_the_base_field() {
+        let mut workspace = Workspace::default();
+        // `arr[*]` types the ELEMENTS of the `arr` array — distinct from the
+        // base field, though both collapse to the same dotted path. It must
+        // not be flagged as a duplicate definition (1022). A genuine plain
+        // redefinition still is.
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD arr ON t TYPE array;\n\
+             DEFINE FIELD arr[*] ON t TYPE object;\n\
+             DEFINE FIELD arr[*].price ON t TYPE string;\n\
+             DEFINE FIELD dup ON t TYPE int;\n\
+             DEFINE FIELD dup ON t TYPE int;"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        let duplicates: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code() == FindingCode::schema(1022))
+            .collect();
+        // Only the genuine plain `dup` redefinition is a duplicate.
+        assert_eq!(duplicates.len(), 1, "unexpected duplicates: {duplicates:?}");
+        assert!(duplicates[0].message().contains("dup"));
+    }
+
+    #[test]
+    fn unique_and_plain_index_over_the_same_fields_are_not_redundant() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD code ON t TYPE string;\n\
+             DEFINE INDEX by_code ON t FIELDS code;\n\
+             DEFINE INDEX unique_code ON t FIELDS code UNIQUE;"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        // A UNIQUE index and a plain index over the same field do different
+        // work, so 1029 must not fire.
+        assert_eq!(codes(&output, 1029), 0);
+    }
+
+    #[test]
+    fn two_plain_indexes_over_the_same_fields_are_redundant() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD code ON t TYPE string;\n\
+             DEFINE INDEX by_code ON t FIELDS code;\n\
+             DEFINE INDEX also_code ON t FIELDS code;"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 1029), 1);
+    }
+
+    #[test]
+    fn event_then_block_ending_in_let_is_statement_position_not_a_value_block() {
+        let mut workspace = Workspace::default();
+        // An event THEN body is in statement position; a block ending in LET
+        // is fine there, so the value-block lint (4017) must not fire.
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD name ON t TYPE string;\n\
+             DEFINE EVENT ev ON t WHEN $event = 'CREATE' THEN {\n\
+                 LET $x = CREATE t SET name = 'a';\n\
+             };"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 4017), 0);
+    }
+
+    #[test]
+    fn none_guard_narrows_the_right_operand_for_arg_checks() {
+        let mut workspace = Workspace::default();
+        // `$value = NONE OR string::len($value) = 10`: inside the right
+        // operand `$value` is non-none, so `string::len` sees `string`, not
+        // `option<string>` — no argument-type finding (5002).
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD code ON t TYPE option<string>\n\
+                 ASSERT $value = NONE OR string::len($value) = 10;\n\
+             DEFINE FIELD mail ON t TYPE option<string>\n\
+                 ASSERT $value != NONE AND string::is_email($value);"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 5002), 0, "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn an_unguarded_optional_argument_still_fails_the_arg_check() {
+        let mut workspace = Workspace::default();
+        // Without the `= NONE OR` guard the optional reaches `string::len`
+        // as `option<string>`, which is a genuine 5002.
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD code ON t TYPE option<string>\n\
+                 ASSERT string::len($value) = 10;"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 5002), 1);
+    }
+
     #[test]
     fn analyze_workspace_indexes_define_table_relation_metadata() {
         let mut workspace = Workspace::default();
@@ -724,19 +857,14 @@ INSERT INTO person { name: 'Ada' };
 
         let output = analyze_workspace(&workspace);
 
+        // A `DEFINE FIELD ... ON` a never-`DEFINE`d table is valid: the table
+        // exists schemaless. No unknown-table diagnostic fires, and no
+        // `DEFINE TABLE` was seen so the catalog stays empty.
         assert!(output.schema.tables.is_empty());
-        let unknown_table: Vec<_> = output
+        assert!(output
             .diagnostics
             .iter()
-            .filter(|finding| finding.code() == FindingCode::schema(1001))
-            .collect();
-        assert_eq!(unknown_table.len(), 1);
-        assert_eq!(
-            unknown_table[0].message(),
-            "field `name` targets unknown table `person`"
-        );
-        assert_eq!(unknown_table[0].span().range().start(), 21);
-        assert_eq!(unknown_table[0].span().range().end(), 27);
+            .all(|finding| finding.code() != FindingCode::schema(1001)));
     }
 
     #[test]
@@ -945,20 +1073,16 @@ INSERT INTO person { name: 'Ada' };
 
         let output = analyze_workspace(&workspace);
 
+        // CREATE and DELETE create/act on schemaless tables on demand, so a
+        // never-`DEFINE`d target is valid there. UPDATE only ever touches
+        // existing rows, so its unknown target still reports.
         let messages: Vec<_> = output
             .diagnostics
             .iter()
             .filter(|finding| finding.code() == FindingCode::schema(1001))
             .map(|finding| finding.message().to_string())
             .collect();
-        assert_eq!(
-            messages,
-            vec![
-                "unknown table `ghost`",
-                "unknown table `phantom`",
-                "unknown table `missing`",
-            ]
-        );
+        assert_eq!(messages, vec!["unknown table `phantom`"]);
     }
 
     #[test]
@@ -977,11 +1101,12 @@ INSERT INTO person { name: 'Ada' };
             .map(|diagnostic| diagnostic.message().to_string())
             .collect();
 
+        // UPSERT and INSERT write schemaless tables on demand, so `ghost` and
+        // `phantom` are valid targets. The read/DDL forms below (LIVE SELECT,
+        // ALTER, REBUILD, SHOW, INFO) still require the table to exist.
         assert_eq!(
             unknown_tables,
             vec![
-                "unknown table `ghost`",
-                "unknown table `phantom`",
                 "unknown table `missing`",
                 "unknown table `shadow`",
                 "unknown table `absent`",

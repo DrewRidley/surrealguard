@@ -37,6 +37,12 @@ pub(crate) fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) ->
 
     let fact = crate::analyzer::expression::expr_fact(ctx, &stmt.value);
     ctx.define_local(stmt.name.node.clone(), fact);
+    // Track `LET $t = type::table($x)` so a later `IF $t = 'table'` guard
+    // narrows `$x` (indirect record discriminant).
+    ctx.set_table_discriminant(
+        stmt.name.node.clone(),
+        crate::analyzer::flow::narrow::type_table_arg(&stmt.value.node),
+    );
     Kind::None
 }
 

@@ -40,13 +40,30 @@ pub(crate) fn analyze_if_else(ctx: &mut AnalysisContext<'_>, stmt: &ast::IfElseS
                 format!("IF condition has type `{condition_kind}`, expected `bool`"),
             ));
         }
-        let kind = ctx
-            .with_child_env(|ctx| crate::analyzer::flow::block::analyze_block(ctx, &branch.body));
+        // The THEN body runs only when the branch condition holds, so it
+        // sees the positive narrowing of that condition's guards.
+        let positive =
+            crate::analyzer::flow::narrow::positive_effects(&branch.condition.node, ctx.env());
+        let kind = ctx.with_child_env(|ctx| {
+            crate::analyzer::flow::narrow::apply_effects(ctx, &positive);
+            crate::analyzer::flow::block::analyze_block(ctx, &branch.body)
+        });
         branch_kinds.push(kind);
     }
     if let Some(else_branch) = &stmt.else_branch {
-        let kind =
-            ctx.with_child_env(|ctx| crate::analyzer::flow::block::analyze_block(ctx, else_branch));
+        // The ELSE runs only when every preceding branch condition was false,
+        // so it sees the negation of each.
+        let mut negative = Vec::new();
+        for branch in &stmt.branches {
+            negative.extend(crate::analyzer::flow::narrow::negative_effects(
+                &branch.condition.node,
+                ctx.env(),
+            ));
+        }
+        let kind = ctx.with_child_env(|ctx| {
+            crate::analyzer::flow::narrow::apply_effects(ctx, &negative);
+            crate::analyzer::flow::block::analyze_block(ctx, else_branch)
+        });
         branch_kinds.push(kind);
     }
 

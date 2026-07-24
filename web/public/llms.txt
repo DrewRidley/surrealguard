@@ -1,6 +1,6 @@
 # SurrealGuard
 
-> Static analysis and type inference for SurrealQL. SurrealGuard parses your `.surql` schema and queries into a typed, span-carrying AST, infers the response type of every statement, and reports violations of each construct's contract — before a query reaches SurrealDB. The same engine powers a CLI, a language server, a Rust proc-macro, and TypeScript packages.
+> Static analysis and type inference for SurrealQL. SurrealGuard parses your `.surql` schema and queries into a typed, span-carrying AST, infers the response type of every statement, and reports violations of each construct's contract - before a query reaches SurrealDB. The same engine powers a CLI, a language server, a Rust proc-macro, and TypeScript packages.
 
 SurrealDB is permissive at runtime (cross-kind comparisons order by kind, coercions succeed silently, missing fields return NONE), so bugs hide in behavior the database accepts. SurrealGuard is contract-first: every construct has a contract, and violations are reported statically even when the engine would run the query.
 
@@ -9,8 +9,8 @@ SurrealDB is permissive at runtime (cross-kind comparisons order by kind, coerci
 - Run `npx surrealguard init` to create `surrealguard.toml`, point it at your `.surql` schema and query directories.
 - Run `npx surrealguard check --json` for machine-readable diagnostics (code, severity, message, byte span, help). Exit code reflects post-policy errors.
 - Run `npx surrealguard generate` to emit a TypeScript file that re-exports a ready `SurrealGuardClient` and augments its query registry (point `--out` at a `.ts`, e.g. `src/surrealguard.generated.ts`).
-- In Rust, wrap queries in the `query!` macro (crate `surrealguard-rs`) — they are checked against your schema at compile time and fail `cargo check` on any violation.
-- In TypeScript, import `SurrealGuardClient` from the generated file (one import). It extends the `surrealdb` SDK's `Surreal` class, so `new SurrealGuardClient()` has every SDK method. Pass a string literal to `db.query("…")` — result and params are typed from the query text; the SDK returns one result per statement, so destructure the first: `const [rows] = await db.query("…")`.
+- In Rust, wrap queries in the `query!` macro (crate `surrealguard-rs`) - they are checked against your schema at compile time and fail `cargo check` on any violation.
+- In TypeScript, import `SurrealGuardClient` from the generated file (one import). It extends the `surrealdb` SDK's `Surreal` class, so `new SurrealGuardClient()` has every SDK method. Pass a string literal to `db.query("...")` - result and params are typed from the query text; the SDK returns one result per statement, so destructure the first: `const [rows] = await db.query("...")`.
 
 ## Diagnostics
 

@@ -25,6 +25,9 @@ pub enum TypeExpr {
     Optional(Box<Spanned<TypeExpr>>),
     /// A literal type: `'active'`, `42`, `true` — usually inside unions.
     Literal(crate::ast::Literal),
-    /// Object types and other unmodeled type syntax: explicit, never dropped.
+    /// An object type: `{ name: string, age: int }` — each property maps a
+    /// name to its own type expression.
+    Object(Vec<(Spanned<String>, Spanned<TypeExpr>)>),
+    /// Other unmodeled type syntax: explicit, never dropped.
     Partial(PartialNode),
 }

@@ -113,7 +113,7 @@ fn check_field_definition(
                 ),
             ));
         }
-        Some(table) if !stmt.overwrite && table.fields.contains_key(&field_key) => {
+        Some(table) if !stmt.overwrite && field_is_duplicate(table, &stmt.path.node, &field_key) => {
             ctx.emit(surrealguard_diagnostics::catalog::finding(
                 surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.path.span),
                 1022,
@@ -125,6 +125,17 @@ fn check_field_definition(
         }
         Some(_) => {}
     }
+}
+
+/// Whether `path` redefines an existing field. The duplicate-definition
+/// contract keys on the FULL field path: a `field[*]` element-type definition
+/// (or any `[index]`/wildcard sub-definition) is structurally distinct from
+/// the base array field `field`, even though both collapse to the same
+/// `idiom_field_path`. Only a plain (all-`Field`) path — whose dotted key is
+/// lossless — can be a true duplicate of a stored field.
+fn field_is_duplicate(table: &crate::schema::TableDef, path: &ast::Idiom, field_key: &str) -> bool {
+    crate::analyzer::expression::infer::plain_field_segments(path).is_some()
+        && table.fields.contains_key(field_key)
 }
 
 /// Runs `f` with `$value` (and `$input`) bound: `$value` carries the

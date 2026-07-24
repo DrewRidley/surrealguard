@@ -706,8 +706,11 @@ fn lower_return(node: Node<'_>, text: &str) -> ReturnStmt {
 }
 
 /// `IF cond { .. } ELSE IF cond { .. } ELSE { .. }` — the grammar wraps the
-/// arms in a `Modern` node as an alternating condition/block sequence; the
-/// deprecated THEN/END form (`Legacy` node) is not modeled.
+/// modern arms in a `Modern` node as an alternating condition/block sequence.
+/// The deprecated `IF cond THEN body ELSE IF cond THEN body ELSE body END`
+/// form arrives as a `Legacy` node whose bodies may be bare statements or
+/// values rather than blocks; both forms lower to the same branch/else shape
+/// so flow analysis (divergence, narrowing) treats them identically.
 fn lower_if_else(node: Node<'_>, text: &str) -> IfElseStmt {
     let mut stmt = IfElseStmt {
         branches: Vec::new(),
@@ -734,11 +737,72 @@ fn lower_if_else(node: Node<'_>, text: &str) -> IfElseStmt {
                     }
                 }
             }
+            "Legacy" => lower_legacy_if(child, text, &mut stmt),
             _ => {}
         }
     }
 
     stmt
+}
+
+/// The slot the next non-keyword `Legacy` child fills, tracked through the
+/// THEN/ELSE/IF/END keyword sequence.
+enum LegacySlot {
+    Condition,
+    Body,
+    ElseBody,
+}
+
+/// Lowers a `Legacy` THEN/END if-chain into `stmt`'s branches/else. Bodies in
+/// this form may be a `Block`, a bare `RETURN`/`THROW`, or a value/subquery —
+/// each is wrapped into a single-statement [`Block`] so both forms share the
+/// branch/else shape.
+fn lower_legacy_if(node: Node<'_>, text: &str, stmt: &mut IfElseStmt) {
+    let mut slot = LegacySlot::Condition;
+    let mut pending_condition = None;
+
+    for child in named_children(node) {
+        if child.kind() == "Keyword" {
+            match text[child.byte_range()].to_ascii_uppercase().as_str() {
+                "THEN" => slot = LegacySlot::Body,
+                "ELSE" => slot = LegacySlot::ElseBody,
+                "IF" => slot = LegacySlot::Condition,
+                _ => {}
+            }
+            continue;
+        }
+        if child.is_error() || child.is_missing() {
+            continue;
+        }
+        match slot {
+            LegacySlot::Condition => pending_condition = Some(lower_expr(child, text)),
+            LegacySlot::Body => {
+                let body = legacy_body_block(child, text);
+                if let Some(condition) = pending_condition.take() {
+                    stmt.branches.push(IfBranch { condition, body });
+                }
+            }
+            LegacySlot::ElseBody => stmt.else_branch = Some(legacy_body_block(child, text)),
+        }
+    }
+}
+
+/// A `Legacy` branch body as a [`Block`]: a real block passes through; a bare
+/// `RETURN`/`THROW` statement or a value/subquery becomes a one-statement block.
+fn legacy_body_block(node: Node<'_>, text: &str) -> crate::ast::Block {
+    match node.kind() {
+        "Block" => super::expr::lower_block_node(node, text),
+        "ReturnStatement" | "ThrowStatement" => crate::ast::Block {
+            statements: vec![lower_statement(node, text)],
+        },
+        _ => {
+            let expr = lower_expr(node, text);
+            let span = expr.span;
+            crate::ast::Block {
+                statements: vec![Spanned::new(Statement::Expr(expr), span)],
+            }
+        }
+    }
 }
 
 fn lower_for(node: Node<'_>, text: &str) -> ForStmt {

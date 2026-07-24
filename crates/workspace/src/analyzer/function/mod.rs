@@ -44,6 +44,14 @@ pub(crate) fn analyze_builtin_function(
     call: &ast::Call,
     args: &[Kind],
 ) -> Kind {
+    // An empty call path is not a builtin lookup: it is a param-invocation
+    // like `$priority($cur.source)` — calling a variable that holds a
+    // closure. There is no function name to resolve, so yield `Any` rather
+    // than emitting a spurious "unknown function" (5001).
+    if call.path.node.is_empty() {
+        return Kind::Any;
+    }
+
     // `call.path` is pre-normalized by lowering (`type::is::record` ->
     // `type::is_record`); custom `fn::*` functions fall through to `Any`.
     let path = call.path.node.as_str();

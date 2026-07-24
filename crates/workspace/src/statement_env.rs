@@ -19,6 +19,10 @@ pub struct StatementEnv {
     inherited: BTreeSet<String>,
     param_defaults: BTreeMap<String, ExpressionFact>,
     params: BTreeMap<String, ParamInference>,
+    /// `LET $t = type::table($x)` records `$t -> $x`, so a later
+    /// `IF $t = 'table'` guard narrows `$x` the same as the direct
+    /// `type::table($x) = 'table'` form.
+    table_discriminants: BTreeMap<String, String>,
 }
 
 impl StatementEnv {
@@ -31,7 +35,27 @@ impl StatementEnv {
             inherited: self.lets.keys().cloned().collect(),
             param_defaults: self.param_defaults.clone(),
             params: BTreeMap::new(),
+            table_discriminants: self.table_discriminants.clone(),
         }
+    }
+
+    /// Records that `binding` holds `type::table($param)`, so an equality
+    /// guard on `binding` narrows `$param`. Passing `None` clears any prior
+    /// mapping (a rebind to something else).
+    pub fn set_table_discriminant(&mut self, binding: String, param: Option<String>) {
+        match param {
+            Some(param) => {
+                self.table_discriminants.insert(binding, param);
+            }
+            None => {
+                self.table_discriminants.remove(&binding);
+            }
+        }
+    }
+
+    /// The param `binding` is a `type::table(...)` discriminant of, if any.
+    pub fn table_discriminant(&self, binding: &str) -> Option<&str> {
+        self.table_discriminants.get(binding).map(String::as_str)
     }
 
     /// Whether a `LET` of `name` here would shadow a binding from an

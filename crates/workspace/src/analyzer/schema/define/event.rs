@@ -50,7 +50,21 @@ pub(crate) fn analyze_define_event(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
                 crate::analyzer::expression::analyze_expr(ctx, when);
             }
             if let Some(then) = &stmt.then {
-                crate::analyzer::expression::analyze_expr(ctx, then);
+                // An event THEN body is in statement position — nothing
+                // consumes its value — so a block ending in LET is fine (the
+                // value-block check 4017 must not fire). Route a block body
+                // straight through the statement path; each inner statement
+                // still gets its own analysis (function-arg checks included).
+                match &then.node {
+                    ast::Expr::Block(block) => {
+                        ctx.with_child_env(|ctx| {
+                            crate::analyzer::flow::block::analyze_block(ctx, block)
+                        });
+                    }
+                    _ => {
+                        crate::analyzer::expression::analyze_expr(ctx, then);
+                    }
+                }
             }
         });
     });

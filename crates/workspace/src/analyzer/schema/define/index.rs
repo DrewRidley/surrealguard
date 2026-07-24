@@ -37,12 +37,19 @@ pub(crate) fn analyze_define_index(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
     // Two indexes over the same field set do the same work twice (1029).
     let mut paths: Vec<String> = refs.iter().map(|(path, _, _)| path.join(".")).collect();
     paths.sort();
+    let this_kind = crate::schema::index_def_from_ast(stmt, ctx.source()).kind;
     let duplicate = (!paths.is_empty())
         .then(|| {
             table.indexes.values().find(|other| {
                 let mut other_paths = other.field_paths();
                 other_paths.sort();
-                other.name != stmt.name.node && other_paths == paths
+                // A UNIQUE index and a plain index over the same fields do
+                // different work (one enforces a constraint, the other only
+                // speeds lookups), so they are not redundant. Two indexes are
+                // duplicates only when their backing kind matches too.
+                other.name != stmt.name.node
+                    && other.kind == this_kind
+                    && other_paths == paths
             })
         })
         .flatten()

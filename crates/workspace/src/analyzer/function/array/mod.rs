@@ -71,7 +71,11 @@ pub(crate) fn analyze_array_function(
     match path {
         "array::add" => add::analyze_array_add(ctx, call, args),
         "array::all" => all::analyze_array_all(ctx, call, args),
+        // `array::every` is a documented alias of `array::all`.
+        "array::every" => all::analyze_array_all(ctx, call, args),
         "array::any" => any::analyze_array_any(ctx, call, args),
+        // `array::some` and `array::includes` are documented aliases of `array::any`.
+        "array::some" | "array::includes" => any::analyze_array_any(ctx, call, args),
         "array::append" => append::analyze_array_append(ctx, call, args),
         "array::at" => at::analyze_array_at(ctx, call, args),
         "array::boolean_and" => boolean_and::analyze_array_boolean_and(ctx, call, args),

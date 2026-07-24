@@ -130,6 +130,12 @@ impl<'a> AnalysisContext<'a> {
         self.env.define_let(name, fact);
     }
 
+    /// Records (or clears) that `binding` holds `type::table($param)`, for
+    /// indirect record-discriminant narrowing.
+    pub fn set_table_discriminant(&mut self, binding: String, param: Option<String>) {
+        self.env.set_table_discriminant(binding, param);
+    }
+
     /// Looks up the fact for `LET` local `name`, or `None` if it is not bound
     /// in scope (in which case `$name` is a host parameter).
     pub fn local(&self, name: &str) -> Option<&ExpressionFact> {

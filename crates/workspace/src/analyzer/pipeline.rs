@@ -22,11 +22,11 @@ use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
 use surrealguard_syntax::parse::ParsedSource;
 use surrealguard_syntax::source::SourceId;
-use surrealguard_syntax::span::SourceSpan;
+use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analysis::{ParamInference, SelectModifierAnalysis, StatementAnalysis};
 use crate::analyzer::context::AnalysisContext;
-use crate::schema::SchemaIndex;
+use crate::schema::{SchemaIndex, TableDef};
 use crate::statement_env::StatementEnv;
 use surrealguard_diagnostics::Finding;
 
@@ -53,20 +53,86 @@ pub(crate) fn analyze_sources_with(
 ) -> PipelineOutput {
     let mut output = PipelineOutput::default();
 
-    for parsed in parsed_sources {
-        if !parsed.syntax_diagnostics().is_empty() {
-            continue;
+    // Lower every parse-clean source once; the pre-passes and the ordered
+    // walk all reuse the same lowered statements.
+    let sources: Vec<(&ParsedSource, Vec<ast::Spanned<ast::Statement>>)> = parsed_sources
+        .iter()
+        .filter(|parsed| parsed.syntax_diagnostics().is_empty())
+        .map(|parsed| (parsed, surrealguard_syntax::lower::lower_statements(parsed)))
+        .collect();
+
+    // PRE-PASS 1 — the global additive catalog. A namespace is global: a
+    // `DEFINE` in any source is a legitimate target for a reference in every
+    // other source, regardless of file sort order. Only additive `DEFINE`
+    // effects apply here; `REMOVE` and the order-sensitive contracts (4007,
+    // 6004, duplicate definition) stay in the ordered walk below.
+    let mut global_defined = SchemaIndex::default();
+    for (parsed, statements) in &sources {
+        for stmt in statements {
+            apply_additive_define(stmt, parsed.source_id(), parsed.text(), &mut global_defined);
         }
+    }
 
-        let statements = surrealguard_syntax::lower::lower_statements(parsed);
+    // PRE-PASS 2 — implicit schemaless tables. Writing to (CREATE/UPSERT/
+    // INSERT/DELETE) or hanging DDL (`DEFINE FIELD/EVENT/INDEX ... ON`) on a
+    // never-`DEFINE`d table is valid SurrealQL: the table is created on
+    // demand. Register an empty `TableDef` for each such target so those
+    // positions resolve and downstream field checks stay lenient. A table
+    // that is only ever READ and never defined stays unknown, so 1001 keeps
+    // firing there.
+    let mut implicit_tables: Vec<TableDef> = Vec::new();
+    let mut seen_implicit: BTreeSet<String> = BTreeSet::new();
+    for (parsed, statements) in &sources {
+        for stmt in statements {
+            for (name, range) in implicit_table_targets(stmt) {
+                if global_defined.tables.contains_key(&name) || !seen_implicit.insert(name.clone()) {
+                    continue;
+                }
+                implicit_tables.push(TableDef {
+                    name: name.clone(),
+                    source: parsed.source_id().clone(),
+                    name_span: SourceSpan::new(parsed.source_id().clone(), range),
+                    fields: BTreeMap::new(),
+                    indexes: BTreeMap::new(),
+                    relation: None,
+                    drop_table: false,
+                    changefeed: false,
+                });
+            }
+        }
+    }
 
-        // fn:: signatures hoist: a body references functions at invocation
-        // time, so definitions later in the source are legitimate targets.
-        for statement in &statements {
+    // W5009 guardedness: whether each `fn::` body branches (any IF/FOR). A
+    // recursion cycle only provably never terminates when no function in the
+    // cycle can branch to a base case.
+    let mut fn_guarded: BTreeMap<String, bool> = BTreeMap::new();
+
+    for (index, (parsed, statements)) in sources.iter().enumerate() {
+        // The catalog this source is analyzed against: every OTHER source's
+        // definitions (cross-file visibility) plus the implicit schemaless
+        // tables. This source's own definitions accumulate incrementally
+        // during the walk, so within-source ordering contracts (duplicate
+        // definition, REMOVE) keep behaving exactly as before.
+        let mut working = SchemaIndex::default();
+        for (other_index, (other, other_statements)) in sources.iter().enumerate() {
+            if other_index == index {
+                continue;
+            }
+            for stmt in other_statements {
+                apply_additive_define(stmt, other.source_id(), other.text(), &mut working);
+            }
+        }
+        for table in &implicit_tables {
+            working.insert_table(table.clone(), false);
+        }
+        // Within-source fn:: hoist: a body may call functions defined later
+        // in the same file.
+        for stmt in statements {
             if let Some(function) =
-                crate::schema::extract_function_def(statement, parsed.source_id(), parsed.text())
+                crate::schema::extract_function_def(stmt, parsed.source_id(), parsed.text())
             {
-                output.schema.insert_function(function);
+                fn_guarded.insert(function.name.clone(), fn_body_branches(stmt, parsed.text()));
+                working.insert_function(function);
             }
         }
 
@@ -74,12 +140,12 @@ pub(crate) fn analyze_sources_with(
         let mut analyzer_env = StatementEnv::default();
         // Transaction pairing (4007): BEGIN opens exactly one transaction
         // that COMMIT/CANCEL closes.
-        let mut open_transaction: Option<surrealguard_syntax::span::ByteRange> = None;
+        let mut open_transaction: Option<ByteRange> = None;
 
-        for lowered in &statements {
+        for lowered in statements {
             let kind = {
                 let mut ctx = AnalysisContext::scoped(
-                    &output.schema,
+                    &working,
                     parsed.source_id().clone(),
                     parsed.text(),
                     &mut output.diagnostics,
@@ -124,6 +190,16 @@ pub(crate) fn analyze_sources_with(
                 _ => {}
             }
 
+            // Apply the statement's effects to both this source's working
+            // catalog (so later statements in the same file see them, and
+            // REMOVE stays order-sensitive) and the run-wide catalog
+            // returned to consumers.
+            crate::schema::apply_schema_statement_effects(
+                lowered,
+                parsed.source_id(),
+                parsed.text(),
+                &mut working,
+            );
             crate::schema::apply_schema_statement_effects(
                 lowered,
                 parsed.source_id(),
@@ -173,9 +249,10 @@ pub(crate) fn analyze_sources_with(
             .insert(parsed.source_id().clone(), source_analysis);
     }
 
-    // fn:: definitions must terminate: direct or mutual recursion never
-    // does (5009). Three-color DFS; each cycle reports once.
-    check_function_cycles(&output.schema, &mut output.diagnostics);
+    // fn:: definitions must terminate: an unconditional direct or mutual
+    // recursion cycle never does (5009). Three-color DFS; each cycle reports
+    // once, and only when no function in it can branch to a base case.
+    check_function_cycles(&output.schema, &fn_guarded, &mut output.diagnostics);
 
     // Suppression runs last so directives can silence every finding kind,
     // including the cross-source passes above.
@@ -313,7 +390,126 @@ fn select_modifiers(source: &SourceId, stmt: &ast::SelectStmt) -> Vec<SelectModi
     out
 }
 
-fn check_function_cycles(schema: &SchemaIndex, diagnostics: &mut Vec<Finding>) {
+/// Applies one lowered statement's *additive* `DEFINE` effect to `schema`,
+/// reusing schema.rs's extraction. Unlike
+/// [`crate::schema::apply_schema_statement_effects`], this skips `REMOVE`
+/// (order-sensitive, owned by the walk) and events (unmodeled) — it exists to
+/// pre-build the order-independent global namespace.
+fn apply_additive_define(
+    stmt: &ast::Spanned<ast::Statement>,
+    source: &SourceId,
+    text: &str,
+    schema: &mut SchemaIndex,
+) {
+    let ast::Statement::Define(def) = &stmt.node else {
+        return;
+    };
+    match def {
+        ast::DefineStmt::Table(def) => {
+            schema.insert_table(crate::schema::table_def_from_ast(def, source), def.overwrite);
+        }
+        ast::DefineStmt::Field(def) => {
+            schema.insert_field(
+                crate::schema::field_def_from_ast(def, source, text),
+                def.overwrite,
+            );
+        }
+        ast::DefineStmt::Index(def) => {
+            let index = crate::schema::index_def_from_ast(def, source);
+            if let Some(table) = schema.tables.get_mut(&index.table) {
+                table.indexes.insert(index.name.clone(), index);
+            }
+        }
+        ast::DefineStmt::Param(def) => {
+            schema.insert_param(crate::schema::param_def_from_ast(def, source));
+        }
+        ast::DefineStmt::Function(def) => {
+            schema.insert_function(crate::schema::function_def_from_ast(
+                def, source, text, stmt.span,
+            ));
+        }
+        ast::DefineStmt::Analyzer(def) => {
+            schema.insert_analyzer(crate::schema::analyzer_def_from_ast(def, source));
+        }
+        ast::DefineStmt::Event(_) | ast::DefineStmt::Other(_) => {}
+    }
+}
+
+/// The tables a statement implicitly creates on demand: write targets
+/// (CREATE/UPSERT/INSERT/DELETE) and a `DEFINE FIELD ... ON` target. Writing
+/// to, or hanging a field on, a never-`DEFINE`d table is valid SurrealQL —
+/// the table exists schemaless.
+///
+/// RELATE edges are excluded: an undefined edge is a relation-contract
+/// question (3001/3002), not an implicit plain table. `DEFINE EVENT`/`DEFINE
+/// INDEX` `ON` targets are excluded because their downstream field checks
+/// (in the event/index analyzers) would then run against the empty implicit
+/// table and report an *unknown field* (1002) instead — trading one false
+/// positive for another. A field/event/index on an undefined table therefore
+/// still reports, which no valid corpus exercises.
+fn implicit_table_targets(
+    stmt: &ast::Spanned<ast::Statement>,
+) -> Vec<(String, ByteRange)> {
+    fn target(source: Option<&ast::Spanned<ast::Expr>>) -> Option<(String, ByteRange)> {
+        let expr = source?;
+        let name = crate::analyzer::data::mutation::source_table_name(source)?;
+        Some((name, expr.span))
+    }
+
+    let mut out = Vec::new();
+    match &stmt.node {
+        ast::Statement::Create(stmt) => out.extend(target(stmt.targets.first())),
+        ast::Statement::Upsert(stmt) => out.extend(target(stmt.targets.first())),
+        ast::Statement::Delete(stmt) => out.extend(target(stmt.targets.first())),
+        ast::Statement::Insert(stmt) => out.extend(target(stmt.target.as_ref())),
+        ast::Statement::Define(ast::DefineStmt::Field(def)) => {
+            out.push((def.table.node.clone(), def.table.span));
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Whether a `DEFINE FUNCTION` body contains any branching (an `IF` or `FOR`),
+/// i.e. a construct that can route around a self-call to a base case. Used to
+/// keep 5009 to provably-degenerate recursion: a guarded self-call may
+/// terminate and must not be flagged.
+fn fn_body_branches(stmt: &ast::Spanned<ast::Statement>, text: &str) -> bool {
+    let ast::Statement::Define(ast::DefineStmt::Function(def)) = &stmt.node else {
+        return false;
+    };
+    let body_start = def.name.span.end() as usize;
+    let body_end = stmt.span.end() as usize;
+    let Some(body) = text.get(body_start..body_end) else {
+        return false;
+    };
+    let lower = body.to_ascii_lowercase();
+    has_keyword(&lower, "if") || has_keyword(&lower, "for")
+}
+
+/// Whether `haystack` (already lowercased) contains `keyword` as a whole word.
+fn has_keyword(haystack: &str, keyword: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut from = 0;
+    while let Some(pos) = haystack[from..].find(keyword) {
+        let start = from + pos;
+        let end = start + keyword.len();
+        let before_ok = start == 0 || !is_ident(bytes[start - 1]);
+        let after_ok = end >= bytes.len() || !is_ident(bytes[end]);
+        if before_ok && after_ok {
+            return true;
+        }
+        from = start + 1;
+    }
+    false
+}
+
+fn check_function_cycles(
+    schema: &SchemaIndex,
+    fn_guarded: &BTreeMap<String, bool>,
+    diagnostics: &mut Vec<Finding>,
+) {
     fn find_cycle(
         name: &str,
         functions: &BTreeMap<String, crate::schema::FunctionDef>,
@@ -350,15 +546,24 @@ fn check_function_cycles(schema: &SchemaIndex, diagnostics: &mut Vec<Finding>) {
             for name in &cycle {
                 on_reported_cycle.insert(name.clone());
             }
-            diagnostics.push(surrealguard_diagnostics::catalog::finding(
-                function.name_span.clone(),
-                5009,
-                format!(
-                    "`{}` never terminates: {} calls itself",
-                    function.name,
-                    cycle.join(" -> "),
-                ),
-            ));
+            // Only provably-degenerate recursion is flagged: if any function
+            // in the cycle can branch to a base case, the recursion may
+            // terminate (bounded/tree recursion is legitimate) and is left
+            // alone.
+            let unconditional = cycle
+                .iter()
+                .all(|name| !fn_guarded.get(name).copied().unwrap_or(false));
+            if unconditional {
+                diagnostics.push(surrealguard_diagnostics::catalog::finding(
+                    function.name_span.clone(),
+                    5009,
+                    format!(
+                        "`{}` never terminates: {} calls itself",
+                        function.name,
+                        cycle.join(" -> "),
+                    ),
+                ));
+            }
         }
     }
 }

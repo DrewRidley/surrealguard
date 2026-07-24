@@ -1,9 +1,9 @@
-# SurrealGuard — Full LLM Reference
+# SurrealGuard - Full LLM Reference
 
 > Static analysis and type inference for SurrealQL. SurrealGuard parses your
 > `.surql` schema and queries into a typed, span-carrying AST, infers the
 > response type of every statement, and reports violations of each construct's
-> contract — before a query reaches SurrealDB. The same engine powers a CLI, a
+> contract - before a query reaches SurrealDB. The same engine powers a CLI, a
 > language server, a Rust proc-macro, and a set of TypeScript packages.
 
 This document is the complete reference intended for LLMs and coding agents. A
@@ -11,27 +11,27 @@ shorter overview lives at `/llms.txt`. Human docs: https://surrealguard.dev/docs
 
 ## Table of contents
 
-1. Model — why contract-first
+1. Model - why contract-first
 2. Install
 3. CLI (`surrealguard`): init, check, check --json, generate, exit codes
 4. Configuration (`surrealguard.toml`)
 5. Diagnostics: the eight code families with example codes
 6. Parameter constraints and context parameters
-7. Rust: `surrealguard-rs` (`query!` / `surql!`), schema resolution, Kind→Rust
+7. Rust: `surrealguard-rs` (`query!` / `surql!`), schema resolution, Kind->Rust
 8. TypeScript: `@surrealguard/client`, `generate`, `@surrealguard/query`,
-   `@surrealguard/next`, `@surrealguard/svelte`
+ `@surrealguard/next`, `@surrealguard/svelte`
 9. Using SurrealGuard with a coding agent
 10. Links
 
 ---
 
-## 1. Model — why contract-first
+## 1. Model - why contract-first
 
 SurrealDB is permissive at runtime: cross-kind comparisons order by kind instead
 of failing, coercions succeed silently, and a misspelled field just returns
-`NONE`. That is exactly where bugs hide — the database accepts them.
+`NONE`. That is exactly where bugs hide - the database accepts them.
 
-SurrealGuard is **contract-first**. Every construct has a contract — what the
+SurrealGuard is **contract-first**. Every construct has a contract - what the
 author must mean for the statement to make sense. A diagnostic exists when the
 contract is provably violated; whether SurrealDB throws, silently tolerates, or
 coerces is irrelevant to severity. Tolerated misuse is the reason the tool
@@ -40,15 +40,15 @@ exists.
 Principles:
 
 - **Contracts, not engine behavior.** One code per contract; variations of the
-  same violation are message variants, never new codes.
+ same violation are message variants, never new codes.
 - **Inference is never affected.** A finding never changes an inferred type;
-  `UPDATE person SET age = 'x'` still types as `person` rows. Poison (`any`)
-  appears only where the type is genuinely unknowable.
+ `UPDATE person SET age = 'x'` still types as `person` rows. Poison (`any`)
+ appears only where the type is genuinely unknowable.
 - **Detection site = emission site.** The analyzer that owns a statement emits
-  its findings; composite analyzers learn about inner findings by span overlap.
+ its findings; composite analyzers learn about inner findings by span overlap.
 - **Statically provable only.** Every code is checkable from source + schema.
-  When a value is a host parameter, the check is exported as a constraint
-  instead of emitted as a finding.
+ When a value is a host parameter, the check is exported as a constraint
+ instead of emitted as a finding.
 
 Why tree-sitter: SurrealDB's own parser discards spans before producing its AST
 (true in 2.x and 3.0), so it cannot power an analyzer or editor tooling.
@@ -58,16 +58,16 @@ the project does not maintain a competing scalar/type hierarchy.
 
 What it analyzes:
 
-- **Full statement coverage** — SELECT (projections, graph traversals,
-  FETCH/SPLIT/GROUP/OMIT), the six mutations, RELATE, LET/RETURN/IF/FOR/blocks,
-  transactions, DEFINE/REMOVE/ALTER, LIVE SELECT/KILL, and the rest.
-- **Type inference** — response kinds as `surrealdb_types::Kind`: closed object
-  literals for known rows, IF/ELSE unions, record-link and graph-edge shapes,
-  the full builtin function table plus `fn::` declarations, closure and subquery
-  inference, and constant-value evaluation.
+- **Full statement coverage** - SELECT (projections, graph traversals,
+ FETCH/SPLIT/GROUP/OMIT), the six mutations, RELATE, LET/RETURN/IF/FOR/blocks,
+ transactions, DEFINE/REMOVE/ALTER, LIVE SELECT/KILL, and the rest.
+- **Type inference** - response kinds as `surrealdb_types::Kind`: closed object
+ literals for known rows, IF/ELSE unions, record-link and graph-edge shapes,
+ the full builtin function table plus `fn::` declarations, closure and subquery
+ inference, and constant-value evaluation.
 - **~80 contract diagnostics** across eight families.
-- **Parameter constraints** — every `$param` a source reads is exported with the
-  kind and value domain its uses imply.
+- **Parameter constraints** - every `$param` a source reads is exported with the
+ kind and value domain its uses imply.
 - **Byte-precise spans** on every finding.
 
 ---
@@ -75,7 +75,7 @@ What it analyzes:
 ## 2. Install
 
 ```bash
-# zero-install (Node) — ideal for CI & agents
+# zero-install (Node) - ideal for CI & agents
 npx surrealguard check --json
 
 # prebuilt binary, no compile
@@ -88,8 +88,8 @@ cargo install surrealguard
 cargo install --path crates/cli
 
 # libraries
-cargo add surrealguard-rs        # Rust query!/surql! macros
-npm i @surrealguard/client       # TypeScript typed client
+cargo add surrealguard-rs # Rust query!/surql! macros
+npm i @surrealguard/client # TypeScript typed client
 ```
 
 Release note: the crates.io publish is gated on the tree-sitter SurrealQL
@@ -134,8 +134,8 @@ Emits machine-readable diagnostics. The document has two top-level keys,
 
 ```json
 {
-  "summary": { "sources_checked": 2, "diagnostics": 1, "errors": 1 },
-  "diagnostics": [
+ "summary": { "sources_checked": 2, "diagnostics": 1, "errors": 1 },
+ "diagnostics": [
     {
       "code": "E1002",
       "severity": "error",
@@ -151,25 +151,25 @@ Emits machine-readable diagnostics. The document has two top-level keys,
         }
       ]
     }
-  ]
+ ]
 }
 ```
 
 Field reference:
 
-- `summary.sources_checked` (number) — analyzed sources.
-- `summary.diagnostics` (number) — findings that survived policy (errors +
-  warnings + hints).
-- `summary.errors` (number) — error-severity findings; non-zero fails the check.
-- `code` (string) — severity-prefixed code: `E` error, `W` warning, `I` hint,
-  `S` syntax; four digits (e.g. `E1002`, `W4022`, `I7007`, `S0001`). The prefix
-  reflects the *resolved* severity, so a promoted warning renders as `E…`.
-- `severity` (string) — `"error"`, `"warning"`, or `"hint"`.
-- `source` (string) — the source path/id the span belongs to.
-- `range` ({ start, end }) — byte offsets into that source.
-- `message` (string) — the finding message.
-- `help` (string[]) — zero or more help lines.
-- `related` (object[]) — related spans, each `{ source, range, message }`.
+- `summary.sources_checked` (number) - analyzed sources.
+- `summary.diagnostics` (number) - findings that survived policy (errors +
+ warnings + hints).
+- `summary.errors` (number) - error-severity findings; non-zero fails the check.
+- `code` (string) - severity-prefixed code: `E` error, `W` warning, `I` hint,
+ `S` syntax; four digits (e.g. `E1002`, `W4022`, `I7007`, `S0001`). The prefix
+ reflects the *resolved* severity, so a promoted warning renders as `E...`.
+- `severity` (string) - `"error"`, `"warning"`, or `"hint"`.
+- `source` (string) - the source path/id the span belongs to.
+- `range` ({ start, end }) - byte offsets into that source.
+- `message` (string) - the finding message.
+- `help` (string[]) - zero or more help lines.
+- `related` (object[]) - related spans, each `{ source, range, message }`.
 
 On a clean run the `diagnostics` array is empty and only the `summary` is
 populated. The `help` and `related` arrays are always present, often empty.
@@ -179,11 +179,11 @@ populated. The `help` and `related` arrays are always present, often empty.
 Scans host-language files for embedded SurrealQL, analyzes each query against the
 workspace schema, and writes a TypeScript module that re-exports a ready
 `SurrealGuardClient` and augments its query registry. Host files are discovered
-by extension — `.ts`, `.tsx`, `.js`, `.jsx`, `.svelte`, `.vue`, `.astro` —
+by extension - `.ts`, `.tsx`, `.js`, `.jsx`, `.svelte`, `.vue`, `.astro` - 
 honoring the same ignore patterns as `.surql` discovery. Because the file
 re-exports a runtime value (the client), write it to a `.ts` file via `--out`
 (e.g. `src/surrealguard.generated.ts`). The emitted file both re-exports
-`SurrealGuardClient` and augments `@surrealguard/client` (see §8).
+`SurrealGuardClient` and augments `@surrealguard/client` (see Section 8).
 
 ```
 $ surrealguard generate --out src/surrealguard.generated.ts
@@ -192,10 +192,10 @@ Generated src/surrealguard.generated.ts
 
 ### Exit codes
 
-- `0` — no error-severity findings survived policy. Warnings and hints do not
-  fail the check unless `warnings_as_errors` promotes them.
-- `1` — the check found one or more error-severity findings, or a command failed
-  (missing/invalid config, unreadable source, I/O error).
+- `0` - no error-severity findings survived policy. Warnings and hints do not
+ fail the check unless `warnings_as_errors` promotes them.
+- `1` - the check found one or more error-severity findings, or a command failed
+ (missing/invalid config, unreadable source, I/O error).
 
 ---
 
@@ -207,25 +207,25 @@ skipping `target/`, `node_modules/`, and `.git/`.
 
 ```toml
 [sources]
-schema  = ["schema/**/*.surql", "migrations/**/*.surql"]  # default: **/*.surql, **/*.surrealql
-queries = ["queries/**/*.surql"]                          # default: **/*.surql, **/*.surrealql
-ignore  = ["target/**", "node_modules/**", ".git/**"]     # default: same
+schema = ["schema/**/*.surql", "migrations/**/*.surql"] # default: **/*.surql, **/*.surrealql
+queries = ["queries/**/*.surql"] # default: **/*.surql, **/*.surrealql
+ignore = ["target/**", "node_modules/**", ".git/**"] # default: same
 
 [analysis]
-strict = false             # tighten otherwise-advisory checks
-surrealdb_version = "2"     # target version for version-gated behavior
+strict = false # tighten otherwise-advisory checks
+surrealdb_version = "2" # target version for version-gated behavior
 
 [diagnostics]
-warnings_as_errors = false          # promote every warning to an error
+warnings_as_errors = false # promote every warning to an error
 require_suppression_reasons = false # require a reason on every inline suppression
 
 [lints]
-select_star = "warn"             # allow | warn | deny
-dynamic_query = "warn"           # allow | warn | deny
-permission_gated_field = "warn"  # allow | warn | deny
+select_star = "warn" # allow | warn | deny
+dynamic_query = "warn" # allow | warn | deny
+permission_gated_field = "warn" # allow | warn | deny
 ```
 
-In-source suppression is separate from config policy — it is source-authored
+In-source suppression is separate from config policy - it is source-authored
 intent applied at analysis time, rustc-style. The directive covers the next line
 (or its own line when trailing a statement); a suppressed finding never leaves
 the pipeline. Blanket suppressions are rejected; a directive that violates its
@@ -238,7 +238,7 @@ SELECT * FROM external_table;
 
 ---
 
-## 5. Diagnostics — the eight code families
+## 5. Diagnostics - the eight code families
 
 Codes are `<family><3 digits>`; the `E`/`W`/`I` prefix comes from resolved
 severity at render time, and parse-level findings keep an `S` prefix. Severity
@@ -248,129 +248,129 @@ Severity is intrinsic data; consumers apply policy at their edge. Errors are
 never demotable; lints are fully configurable. Roughly 80 contracts span the
 eight families below (0xxx syntax is emitted by the parser).
 
-Families: 0xxx syntax · 1xxx schema references · 2xxx types · 3xxx graph ·
-4xxx statement misuse · 5xxx functions · 6xxx parameters · 7xxx lints ·
+Families: 0xxx syntax - 1xxx schema references - 2xxx types - 3xxx graph -
+4xxx statement misuse - 5xxx functions - 6xxx parameters - 7xxx lints -
 8xxx version compatibility.
 
-### 1xxx — Schema references
+### 1xxx - Schema references
 
 Contract: every name a query uses must resolve against the schema.
 
-- `1001` (E) — a table reference names a known table (FROM/targets, RELATE
-  endpoints, `record<t>`, `DEFINE … ON`).
-- `1002` (E) — a field reference names a declared field of its row's table
-  (schemafull only; FLEXIBLE subtrees exempt).
-- `1012` (E) — a schema-object reference names a known object of that kind
-  (REMOVE/REBUILD INDEX, REMOVE EVENT, analyzers).
-- `1021` (W) — REMOVE removes something that exists.
-- `1022` (W) — a definition does not silently redefine (use OVERWRITE).
-- `1023` (E) — FETCH names something that can hold records.
-- `1024` (E) — SPLIT names a collection field.
-- `1027` (E) — an index-backed operator has its supporting index (`@@`/search
-  needs a SEARCH index; `<|k|>` needs MTREE/HNSW).
-- `1029` (W) — each index covers a distinct field set.
+- `1001` (E) - a table reference names a known table (FROM/targets, RELATE
+ endpoints, `record<t>`, `DEFINE ... ON`).
+- `1002` (E) - a field reference names a declared field of its row's table
+ (schemafull only; FLEXIBLE subtrees exempt).
+- `1012` (E) - a schema-object reference names a known object of that kind
+ (REMOVE/REBUILD INDEX, REMOVE EVENT, analyzers).
+- `1021` (W) - REMOVE removes something that exists.
+- `1022` (W) - a definition does not silently redefine (use OVERWRITE).
+- `1023` (E) - FETCH names something that can hold records.
+- `1024` (E) - SPLIT names a collection field.
+- `1027` (E) - an index-backed operator has its supporting index (`@@`/search
+ needs a SEARCH index; `<|k|>` needs MTREE/HNSW).
+- `1029` (W) - each index covers a distinct field set.
 
-### 2xxx — Types and nullability
+### 2xxx - Types and nullability
 
-- `2001` (E) — a value written to a field inhabits the field's declared type
-  (SET, CONTENT/MERGE/REPLACE, INSERT, DEFAULT/VALUE, record links, NONE into
-  non-optional).
-- `2004` (E) — the operands make sense together for the operator (binary/unary,
-  arithmetic/comparison, compound assignment).
-- `2005` (W) — a condition position expects a boolean (IF, ASSERT, bare WHERE).
-- `2007` (E) — a cast names a known type (`<ghost> x`).
-- `2008` (E) — a conversion can succeed (`<int> 'abc'`, `type::int('x')`).
-- `2017` (E) — ORDER BY keys name fields available on the result rows (or RAND()).
-- `2018` (E) — LIMIT/START take a non-negative integer.
-- `2022` (E) — FOR iterates something iterable.
-- `2025` (E) — READONLY fields are written only at creation.
-- `2026` (W) — computed (VALUE-clause) fields are not hand-assigned.
-- `2030` (E) — index/filter/splat apply to collections (`age[0]`, `name[WHERE …]`).
-- `2031` (E) — a regex literal compiles.
-- `2032` (E) — literal content is valid for its kind (`d'2024-13-45'`, `u'not-a-uuid'`).
-- `2033` (E) — PATCH operations are well-formed.
-- `2034` (E) — required fields are provided at creation.
-- `2036` (E) — GeoJSON literals have their declared shape.
+- `2001` (E) - a value written to a field inhabits the field's declared type
+ (SET, CONTENT/MERGE/REPLACE, INSERT, DEFAULT/VALUE, record links, NONE into
+ non-optional).
+- `2004` (E) - the operands make sense together for the operator (binary/unary,
+ arithmetic/comparison, compound assignment).
+- `2005` (W) - a condition position expects a boolean (IF, ASSERT, bare WHERE).
+- `2007` (E) - a cast names a known type (`<ghost> x`).
+- `2008` (E) - a conversion can succeed (`<int> 'abc'`, `type::int('x')`).
+- `2017` (E) - ORDER BY keys name fields available on the result rows (or RAND()).
+- `2018` (E) - LIMIT/START take a non-negative integer.
+- `2022` (E) - FOR iterates something iterable.
+- `2025` (E) - READONLY fields are written only at creation.
+- `2026` (W) - computed (VALUE-clause) fields are not hand-assigned.
+- `2030` (E) - index/filter/splat apply to collections (`age[0]`, `name[WHERE ...]`).
+- `2031` (E) - a regex literal compiles.
+- `2032` (E) - literal content is valid for its kind (`d'2024-13-45'`, `u'not-a-uuid'`).
+- `2033` (E) - PATCH operations are well-formed.
+- `2034` (E) - required fields are provided at creation.
+- `2036` (E) - GeoJSON literals have their declared shape.
 
-### 3xxx — Graph and relations
+### 3xxx - Graph and relations
 
 Contract: a traversal or RELATE must use relations as declared (`in`->edge->`out`).
 
-- `3001` (E) — a step traverses a relation table (not a plain table).
-- `3002` (E) — the usage matches the relation's declared shape (wrong direction,
-  hop landing off the far side, RELATE writing endpoints on the wrong sides).
-- `3004` (E) — a FROM-position chain is complete (edge->target pairs).
-- `3009` (E) — a traversal starts from records.
-- `3011` (W) — graph recursion is bounded (`@{..}` with no upper bound).
+- `3001` (E) - a step traverses a relation table (not a plain table).
+- `3002` (E) - the usage matches the relation's declared shape (wrong direction,
+ hop landing off the far side, RELATE writing endpoints on the wrong sides).
+- `3004` (E) - a FROM-position chain is complete (edge->target pairs).
+- `3009` (E) - a traversal starts from records.
+- `3011` (W) - graph recursion is bounded (`@{..}` with no upper bound).
 
-### 4xxx — Statement and clause misuse
+### 4xxx - Statement and clause misuse
 
-- `4001` (E) — clause valid on this statement (`SELECT … RETURN NONE`,
-  `CREATE … WHERE`).
-- `4003` (E) — ONLY on a table-wide target needs LIMIT 1 (`SingleOnlyOutput`).
-- `4004` (E) — INSERT tuple column/value count matches.
-- `4005` (E) — BREAK/CONTINUE only inside a loop.
-- `4006` (W) — no unreachable statements after RETURN/BREAK/THROW.
-- `4007` (E) — transaction pairing: BEGIN opens exactly one transaction that
-  COMMIT/CANCEL closes.
-- `4010` (W) — no duplicate SET target in one statement.
-- `4011` (W) — no duplicate projection key/alias.
-- `4017` (W) — a block ending with LET has value NONE.
-- `4018` (W) — no side-effecting subquery in read position.
-- `4019` (W) — CREATE/INSERT on a relation table sets `in`/`out`.
-- `4021` (E) — SHOW CHANGES only on a table with CHANGEFEED.
-- `4022` (W) — SELECT from a DROP table (rows are never retained).
+- `4001` (E) - clause valid on this statement (`SELECT ... RETURN NONE`,
+ `CREATE ... WHERE`).
+- `4003` (E) - ONLY on a table-wide target needs LIMIT 1 (`SingleOnlyOutput`).
+- `4004` (E) - INSERT tuple column/value count matches.
+- `4005` (E) - BREAK/CONTINUE only inside a loop.
+- `4006` (W) - no unreachable statements after RETURN/BREAK/THROW.
+- `4007` (E) - transaction pairing: BEGIN opens exactly one transaction that
+ COMMIT/CANCEL closes.
+- `4010` (W) - no duplicate SET target in one statement.
+- `4011` (W) - no duplicate projection key/alias.
+- `4017` (W) - a block ending with LET has value NONE.
+- `4018` (W) - no side-effecting subquery in read position.
+- `4019` (W) - CREATE/INSERT on a relation table sets `in`/`out`.
+- `4021` (E) - SHOW CHANGES only on a table with CHANGEFEED.
+- `4022` (W) - SELECT from a DROP table (rows are never retained).
 
-### 5xxx — Functions and closures
+### 5xxx - Functions and closures
 
-- `5001` (E) — a call resolves to a function that exists (unknown builtins,
-  undefined `fn::`, methods unavailable on the receiver's kind).
-- `5002` (E) — a call matches the function's signature (arity, per-argument
-  kinds, `fn::` declared params, closure arity).
-- `5005` (E) — a const argument satisfies the function's value contract
-  (`type::field('aeg')` naming no field, `type::thing('ghost', …)`).
-- `5009` (W) — `fn::` definitions terminate (no recursion cycles).
-- `5010` (W) — events do not trigger themselves, directly or in a cycle.
+- `5001` (E) - a call resolves to a function that exists (unknown builtins,
+ undefined `fn::`, methods unavailable on the receiver's kind).
+- `5002` (E) - a call matches the function's signature (arity, per-argument
+ kinds, `fn::` declared params, closure arity).
+- `5005` (E) - a const argument satisfies the function's value contract
+ (`type::field('aeg')` naming no field, `type::thing('ghost', ...)`).
+- `5009` (W) - `fn::` definitions terminate (no recursion cycles).
+- `5010` (W) - events do not trigger themselves, directly or in a cycle.
 
-### 6xxx — Parameters
+### 6xxx - Parameters
 
-- `6001` (E) — constraints on one param unify (`WHERE $x > 3 AND $x = 'abc'` has
-  no satisfying value).
-- `6002` (W) — a param does not shadow a DEFINE PARAM with a different kind.
-- `6004` (W) — a param is not used before its LET in source order.
-- `6005` (E) — a context param is used inside its context (`$before` outside an
-  event, `$parent` outside a subquery).
-- `6006` (E, host-static) — a host-declared type does not contradict a query
-  constraint (host binds `$age: string`, query needs int) — enforced by adapters.
-- `6007` (E) — no assignment to a protected parameter (`$auth`, `$session`,
-  `$token`, `$this`, …).
+- `6001` (E) - constraints on one param unify (`WHERE $x > 3 AND $x = 'abc'` has
+ no satisfying value).
+- `6002` (W) - a param does not shadow a DEFINE PARAM with a different kind.
+- `6004` (W) - a param is not used before its LET in source order.
+- `6005` (E) - a context param is used inside its context (`$before` outside an
+ event, `$parent` outside a subquery).
+- `6006` (E, host-static) - a host-declared type does not contradict a query
+ constraint (host binds `$age: string`, query needs int) - enforced by adapters.
+- `6007` (E) - no assignment to a protected parameter (`$auth`, `$session`,
+ `$token`, `$this`, ...).
 
-### 7xxx — Lints (levels configurable)
+### 7xxx - Lints (levels configurable)
 
-- `7001` (W) — unused LET binding.
-- `7002` (I) — LET shadowing.
-- `7003` (I) — mixed-kind array literal (`[1, 'a']`).
-- `7004` (W) — control flow decided by a constant (`IF true`, `WHERE 1 = 1`,
-  `FOR $x IN []`).
-- `7005` (W) — a comparison against a closed literal set can never match
-  (`WHEN $event = 'CRATE'`).
-- `7006` (W) — empty IN/CONTAINS list.
-- `7007` (I) — `SELECT *` alongside explicit fields.
-- `7008` (I) — schemaless table in a typed workspace.
-- `7009` (W) — whole-table UPDATE/DELETE without WHERE.
-- `7011` (W) — assignment to `id` in SET.
-- `7012` (W) — blocking or side-effecting call in a computed context
-  (`http::get(...)` / `sleep()` in a field VALUE or event body).
-- `7013` (W) — a suppression directive names a catalog code (with a reason when
-  required).
+- `7001` (W) - unused LET binding.
+- `7002` (I) - LET shadowing.
+- `7003` (I) - mixed-kind array literal (`[1, 'a']`).
+- `7004` (W) - control flow decided by a constant (`IF true`, `WHERE 1 = 1`,
+ `FOR $x IN []`).
+- `7005` (W) - a comparison against a closed literal set can never match
+ (`WHEN $event = 'CRATE'`).
+- `7006` (W) - empty IN/CONTAINS list.
+- `7007` (I) - `SELECT *` alongside explicit fields.
+- `7008` (I) - schemaless table in a typed workspace.
+- `7009` (W) - whole-table UPDATE/DELETE without WHERE.
+- `7011` (W) - assignment to `id` in SET.
+- `7012` (W) - blocking or side-effecting call in a computed context
+ (`http::get(...)` / `sleep()` in a field VALUE or event body).
+- `7013` (W) - a suppression directive names a catalog code (with a reason when
+ required).
 
-### 8xxx — Version compatibility
+### 8xxx - Version compatibility
 
 Gated on `[analysis] surrealdb_version`.
 
-- `8001` (E) — every function used exists in the configured target version
-  (unavailable or renamed — the message suggests the new name).
-- `8003` (E) — syntax requires a newer version (closures, `??` on old targets).
+- `8001` (E) - every function used exists in the configured target version
+ (unavailable or renamed - the message suggests the new name).
+- `8003` (E) - syntax requires a newer version (closures, `??` on old targets).
 
 ---
 
@@ -382,35 +382,35 @@ host adapters discharge, not a finding. Constraints from multiple uses intersect
 
 Examples of the constraint each use produces:
 
-- `SET age = $age` → `$age: int` (the field's kind)
-- `WHERE age > $min` → `$min: numeric`
-- `string::len($s)` → `$s: string`
-- `fn::greet($n)` → `$n: string` (from the DEFINE)
-- `type::field($f)` → `$f: string` and value ∈ the table's field paths
-- `FROM $tbl` → `$tbl: table | record` (domain: known tables)
-- `KILL $id` → `$id: uuid`
-- `LIMIT $n` → `$n: int` and `n >= 0`
+- `SET age = $age` -> `$age: int` (the field's kind)
+- `WHERE age > $min` -> `$min: numeric`
+- `string::len($s)` -> `$s: string`
+- `fn::greet($n)` -> `$n: string` (from the DEFINE)
+- `type::field($f)` -> `$f: string` and value in the table's field paths
+- `FROM $tbl` -> `$tbl: table | record` (domain: known tables)
+- `KILL $id` -> `$id: uuid`
+- `LIMIT $n` -> `$n: int` and `n >= 0`
 
 The exported `ParamInference` carries: `name`, unified `kind`, optional value
 `domain` (`OneOf(values)` or `Range { min, max }`), `required` (no DEFINE PARAM
 default), and every use-site span. Host adapters (the Rust macro, the TypeScript
-codegen) enforce these at the call site — at the host's compile time where
+codegen) enforce these at the call site - at the host's compile time where
 possible, or as a runtime guard for values the host cannot prove statically.
 
 Context parameters are injected by SurrealQL; the analyzer models them as
 implicitly bound with kinds where the context defines them, so their bodies
 type-check and using one outside its context is `6005`:
 
-- `$this` (any row scope) — current row (table's object type)
-- `$parent` (subquery) — enclosing row
-- `$event` (DEFINE EVENT) — `'CREATE' | 'UPDATE' | 'DELETE'` (literal union)
-- `$before`, `$after` (DEFINE EVENT) — the table's row type
-- `$value`, `$input` (EVENT / FIELD VALUE·ASSERT) — event row / field's declared type
-- `$auth`, `$session`, `$token`, `$scope` — session-shaped objects (open)
+- `$this` (any row scope) - current row (table's object type)
+- `$parent` (subquery) - enclosing row
+- `$event` (DEFINE EVENT) - `'CREATE' | 'UPDATE' | 'DELETE'` (literal union)
+- `$before`, `$after` (DEFINE EVENT) - the table's row type
+- `$value`, `$input` (EVENT / FIELD VALUE-ASSERT) - event row / field's declared type
+- `$auth`, `$session`, `$token`, `$scope` - session-shaped objects (open)
 
 ---
 
-## 7. Rust — `surrealguard-rs`
+## 7. Rust - `surrealguard-rs`
 
 Compile-time-checked, typed SurrealQL. `cargo add surrealguard-rs`. The crate
 re-exports two proc-macros; a crate using them only needs `surrealguard-rs` in
@@ -419,19 +419,19 @@ scope (it re-exports every dependency the expansion references: `serde`,
 
 ### Macros
 
-- `query!("…")` — check and return a typed `Query<T>` whose `T` is the inferred,
-  nameless result type.
-- `surql!("…")` — check and expand to the query text as a `&'static str` (the
-  lighter form when you only want validation).
+- `query!("...")` - check and return a typed `Query<T>` whose `T` is the inferred,
+ nameless result type.
+- `surql!("...")` - check and expand to the query text as a `&'static str` (the
+ lighter form when you only want validation).
 
 ```rust
 use surrealguard_rs::{query, surql};
 
 let users = query!("SELECT name, age FROM user");
-//  users: Query<Vec<{ name: String, age: i64 }>>  ← nameless struct, inferred
+// users: Query<Vec<{ name: String, age: i64 }>> <- nameless struct, inferred
 
 let sql = surql!("UPDATE user SET age = 30");
-//  sql: &'static str — validated, unchanged text
+// sql: &'static str - validated, unchanged text
 ```
 
 ### The compiler is the checker
@@ -443,7 +443,7 @@ whole literal; the message carries every finding's code and text.
 ```rust
 let bad = query!("SELECT name, ssn FROM user");
 // error: SurrealGuard rejected this query:
-//   [E1002] unknown field `ssn` on table `user`
+// [E1002] unknown field `ssn` on table `user`
 ```
 
 With no schema configured, queries are still checked for everything that doesn't
@@ -453,10 +453,10 @@ depend on one (syntax, function arity, operators).
 
 Resolved at compile time from, in order:
 
-1. the `SURREALGUARD_SCHEMA` environment variable — a `.surql` file or a
-   directory, taken relative to `CARGO_MANIFEST_DIR` unless absolute;
+1. the `SURREALGUARD_SCHEMA` environment variable - a `.surql` file or a
+ directory, taken relative to `CARGO_MANIFEST_DIR` unless absolute;
 2. otherwise a convention path under the crate root, first match wins:
-   `schema/`, `migrations/`, then `schema.surql`.
+ `schema/`, `migrations/`, then `schema.surql`.
 
 A directory contributes every `.surql`/`.surrealql` file it contains, **sorted
 by path**, so zero-padded migrations (`0001_*.surql`, `0002_*.surql`) apply in
@@ -470,7 +470,7 @@ SURREALGUARD_SCHEMA=db/schema.surql cargo check
 ### Nameless typed results
 
 `query!` expands to a `Query<T>`. Object shapes become `struct`s defined inside
-the macro's own block scope — the type escapes as a value but its name never
+the macro's own block scope - the type escapes as a value but its name never
 does, so you get nested field access without ever writing a type (like sqlx's
 `query!`). Generated types derive `serde::Deserialize`. A statement with no
 response (e.g. a bare `LET`) yields `()`.
@@ -480,25 +480,25 @@ JSON encoding of the rows (`.from_json(json) -> serde_json::Result<T>`).
 
 Execution: the shipped crate **checks and types** queries; it does not itself
 run them. Running a `Query<T>` against a live database uses the official
-`surrealdb` Rust SDK — the execution layer is the next layer on top.
+`surrealdb` Rust SDK - the execution layer is the next layer on top.
 
-### Kind → Rust type mapping
+### Kind -> Rust type mapping
 
-- `bool` → `bool`
-- `int` → `i64`
-- `float` / `number` / `decimal` → `f64`
-- `string` / `regex` → `String`
-- `datetime` → `chrono::DateTime<Utc>`
-- `uuid` → `uuid::Uuid`
-- `duration` → `String` (serialized as `1h30m`)
-- `bytes` → `Vec<u8>`
-- `none` / `null` → `()`
-- `array<T>` / `set<T>` → `Vec<T>`
-- `option<T>` → `Option<T>`
-- `record<t>` → `String` (the id decodes as a string; also surfaced as a typed
-  `RecordLink<T>` in the runtime)
-- closed object → a nested block-local `struct`
-- open object / geometry / range / file / `any` → `serde_json::Value`
+- `bool` -> `bool`
+- `int` -> `i64`
+- `float` / `number` / `decimal` -> `f64`
+- `string` / `regex` -> `String`
+- `datetime` -> `chrono::DateTime<Utc>`
+- `uuid` -> `uuid::Uuid`
+- `duration` -> `String` (serialized as `1h30m`)
+- `bytes` -> `Vec<u8>`
+- `none` / `null` -> `()`
+- `array<T>` / `set<T>` -> `Vec<T>`
+- `option<T>` -> `Option<T>`
+- `record<t>` -> `String` (the id decodes as a string; also surfaced as a typed
+ `RecordLink<T>` in the runtime)
+- closed object -> a nested block-local `struct`
+- open object / geometry / range / file / `any` -> `serde_json::Value`
 
 Literal kinds follow their base: a literal string is `String`, a literal integer
 is `i64`, a literal array becomes a tuple, a literal object becomes a struct.
@@ -528,10 +528,10 @@ await db.use({ namespace: "app", database: "app" });
 
 // SurrealDB returns one result per statement, so destructure the first result.
 const [users] = await db.query("SELECT name FROM user WHERE team = $team", { team: "red" });
-//     ^ Array<{ name: string }> — result & params inferred from the query text
+// ^ Array<{ name: string }> - result & params inferred from the query text
 
 await db.query("SELECT name FROM user WHERE team = $team");
-//    ✗ Expected 2 arguments, but got 1.  (params required when the query reads them)
+// x Expected 2 arguments, but got 1. (params required when the query reads them)
 ```
 
 Because the client IS a real `Surreal`, `connect()`, `use()`, live queries, and
@@ -541,17 +541,17 @@ Signatures and exports:
 
 ```ts
 class SurrealGuardClient extends Surreal {
-  // The SDK's `query` builder is nominal and unexported, so the override
-  // intersects it with `Promise<tuple>` — narrowing what `await` yields while
-  // staying assignable to the base method (no runtime change, no lie about it).
-  query<Q extends string>(query: Q, ...args: ArgsOf<Q>): QueryBuilder & Promise<QueryResultOf<Q>>;
+ // The SDK's `query` builder is nominal and unexported, so the override
+ // intersects it with `Promise<tuple>` - narrowing what `await` yields while
+ // staying assignable to the base method (no runtime change, no lie about it).
+ query<Q extends string>(query: Q, ...args: ArgsOf<Q>): QueryBuilder & Promise<QueryResultOf<Q>>;
 }
 
-// Required exactly when the query reads params, forbidden otherwise — one
+// Required exactly when the query reads params, forbidden otherwise - one
 // conditional generic, proven against tsc. There is deliberately NO permissive
 // string overload for text; a second overload would defeat the inference.
 type ParamsArg<P> = P extends Record<string, never> ? [] : [params: P];
-type ArgsOf<Q extends string>        = Q extends keyof SurqlRegistry ? ParamsArg<SurqlRegistry[Q]["params"]> : [bindings?: Record<string, unknown>];
+type ArgsOf<Q extends string> = Q extends keyof SurqlRegistry ? ParamsArg<SurqlRegistry[Q]["params"]> : [bindings?: Record<string, unknown>];
 type QueryResultOf<Q extends string> = Q extends keyof SurqlRegistry ? [SurqlRegistry[Q]["result"]] : unknown[];
 
 type RecordId<T extends string = string> = string & { readonly __table?: T };
@@ -562,10 +562,10 @@ Also exports `GeoJSON`, `SurqlRegistry`, `SurqlQueryShape`, `ArgsOf`, `QueryResu
 ### `surrealguard generate`
 
 Emits one TypeScript module that re-exports a ready `SurrealGuardClient` and
-augments `@surrealguard/client`'s registry — one entry per analyzed query, keyed
+augments `@surrealguard/client`'s registry - one entry per analyzed query, keyed
 by its exact text. The base `SurqlRegistry` is empty; the generated file only
 ever adds entries. Import the client from this one file (that also loads the
-augmentation) and every matching `db.query("…")` is typed, no side-import.
+augmentation) and every matching `db.query("...")` is typed, no side-import.
 
 ```ts
 import type { RecordId, GeoJSON } from "@surrealguard/client";
@@ -573,12 +573,12 @@ import type { RecordId, GeoJSON } from "@surrealguard/client";
 export { SurrealGuardClient } from "@surrealguard/client";
 
 declare module "@surrealguard/client" {
-  interface SurqlRegistry {
+ interface SurqlRegistry {
     "SELECT * FROM user": {
       result: Array<{ id: RecordId<"user">; name: string }>;
       params: Record<string, never>;
     };
-  }
+ }
 }
 ```
 
@@ -598,18 +598,18 @@ const handle = qc.observe("LIVE SELECT * FROM user", { initialData });
 const stop = handle.subscribe((state) => render(state.data));
 ```
 
-- `observe(sql, options)` — reference-counted subscription. Identical
-  `(sql, params)` calls share one cache entry via a stable `queryKey`; the first
-  subscriber starts it, the last to leave tears it down. Returns an `Observable`
-  with `get()` and `subscribe(listener)`.
+- `observe(sql, options)` - reference-counted subscription. Identical
+ `(sql, params)` calls share one cache entry via a stable `queryKey`; the first
+ subscriber starts it, the last to leave tears it down. Returns an `Observable`
+ with `get()` and `subscribe(listener)`.
 - **Live reconcile by id.** `LIVE SELECT` (matched by a leading `live` keyword)
-  seeds from `initialData` (SSR), subscribes to the live-query id via the SDK's
-  `liveOf`, then applies notifications keyed by record `id` — `CREATE`/`UPDATE`
-  upsert, `DELETE` removes. A plain query resolves once.
-- `fetch(sql, params)` — a one-shot query outside the reactive layer.
-- `dehydrate()` — snapshot successful cached results for SSR transport.
-- `hydrate(state)` — seed the cache from a server snapshot so the client renders
-  without a refetch, then (for live queries) upgrade in place.
+ seeds from `initialData` (SSR), subscribes to the live-query id via the SDK's
+ `liveOf`, then applies notifications keyed by record `id` - `CREATE`/`UPDATE`
+ upsert, `DELETE` removes. A plain query resolves once.
+- `fetch(sql, params)` - a one-shot query outside the reactive layer.
+- `dehydrate()` - snapshot successful cached results for SSR transport.
+- `hydrate(state)` - seed the cache from a server snapshot so the client renders
+ without a refetch, then (for live queries) upgrade in place.
 
 State shape: `QueryState<Row> = { data: Row[]; status: "loading" | "success" |
 "error"; error?: unknown }`.
@@ -620,7 +620,7 @@ State shape: `QueryState<Row> = { data: Row[]; status: "loading" | "success" |
 import { useLiveQuery } from "@surrealguard/next";
 
 const { data, status } = useLiveQuery(qc, "LIVE SELECT * FROM user", {
-  initialData: initial,
+ initialData: initial,
 });
 ```
 
@@ -635,9 +635,9 @@ as `initialData`.
 
 ```svelte
 <script>
-  import { liveQuery } from "@surrealguard/svelte";
-  export let data;
-  const users = liveQuery(qc, "LIVE SELECT * FROM user", { initial: data.users });
+ import { liveQuery } from "@surrealguard/svelte";
+ export let data;
+ const users = liveQuery(qc, "LIVE SELECT * FROM user", { initial: data.users });
 </script>
 {#each $users.data as user (user.id)}<li>{user.name}</li>{/each}
 ```
@@ -662,19 +662,19 @@ Paste-in setup prompt:
 Why it works well for agents:
 
 - **Structured findings.** `surrealguard check --json` emits code, severity,
-  source, byte range, message, help, and related spans — parse findings instead
-  of scraping prose.
+ source, byte range, message, help, and related spans - parse findings instead
+ of scraping prose.
 - **Byte-precise spans.** Every finding carries an exact byte range for surgical
-  inline edits, even inside a query embedded in a host file.
+ inline edits, even inside a query embedded in a host file.
 - **Compile-time errors.** In Rust a bad query fails `cargo check` with a message
-  carrying the code and text (`[E1002] unknown field …`). In TypeScript a wrong
-  or missing param is a `tsc` error. Agents already read compiler output.
+ carrying the code and text (`[E1002] unknown field ...`). In TypeScript a wrong
+ or missing param is a `tsc` error. Agents already read compiler output.
 - **Deterministic exit code.** `check` exits non-zero exactly when an
-  error-severity finding survives policy, so an agent loop knows when it's done.
+ error-severity finding survives policy, so an agent loop knows when it's done.
 
 The check loop: run `check --json`, read the `diagnostics` array, edit at each
 `range`, repeat until the array is empty and the exit code is `0`. In CI, run
-`surrealguard check` as a gate — the non-zero exit fails the build on any
+`surrealguard check` as a gate - the non-zero exit fails the build on any
 error-severity finding.
 
 Context files: `/llms.txt` (short overview) and `/llms-full.txt` (this file).
@@ -689,8 +689,8 @@ Context files: `/llms.txt` (short overview) and `/llms-full.txt` (this file).
 - GitHub: https://github.com/DrewRidley/surrealguard
 - crates.io: https://crates.io/crates/surrealguard
 - npm: https://www.npmjs.com/org/surrealguard
-  (`@surrealguard/client`, `@surrealguard/query`, `@surrealguard/next`,
-  `@surrealguard/svelte`)
+ (`@surrealguard/client`, `@surrealguard/query`, `@surrealguard/next`,
+ `@surrealguard/svelte`)
 - Rust crate: `surrealguard-rs` (re-exports the `query!` / `surql!` macros)
 
 License: MIT OR Apache-2.0.

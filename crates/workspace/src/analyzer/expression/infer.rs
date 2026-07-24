@@ -494,7 +494,15 @@ fn binary_fact(
     ctx: &mut AnalysisContext<'_>,
 ) -> ExpressionFact {
     let lhs_fact = infer_expression_fact(lhs, ctx);
-    let rhs_fact = infer_expression_fact(rhs, ctx);
+    // NONE-narrowing: the right operand of `$x = NONE OR <rhs>` runs only when
+    // `$x` is NOT none (the left disjunct already handled the none case), and
+    // likewise `$x != NONE AND <rhs>`. Infer the rhs with `$x` narrowed to its
+    // non-none kind so `option<string>` reads as `string` there (a guarded
+    // `string::len($value)` / `string::is_email($value)` type-checks).
+    let rhs_fact = match none_guarded_param(&op.node, lhs) {
+        Some(param) => infer_rhs_with_narrowed_param(param, rhs, ctx),
+        None => infer_expression_fact(rhs, ctx),
+    };
 
     let mut fact = ExpressionFact::new(span, ExpressionValueClass::Unknown);
     merge_dependencies(&mut fact, lhs_fact.dependencies);
@@ -511,6 +519,103 @@ fn binary_fact(
     }
 
     fact.with_partial(PartialReason::UnsupportedSyntax("BinaryExpression".into()))
+}
+
+/// The parameter narrowed by a `= NONE OR` / `!= NONE AND` guard on the
+/// *left* operand: `$x = NONE` under `OR`, or `$x != NONE` under `AND`.
+/// Returns the parameter name whose non-none kind the right operand may
+/// assume.
+pub(crate) fn none_guarded_param<'a>(
+    op: &ast::BinaryOp,
+    lhs: &'a ast::Spanned<ast::Expr>,
+) -> Option<&'a str> {
+    let want_eq = match op {
+        ast::BinaryOp::Or => true,
+        ast::BinaryOp::And => false,
+        _ => return None,
+    };
+    let ast::Expr::Binary {
+        lhs: inner_lhs,
+        op: inner_op,
+        rhs: inner_rhs,
+    } = &lhs.node
+    else {
+        return None;
+    };
+    let matches_op = match inner_op.node {
+        ast::BinaryOp::Eq => want_eq,
+        ast::BinaryOp::NotEq => !want_eq,
+        _ => return None,
+    };
+    if !matches_op {
+        return None;
+    }
+    // One side is the parameter, the other the `NONE` literal.
+    let is_none = |e: &ast::Spanned<ast::Expr>| {
+        matches!(&e.node, ast::Expr::Literal(ast::Literal::None))
+    };
+    let param_of = |e: &'a ast::Spanned<ast::Expr>| match &e.node {
+        ast::Expr::Param(name) => Some(name.as_str()),
+        _ => None,
+    };
+    if is_none(inner_rhs) {
+        param_of(inner_lhs)
+    } else if is_none(inner_lhs) {
+        param_of(inner_rhs)
+    } else {
+        None
+    }
+}
+
+/// Infers `rhs` with `param` rebound to its non-none kind, when it currently
+/// resolves to an `option<...>` (`none | t`).
+fn infer_rhs_with_narrowed_param(
+    param: &str,
+    rhs: &ast::Spanned<ast::Expr>,
+    ctx: &mut AnalysisContext<'_>,
+) -> ExpressionFact {
+    with_none_narrowed(param, ctx, |ctx| infer_expression_fact(rhs, ctx))
+}
+
+/// Runs `f` with `param` rebound to its non-none kind (`none | t` → `t`). A
+/// missing or non-optional binding leaves the environment unchanged. Shared
+/// by inference (this module) and checking (`super::check`), so both sides of
+/// a `= NONE OR` / `!= NONE AND` guard read the narrowed kind.
+pub(crate) fn with_none_narrowed<T>(
+    param: &str,
+    ctx: &mut AnalysisContext<'_>,
+    f: impl FnOnce(&mut AnalysisContext<'_>) -> T,
+) -> T {
+    let narrowed = ctx.env().let_fact(param).cloned().and_then(|mut fact| {
+        let kind = narrow_out_none(fact.kind.as_ref()?);
+        fact.kind = Some(kind);
+        Some(fact)
+    });
+    match narrowed {
+        Some(fact) => ctx.with_child_env(|ctx| {
+            ctx.define_local(param.to_string(), fact);
+            f(ctx)
+        }),
+        None => f(ctx),
+    }
+}
+
+/// Drops the `none`/`null` variants from a union: `none | string` becomes
+/// `string`. A non-union kind is returned unchanged.
+pub(crate) fn narrow_out_none(kind: &Kind) -> Kind {
+    let Kind::Either(variants) = kind else {
+        return kind.clone();
+    };
+    let kept: Vec<Kind> = variants
+        .iter()
+        .filter(|v| !matches!(v, Kind::None | Kind::Null))
+        .cloned()
+        .collect();
+    match kept.len() {
+        0 => kind.clone(),
+        1 => kept.into_iter().next().expect("one variant"),
+        _ => Kind::Either(kept),
+    }
 }
 
 fn prefix_fact(
@@ -551,7 +656,8 @@ fn object_fact(
     for (key, value) in fields {
         let value_fact = infer_expression_fact(value, ctx);
         partial.extend(value_fact.partial.iter().cloned());
-        kinds.insert(key.node.clone(), value_fact.kind.unwrap_or(Kind::Any));
+        let kind = object_property_kind(&value_fact);
+        kinds.insert(key.node.clone(), kind);
     }
 
     let mut fact = ExpressionFact::new(span, ExpressionValueClass::Object)
@@ -569,6 +675,22 @@ fn object_fact(
         fact.value = Some(surrealdb_types::Value::Object(values.into()));
     }
     fact
+}
+
+/// The kind an object-literal property contributes to the object's type. A
+/// property written as a constant string is given its *literal* kind
+/// (`'marble'` rather than the widened `string`) so a DEFAULT/CONTENT object
+/// type-checks against a field whose object type constrains that property to
+/// a string-literal union (`'marble' | 'euclid' | ...`). Other kinds pass
+/// through unchanged.
+fn object_property_kind(value_fact: &ExpressionFact) -> Kind {
+    match (&value_fact.kind, &value_fact.value) {
+        (Some(Kind::String), Some(surrealdb_types::Value::String(text))) => {
+            Kind::Literal(KindLiteral::String(text.clone()))
+        }
+        (Some(kind), _) => kind.clone(),
+        (None, _) => Kind::Any,
+    }
 }
 
 fn array_fact(

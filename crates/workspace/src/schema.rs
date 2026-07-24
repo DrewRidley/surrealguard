@@ -422,6 +422,36 @@ impl TableDef {
         self.fields.get(&path.dotted())
     }
 
+    /// The kind of an implicit record field SurrealDB provides but no
+    /// `DEFINE FIELD` declares: every record has an `id` (a record link to
+    /// its own table), and every `TYPE RELATION` edge record additionally
+    /// has `in`/`out` record links to its FROM/TO endpoint tables. These are
+    /// real, queryable, and indexable, but they live outside `self.fields`
+    /// so the schemaless `fields.is_empty()` gate stays untouched. An empty
+    /// endpoint list means any record (`record<>`).
+    pub fn implicit_field_kind(&self, head: &str) -> Option<Kind> {
+        match head {
+            "id" => Some(Kind::Record(vec![surrealdb_types::Table::from(
+                self.name.as_str(),
+            )])),
+            "in" | "out" => {
+                let relation = self.relation.as_ref()?;
+                let tables = if head == "in" {
+                    &relation.in_tables
+                } else {
+                    &relation.out_tables
+                };
+                Some(Kind::Record(
+                    tables
+                        .iter()
+                        .map(|table| surrealdb_types::Table::from(table.as_str()))
+                        .collect(),
+                ))
+            }
+            _ => None,
+        }
+    }
+
     /// Every field whose path lies under `prefix`, for expanding a nested
     /// object selection.
     pub fn fields_under<'a>(
@@ -531,6 +561,9 @@ pub(crate) fn index_field_path_exists_on_table(table: &TableDef, path: &[String]
             .fields
             .values()
             .any(|field| field.path.len() > path.len() && field.path.starts_with(path))
+        || path
+            .first()
+            .is_some_and(|head| table.implicit_field_kind(head).is_some())
 }
 
 pub(crate) fn table_def_from_ast(def: &ast::DefineTable, source: &SourceId) -> TableDef {
@@ -730,6 +763,14 @@ pub(crate) fn kind_from_type_expr(
                 Ok(Kind::either(vec![Kind::None, inner]))
             }
             TypeExpr::Literal(literal) => literal_kind(literal),
+            TypeExpr::Object(properties) => {
+                use surrealdb_types::KindLiteral;
+                let mut map = std::collections::BTreeMap::new();
+                for (name, value) in properties {
+                    map.insert(name.node.clone(), convert(&value.node, text)?);
+                }
+                Ok(Kind::Literal(KindLiteral::Object(map)))
+            }
             TypeExpr::Partial(partial) => {
                 let start = partial.span.start() as usize;
                 let end = partial.span.end() as usize;
@@ -751,7 +792,17 @@ pub(crate) fn kind_from_type_expr(
         let unsupported = || PartialReason::UnsupportedSyntax(format!("{name}<...>"));
         match name.to_ascii_lowercase().as_str() {
             "record" => {
-                let tables = args
+                // `record<user>` takes named tables directly; `record<team |
+                // user | org>` writes the same set of tables as a single union
+                // argument, which the grammar nests as one `TypeExpr::Union`.
+                let table_names: &[surrealguard_syntax::ast::Spanned<TypeExpr>] = match args {
+                    [single] => match &single.node {
+                        TypeExpr::Union(variants) => variants,
+                        _ => args,
+                    },
+                    _ => args,
+                };
+                let tables = table_names
                     .iter()
                     .filter_map(|arg| match &arg.node {
                         TypeExpr::Name(table) => {
@@ -760,7 +811,7 @@ pub(crate) fn kind_from_type_expr(
                         _ => None,
                     })
                     .collect::<Vec<_>>();
-                if tables.len() == args.len() && !tables.is_empty() {
+                if tables.len() == table_names.len() && !tables.is_empty() {
                     Ok(Kind::Record(tables))
                 } else {
                     Err(unsupported())
@@ -976,6 +1027,62 @@ mod tests {
         assert_eq!(
             duplicates[0].message(),
             "duplicate table definition `person`"
+        );
+    }
+
+    #[test]
+    fn object_and_record_union_field_types_resolve_to_kinds_without_partial() {
+        use std::collections::BTreeMap;
+        use surrealdb_types::{KindLiteral, Table};
+
+        let parsed = parse_source(
+            SourceId::new("schema:object-record-union"),
+            "DEFINE TABLE thing;\n\
+             DEFINE FIELD address ON thing TYPE { street: string, zip: int };\n\
+             DEFINE FIELD owner ON thing TYPE record<team | user | organization>;\n\
+             DEFINE FIELD maybe ON thing TYPE option<record<account | team>>;",
+        )
+        .expect("schema parses");
+
+        let extraction = extract_schema(&[parsed]);
+        assert_eq!(extraction.diagnostics, Vec::new());
+        let thing = extraction.schema.table("thing").expect("thing table exists");
+
+        let address = thing
+            .field(&FieldPath::parse("address"))
+            .expect("address field exists");
+        assert!(address.partial.is_empty(), "object type must fully resolve");
+        let mut expected = BTreeMap::new();
+        expected.insert("street".to_string(), Kind::String);
+        expected.insert("zip".to_string(), Kind::Int);
+        assert_eq!(
+            address.kind,
+            Some(Kind::Literal(KindLiteral::Object(expected)))
+        );
+
+        let owner = thing
+            .field(&FieldPath::parse("owner"))
+            .expect("owner field exists");
+        assert!(owner.partial.is_empty(), "record union must fully resolve");
+        assert_eq!(
+            owner.kind,
+            Some(Kind::Record(vec![
+                Table::from("team"),
+                Table::from("user"),
+                Table::from("organization"),
+            ]))
+        );
+
+        let maybe = thing
+            .field(&FieldPath::parse("maybe"))
+            .expect("maybe field exists");
+        assert!(maybe.partial.is_empty(), "option<record<...>> must resolve");
+        assert_eq!(
+            maybe.kind,
+            Some(Kind::either(vec![
+                Kind::None,
+                Kind::Record(vec![Table::from("account"), Table::from("team")]),
+            ]))
         );
     }
 

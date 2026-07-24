@@ -15,7 +15,10 @@ pub(crate) fn analyze_upsert(ctx: &mut AnalysisContext<'_>, stmt: &ast::UpsertSt
 
 pub(crate) fn upsert_response_kind(stmt: &ast::UpsertStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
     mutation::check_only_on_table(ctx, stmt.only, stmt.targets.first());
-    mutation::check_whole_table_write(ctx, stmt.targets.first(), stmt.where_clause.as_ref());
+    // UPSERT is create-like: a bare `UPSERT table SET ...` (no WHERE) generates
+    // a fresh record id rather than rewriting every existing row, so the
+    // whole-table-write contract (7009) — which flags unconditional
+    // UPDATE/DELETE — does not apply here.
     let table_hint = mutation::source_table_name(stmt.targets.first());
     mutation::analyze_expression_positions_for(
         ctx,
@@ -48,6 +51,13 @@ mod tests {
     use crate::schema::extract_schema;
 
     fn analyze(schema: &SchemaIndex, query: &str) -> Kind {
+        analyze_with_diagnostics(schema, query).0
+    }
+
+    fn analyze_with_diagnostics(
+        schema: &SchemaIndex,
+        query: &str,
+    ) -> (Kind, Vec<surrealguard_diagnostics::Finding>) {
         let parsed = parse_source(SourceId::new("query"), query).expect("query should parse");
         let ast::Statement::Upsert(stmt) =
             surrealguard_syntax::lower::lower_first_statement(&parsed, "UpsertStatement")
@@ -58,15 +68,37 @@ mod tests {
         };
         let env = StatementEnv::default();
         let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
-        let mut ctx = AnalysisContext::scoped(
-            schema,
-            parsed.source_id().clone(),
-            parsed.text(),
-            &mut diagnostics,
-            env,
-            None,
+        let kind = {
+            let mut ctx = AnalysisContext::scoped(
+                schema,
+                parsed.source_id().clone(),
+                parsed.text(),
+                &mut diagnostics,
+                env,
+                None,
+            );
+            upsert_response_kind(&stmt, &mut ctx)
+        };
+        (kind, diagnostics)
+    }
+
+    #[test]
+    fn bare_upsert_is_create_like_and_never_a_whole_table_write() {
+        let schema_parsed = parse_source(
+            SourceId::new("schema"),
+            "DEFINE TABLE settlement SCHEMAFULL;\nDEFINE FIELD amount ON settlement TYPE int;",
+        )
+        .expect("schema should parse");
+        let schema = extract_schema(&[schema_parsed]).schema;
+
+        // No WHERE: UPSERT generates a record, so 7009 must not fire.
+        let (_, diagnostics) = analyze_with_diagnostics(&schema, "UPSERT settlement SET amount = 1;");
+        assert!(
+            diagnostics
+                .iter()
+                .all(|finding| finding.code().number() != 7009),
+            "bare UPSERT should not be flagged as a whole-table write: {diagnostics:?}"
         );
-        upsert_response_kind(&stmt, &mut ctx)
     }
 
     #[test]

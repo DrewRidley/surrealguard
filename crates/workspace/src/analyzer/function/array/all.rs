@@ -18,8 +18,8 @@ pub(crate) fn analyze_array_all(
         call,
         &Signature {
             min_args: 1,
-            max_args: Some(1),
-            arg_kinds: vec![ParamKind::Array],
+            max_args: Some(2),
+            arg_kinds: vec![ParamKind::Array, ParamKind::Any],
             return_kind: ReturnKind::Fixed(Kind::Bool),
         },
         args,
