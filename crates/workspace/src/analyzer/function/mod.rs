@@ -241,15 +241,19 @@ fn check_custom_call(
                 span,
                 5002,
                 format!(
-                    "argument {} to `{}` is a `{kind}`, but `${}` is declared `{expected}`",
+                    "argument {} to `{}` is a `{}`, but `${}` is declared `{}`",
                     index + 1,
                     call.path.node,
+                    crate::render_kind(kind),
                     param.name,
+                    crate::render_kind(expected),
                 ),
             )
             .with_help(format!(
-                "pass a `{expected}`, or widen `${}` to accept `{kind}`",
-                param.name
+                "pass a `{}`, or widen `${}` to accept `{}`",
+                crate::render_kind(expected),
+                param.name,
+                crate::render_kind(kind),
             ))
             .with_related(
                 function.name_span.clone(),

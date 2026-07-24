@@ -4,8 +4,10 @@
 //! (`AnalysisOutput`, `SchemaIndex`) and shapes them for presentation.
 
 use surrealdb_types::{Kind, KindLiteral};
+use surrealguard_syntax::ast;
+use surrealguard_syntax::parse::parse_source;
 use surrealguard_syntax::source::SourceId;
-use surrealguard_syntax::span::SourceSpan;
+use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analysis::AnalysisOutput;
 use crate::schema::SchemaIndex;
@@ -118,6 +120,27 @@ pub fn hover_at(
                 let span = SourceSpan::new(source.clone(), range);
                 consider(&span, symbol_markdown(&format!("${name}"), Some(kind), schema));
             }
+        }
+    }
+
+    // Table references and field names in ordinary positions. The analyzed
+    // statements carry no per-reference spans, so — as with context params —
+    // a fresh parse is walked to locate the identifier under the cursor and
+    // resolve it against the schema. Only definitely-typed references produce
+    // a hover; anything uncertain is left untouched (low-FP).
+    if let Ok(parsed) = parse_source(source.clone(), text) {
+        let statements = surrealguard_syntax::lower::lower_statements(&parsed);
+        let mut collector = SchemaHovers {
+            schema,
+            source,
+            offset,
+            out: Vec::new(),
+        };
+        for statement in &statements {
+            collector.walk_statement(statement);
+        }
+        for (span, markdown) in collector.out {
+            consider(&span, markdown);
         }
     }
 
@@ -287,6 +310,444 @@ fn render_literal(literal: &KindLiteral) -> String {
     }
 }
 
+/// Collects hover candidates for table references and field names by walking
+/// a freshly-lowered statement tree. Each candidate is a `(span, markdown)`
+/// pair the caller feeds through the smallest-covering `consider` closure.
+///
+/// Field resolution tracks the table in scope (a SELECT's single `FROM`
+/// source, a mutation's target, a `DEFINE FIELD`'s table) and follows
+/// `record<>` links: `author.name` on `post` resolves `name` against the
+/// linked `user`. Ambiguity (multiple sources, an opaque traversal) drops the
+/// scope so nothing misleading is shown.
+struct SchemaHovers<'a> {
+    schema: &'a SchemaIndex,
+    source: &'a SourceId,
+    offset: u32,
+    out: Vec<(SourceSpan, String)>,
+}
+
+impl SchemaHovers<'_> {
+    fn covers(&self, span: ByteRange) -> bool {
+        self.offset >= span.start() && self.offset <= span.end()
+    }
+
+    /// A table reference (`FROM person`, `ON person`, a graph edge): show the
+    /// `table <name>` popover, but only for a table the schema actually knows.
+    fn table_ref(&mut self, name: &ast::Spanned<String>) {
+        if !self.covers(name.span) {
+            return;
+        }
+        if let Some(def) = self.schema.table(&name.node) {
+            let span = SourceSpan::new(self.source.clone(), name.span);
+            self.out.push((span, table_markdown(def, self.schema)));
+        }
+    }
+
+    /// Walks a statement, threading the row table into the positions where
+    /// field paths resolve against it.
+    fn walk_statement(&mut self, statement: &ast::Spanned<ast::Statement>) {
+        use ast::Statement;
+        match &statement.node {
+            Statement::Select(select) => {
+                let root = single_table(&select.from);
+                for source in &select.from {
+                    self.walk_expr(None, source);
+                }
+                for projection in &select.projections {
+                    if let ast::Projection::Expr { expr, .. } = projection {
+                        self.walk_expr(root, expr);
+                    }
+                }
+                if let Some(where_clause) = &select.where_clause {
+                    self.walk_expr(root, where_clause);
+                }
+                if let Some(group) = &select.group {
+                    for key in &group.keys {
+                        self.walk_idiom(root, &key.node);
+                    }
+                }
+                if let Some(order) = &select.order {
+                    for key in &order.keys {
+                        self.walk_expr(root, &key.expr);
+                    }
+                }
+                for idiom in select.omit.iter().chain(&select.split).chain(&select.fetch) {
+                    self.walk_idiom(root, &idiom.node);
+                }
+                for extra in [&select.limit, &select.start, &select.timeout].into_iter().flatten() {
+                    self.walk_expr(None, extra);
+                }
+            }
+            Statement::Create(create) => {
+                let root = single_table(&create.targets);
+                for target in &create.targets {
+                    self.walk_expr(None, target);
+                }
+                self.walk_data(root, create.data.as_ref());
+            }
+            Statement::Update(update) => {
+                let root = single_table(&update.targets);
+                for target in &update.targets {
+                    self.walk_expr(None, target);
+                }
+                self.walk_data(root, update.data.as_ref());
+                if let Some(where_clause) = &update.where_clause {
+                    self.walk_expr(root, where_clause);
+                }
+            }
+            Statement::Upsert(upsert) => {
+                let root = single_table(&upsert.targets);
+                for target in &upsert.targets {
+                    self.walk_expr(None, target);
+                }
+                self.walk_data(root, upsert.data.as_ref());
+                if let Some(where_clause) = &upsert.where_clause {
+                    self.walk_expr(root, where_clause);
+                }
+            }
+            Statement::Delete(delete) => {
+                let root = single_table(&delete.targets);
+                for target in &delete.targets {
+                    self.walk_expr(None, target);
+                }
+                if let Some(where_clause) = &delete.where_clause {
+                    self.walk_expr(root, where_clause);
+                }
+            }
+            Statement::Insert(insert) => {
+                let root = insert
+                    .target
+                    .as_ref()
+                    .and_then(|target| expr_table_name(&target.node));
+                if let Some(target) = &insert.target {
+                    self.walk_expr(None, target);
+                }
+                self.walk_insert_data(root, &insert.data);
+            }
+            Statement::Relate(relate) => {
+                for endpoint in [&relate.from, &relate.edge, &relate.to].into_iter().flatten() {
+                    self.walk_expr(None, endpoint);
+                }
+                let root = relate.edge.as_ref().and_then(|edge| expr_table_name(&edge.node));
+                self.walk_data(root, relate.data.as_ref());
+            }
+            Statement::Define(define) => self.walk_define(define),
+            Statement::Remove(remove) => match &remove.target {
+                ast::RemoveTarget::Table(name) => self.table_ref(name),
+                ast::RemoveTarget::Field { field, table } => {
+                    self.table_ref(table);
+                    self.walk_idiom(Some(table.node.as_str()), &field.node);
+                }
+                ast::RemoveTarget::Index { table, .. } => self.table_ref(table),
+                ast::RemoveTarget::Other(_) => {}
+            },
+            Statement::Alter(alter) => {
+                if let Some(table) = &alter.table {
+                    self.table_ref(table);
+                }
+            }
+            Statement::LiveSelect(live) => {
+                if let Some(table) = &live.table {
+                    self.table_ref(table);
+                }
+            }
+            Statement::Info(info) => {
+                if let Some(table) = &info.table {
+                    self.table_ref(table);
+                }
+            }
+            Statement::Show(show) => {
+                if let Some(table) = &show.table {
+                    self.table_ref(table);
+                }
+            }
+            Statement::Rebuild(rebuild) => {
+                if let Some(table) = &rebuild.table {
+                    self.table_ref(table);
+                }
+            }
+            Statement::Let(let_stmt) => self.walk_expr(None, &let_stmt.value),
+            Statement::Return(ret) => {
+                if let Some(value) = &ret.value {
+                    self.walk_expr(None, value);
+                }
+            }
+            Statement::Throw(throw) => {
+                if let Some(value) = &throw.value {
+                    self.walk_expr(None, value);
+                }
+            }
+            Statement::Kill(kill) => {
+                if let Some(id) = &kill.id {
+                    self.walk_expr(None, id);
+                }
+            }
+            Statement::IfElse(if_else) => {
+                for branch in &if_else.branches {
+                    self.walk_expr(None, &branch.condition);
+                    self.walk_block(&branch.body);
+                }
+                if let Some(else_branch) = &if_else.else_branch {
+                    self.walk_block(else_branch);
+                }
+            }
+            Statement::For(for_stmt) => {
+                self.walk_expr(None, &for_stmt.iterable);
+                self.walk_block(&for_stmt.body);
+            }
+            Statement::Block(block) => self.walk_block(block),
+            Statement::Expr(expr) => self.walk_expr(None, expr),
+            _ => {}
+        }
+    }
+
+    fn walk_define(&mut self, define: &ast::DefineStmt) {
+        use ast::DefineStmt;
+        match define {
+            DefineStmt::Field(field) => {
+                self.table_ref(&field.table);
+                self.walk_idiom(Some(field.table.node.as_str()), &field.path.node);
+                let root = Some(field.table.node.as_str());
+                for expr in [&field.default, &field.value, &field.assert].into_iter().flatten() {
+                    self.walk_expr(root, expr);
+                }
+                for predicate in &field.permissions {
+                    self.walk_expr(root, predicate);
+                }
+            }
+            DefineStmt::Table(table) => {
+                if let Some(relation) = &table.relation {
+                    for endpoint in relation.in_tables.iter().chain(&relation.out_tables) {
+                        self.table_ref(endpoint);
+                    }
+                }
+                let root = Some(table.name.node.as_str());
+                for predicate in &table.permissions {
+                    self.walk_expr(root, predicate);
+                }
+            }
+            DefineStmt::Index(index) => {
+                self.table_ref(&index.table);
+                for idiom in &index.fields {
+                    self.walk_idiom(Some(index.table.node.as_str()), &idiom.node);
+                }
+            }
+            DefineStmt::Event(event) => {
+                self.table_ref(&event.table);
+                let root = Some(event.table.node.as_str());
+                for expr in [&event.when, &event.then].into_iter().flatten() {
+                    self.walk_expr(root, expr);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn walk_block(&mut self, block: &ast::Block) {
+        for statement in &block.statements {
+            self.walk_statement(statement);
+        }
+    }
+
+    fn walk_data(&mut self, root: Option<&str>, data: Option<&ast::DataClause>) {
+        use ast::DataClause;
+        match data {
+            Some(DataClause::Set(assignments)) => {
+                for assignment in assignments {
+                    self.walk_idiom(root, &assignment.target.node);
+                    self.walk_expr(root, &assignment.value);
+                }
+            }
+            Some(DataClause::Unset(idioms)) => {
+                for idiom in idioms {
+                    self.walk_idiom(root, &idiom.node);
+                }
+            }
+            Some(
+                DataClause::Content(expr)
+                | DataClause::Merge(expr)
+                | DataClause::Patch(expr)
+                | DataClause::Replace(expr)
+                | DataClause::Single(expr),
+            ) => self.walk_expr(root, expr),
+            _ => {}
+        }
+    }
+
+    fn walk_insert_data(&mut self, root: Option<&str>, data: &ast::InsertData) {
+        use ast::InsertData;
+        match data {
+            InsertData::Values(exprs) => {
+                for expr in exprs {
+                    self.walk_expr(root, expr);
+                }
+            }
+            InsertData::Rows { rows, .. } => {
+                for row in rows {
+                    for (column, value) in row {
+                        self.walk_idiom(root, &column.node);
+                        self.walk_expr(root, value);
+                    }
+                }
+            }
+            InsertData::Assignments(assignments) => {
+                for (column, value) in assignments {
+                    self.walk_idiom(root, &column.node);
+                    self.walk_expr(root, value);
+                }
+            }
+            InsertData::Partial(_) => {}
+        }
+    }
+
+    /// Recurses through an expression, resolving table references and
+    /// field-path idioms against the row table `root` (when one is in scope).
+    fn walk_expr(&mut self, root: Option<&str>, expr: &ast::Spanned<ast::Expr>) {
+        use ast::Expr;
+        match &expr.node {
+            Expr::Table(name) => self.table_ref(name),
+            Expr::RecordId { table, .. } => self.table_ref(table),
+            Expr::Idiom(idiom) => self.walk_idiom(root, idiom),
+            Expr::Binary { lhs, rhs, .. } => {
+                self.walk_expr(root, lhs);
+                self.walk_expr(root, rhs);
+            }
+            Expr::Prefix { expr, .. } | Expr::Cast { expr, .. } => self.walk_expr(root, expr),
+            Expr::Call(call) => {
+                for arg in &call.args {
+                    self.walk_expr(root, arg);
+                }
+            }
+            Expr::Object(entries) => {
+                for (_, value) in entries {
+                    self.walk_expr(root, value);
+                }
+            }
+            Expr::Array(items) => {
+                for item in items {
+                    self.walk_expr(root, item);
+                }
+            }
+            Expr::Subquery(statement) => self.walk_statement(statement),
+            Expr::Block(block) => self.walk_block(block),
+            Expr::Closure(closure) => self.walk_expr(root, &closure.body),
+            _ => {}
+        }
+    }
+
+    /// Walks an idiom's field parts, resolving each against the table in scope
+    /// and re-rooting on `record<>` links so linked-table fields type too.
+    fn walk_idiom(&mut self, root: Option<&str>, idiom: &ast::Idiom) {
+        use ast::IdiomPart;
+        let mut table = root.map(str::to_string);
+        // Field segments accumulated relative to the current `table`.
+        let mut segments: Vec<String> = Vec::new();
+        for part in &idiom.parts {
+            match &part.node {
+                IdiomPart::Start(inner) => {
+                    self.walk_expr(root, inner);
+                    // Rooted in a leading value, not the row table.
+                    table = None;
+                    segments.clear();
+                }
+                IdiomPart::Field(name) => {
+                    let Some(current) = table.clone() else {
+                        continue;
+                    };
+                    let Some(def) = self.schema.table(&current) else {
+                        table = None;
+                        continue;
+                    };
+                    let mut path = segments.clone();
+                    path.push(name.clone());
+                    let kind = crate::analyzer::data::select::kind_for_path(def, &path);
+                    if self.covers(part.span) {
+                        if let Some(kind) = &kind {
+                            let span = SourceSpan::new(self.source.clone(), part.span);
+                            self.out.push((span, symbol_markdown(name, Some(kind), self.schema)));
+                        }
+                    }
+                    // Advance the scope: follow a record link into its table,
+                    // stay on the same table for a nested object, or give up.
+                    match kind.as_ref().and_then(record_link_target) {
+                        Some(linked) => {
+                            table = Some(linked);
+                            segments.clear();
+                        }
+                        None if kind.is_some() => segments = path,
+                        None => table = None,
+                    }
+                }
+                IdiomPart::Index(inner) | IdiomPart::Where(inner) => self.walk_expr(root, inner),
+                IdiomPart::Method { args, .. } => {
+                    for arg in args {
+                        self.walk_expr(root, arg);
+                    }
+                }
+                IdiomPart::Graph { step, .. } => {
+                    for target in &step.targets {
+                        self.table_ref(target);
+                    }
+                    if let Some(where_clause) = &step.where_clause {
+                        self.walk_expr(root, where_clause);
+                    }
+                    // The shape after a graph step is opaque here.
+                    table = None;
+                    segments.clear();
+                }
+                IdiomPart::Destructure(idioms) => {
+                    for sub in idioms {
+                        self.walk_idiom(table.as_deref(), &sub.node);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// The table a set of source/target expressions names, when it is exactly one
+/// plain table (or record id). Any other shape — none, several, a subquery —
+/// leaves the row table unknown so field paths stay unresolved.
+fn single_table(exprs: &[ast::Spanned<ast::Expr>]) -> Option<&str> {
+    match exprs {
+        [only] => expr_table_name(&only.node),
+        _ => None,
+    }
+}
+
+/// The table name a source/target expression names, if it is a bare table or a
+/// record id (`person` / `person:one`).
+fn expr_table_name(expr: &ast::Expr) -> Option<&str> {
+    match expr {
+        ast::Expr::Table(name) => Some(name.node.as_str()),
+        ast::Expr::RecordId { table, .. } => Some(table.node.as_str()),
+        _ => None,
+    }
+}
+
+/// The single linked table a `record<T>` (or `option<record<T>>`) points at,
+/// used to re-root idiom traversal across a link. Multi-table or ambiguous
+/// links resolve to nothing rather than guess.
+fn record_link_target(kind: &Kind) -> Option<String> {
+    match kind {
+        Kind::Record(tables) => match tables.as_slice() {
+            [table] => Some(table.as_str().to_string()),
+            _ => None,
+        },
+        Kind::Either(variants) => {
+            let mut records = variants
+                .iter()
+                .filter(|variant| !matches!(variant, Kind::None | Kind::Null));
+            match (records.next(), records.next()) {
+                (Some(single), None) => record_link_target(single),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,6 +882,76 @@ mod tests {
             "got: {}",
             after_hover.markdown
         );
+    }
+
+    #[test]
+    fn hover_over_a_table_reference_in_from_lists_its_fields() {
+        let text = "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD name ON person TYPE string;\n\
+             DEFINE FIELD age ON person TYPE int;\n\
+             SELECT * FROM person;";
+        let (output, schema, source) = analyze(text);
+        // Cursor on the `person` in the `FROM person` clause (last occurrence).
+        let offset = text.rfind("person").expect("FROM table present") as u32 + 1;
+        let hover = hover_at(&output, &schema, &source, text, offset).expect("hover over FROM table");
+
+        assert!(hover.markdown.contains("table person"), "got: {}", hover.markdown);
+        assert!(hover.markdown.contains("name: string"), "got: {}", hover.markdown);
+        assert!(hover.markdown.contains("age: int"), "got: {}", hover.markdown);
+    }
+
+    #[test]
+    fn hover_over_a_projected_field_shows_its_type() {
+        let text = "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD age ON person TYPE int;\n\
+             SELECT age FROM person;";
+        let (output, schema, source) = analyze(text);
+        // Cursor on the projected `age`, not the DEFINE FIELD name.
+        let offset = text.rfind("age").expect("projected field present") as u32 + 1;
+        let hover =
+            hover_at(&output, &schema, &source, text, offset).expect("hover over projected field");
+
+        assert!(hover.markdown.contains("age: int"), "got: {}", hover.markdown);
+    }
+
+    #[test]
+    fn hover_over_a_record_link_field_resolves_it_and_the_linked_field() {
+        let text = "DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE FIELD name ON user TYPE string;\n\
+             DEFINE TABLE post SCHEMAFULL;\n\
+             DEFINE FIELD author ON post TYPE record<user>;\n\
+             SELECT author.name FROM post;";
+        let (output, schema, source) = analyze(text);
+
+        // The link field itself renders as `record<user>`.
+        let author_offset = text.rfind("author").expect("projected link present") as u32 + 1;
+        let author_hover =
+            hover_at(&output, &schema, &source, text, author_offset).expect("hover over link field");
+        assert!(
+            author_hover.markdown.contains("author: record<user>"),
+            "got: {}",
+            author_hover.markdown
+        );
+
+        // The field reached through the link resolves against the linked table.
+        let name_offset = text.rfind("name").expect("linked field present") as u32 + 1;
+        let name_hover =
+            hover_at(&output, &schema, &source, text, name_offset).expect("hover over linked field");
+        assert!(
+            name_hover.markdown.contains("name: string"),
+            "got: {}",
+            name_hover.markdown
+        );
+    }
+
+    #[test]
+    fn hover_over_a_field_on_a_schemaless_table_returns_no_misleading_type() {
+        // Low-FP: an undeclared field on a schemaless table has no known type,
+        // so hovering it must not invent one.
+        let text = "DEFINE TABLE person;\nSELECT nickname FROM person;";
+        let (output, schema, source) = analyze(text);
+        let offset = text.rfind("nickname").expect("field present") as u32 + 1;
+        assert!(hover_at(&output, &schema, &source, text, offset).is_none());
     }
 
     #[test]

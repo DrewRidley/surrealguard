@@ -1438,6 +1438,39 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn function_arg_mismatch_renders_optional_kinds_idiomatically() {
+        let mut workspace = Workspace::default();
+        // Passing an `int` where a param declared `option<string>` is expected
+        // trips the 5002 arg-type contract. The declared kind must render in
+        // the idiomatic compact form (`option<string>`), never the raw union
+        // (`none | string`).
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE FUNCTION fn::greet($name: option<string>) { RETURN $name; };\n\
+             RETURN fn::greet(1);"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let message = output.sources[&source]
+            .diagnostics
+            .iter()
+            .find(|finding| finding.code().number() == 5002)
+            .map(|finding| finding.message().to_string())
+            .expect("a 5002 argument-type finding");
+
+        assert!(
+            message.contains("declared `option<string>`"),
+            "expected compact optional rendering, got: {message}"
+        );
+        assert!(
+            message.contains("is a `int`"),
+            "expected the passed kind, got: {message}"
+        );
+        assert!(!message.contains("none |"), "raw union leaked: {message}");
+    }
+
+    #[test]
     fn analyze_workspace_infers_let_variables_from_prior_let_variables() {
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(

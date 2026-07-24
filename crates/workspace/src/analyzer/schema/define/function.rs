@@ -47,8 +47,10 @@ pub(crate) fn analyze_define_function(
                     span,
                     2012,
                     format!(
-                        "`{}` declares `-> {declared}` but its body returns `{body_kind}`",
-                        stmt.name.node
+                        "`{}` declares `-> {}` but its body returns `{}`",
+                        stmt.name.node,
+                        crate::render_kind(&declared),
+                        crate::render_kind(&body_kind)
                     ),
                 ));
             }

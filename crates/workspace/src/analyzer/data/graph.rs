@@ -53,8 +53,9 @@ pub(crate) fn check_graph_idiom_at(
                             SourceSpan::new(ctx.source().clone(), first_graph),
                             3009,
                             format!(
-                                "a graph step can't start from `{}` — `{kind}` holds no records",
-                                prefix.join(".")
+                                "a graph step can't start from `{}` — `{}` holds no records",
+                                prefix.join("."),
+                                crate::render_kind(&kind)
                             ),
                         );
                         finding = finding.with_help(

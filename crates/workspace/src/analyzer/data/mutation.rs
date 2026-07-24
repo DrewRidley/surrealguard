@@ -132,7 +132,8 @@ pub fn check_required_fields(
                 format!("`{path}` must be set when creating a `{}`", table.name),
             )
             .with_help(format!(
-                "`{path}` is `{kind}` with no `DEFAULT`, so every create must provide it"
+                "`{path}` is `{}` with no `DEFAULT`, so every create must provide it",
+                crate::render_kind(kind)
             ))
             .with_related(
                 field.name_span.clone(),
@@ -487,10 +488,11 @@ fn check_assignment_value(
             let mut finding = surrealguard_diagnostics::catalog::finding(
                 span,
                 2004,
-                format!("`{op_text}` can't combine a `{field_kind}` and a `{value_kind}`"),
+                format!("`{op_text}` can't combine a `{}` and a `{}`", crate::render_kind(&field_kind), crate::render_kind(&value_kind)),
             )
             .with_help(format!(
-                "`{path}` is `{field_kind}`; `{op_text}` needs a right-hand value that combines with it"
+                "`{path}` is `{}`; `{op_text}` needs a right-hand value that combines with it",
+                crate::render_kind(&field_kind)
             ));
             if let Some(def) = table.fields.get(&path) {
                 finding =
@@ -530,16 +532,17 @@ fn check_assignment_value(
         surrealguard_diagnostics::catalog::finding(
             span,
             2001,
-            format!("`{field}` is not optional, so it can't be set to {value_kind}"),
+            format!("`{field}` is not optional, so it can't be set to {}", crate::render_kind(&value_kind)),
         )
         .with_help(format!(
-            "declare it `option<{field_kind}>`, or coalesce with `?? <value>`"
+            "declare it `option<{}>`, or coalesce with `?? <value>`",
+            crate::render_kind(&field_kind)
         ))
     } else {
         surrealguard_diagnostics::catalog::finding(
             span,
             2001,
-            format!("`{field}` is declared `{field_kind}`, but this value is `{value_kind}`"),
+            format!("`{field}` is declared `{}`, but this value is `{}`", crate::render_kind(&field_kind), crate::render_kind(&value_kind)),
         )
     };
     if let Some(def) = table.fields.get(&field) {
@@ -615,7 +618,9 @@ pub fn check_payload_object_keys(
                     span,
                     2001,
                     format!(
-                        "`{path}` is declared `{field_kind}`, but this value is `{value_kind}`"
+                        "`{path}` is declared `{}`, but this value is `{}`",
+                        crate::render_kind(&field_kind),
+                        crate::render_kind(&value_kind)
                     ),
                 );
                 if let Some(def) = table.fields.get(&path) {

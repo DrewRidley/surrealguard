@@ -49,8 +49,10 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
                     span,
                     2001,
                     format!(
-                        "`{}`'s value is `{kind}`, but the field is declared `{declared}`",
-                        idiom_text(&stmt.path.node)
+                        "`{}`'s value is `{}`, but the field is declared `{}`",
+                        idiom_text(&stmt.path.node),
+                        crate::render_kind(&kind),
+                        crate::render_kind(declared),
                     ),
                 ));
             }
@@ -71,7 +73,7 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
                     span,
                     2005,
-                    format!("this ASSERT is a `{kind}`, not a `bool`"),
+                    format!("this ASSERT is a `{}`, not a `bool`", crate::render_kind(&kind)),
                 ));
             }
         }

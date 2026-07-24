@@ -38,7 +38,7 @@ pub(crate) fn analyze_if_else(ctx: &mut AnalysisContext<'_>, stmt: &ast::IfElseS
                 surrealguard_diagnostics::catalog::finding(
                     span,
                     2005,
-                    format!("this IF condition is a `{condition_kind}`, not a `bool`"),
+                    format!("this IF condition is a `{}`, not a `bool`", crate::render_kind(&condition_kind)),
                 )
                 .with_help("an IF chooses a branch on a true/false test; the condition must be a bool"),
             );

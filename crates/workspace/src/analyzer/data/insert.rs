@@ -119,7 +119,9 @@ fn check_insert_payload(
                             span,
                             2001,
                             format!(
-                                "`{path}` is declared `{column_kind}`, but this value is `{value_kind}`"
+                                "`{path}` is declared `{}`, but this value is `{}`",
+                                crate::render_kind(&column_kind),
+                                crate::render_kind(&value_kind)
                             ),
                         );
                         if let Some(def) = table.fields.get(&path) {

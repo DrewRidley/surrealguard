@@ -44,7 +44,7 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
                             ctx,
                             expr.span,
                             2004,
-                            format!("`-` can't be applied to a `{kind}`"),
+                            format!("`-` can't be applied to a `{}`", crate::render_kind(&kind)),
                         );
                     }
                 }
@@ -198,7 +198,7 @@ fn check_cast(
                 ctx,
                 whole.span,
                 2008,
-                format!("`{text}` can't be cast to `{target}`"),
+                format!("`{text}` can't be cast to `{}`", crate::render_kind(&target)),
             );
         }
         return;
@@ -230,7 +230,7 @@ fn check_cast(
             ctx,
             whole.span,
             2008,
-            format!("a `{kind}` can't be cast to `{target}`"),
+            format!("a `{}` can't be cast to `{}`", crate::render_kind(&kind), crate::render_kind(&target)),
         );
     }
 }
@@ -369,8 +369,10 @@ fn check_binary(
             whole.span,
             7005,
             format!(
-                "`{}` between `{left}` and `{right}` is always {}",
+                "`{}` between `{}` and `{}` is always {}",
                 op_text(op),
+                crate::render_kind(&left),
+                crate::render_kind(&right),
                 if matches!(op, Op::Eq) {
                     "false"
                 } else {
@@ -395,8 +397,10 @@ fn check_binary(
             whole.span,
             2004,
             format!(
-                "`{}` can't combine a `{left}` and a `{right}`",
-                op_text(op)
+                "`{}` can't combine a `{}` and a `{}`",
+                op_text(op),
+                crate::render_kind(&left),
+                crate::render_kind(&right)
             ),
         );
     }
@@ -571,7 +575,8 @@ fn check_none_arithmetic(
                         "this value may be NONE here, and arithmetic on NONE fails".to_string(),
                     )
                     .with_help(format!(
-                        "it is `{kind}`; coalesce with `?? <default>` or narrow before the operation"
+                        "it is `{}`; coalesce with `?? <default>` or narrow before the operation",
+                        crate::render_kind(kind)
                     )),
                 );
             }
@@ -745,7 +750,7 @@ fn check_membership_kind(
             ctx,
             whole.span,
             7006,
-            format!("membership of `{element}` in a collection of `{elem}` is always false"),
+            format!("membership of `{}` in a collection of `{}` is always false", crate::render_kind(element), crate::render_kind(elem)),
         );
     }
 }

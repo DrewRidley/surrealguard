@@ -69,7 +69,7 @@ pub(crate) fn analyze_permission_predicates(
                         ctx.emit(surrealguard_diagnostics::catalog::finding(
                             span,
                             2005,
-                            format!("this permission predicate is a `{kind}`, not a `bool`"),
+                            format!("this permission predicate is a `{}`, not a `bool`", crate::render_kind(&kind)),
                         ));
                     }
                 }

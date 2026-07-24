@@ -41,7 +41,7 @@ pub(crate) fn analyze_for_loop(ctx: &mut AnalysisContext<'_>, stmt: &ast::ForStm
             ctx.emit(surrealguard_diagnostics::catalog::finding(
                 span,
                 2022,
-                format!("FOR can't iterate a `{kind}` — it is not a collection"),
+                format!("FOR can't iterate a `{}` — it is not a collection", crate::render_kind(kind)),
             ));
         }
         // Constant empty collections never run their body (7004: control

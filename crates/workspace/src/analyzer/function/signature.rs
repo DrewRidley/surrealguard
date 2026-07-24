@@ -187,9 +187,10 @@ fn check_argument_kinds(
             span,
             5002,
             format!(
-                "argument {} to `{}` is a `{kind}`, but {} is required",
+                "argument {} to `{}` is a `{}`, but {} is required",
                 index + 1,
                 call.path.node,
+                crate::render_kind(kind),
                 param_label(expected),
             ),
         ));
@@ -224,7 +225,7 @@ fn param_kind_to_kind(expected: &ParamKind) -> Kind {
 
 fn param_label(expected: &ParamKind) -> String {
     match expected {
-        ParamKind::Exact(kind) => format!("`{kind}`"),
+        ParamKind::Exact(kind) => format!("`{}`", crate::render_kind(kind)),
         ParamKind::Numeric => "a number".to_string(),
         ParamKind::Array => "an array".to_string(),
         ParamKind::Object => "an object".to_string(),
