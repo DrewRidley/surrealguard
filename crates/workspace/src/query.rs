@@ -129,7 +129,12 @@ pub fn hover_at(
     for binding in &output.let_bindings {
         consider(
             &binding.name_span,
-            symbol_markdown(&format!("${}", binding.name), binding.kind.as_ref(), schema),
+            symbol_markdown(
+                Some(&format!("local `${}`", binding.name)),
+                &format!("${}", binding.name),
+                binding.kind.as_ref(),
+                schema,
+            ),
         );
     }
 
@@ -146,7 +151,12 @@ pub fn hover_at(
 
     // `$param` use sites.
     for param in &output.inferred_params {
-        let markdown = symbol_markdown(&format!("${}", param.name), param.kind.as_ref(), schema);
+        let markdown = symbol_markdown(
+            Some(&format!("parameter `${}`", param.name)),
+            &format!("${}", param.name),
+            param.kind.as_ref(),
+            schema,
+        );
         for span in &param.spans {
             consider(span, markdown.clone());
         }
@@ -164,7 +174,15 @@ pub fn hover_at(
         if let Some(map) = crate::context_params::context_param_map(schema, source, text, offset) {
             if let Some(kind) = map.get(&name) {
                 let span = SourceSpan::new(source.clone(), range);
-                consider(&span, symbol_markdown(&format!("${name}"), Some(kind), schema));
+                consider(
+                    &span,
+                    symbol_markdown(
+                        Some(&format!("context `${name}`")),
+                        &format!("${name}"),
+                        Some(kind),
+                        schema,
+                    ),
+                );
             }
         }
     }
@@ -181,6 +199,7 @@ pub fn hover_at(
             source,
             offset,
             let_kinds: &let_kinds,
+            param_kinds: std::collections::HashMap::new(),
             out: Vec::new(),
         };
         for statement in &statements {
@@ -260,8 +279,10 @@ pub fn definition_at(
         let statements = surrealguard_syntax::lower::lower_statements(&parsed);
         let mut collector = SchemaDefs {
             schema,
+            source,
             offset,
             bindings: &bindings,
+            param_spans: std::collections::HashMap::new(),
             out: Vec::new(),
         };
         for statement in &statements {
@@ -275,34 +296,92 @@ pub fn definition_at(
     best.map(|(_, span)| DefinitionTarget { span })
 }
 
-/// Markdown for a variable/parameter symbol: a fenced type line plus,
-/// when the kind resolves to records or a literal object, its field list.
-fn symbol_markdown(name: &str, kind: Option<&Kind>, schema: &SchemaIndex) -> String {
+/// Markdown for a variable/parameter/field symbol: an optional bold caption
+/// line (already-formatted markdown, e.g. ``local `$direct` ``) above a fenced
+/// `surql` type line the editor syntax-highlights. Records and literal objects
+/// additionally get their field shape as an indented `surql` block.
+fn symbol_markdown(
+    caption: Option<&str>,
+    name: &str,
+    kind: Option<&Kind>,
+    schema: &SchemaIndex,
+) -> String {
     let rendered = kind.map_or_else(|| "unknown".to_string(), render_kind);
-    let mut markdown = format!("```surql\n{name}: {rendered}\n```");
+    let mut markdown = String::new();
+    if let Some(caption) = caption {
+        markdown.push_str(&format!("**{caption}**\n"));
+    }
+    markdown.push_str(&format!("```surql\n{name}: {rendered}\n```"));
+    // Only records earn an expanded field block: their linked-table fields
+    // aren't visible in the compact `record<t>` render, so listing them adds
+    // information. Object/array kinds already render their shape inline, so a
+    // second copy would just be noise.
     if let Some(kind) = kind {
-        let fields = field_lines(kind, schema);
-        if !fields.is_empty() {
-            markdown.push_str("\n\n**fields**\n");
-            for line in fields {
-                markdown.push_str(&format!("- `{line}`\n"));
+        if is_record_bearing(kind) {
+            let fields = field_lines(kind, schema);
+            if !fields.is_empty() {
+                markdown.push_str("\n```surql\n");
+                for line in &fields {
+                    markdown.push_str(line);
+                    markdown.push('\n');
+                }
+                markdown.push_str("```");
             }
         }
     }
     markdown
 }
 
-/// Markdown for a table declaration: its record kind plus its field list.
+/// The field-line cap for a table popover: enough to convey the shape without
+/// the hover swallowing the screen on a wide table.
+const TABLE_FIELD_CAP: usize = 20;
+
+/// Markdown for a table declaration: a fenced `surql` preview built as a
+/// `DEFINE TABLE` line (so editors color the keywords and the table name),
+/// the `TYPE RELATION` edge spec when it is a relation, and one `field: kind`
+/// line per declared field (capped, with a `-- +N more` tail when it overruns).
 fn table_markdown(table: &crate::schema::TableDef, schema: &SchemaIndex) -> String {
-    let mut markdown = format!("```surql\ntable {}\n```", table.name);
-    let fields = table_field_lines(&table.name, schema);
-    if !fields.is_empty() {
-        markdown.push_str("\n\n**fields**\n");
-        for line in fields {
-            markdown.push_str(&format!("- `{line}`\n"));
-        }
+    let mut body = format!("DEFINE TABLE {}", table.name);
+    if table.schemafull {
+        body.push_str(" SCHEMAFULL");
     }
-    markdown
+    body.push(';');
+    if let Some(relation) = &table.relation {
+        body.push('\n');
+        body.push_str(&relation_line(relation));
+    }
+    let fields = table_field_lines(&table.name, schema);
+    for line in fields.iter().take(TABLE_FIELD_CAP) {
+        body.push('\n');
+        body.push_str(line);
+    }
+    if fields.len() > TABLE_FIELD_CAP {
+        body.push_str(&format!("\n-- +{} more", fields.len() - TABLE_FIELD_CAP));
+    }
+    format!("```surql\n{body}\n```")
+}
+
+/// The `TYPE RELATION IN <a> OUT <b>` line for a relation edge's popover.
+/// An empty endpoint list (any record) renders as a bare `IN`/`OUT`.
+fn relation_line(relation: &crate::schema::RelationDef) -> String {
+    let mut line = "TYPE RELATION".to_string();
+    if !relation.in_tables.is_empty() {
+        line.push_str(&format!(" IN {}", relation.in_tables.join(" | ")));
+    }
+    if !relation.out_tables.is_empty() {
+        line.push_str(&format!(" OUT {}", relation.out_tables.join(" | ")));
+    }
+    line
+}
+
+/// Whether a kind carries record links whose fields are worth expanding in a
+/// popover (a `record<>`, or an `option<record<>>`/union of them).
+fn is_record_bearing(kind: &Kind) -> bool {
+    match kind {
+        Kind::Record(_) => true,
+        Kind::Either(variants) => variants.iter().any(is_record_bearing),
+        _ => false,
+    }
 }
 
 /// `name: kind` lines for a kind that carries a field shape: the fields of
@@ -454,12 +533,36 @@ struct SchemaHovers<'a> {
     /// The inferred kind of each `LET`/`FOR` variable in scope, by name,
     /// for hovering `$var` uses and `$var[i].field` idioms.
     let_kinds: &'a std::collections::HashMap<String, Kind>,
+    /// Declared `DEFINE FUNCTION` parameters in scope while walking a function
+    /// body, by name → declared kind. Populated on entry to the body and
+    /// restored on exit, so `$param` uses deep in the body hover their declared
+    /// type. A `LET` of the same name shadows it (`let_kinds` is checked first).
+    param_kinds: std::collections::HashMap<String, Kind>,
     out: Vec<(SourceSpan, String)>,
 }
 
 impl SchemaHovers<'_> {
     fn covers(&self, span: ByteRange) -> bool {
         self.offset >= span.start() && self.offset <= span.end()
+    }
+
+    /// The kind of a `$var` in scope: a `LET`/`FOR` binding wins over a
+    /// function parameter of the same name.
+    fn var_kind(&self, name: &str) -> Option<Kind> {
+        self.let_kinds
+            .get(name)
+            .or_else(|| self.param_kinds.get(name))
+            .cloned()
+    }
+
+    /// The bold caption for a `$var` hover: `local` for a `LET`/`FOR`
+    /// binding, `parameter` for a function parameter.
+    fn var_caption(&self, name: &str) -> String {
+        if self.let_kinds.contains_key(name) {
+            format!("local `${name}`")
+        } else {
+            format!("parameter `${name}`")
+        }
     }
 
     /// A table reference (`FROM person`, `ON person`, a graph edge): show the
@@ -672,11 +775,37 @@ impl SchemaHovers<'_> {
             }
             // A DEFINE FUNCTION body is ordinary statement territory: its
             // `LET`/`FOR` var uses, `fn::` calls, and idioms all resolve the
-            // same as at top level, so walk it.
+            // same as at top level, so walk it — but first bring the declared
+            // parameters into scope so `$param` uses in the body (and the
+            // signature tokens themselves) hover their declared type.
             DefineStmt::Function(func) => {
+                let def = self.schema.function(&func.name.node);
+                let saved = std::mem::take(&mut self.param_kinds);
+                for (name, _ty) in &func.params {
+                    let kind = def
+                        .and_then(|def| def.args.iter().find(|arg| arg.name == name.node))
+                        .and_then(|arg| arg.kind.clone());
+                    if let Some(kind) = kind {
+                        // Hover the `$param` token in the signature itself.
+                        if self.covers(name.span) {
+                            let span = SourceSpan::new(self.source.clone(), name.span);
+                            self.out.push((
+                                span,
+                                symbol_markdown(
+                                    Some(&format!("parameter `${}`", name.node)),
+                                    &format!("${}", name.node),
+                                    Some(&kind),
+                                    self.schema,
+                                ),
+                            ));
+                        }
+                        self.param_kinds.insert(name.node.clone(), kind);
+                    }
+                }
                 if let Some(body) = &func.body {
                     self.walk_block(body);
                 }
+                self.param_kinds = saved;
             }
             _ => {}
         }
@@ -776,15 +905,18 @@ impl SchemaHovers<'_> {
         }
     }
 
-    /// A bare `$var` use whose `LET`/`FOR` kind is known → its inferred type.
+    /// A bare `$var` use whose `LET`/`FOR`/function-parameter kind is known →
+    /// its inferred type.
     fn param_use(&mut self, span: ByteRange, name: &str) {
         if !self.covers(span) {
             return;
         }
-        if let Some(kind) = self.let_kinds.get(name) {
+        if let Some(kind) = self.var_kind(name) {
             let source_span = SourceSpan::new(self.source.clone(), span);
-            self.out
-                .push((source_span, symbol_markdown(&format!("${name}"), Some(kind), self.schema)));
+            self.out.push((
+                source_span,
+                symbol_markdown(Some(&self.var_caption(name)), &format!("${name}"), Some(&kind), self.schema),
+            ));
         }
     }
 
@@ -809,14 +941,14 @@ impl SchemaHovers<'_> {
     fn resolve_value_idiom(&mut self, name: &str, name_span: ByteRange, idiom: &ast::Idiom) {
         use ast::IdiomPart;
         // Hover the leading `$var` token itself.
-        let Some(root_kind) = self.let_kinds.get(name).cloned() else {
+        let Some(root_kind) = self.var_kind(name) else {
             return;
         };
         if self.covers(name_span) {
             let span = SourceSpan::new(self.source.clone(), name_span);
             self.out.push((
                 span,
-                symbol_markdown(&format!("${name}"), Some(&root_kind), self.schema),
+                symbol_markdown(Some(&self.var_caption(name)), &format!("${name}"), Some(&root_kind), self.schema),
             ));
         }
         // `current` is a value kind; once traversal crosses a `record<>` link
@@ -867,8 +999,15 @@ impl SchemaHovers<'_> {
                     if self.covers(part.span) {
                         if let Some(next) = &next {
                             let span = SourceSpan::new(self.source.clone(), part.span);
-                            self.out
-                                .push((span, symbol_markdown(field, Some(next), self.schema)));
+                            self.out.push((
+                                span,
+                                symbol_markdown(
+                                    Some(&format!("field `{field}`")),
+                                    field,
+                                    Some(next),
+                                    self.schema,
+                                ),
+                            ));
                         }
                     }
                     current = next;
@@ -901,8 +1040,15 @@ impl SchemaHovers<'_> {
         if self.covers(span) {
             if let Some(kind) = &kind {
                 let source_span = SourceSpan::new(self.source.clone(), span);
-                self.out
-                    .push((source_span, symbol_markdown(field, Some(kind), self.schema)));
+                self.out.push((
+                    source_span,
+                    symbol_markdown(
+                        Some(&format!("field `{field}` on `{table}`")),
+                        field,
+                        Some(kind),
+                        self.schema,
+                    ),
+                ));
             }
         }
         match kind.as_ref().and_then(record_link_target) {
@@ -924,7 +1070,7 @@ impl SchemaHovers<'_> {
         if let Some(first) = idiom.parts.first() {
             if let IdiomPart::Start(inner) = &first.node {
                 if let ast::Expr::Param(name) = &inner.node {
-                    if self.let_kinds.contains_key(name) {
+                    if self.var_kind(name).is_some() {
                         self.resolve_value_idiom(name, inner.span, idiom);
                         return;
                     }
@@ -956,7 +1102,15 @@ impl SchemaHovers<'_> {
                     if self.covers(part.span) {
                         if let Some(kind) = &kind {
                             let span = SourceSpan::new(self.source.clone(), part.span);
-                            self.out.push((span, symbol_markdown(name, Some(kind), self.schema)));
+                            self.out.push((
+                                span,
+                                symbol_markdown(
+                                    Some(&format!("field `{name}` on `{current}`")),
+                                    name,
+                                    Some(kind),
+                                    self.schema,
+                                ),
+                            ));
                         }
                     }
                     // Advance the scope: follow a record link into its table,
@@ -1006,9 +1160,16 @@ impl SchemaHovers<'_> {
 /// instead of markdown), and only definitely-declared symbols emit.
 struct SchemaDefs<'a> {
     schema: &'a SchemaIndex,
+    source: &'a SourceId,
     offset: u32,
     /// `$name` (no sigil) → its binding site, for resolving param/LET uses.
     bindings: &'a std::collections::HashMap<String, SourceSpan>,
+    /// Declared `DEFINE FUNCTION` parameters in scope while walking a function
+    /// body, by name → the param's name span in the signature. Populated on
+    /// entry to the body and restored on exit, so go-to-def on a `$param` use
+    /// jumps to its declaration. A `LET`/`DEFINE PARAM` of the same name wins
+    /// (`bindings` is checked first).
+    param_spans: std::collections::HashMap<String, SourceSpan>,
     out: Vec<(ByteRange, SourceSpan)>,
 }
 
@@ -1224,11 +1385,21 @@ impl SchemaDefs<'_> {
             }
             // A DEFINE FUNCTION body is ordinary statement territory: its
             // `LET`/`FOR` var uses, `fn::` calls, and idioms all resolve the
-            // same as at top level, so walk it.
+            // same as at top level, so walk it — but first bring the declared
+            // parameters into scope so go-to-def on a `$param` use in the body
+            // jumps to its declaration in the signature.
             DefineStmt::Function(func) => {
+                let saved = std::mem::take(&mut self.param_spans);
+                for (name, _ty) in &func.params {
+                    self.param_spans.insert(
+                        name.node.clone(),
+                        SourceSpan::new(self.source.clone(), name.span),
+                    );
+                }
                 if let Some(body) = &func.body {
                     self.walk_block(body);
                 }
+                self.param_spans = saved;
             }
             _ => {}
         }
@@ -1297,9 +1468,13 @@ impl SchemaDefs<'_> {
             Expr::Table(name) => self.table_ref(name),
             Expr::RecordId { table, .. } => self.table_ref(table),
             Expr::Param(name) => {
-                // A `$param` / `LET` variable use → its binding site.
+                // A `$param` / `LET` variable use → its binding site. A
+                // `LET`/`DEFINE PARAM` binding wins over a function parameter
+                // of the same name.
                 if self.covers(expr.span) {
-                    if let Some(target) = self.bindings.get(name) {
+                    if let Some(target) =
+                        self.bindings.get(name).or_else(|| self.param_spans.get(name))
+                    {
                         self.out.push((expr.span, target.clone()));
                     }
                 }
@@ -1588,7 +1763,7 @@ mod tests {
         let offset = text.find("person").expect("table name present") as u32 + 1;
         let hover = hover_at(&output, &schema, &source, text, offset).expect("hover over table");
 
-        assert!(hover.markdown.contains("table person"), "got: {}", hover.markdown);
+        assert!(hover.markdown.contains("DEFINE TABLE person"), "got: {}", hover.markdown);
         assert!(hover.markdown.contains("name: string"), "got: {}", hover.markdown);
         assert!(hover.markdown.contains("age: int"), "got: {}", hover.markdown);
     }
@@ -1650,7 +1825,7 @@ mod tests {
         let offset = text.rfind("person").expect("FROM table present") as u32 + 1;
         let hover = hover_at(&output, &schema, &source, text, offset).expect("hover over FROM table");
 
-        assert!(hover.markdown.contains("table person"), "got: {}", hover.markdown);
+        assert!(hover.markdown.contains("DEFINE TABLE person"), "got: {}", hover.markdown);
         assert!(hover.markdown.contains("name: string"), "got: {}", hover.markdown);
         assert!(hover.markdown.contains("age: int"), "got: {}", hover.markdown);
     }
@@ -1960,6 +2135,115 @@ mod tests {
         let elided = elide_label(&render_kind(&wide));
         assert!(elided.ends_with('…'), "got: {elided}");
         assert!(elided.chars().count() <= INLAY_LABEL_MAX + 1);
+    }
+
+    /// A RELATION-edge schema for the coverage tests: `has_subsidiary` links
+    /// `organization` → `organization`, with two ordinary fields.
+    const RELATION_FIXTURE: &str = "DEFINE TABLE organization SCHEMAFULL;\n\
+         DEFINE TABLE has_subsidiary SCHEMAFULL TYPE RELATION IN organization OUT organization;\n\
+         DEFINE FIELD public ON has_subsidiary TYPE bool;\n\
+         DEFINE FIELD status ON has_subsidiary TYPE string;\n\
+         DEFINE FUNCTION fn::f($organization: record<organization>) {\n\
+             LET $x = SELECT * FROM has_subsidiary WHERE out = $organization;\n\
+         };";
+
+    #[test]
+    fn table_hover_renders_a_define_fence_with_fields() {
+        let (output, schema, source) = analyze(RELATION_FIXTURE);
+        let offset = RELATION_FIXTURE
+            .find("has_subsidiary TYPE")
+            .expect("table decl present") as u32
+            + 1;
+        let hover = hover_at(&output, &schema, &source, RELATION_FIXTURE, offset)
+            .expect("hover over relation table");
+        assert!(hover.markdown.contains("```surql"), "got: {}", hover.markdown);
+        assert!(
+            hover.markdown.contains("DEFINE TABLE has_subsidiary SCHEMAFULL;"),
+            "got: {}",
+            hover.markdown
+        );
+        assert!(
+            hover.markdown.contains("TYPE RELATION IN organization OUT organization"),
+            "got: {}",
+            hover.markdown
+        );
+        assert!(hover.markdown.contains("public: bool"), "got: {}", hover.markdown);
+        assert!(hover.markdown.contains("status: string"), "got: {}", hover.markdown);
+    }
+
+    #[test]
+    fn hover_resolves_a_function_param_at_a_body_use_site() {
+        let (output, schema, source) = analyze(RELATION_FIXTURE);
+        // `$organization` used deep in the WHERE clause of the body SELECT.
+        let use_offset = RELATION_FIXTURE
+            .find("= $organization")
+            .expect("param use present") as u32
+            + 3;
+        let hover = hover_at(&output, &schema, &source, RELATION_FIXTURE, use_offset)
+            .expect("hover over fn param use");
+        assert!(
+            hover.markdown.contains("$organization: record<organization>"),
+            "got: {}",
+            hover.markdown
+        );
+    }
+
+    #[test]
+    fn definition_of_a_function_param_use_jumps_to_the_signature() {
+        let (output, schema, source) = analyze(RELATION_FIXTURE);
+        let use_offset = RELATION_FIXTURE
+            .find("= $organization")
+            .expect("param use present") as u32
+            + 3;
+        let target = definition_at(&output, &schema, &source, RELATION_FIXTURE, use_offset)
+            .expect("definition of fn param");
+        let expected = RELATION_FIXTURE
+            .find("$organization: record")
+            .expect("param decl present") as u32;
+        assert_eq!(target.span.range().start(), expected);
+    }
+
+    #[test]
+    fn let_binding_shadows_a_function_param_of_the_same_name() {
+        // A body `LET $organization = ...` wins over the function parameter of
+        // the same name at a later use site.
+        let text = "DEFINE TABLE org SCHEMAFULL;\n\
+             DEFINE FUNCTION fn::f($organization: record<org>) {\n\
+                 LET $organization = 42;\n\
+                 RETURN $organization;\n\
+             };";
+        let (output, schema, source) = analyze(text);
+        let use_offset = text.rfind("$organization").expect("use present") as u32 + 1;
+        let hover =
+            hover_at(&output, &schema, &source, text, use_offset).expect("hover over shadowed var");
+        assert!(hover.markdown.contains("$organization: int"), "got: {}", hover.markdown);
+    }
+
+    #[test]
+    fn hover_resolves_an_implicit_relation_out_field() {
+        let (output, schema, source) = analyze(RELATION_FIXTURE);
+        // `out` in `WHERE out = $organization` on the relation table.
+        let out_offset = RELATION_FIXTURE
+            .find("WHERE out")
+            .expect("out present") as u32
+            + 6;
+        let hover = hover_at(&output, &schema, &source, RELATION_FIXTURE, out_offset)
+            .expect("hover over implicit out field");
+        assert!(
+            hover.markdown.contains("out: record<organization>"),
+            "got: {}",
+            hover.markdown
+        );
+    }
+
+    #[test]
+    fn definition_of_an_implicit_relation_field_returns_none() {
+        let (output, schema, source) = analyze(RELATION_FIXTURE);
+        let out_offset = RELATION_FIXTURE
+            .find("WHERE out")
+            .expect("out present") as u32
+            + 6;
+        assert!(definition_at(&output, &schema, &source, RELATION_FIXTURE, out_offset).is_none());
     }
 
 }

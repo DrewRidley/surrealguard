@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{FindingCategory, FindingCode, Severity};
+use crate::{FindingCode, Severity};
 
 /// How a surface treats one lint code: silenced, reported as a warning,
 /// or promoted to an error.
@@ -41,13 +41,14 @@ impl PolicyConfig {
         self.lint_levels.insert(code, level);
     }
 
-    /// The configured level for `code`. Lints default to `Warn` — visible
-    /// until individually allowed; other families report `Warn` here only
-    /// as the "no explicit override" sentinel.
+    /// The configured level for `code`: an explicit `[lints]` override if one
+    /// exists, otherwise the catalog's rustc-style `default_level`. Codes with
+    /// no catalog entry fall back to `Warn`.
     pub fn resolve_lint_level(&self, code: FindingCode) -> LintLevel {
         self.lint_levels
             .get(&code)
             .copied()
+            .or_else(|| crate::catalog::entry(code.number()).map(|entry| entry.default_level))
             .unwrap_or(LintLevel::Warn)
     }
 
@@ -56,10 +57,13 @@ impl PolicyConfig {
     ///
     /// An explicit per-code override (from `[lints]`) wins for *any* family:
     /// `allow` silences, `warn` reports as a warning, `deny`/`error` promotes
-    /// to an error. With no override, lint codes default to `Warn` (reported
-    /// as a warning), and every other family keeps its intrinsic
-    /// `default_severity`, promoted to an error only when `warnings_as_errors`
-    /// is set.
+    /// to an error, and an explicit level is never touched by
+    /// `warnings_as_errors`. With no override, the code's rustc-style
+    /// `default_level` from the catalog decides: `allow` silences, `deny`
+    /// errors, and `deny`/`allow` are both unaffected by `warnings_as_errors`
+    /// (a `warnings_as_errors` run never un-allows an allow-by-default lint).
+    /// A `warn`-by-default code reports a warning, promoted to an error only
+    /// when `warnings_as_errors` is set.
     pub fn resolve_severity(
         &self,
         code: FindingCode,
@@ -73,15 +77,25 @@ impl PolicyConfig {
             };
         }
 
-        if code.category() == FindingCategory::Lint {
-            // Lints default to Warn — visible until individually allowed.
-            return Some(Severity::Warning);
-        }
+        // No explicit override: the catalog's default level decides. Codes
+        // absent from the catalog fall back to their intrinsic severity.
+        let Some(entry) = crate::catalog::entry(code.number()) else {
+            if self.warnings_as_errors && default_severity == Severity::Warning {
+                return Some(Severity::Error);
+            }
+            return Some(default_severity);
+        };
 
-        if self.warnings_as_errors && default_severity == Severity::Warning {
-            Some(Severity::Error)
-        } else {
-            Some(default_severity)
+        match entry.default_level {
+            LintLevel::Allow => None,
+            LintLevel::Deny => Some(Severity::Error),
+            LintLevel::Warn => {
+                if self.warnings_as_errors {
+                    Some(Severity::Error)
+                } else {
+                    Some(Severity::Warning)
+                }
+            }
         }
     }
 }

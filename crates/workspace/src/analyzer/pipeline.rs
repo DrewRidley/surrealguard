@@ -99,6 +99,7 @@ pub(crate) fn analyze_sources_with(
                     fields: BTreeMap::new(),
                     indexes: BTreeMap::new(),
                     relation: None,
+                    schemafull: false,
                     drop_table: false,
                     changefeed: false,
                 });

@@ -144,6 +144,8 @@ pub struct TableDef {
     pub indexes: BTreeMap<String, IndexDef>,
     /// The `TYPE RELATION` edge spec, when the table is a relation.
     pub relation: Option<RelationDef>,
+    /// `DEFINE TABLE ... SCHEMAFULL` — only declared fields are retained.
+    pub schemafull: bool,
     /// `DEFINE TABLE ... DROP` — rows are never retained.
     pub drop_table: bool,
     /// `DEFINE TABLE ... CHANGEFEED <duration>`.
@@ -319,11 +321,16 @@ impl SchemaIndex {
         let mut findings = Vec::new();
         for tokenizer in &analyzer.tokenizers {
             if !TOKENIZERS.contains(&tokenizer.to_ascii_lowercase().as_str()) {
-                findings.push(surrealguard_diagnostics::catalog::finding(
-                    analyzer.name_span.clone(),
-                    1032,
-                    format!("`{tokenizer}` is not a tokenizer"),
-                ));
+                findings.push(
+                    surrealguard_diagnostics::catalog::finding(
+                        analyzer.name_span.clone(),
+                        1032,
+                        format!(
+                            "DEFINE ANALYZER will fail: `{tokenizer}` is not a supported tokenizer"
+                        ),
+                    )
+                    .with_help("supported tokenizers: blank, camel, class, punct"),
+                );
             }
         }
         for filter in &analyzer.filters {
@@ -343,14 +350,21 @@ impl SchemaIndex {
                     if !args.first().is_some_and(|lang| {
                         SNOWBALL_LANGS.contains(&lang.to_ascii_lowercase().as_str())
                     }) {
-                        findings.push(surrealguard_diagnostics::catalog::finding(
-                            analyzer.name_span.clone(),
-                            1032,
-                            format!(
-                                "`{}` is not a snowball language",
-                                args.first().cloned().unwrap_or_default()
+                        findings.push(
+                            surrealguard_diagnostics::catalog::finding(
+                                analyzer.name_span.clone(),
+                                1032,
+                                format!(
+                                    "DEFINE ANALYZER will fail: `{}` is not a supported snowball language",
+                                    args.first().cloned().unwrap_or_default()
+                                ),
+                            )
+                            .with_help(
+                                "supported languages: arabic, danish, dutch, english, french, \
+                                 german, greek, hungarian, italian, norwegian, portuguese, \
+                                 romanian, russian, spanish, swedish, tamil, turkish",
                             ),
-                        ));
+                        );
                     }
                 }
                 "edgengram" | "ngram" => {
@@ -365,11 +379,16 @@ impl SchemaIndex {
                         )),
                     }
                 }
-                _ => findings.push(surrealguard_diagnostics::catalog::finding(
-                    analyzer.name_span.clone(),
-                    1032,
-                    format!("`{name}` is not a filter"),
-                )),
+                _ => findings.push(
+                    surrealguard_diagnostics::catalog::finding(
+                        analyzer.name_span.clone(),
+                        1032,
+                        format!("DEFINE ANALYZER will fail: `{name}` is not a supported filter"),
+                    )
+                    .with_help(
+                        "supported filters: ascii, lowercase, uppercase, snowball, edgengram, ngram",
+                    ),
+                ),
             }
         }
         findings
@@ -578,6 +597,7 @@ pub(crate) fn table_def_from_ast(def: &ast::DefineTable, source: &SourceId) -> T
             out_tables: relation.out_tables.iter().map(|t| t.node.clone()).collect(),
             span: span(source, relation.span),
         }),
+        schemafull: def.schemafull,
         drop_table: def.drop,
         changefeed: def.changefeed,
     }
@@ -1026,7 +1046,7 @@ mod tests {
         assert_eq!(duplicates.len(), 1);
         assert_eq!(
             duplicates[0].message(),
-            "duplicate table definition `person`"
+            "`person` is already defined; this DEFINE silently replaces the earlier one"
         );
     }
 

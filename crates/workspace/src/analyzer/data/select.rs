@@ -318,15 +318,20 @@ fn check_split_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analy
                         ctx.source().clone(),
                         idiom.span,
                     );
-                    ctx.emit(surrealguard_diagnostics::catalog::finding(
-                        span,
-                        1024,
-                        format!(
-                            "SPLIT needs a collection field, but `{}` is a `{}`",
-                            segments.join("."),
-                            crate::render_kind(&kind)
+                    ctx.emit(
+                        surrealguard_diagnostics::catalog::finding(
+                            span,
+                            1024,
+                            format!(
+                                "SPLIT needs a collection field, but `{}` is a `{}`",
+                                segments.join("."),
+                                crate::render_kind(&kind)
+                            ),
+                        )
+                        .with_help(
+                            "SPLIT fans one output row out per array/set element; a scalar has nothing to split",
                         ),
-                    ));
+                    );
                 }
             }
         }
@@ -513,6 +518,52 @@ fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContex
                         );
                     }
                 }
+            }
+        }
+    }
+
+    // 7015 (opt-in, off by default): a plain `SELECT *` over-fetches every
+    // column and makes result shapes brittle to schema drift. Distinct from
+    // 7007, which fires only on the redundant `SELECT *, field` overlap — so
+    // this fires only when the wildcard is the *sole* projection.
+    if stmt.projections.len() == 1 {
+        if let Some(ast::Projection::Wildcard(range)) = stmt.projections.first() {
+            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), *range);
+            ctx.emit(
+                surrealguard_diagnostics::catalog::finding(
+                    span,
+                    7015,
+                    "`SELECT *` fetches every column and breaks silently when the schema changes"
+                        .to_string(),
+                )
+                .with_help(
+                    "project the fields you need, or allow this with `7015 = \"allow\"` (it is off by default)",
+                ),
+            );
+        }
+    }
+
+    // 7014 (opt-in, off by default): a whole-table read with neither WHERE
+    // nor LIMIT scans every row — the read-side analogue of 7009. ONLY on a
+    // bare table is already a 4003 error, so it is excluded here.
+    if !stmt.only && stmt.where_clause.is_none() && stmt.limit.is_none() {
+        if let Some(from) = stmt.from.first() {
+            if let ast::Expr::Table(name) = &from.node {
+                let span =
+                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from.span);
+                ctx.emit(
+                    surrealguard_diagnostics::catalog::finding(
+                        span,
+                        7014,
+                        format!(
+                            "`SELECT … FROM {0}` reads the whole `{0}` table",
+                            name.node
+                        ),
+                    )
+                    .with_help(
+                        "add a `WHERE`/`LIMIT`, or allow this with `7014 = \"allow\"` (it is off by default)",
+                    ),
+                );
             }
         }
     }

@@ -350,9 +350,21 @@ mod tests {
         let output = analyze_query(&mut workspace, "SELECT * FROM person;");
 
         // One-shot queries get the full pipeline: with no schema in the
-        // workspace, the unknown table is a real finding.
-        assert_eq!(output.diagnostics.len(), 1);
-        assert_eq!(output.diagnostics[0].code().to_string(), "E1001");
+        // workspace, the unknown table is a real finding, alongside the two
+        // opt-in whole-table/`SELECT *` lints (7014/7015, allow-by-default).
+        assert_eq!(output.diagnostics.len(), 3);
+        assert!(output
+            .diagnostics
+            .iter()
+            .any(|finding| finding.code().to_string() == "E1001"));
+        assert!(output
+            .diagnostics
+            .iter()
+            .any(|finding| finding.code().number() == 7014));
+        assert!(output
+            .diagnostics
+            .iter()
+            .any(|finding| finding.code().number() == 7015));
         assert_eq!(output.statements.len(), 1);
         assert_eq!(output.statements[0].kind, "select");
         assert_eq!(
@@ -526,7 +538,7 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(duplicates.len(), 1);
         assert_eq!(
             duplicates[0].message(),
-            "duplicate table definition `person`"
+            "`person` is already defined; this DEFINE silently replaces the earlier one"
         );
         assert_eq!(duplicates[0].span().range().start(), 34);
         assert_eq!(duplicates[0].span().range().end(), 40);
@@ -1127,7 +1139,9 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(unknown_tables[0].span().source(), &query);
         assert_eq!(unknown_tables[0].span().range().start(), 35);
         assert_eq!(unknown_tables[0].span().range().end(), 42);
-        assert_eq!(output.sources[&query].diagnostics.len(), 1);
+        // The unknown table (1001) plus the two opt-in `SELECT *`/whole-table
+        // lints (7014/7015, allow-by-default but emitted as raw findings).
+        assert_eq!(output.sources[&query].diagnostics.len(), 3);
     }
 
     #[test]
@@ -2009,7 +2023,9 @@ INSERT INTO person { name: 'Ada' };
         );
         assert_eq!(unknown_fields[1].span().range().start(), 79);
         assert_eq!(unknown_fields[1].span().range().end(), 92);
-        assert_eq!(output.sources[&source].diagnostics.len(), 2);
+        // The two unknown fields (1002) plus the whole-table read lint (7014,
+        // allow-by-default): this SELECT has no WHERE/LIMIT.
+        assert_eq!(output.sources[&source].diagnostics.len(), 3);
     }
 
     #[test]
@@ -3213,7 +3229,7 @@ INSERT INTO person { name: 'Ada' };
             ("E3009", "can't start from `age`"),
             ("E1027", "needs a SEARCH ANALYZER index"),
             ("E1029", "covers the same fields as `by_name`"),
-            ("E1032", "`klingon` is not a snowball language"),
+            ("E1032", "`klingon` is not a supported snowball language"),
             ("E2035", "needs `(min, max)` with min <= max"),
             ("E3011", "no upper bound"),
             ("E6004", "read before its LET"),

@@ -226,7 +226,12 @@ fn parse_lint_config(entries: HashMap<String, String>) -> Result<LintConfig, Con
     for (key, value) in entries {
         let level = parse_lint_level(&value, &format!("lints.{key}"))?;
         match key.as_str() {
-            "select_star" => config.select_star = Some(level),
+            "select_star" => {
+                // The legacy `select_star` alias configures the bare-`SELECT *`
+                // lint, 7015 (a specific code, so it wins over a family wildcard).
+                config.select_star = Some(level);
+                codes.push((FindingCode::from_number(7015), level));
+            }
             "dynamic_query" => config.dynamic_query = Some(level),
             "permission_gated_field" => config.permission_gated_field = Some(level),
             _ => {

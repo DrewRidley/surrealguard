@@ -216,6 +216,8 @@ Folded by the contract audit (2026-07-09): 5003, 5004, 5006 → 5002; 5007,
 | 7011 | assignment to `id` in SET | `SET id = ...` | W | ✅ |
 | 7012 | blocking or side-effecting call in a computed context | `http::get(...)` / `sleep()` in a field `VALUE` or event body | W | ✅ call paths known |
 | 7013 | a suppression directive names a catalog code (with a reason when required) | `-- surrealguard: allow(ghost)`; missing reason under `require_suppression_reasons` | W | ✅ |
+| 7014 | whole-table SELECT with no WHERE and no LIMIT | `SELECT * FROM person;` | I | ✅ opt-in (allow by default) |
+| 7015 | any bare `SELECT *` (over-fetch / schema-drift brittleness) | `SELECT * FROM person WHERE id = person:tobie;` | I | ✅ opt-in (allow by default) |
 
 ## 8xxx — Version compatibility
 
