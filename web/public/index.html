@@ -68,7 +68,7 @@
         <div class="guard-diag" id="guardDiag"></div>
       </div>
       <div class="guard-dots" id="guardDots"></div>
-      <div class="guard-hint" id="guardHint">hover to inspect · click to freeze</div>
+      <div class="guard-hint" id="guardHint">hover to inspect</div>
     </div>
   </div>
 </section>
@@ -216,15 +216,47 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
       <p class="reveal">The CLI and LSP install from source today; the TypeScript packages are on npm. crates.io publishes are next.</p>
     </div>
     <div class="install-grid">
-      <div class="install-card reveal"><div class="label">CLI <span class="pill">cargo</span></div><pre><span class="mut"># from source, until the crates.io release</span>
-cargo install --path crates/cli
-surrealguard init &amp;&amp; surrealguard check</pre></div>
-      <div class="install-card reveal"><div class="label">Editors / LSP <span class="pill">rust · zed</span></div><pre><span class="mut"># the language server (Zed: DrewRidley/zed-surreal)</span>
-cargo install --path crates/lsp</pre></div>
-      <div class="install-card reveal"><div class="label">Rust library <span class="pill">Cargo.toml</span></div><pre><span class="mut"># query! / surql!, via git until crates.io</span>
-surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }</pre></div>
-      <div class="install-card reveal"><div class="label">TypeScript <span class="pill">npm</span></div><pre>npm i @surrealguard/client
-<span class="mut"># + @surrealguard/{query,next,svelte}</span></pre></div>
+      <div class="install-card reveal">
+        <div class="label">CLI <span class="pill">cargo</span></div>
+        <div class="term">
+          <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">surrealguard — cli</span></div>
+          <div class="term-body">
+            <div class="term-line comment"># from source, until the crates.io release</div>
+            <div class="term-line"><span class="prompt">$</span><code>cargo install --path crates/cli</code><button class="term-copy" data-copy="cargo install --path crates/cli">Copy</button></div>
+            <div class="term-line"><span class="prompt">$</span><code>surrealguard init &amp;&amp; surrealguard check</code><button class="term-copy" data-copy="surrealguard init &amp;&amp; surrealguard check">Copy</button></div>
+          </div>
+        </div>
+      </div>
+      <div class="install-card reveal">
+        <div class="label">Editors / LSP <span class="pill">rust · zed</span></div>
+        <div class="term">
+          <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">language server</span></div>
+          <div class="term-body">
+            <div class="term-line comment"># the language server (Zed: DrewRidley/zed-surreal)</div>
+            <div class="term-line"><span class="prompt">$</span><code>cargo install --path crates/lsp</code><button class="term-copy" data-copy="cargo install --path crates/lsp">Copy</button></div>
+          </div>
+        </div>
+      </div>
+      <div class="install-card reveal">
+        <div class="label">Rust library <span class="pill">Cargo.toml</span></div>
+        <div class="term">
+          <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">Cargo.toml</span></div>
+          <div class="term-body">
+            <div class="term-line comment"># query! / surql!, via git until crates.io</div>
+            <div class="term-line"><span class="prompt">›</span><code>surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }</code><button class="term-copy" data-copy='surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }'>Copy</button></div>
+          </div>
+        </div>
+      </div>
+      <div class="install-card reveal">
+        <div class="label">TypeScript <span class="pill">npm</span></div>
+        <div class="term">
+          <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">npm</span></div>
+          <div class="term-body">
+            <div class="term-line"><span class="prompt">$</span><code>npm i @surrealguard/client</code><button class="term-copy" data-copy="npm i @surrealguard/client">Copy</button></div>
+            <div class="term-line comment"># + @surrealguard/{query,next,svelte}</div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
@@ -474,8 +506,9 @@ surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }</pre></
     }
 
     // ---- live cycling mode --------------------------------------------
-    let idx = 0, gen = 0, hovered = false, frozen = false;
-    const paused = () => hovered || frozen;
+    // Hovering the hero freezes cycling on the current statement; leaving resumes.
+    let idx = 0, gen = 0, hovered = false;
+    const paused = () => hovered;
 
     function setState(cls, text) { stateEl.className = "guard-state " + cls; stateEl.textContent = text; }
 
@@ -483,7 +516,7 @@ surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }</pre></
       dotsEl.innerHTML = "";
       STMTS.forEach((_, i) => {
         const d = document.createElement("i");
-        d.addEventListener("click", () => { frozen = true; guard.classList.add("frozen", "expanded"); step(i); });
+        d.addEventListener("click", () => step(i));
         dotsEl.appendChild(d);
       });
     }
@@ -546,14 +579,10 @@ surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }</pre></
 
     function startLive() {
       buildDots();
+      // Hover freezes on the current statement and expands its diagnostic;
+      // mouse-leave resumes cycling. (No click-to-freeze.)
       guard.addEventListener("mouseenter", () => { hovered = true; guard.classList.add("expanded"); });
-      guard.addEventListener("mouseleave", () => { hovered = false; if (!frozen) guard.classList.remove("expanded"); });
-      guard.addEventListener("click", (e) => {
-        if (e.target.closest(".guard-dots")) return;
-        frozen = !frozen;
-        guard.classList.toggle("frozen", frozen);
-        guard.classList.toggle("expanded", frozen || hovered);
-      });
+      guard.addEventListener("mouseleave", () => { hovered = false; guard.classList.remove("expanded"); });
       step(0);
     }
 
@@ -616,12 +645,18 @@ surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }</pre></
 
     function render(list) {
       if (!Array.isArray(list) || list.length === 0) {
-        diag.innerHTML = `<div class="pass"><svg class="i" viewBox="0 0 24 24" style="color:var(--accent-2)"><path d="M20 6L9 17l-5-5"/></svg> No problems — this query type-checks.</div>`;
+        diag.innerHTML = `<div class="pg-ok"><svg class="i" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg><span>No problems — query is valid.</span></div>`;
         return;
       }
       diag.innerHTML = list.map((d) => {
         const sev = d.severity || "error";
-        return `<div class="diag ${sev}"><div class="row1"><span class="code">${d.code}</span><span class="sev">${sev}</span></div><div class="msg">${String(d.message).replace(/[&<>]/g, (c)=>({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c])).replace(/`([^`]+)`/g, "<code>$1</code>")}</div></div>`;
+        const glyph = sev === "warning" ? "!" : sev === "hint" ? "i" : "×";
+        return `<div class="diag ${sev}">`
+          + `<span class="diag-icon" aria-hidden="true">${glyph}</span>`
+          + `<div class="diag-body">`
+          + `<div class="diag-head"><span class="code">${sgEsc(d.code || "")}</span><span class="sev">${sev}</span></div>`
+          + `<div class="msg">${sgMsg(d.message)}</div>`
+          + `</div></div>`;
       }).join("");
     }
     let t; function run() { clearTimeout(t); t = setTimeout(() => {
