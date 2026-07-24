@@ -19,7 +19,7 @@ use crate::schema::SchemaIndex;
 pub struct TypeHint {
     /// The span of the `$name` token the hint annotates.
     pub name_span: SourceSpan,
-    /// The rendered label, already prefixed with `": "`.
+    /// The rendered label, rendered as `<T>` (SurrealQL cast form).
     pub label: String,
 }
 
@@ -59,8 +59,10 @@ pub fn let_binding_hints(output: &AnalysisOutput) -> Vec<TypeHint> {
                 return None;
             }
             Some(TypeHint {
+                // SurrealQL's own cast syntax `<T>` reads more naturally than a
+                // Rust-style `: T` for an inline type ghost.
                 name_span: binding.name_span.clone(),
-                label: format!(": {}", elide_label(&render_kind(kind))),
+                label: format!("<{}>", elide_label(&render_kind(kind))),
             })
         })
         .collect()
@@ -1726,8 +1728,8 @@ mod tests {
         let hints = let_binding_hints(&output);
 
         assert_eq!(hints.len(), 2);
-        assert_eq!(hints[0].label, ": int");
-        assert_eq!(hints[1].label, ": string");
+        assert_eq!(hints[0].label, "<int>");
+        assert_eq!(hints[1].label, "<string>");
         // The hint anchors on the `$x` token, not the whole statement.
         assert_eq!(hints[0].name_span.range().start(), 4);
     }
@@ -2087,7 +2089,7 @@ mod tests {
         // array, the call one a record.
         let labels: Vec<&str> = hints.iter().map(|hint| hint.label.as_str()).collect();
         assert!(
-            labels.iter().any(|label| label.starts_with(": array<")),
+            labels.iter().any(|label| label.starts_with("<array<")),
             "expected an array hint, got: {labels:?}"
         );
         assert!(
@@ -2105,7 +2107,7 @@ mod tests {
         let hints = let_binding_hints(&output);
         // `$item` is the element kind `int` of `array<int>`.
         assert!(
-            hints.iter().any(|hint| hint.label == ": int"),
+            hints.iter().any(|hint| hint.label == "<int>"),
             "expected the FOR var hint, got: {:?}",
             hints.iter().map(|h| &h.label).collect::<Vec<_>>()
         );
