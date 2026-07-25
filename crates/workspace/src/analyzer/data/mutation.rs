@@ -793,13 +793,44 @@ fn fields_row_kind(
                     }
                 }
                 // Computed return expression: full inference.
-                let key =
-                    alias_name.unwrap_or_else(|| slice(ctx.source_text(), expr.span).to_string());
                 let row_table = ctx.schema().tables.get(&table.name);
                 let kind = ctx.with_row_table(row_table, |ctx| {
                     infer_expression_fact(expr, ctx).kind.unwrap_or(Kind::Any)
                 });
-                fields.insert(key, kind);
+                // A mutation's RETURN projections are named by the same rule
+                // a SELECT's are (`RETURN fn::abc(age)` → `fn::abc`,
+                // `RETURN name.len()` → `name`), verified on SurrealDB 3.0.5.
+                match alias_name {
+                    Some(alias) => {
+                        fields.insert(alias, kind);
+                    }
+                    None => {
+                        let path = match &expr.node {
+                            ast::Expr::Idiom(idiom) => {
+                                crate::analyzer::data::select::simplified_key_segments(idiom)
+                            }
+                            _ => None,
+                        };
+                        match path {
+                            Some(segments) => {
+                                crate::analyzer::data::select::insert_kind_at_path(
+                                    &mut fields,
+                                    &segments,
+                                    kind,
+                                );
+                            }
+                            None => {
+                                fields.insert(
+                                    crate::analyzer::data::select::unaliased_computed_key(
+                                        expr,
+                                        ctx.source_text(),
+                                    ),
+                                    kind,
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -872,6 +903,25 @@ mod tests {
             panic!("expected array kind, got {kind:?}");
         };
         element
+    }
+
+    #[test]
+    fn return_projections_follow_the_engines_projection_naming() {
+        // `UPDATE … RETURN string::len(name), name.len(), name.len() + 1`
+        // returns `{string::len, name, "name.len() + 1"}` on SurrealDB 3.0.5:
+        // a mutation's RETURN projections are named exactly like a SELECT's.
+        let kind = build_kind(
+            PERSON_SCHEMA,
+            "UPDATE person SET age = 1 RETURN string::len(name), name.len(), name.len() + 1;",
+            "UpdateStatement",
+        );
+
+        let fields = object_fields(array_element(&kind));
+        assert_eq!(fields["string::len"], Kind::Int);
+        assert!(fields.contains_key("name"), "got: {fields:?}");
+        assert!(fields.contains_key("name.len() + 1"), "got: {fields:?}");
+        assert!(!fields.contains_key("string::len(name)"), "got: {fields:?}");
+        assert!(!fields.contains_key("name.len()"), "got: {fields:?}");
     }
 
     #[test]

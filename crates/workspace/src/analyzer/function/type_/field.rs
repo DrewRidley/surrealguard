@@ -130,13 +130,11 @@ mod tests {
         let Kind::Literal(surrealdb_types::KindLiteral::Object(fields)) = *element else {
             panic!("expected object literal element");
         };
-        assert_eq!(
-            fields["type::fields($paths)"],
-            Kind::Literal(surrealdb_types::KindLiteral::Array(vec![
-                Kind::String,
-                Kind::Int
-            ]))
-        );
+        // SurrealDB expands a `type::fields` projection into the fields its
+        // path strings name — `{title, age}`, not one `type::fields(...)`
+        // column (verified on 3.0.5).
+        assert_eq!(fields["title"], Kind::String);
+        assert_eq!(fields["age"], Kind::Int);
     }
 
     #[test]
@@ -174,6 +172,12 @@ mod tests {
         let Kind::Literal(surrealdb_types::KindLiteral::Object(fields)) = *element else {
             panic!("expected object literal element");
         };
-        assert_eq!(fields["type::field($param)"], Kind::String);
+        // The projection is named by the *field it names*, nested exactly as
+        // the path reads (`'name.first'` → `{name: {first: string}}`), not by
+        // the call's source text (verified on 3.0.5).
+        let Kind::Literal(surrealdb_types::KindLiteral::Object(name)) = &fields["name"] else {
+            panic!("expected a nested `name` object, got {fields:?}");
+        };
+        assert_eq!(name["first"], Kind::String);
     }
 }

@@ -4,9 +4,12 @@
 //! are `Kind::Literal(KindLiteral::Object(...))`, undeterminable positions
 //! are `Kind::Any` poison values. Graph traversals, destructure selections,
 //! and modifier clauses are consumed as structured `ast::*` values. The
-//! only use of source text is *naming*: an unaliased computed projection is
-//! keyed by its own source text (`SELECT age >= 18 FROM ...` produces the
-//! field `"age >= 18"`).
+//! only use of source text is *naming*, and only where SurrealDB itself
+//! falls back to it: an unaliased projection is keyed by its *simplified*
+//! form — a call by its bare function name (`string::len(name)` →
+//! `string::len`), an idiom by its `Field`/`Graph` parts alone
+//! (`name.len()` → `name`) — and by its own source text otherwise
+//! (`SELECT age >= 18 FROM ...` produces the field `"age >= 18"`).
 
 use std::collections::BTreeMap;
 
@@ -68,10 +71,7 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     }
     check_order_clause(stmt, table, ctx);
 
-    let has_wildcard_projection = stmt
-        .projections
-        .iter()
-        .any(|projection| matches!(projection, ast::Projection::Wildcard(_)));
+    let has_wildcard = has_wildcard_projection(stmt);
 
     // A wildcard contributes the whole materialized row — but only when the
     // rows are materialized. Under a GROUP clause the result rows are
@@ -84,8 +84,9 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     // the remaining projections alone type the row (`SELECT *, count() FROM t
     // GROUP BY k` is `{ count: number }`). Both behaviours verified against
     // the engine: 3.0.5 live, 2.x via `dbs::group::GroupsCollector`, which
-    // iterates `fields.other()` and never sees `Field::All`.
-    let row_kind = if has_wildcard_projection && stmt.group.is_none() {
+    // iterates `fields.other()` and never sees `Field::All`. The rejection
+    // itself is reported as 4025 at the `*`.
+    let row_kind = if has_wildcard && stmt.group.is_none() {
         object_kind_for_all_fields(table)
     } else if let Some(value_kind) = value_projection_kind(stmt, &table_name, table, ctx) {
         value_kind
@@ -551,15 +552,11 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
 fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
     check_clause_values(stmt, ctx);
     check_count_without_group(stmt, ctx);
+    check_wildcard_under_group(stmt, ctx);
     check_group_key_projection(stmt, ctx);
 
-    let has_wildcard = stmt
-        .projections
-        .iter()
-        .any(|projection| matches!(projection, ast::Projection::Wildcard(_)));
-
     // `SELECT *, age` — the explicit field is already inside `*`.
-    if has_wildcard {
+    if has_wildcard_projection(stmt) {
         for projection in &stmt.projections {
             if let ast::Projection::Expr { expr, alias: None } = projection {
                 if let ast::Expr::Idiom(idiom) = &expr.node {
@@ -686,25 +683,69 @@ fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContex
     }
 }
 
+/// 4025: SurrealDB 3.x rejects a wildcard projection under *any* GROUP
+/// clause outright — "Incorrect selector for aggregate selection, expression
+/// `*` within in selector cannot be aggregated in a group". Verified on a
+/// live 3.0.5 for `GROUP BY k`, `GROUP ALL`, and the mixed
+/// `SELECT *, count() … GROUP BY k` / `… GROUP ALL` forms, including over a
+/// table that doesn't exist (so it is a query-shape rejection, not a
+/// row-dependent one). 2.x doesn't reject it but silently drops the `*`,
+/// building grouped rows from the non-`*` fields only — so under either
+/// engine the query never returns what its author asked for, which is why
+/// this is an error rather than a version-gated warning.
+///
+/// `t.*` in expression position (`SELECT person.* … GROUP ALL`) is a
+/// different construct — an idiom with an `All` part, which 3.0.5 accepts —
+/// and is not a `Projection::Wildcard`, so it never reaches this.
+fn check_wildcard_under_group(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
+    if stmt.group.is_none() {
+        return;
+    }
+    for projection in &stmt.projections {
+        let ast::Projection::Wildcard(range) = projection else {
+            continue;
+        };
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), *range);
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                span,
+                4025,
+                "`*` cannot be aggregated by a GROUP clause — SurrealDB rejects this query"
+                    .to_string(),
+            )
+            .with_help(
+                "replace `*` with the group keys and aggregates you want, e.g. `SELECT status, count() FROM t GROUP BY status`",
+            ),
+        );
+    }
+}
+
+/// Whether the statement projects a wildcard — the shape 4025 reports under
+/// a GROUP clause, and the one that makes 4013 redundant there.
+fn has_wildcard_projection(stmt: &ast::SelectStmt) -> bool {
+    stmt.projections
+        .iter()
+        .any(|projection| matches!(projection, ast::Projection::Wildcard(_)))
+}
+
 /// 4013: a `GROUP BY` key that is not among the projected columns cannot
 /// appear in the result rows — the grouping label is silently dropped, so the
 /// rows can't be told apart. SurrealDB runs the query (it does not reject
 /// this), which is why it is a warning rather than an error. Conservative to
 /// zero false positives: suppressed when an unparseable projection is present
 /// (the key may be covered by it), for `SELECT VALUE` (a single value
-/// projection carries no named keys), and for `GROUP ALL`. A wildcard does
-/// *not* suppress it: `*` covers no key under a GROUP clause — 3.x rejects
-/// such a query outright, 2.x builds grouped rows from the non-`*` fields
-/// only — so the key genuinely cannot appear in the result rows, and the
-/// finding's own advice (name the key in the projection) is the fix. A key
-/// counts as projected when its dotted path equals — or is a prefix of — a
-/// projected field path or alias (projecting `address` covers a
-/// `GROUP BY address.city`).
+/// projection carries no named keys), and for `GROUP ALL`. A wildcard
+/// projection also suppresses it — not because `*` covers the key (it covers
+/// nothing under a GROUP clause) but because that query is *rejected*, which
+/// 4025 reports as an error at the `*` itself; 4013's premise, that the query
+/// runs and merely returns unlabelled rows, doesn't hold there. A key counts
+/// as projected when its dotted path equals — or is a prefix of — a projected
+/// field path or alias (projecting `address` covers a `GROUP BY address.city`).
 fn check_group_key_projection(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
     let Some(group) = &stmt.group else {
         return;
     };
-    if group.all || group.keys.is_empty() || stmt.value {
+    if group.all || group.keys.is_empty() || stmt.value || has_wildcard_projection(stmt) {
         return;
     }
     if stmt
@@ -1198,16 +1239,48 @@ fn project_expr(
             return;
         }
 
-        // Idioms with parts we don't project yet (Start/Index/Method/...)
-        // still get their invariants checked.
-        ctx.with_row_table(ctx.schema().tables.get(&table.name), |ctx| {
-            crate::analyzer::expression::check::check_value_expression(ctx, expr);
-        });
-        fields.insert(
-            alias_name.unwrap_or_else(|| slice(ctx.source_text(), expr.span).to_string()),
-            Kind::Any,
-        );
+        // Idioms with parts the branches above don't project (Start/Index/
+        // Method/...): the same full expression inference every other
+        // computed projection gets — a method resolves against its receiver's
+        // kind (`SELECT name.len()` is an `int`), an index reaches the
+        // element kind — with their invariants checked at the same site.
+        let kind = computed_kind(expr, table, ctx);
+        match alias_name {
+            Some(alias) => {
+                fields.insert(alias, kind);
+            }
+            // Unaliased, the key follows SurrealDB's own simplification rule
+            // (`name.len()` → `name`, `tags[0]` → `tags`).
+            None => match simplified_key_segments(idiom) {
+                Some(segments) => insert_kind_at_path(fields, &segments, kind),
+                None => {
+                    fields.insert(slice(ctx.source_text(), expr.span).to_string(), kind);
+                }
+            },
+        }
         return;
+    }
+
+    // `type::field(path)` / `type::fields([paths])` are *named* projections:
+    // SurrealDB expands them into the fields their path strings name, so
+    // `type::field('meta.inner')` lands at the nested `meta.inner` and
+    // `type::fields(['a', 'b'])` produces both keys (verified on 3.0.5). An
+    // alias overrides the expansion, and a path that isn't statically known
+    // falls through to the ordinary naming below.
+    if alias_name.is_none() {
+        if let ast::Expr::Call(call) = &expr.node {
+            if let Some(paths) = const_field_path_args(call, ctx) {
+                // Check the call as usual (its own 5005 contract) — only the
+                // naming differs.
+                let _ = computed_kind(expr, table, ctx);
+                for path in paths {
+                    let segments: Vec<String> = path.split('.').map(str::to_string).collect();
+                    let kind = kind_for_path(table, &segments).unwrap_or(Kind::Any);
+                    insert_kind_at_path(fields, &segments, kind);
+                }
+                return;
+            }
+        }
     }
 
     // Computed projection: full expression inference.
@@ -1216,17 +1289,100 @@ fn project_expr(
     fields.insert(key, kind);
 }
 
-/// The result-object key for an unaliased computed projection. SurrealDB names
-/// a bare `count()` projection `count` (not its source text); every other
-/// computed projection is keyed by its own source text
-/// (`SELECT age >= 18 FROM ...` → the field `"age >= 18"`).
-fn unaliased_computed_key(expr: &ast::Spanned<ast::Expr>, source_text: &str) -> String {
+/// The statically-known field paths a `type::field` / `type::fields` call
+/// projects, when its argument is a constant (a literal, or a `LET` binding
+/// tracing back to one). `None` when the call is neither, or when the path
+/// argument isn't statically a string / list of strings — the projection is
+/// then named the ordinary way, since its runtime key is unknowable.
+fn const_field_path_args(call: &ast::Call, ctx: &mut AnalysisContext<'_>) -> Option<Vec<String>> {
+    use surrealdb_types::Value;
+
+    match call.path.node.as_str() {
+        "type::field" => match crate::analyzer::function::const_value_arg(ctx, call, 0)? {
+            Value::String(path) => Some(vec![path]),
+            _ => None,
+        },
+        "type::fields" => match crate::analyzer::function::const_value_arg(ctx, call, 0)? {
+            Value::Array(paths) => paths
+                .iter()
+                .map(|value| match value {
+                    Value::String(path) => Some(path.clone()),
+                    _ => None,
+                })
+                .collect(),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The result-object key for an unaliased computed projection.
+///
+/// SurrealDB names a projection after the *top-level* node, not its source
+/// text: a call is named by its bare function name — no parens, no arguments
+/// (`string::len(name)` → `string::len`, `time::now()` → `time::now`,
+/// `fn::abc(age)` → `fn::abc`, `count()` → `count`). Everything else keeps
+/// its source text, which is why a call *inside* a larger expression does
+/// not shorten it (`math::abs(age) + 1` is a binary, so it stays
+/// `"math::abs(age) + 1"`). Verified against SurrealDB 3.0.5.
+///
+/// A path-less call is a param invocation (`$f(age)`), which the engine names
+/// `($f)(age)` — a rendering we don't reproduce; those keep their source text.
+pub(crate) fn unaliased_computed_key(expr: &ast::Spanned<ast::Expr>, source_text: &str) -> String {
     if let ast::Expr::Call(call) = &expr.node {
-        if is_bare_count(call) {
-            return "count".to_string();
+        if !call.path.node.is_empty() {
+            return call.path.node.clone();
         }
     }
     slice(source_text, expr.span).to_string()
+}
+
+/// The result-object key path of an unaliased idiom projection SurrealDB
+/// *simplifies*: only `Field` and `Graph` parts name a key segment, so method
+/// calls, indexes, `[WHERE …]` filters, `[*]`/`[$]`, and `?.` contribute
+/// nothing (`name.len()` → `name`, `tags[0].len()` → `tags`,
+/// `meta.inner.deep.len()` → the nested `meta.inner.deep`,
+/// `tags.map(…).a` → the nested `tags.a`,
+/// `->knows->person.name.len()` → the nested `->knows.->person.name`).
+///
+/// `None` for shapes whose simplified rendering isn't a plain path — a
+/// leading `Start` value (`$obj.a.len()`, which the engine keys under a
+/// literal `$obj` segment), a destructure, or recursion — leaving those on
+/// the source-text fallback. Verified against SurrealDB 3.0.5.
+pub(crate) fn simplified_key_segments(idiom: &ast::Idiom) -> Option<Vec<String>> {
+    if !matches!(
+        idiom.parts.first().map(|part| &part.node),
+        Some(ast::IdiomPart::Field(_) | ast::IdiomPart::Graph { .. })
+    ) {
+        return None;
+    }
+    let mut segments = Vec::new();
+    for part in &idiom.parts {
+        match &part.node {
+            ast::IdiomPart::Field(name) => segments.push(name.clone()),
+            ast::IdiomPart::Graph { .. } => {
+                let (dir, target) = single_graph_target(&part.node)?;
+                let arrow = match dir {
+                    ast::GraphDir::Out => "->",
+                    ast::GraphDir::In => "<-",
+                    ast::GraphDir::Both => "<->",
+                };
+                segments.push(format!("{arrow}{target}"));
+            }
+            // Dropped by the engine's simplification.
+            ast::IdiomPart::Method { .. }
+            | ast::IdiomPart::Index(_)
+            | ast::IdiomPart::All
+            | ast::IdiomPart::Last
+            | ast::IdiomPart::Where(_)
+            | ast::IdiomPart::Optional => {}
+            ast::IdiomPart::Start(_)
+            | ast::IdiomPart::Destructure(_)
+            | ast::IdiomPart::Recurse { .. }
+            | ast::IdiomPart::Partial(_) => return None,
+        }
+    }
+    (!segments.is_empty()).then_some(segments)
 }
 
 fn computed_kind(
@@ -2570,18 +2726,56 @@ mod tests {
     }
 
     #[test]
-    fn a_group_key_a_wildcard_cannot_carry_is_reported() {
+    fn a_wildcard_under_any_group_clause_is_an_error() {
         let schema = schema_from(RELATION_SCHEMA);
 
-        // `*` covers nothing under GROUP, so the key really is unprojected:
-        // 4013 fires and its help (project the key) is the actual fix.
-        let codes: Vec<u16> = diagnostics_for(&schema, "SELECT * FROM person GROUP BY name;")
+        // SurrealDB 3.0.5 rejects every one of these outright ("expression
+        // `*` within in selector cannot be aggregated in a group").
+        for query in [
+            "SELECT * FROM person GROUP BY name;",
+            "SELECT * FROM person GROUP ALL;",
+            "SELECT *, count() FROM person GROUP BY name;",
+            "SELECT *, count() FROM person GROUP ALL;",
+        ] {
+            let codes: Vec<u16> = diagnostics_for(&schema, query)
+                .iter()
+                .map(|finding| finding.code().number())
+                .collect();
+            assert!(codes.contains(&4025), "{query}: got {codes:?}");
+            // 4025 replaces 4013 here: that warning's premise is a query the
+            // engine *runs*, which this one isn't.
+            assert!(!codes.contains(&4013), "{query}: got {codes:?}");
+        }
+    }
+
+    #[test]
+    fn a_group_query_without_a_wildcard_does_not_fire_4025() {
+        let schema = schema_from(RELATION_SCHEMA);
+
+        // The explicit projections 4025's help asks for — plus a bare
+        // aggregate and a `t.*` idiom, both accepted by 3.0.5.
+        for query in [
+            "SELECT name, count() FROM person GROUP BY name;",
+            "SELECT count() FROM person GROUP ALL;",
+            "SELECT person.* FROM person GROUP ALL;",
+            "SELECT * FROM person;",
+        ] {
+            let codes: Vec<u16> = diagnostics_for(&schema, query)
+                .iter()
+                .map(|finding| finding.code().number())
+                .collect();
+            assert!(!codes.contains(&4025), "{query}: got {codes:?}");
+        }
+
+        // A GROUP key that isn't projected is still the ordinary 4013.
+        let codes: Vec<u16> = diagnostics_for(&schema, "SELECT count() FROM person GROUP BY name;")
             .iter()
             .map(|finding| finding.code().number())
             .collect();
         assert!(codes.contains(&4013), "got: {codes:?}");
+        assert!(!codes.contains(&4025), "got: {codes:?}");
 
-        // Projecting the key clears it.
+        // Projecting the key clears 4013.
         let projected: Vec<u16> = diagnostics_for(&schema, "SELECT name FROM person GROUP BY name;")
             .iter()
             .map(|finding| finding.code().number())
@@ -2710,6 +2904,148 @@ mod tests {
         let fields = object_fields(array_element(&kind));
         assert!(!fields.contains_key("count()"));
         assert_eq!(fields["count"], Kind::Int);
+    }
+
+    const KEY_SCHEMA: &str = "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD tags ON person TYPE array<string>;\nDEFINE FIELD meta ON person TYPE object;\nDEFINE FIELD meta.inner ON person TYPE object;\nDEFINE FIELD meta.inner.deep ON person TYPE string;\nDEFINE FUNCTION fn::abc($x: int) { RETURN $x + 1; };";
+
+    #[test]
+    fn an_unaliased_call_projection_is_keyed_by_the_bare_function_name() {
+        // Verified against SurrealDB 3.0.5: a top-level call is named by its
+        // function name, with no parens and no arguments — the *outer* one
+        // when calls nest.
+        let schema = schema_from(KEY_SCHEMA);
+
+        let fields = row_fields(
+            &schema,
+            "SELECT string::len(name), time::now(), fn::abc(age), string::len(string::uppercase(name)) FROM person;",
+        );
+
+        assert_eq!(fields["string::len"], Kind::Int);
+        assert_eq!(fields["time::now"], Kind::Datetime);
+        assert_eq!(fields["fn::abc"], Kind::Int);
+        assert!(!fields.contains_key("string::len(name)"), "got: {fields:?}");
+        assert!(!fields.contains_key("time::now()"), "got: {fields:?}");
+        assert!(!fields.contains_key("fn::abc(age)"), "got: {fields:?}");
+    }
+
+    #[test]
+    fn a_projection_that_is_not_a_top_level_call_keeps_its_source_text() {
+        // The rule is about the *top-level* node: a call nested inside a
+        // binary/cast/container leaves the projection keyed by source text
+        // (all four verified on 3.0.5).
+        let schema = schema_from(KEY_SCHEMA);
+
+        let fields = row_fields(
+            &schema,
+            "SELECT math::abs(age) + 1, age + 1, age > 20, <int> string::len(name) FROM person;",
+        );
+
+        assert!(fields.contains_key("math::abs(age) + 1"), "got: {fields:?}");
+        assert!(fields.contains_key("age + 1"), "got: {fields:?}");
+        assert!(fields.contains_key("age > 20"), "got: {fields:?}");
+        assert!(
+            fields.contains_key("<int> string::len(name)"),
+            "got: {fields:?}"
+        );
+        assert!(!fields.contains_key("math::abs"), "got: {fields:?}");
+    }
+
+    #[test]
+    fn an_unaliased_method_projection_drops_the_method_from_its_key() {
+        // `name.len()` returns under `name`, and a multi-part path keeps its
+        // nesting (`meta.inner.deep.len()` → `{meta: {inner: {deep: …}}}`).
+        // Indexes, filters and splats are dropped from the key the same way.
+        // All verified on 3.0.5.
+        let schema = schema_from(KEY_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT name.len() FROM person;");
+        assert!(fields.contains_key("name"), "got: {fields:?}");
+        assert!(!fields.contains_key("name.len()"), "got: {fields:?}");
+
+        let nested = row_fields(&schema, "SELECT meta.inner.deep.len() FROM person;");
+        let meta = object_fields(&nested["meta"]);
+        let inner = object_fields(&meta["inner"]);
+        assert!(inner.contains_key("deep"), "got: {nested:?}");
+
+        // Chained methods drop together; an index part drops too.
+        let chained = row_fields(&schema, "SELECT name.len().to_string(), tags[0] FROM person;");
+        assert!(chained.contains_key("name"), "got: {chained:?}");
+        assert!(chained.contains_key("tags"), "got: {chained:?}");
+        assert!(!chained.contains_key("tags[0]"), "got: {chained:?}");
+    }
+
+    #[test]
+    fn a_method_projection_is_typed_by_its_receivers_method() {
+        // `SELECT name.len()` is an `int` on 3.0.5, not an unknown: the
+        // projection runs the same inference every other computed projection
+        // gets, so method dispatch (and indexing) applies.
+        let schema = schema_from(KEY_SCHEMA);
+
+        let fields = row_fields(
+            &schema,
+            "SELECT name.len(), tags[0], name.uppercase(), age.to_string() FROM person;",
+        );
+        assert_eq!(fields["name"], Kind::String, "got: {fields:?}");
+        assert_eq!(fields["tags"], Kind::String);
+        assert_eq!(fields["age"], Kind::String);
+
+        // `name.len()` alone (the reported case) is an int.
+        let len = row_fields(&schema, "SELECT name.len() FROM person;");
+        assert_eq!(len["name"], Kind::Int);
+
+        // A method the receiver genuinely doesn't have stays a poison entry.
+        let unknown = row_fields(&schema, "SELECT name.frobnicate() FROM person;");
+        assert_eq!(unknown["name"], Kind::Any);
+    }
+
+    #[test]
+    fn a_method_on_a_graph_traversal_keys_under_the_traversal_segments() {
+        // `->knows->person.name.len()` returns
+        // `{"->knows": {"->person": {name: …}}}` on 3.0.5 — the method drops,
+        // the traversal segments and field tail stay.
+        let schema = schema_from(
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;\nDEFINE TABLE knows TYPE RELATION IN person OUT person;",
+        );
+
+        let fields = row_fields(&schema, "SELECT ->knows->person.name.len() FROM person;");
+        let knows = object_fields(&fields["->knows"]);
+        let target = object_fields(&knows["->person"]);
+        assert!(target.contains_key("name"), "got: {fields:?}");
+    }
+
+    #[test]
+    fn a_leading_value_idiom_keeps_its_source_text_key() {
+        // `$obj.a.len()` is keyed under a literal `$obj` segment by the
+        // engine, a rendering we don't reproduce — those keep source text
+        // rather than silently claiming a wrong path.
+        let schema = schema_from(KEY_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT $obj.a.len() FROM person;");
+        assert!(fields.contains_key("$obj.a.len()"), "got: {fields:?}");
+        assert!(!fields.contains_key("a"), "got: {fields:?}");
+    }
+
+    #[test]
+    fn type_field_projections_are_named_by_the_fields_they_select() {
+        // 3.0.5 expands `type::field`/`type::fields` into the named fields
+        // themselves — `type::fields(['name', 'age'])` returns `{name, age}`.
+        let schema = schema_from(KEY_SCHEMA);
+
+        let single = row_fields(&schema, "SELECT type::field('meta.inner.deep') FROM person;");
+        let meta = object_fields(&single["meta"]);
+        let inner = object_fields(&meta["inner"]);
+        assert_eq!(inner["deep"], Kind::String);
+
+        let many = row_fields(&schema, "SELECT type::fields(['name', 'age']) FROM person;");
+        assert_eq!(many["name"], Kind::String);
+        assert_eq!(many["age"], Kind::Int);
+
+        // An alias overrides the expansion, and a non-constant path falls
+        // back to the ordinary naming (the runtime key is unknowable).
+        let aliased = row_fields(&schema, "SELECT type::field('name') AS n FROM person;");
+        assert!(aliased.contains_key("n"), "got: {aliased:?}");
+        let dynamic = row_fields(&schema, "SELECT type::field($path) FROM person;");
+        assert!(dynamic.contains_key("type::field"), "got: {dynamic:?}");
     }
 
     #[test]

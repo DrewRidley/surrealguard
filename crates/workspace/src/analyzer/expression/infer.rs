@@ -550,7 +550,9 @@ pub(crate) fn field_of_kind(value: &Kind, field: &str, schema: &SchemaIndex) -> 
 }
 
 /// Method calls dispatch to the receiver kind's function family:
-/// `array.len()` is `array::len(array)`.
+/// `array.len()` is `array::len(array)`, `name.len()` is `string::len(name)`.
+/// Receivers whose family has no such method fall through to the generic
+/// methods every value answers (see [`generic_method_path`]).
 fn method_return_kind(
     receiver: &Kind,
     method: &str,
@@ -574,20 +576,66 @@ fn method_return_kind(
         return Some(Kind::either(results));
     }
     let family = match base {
-        Kind::Array(_, _) => "array",
-        Kind::Set(_, _) => "set",
-        Kind::String => "string",
-        Kind::Object => "object",
-        Kind::Duration => "duration",
-        Kind::Datetime => "time",
-        Kind::Bytes => "bytes",
-        Kind::Record(_) => "record",
-        Kind::Int | Kind::Float | Kind::Decimal | Kind::Number => "math",
-        _ => return None,
+        Kind::Array(_, _) => Some("array"),
+        Kind::Set(_, _) => Some("set"),
+        Kind::String => Some("string"),
+        Kind::Object => Some("object"),
+        Kind::Duration => Some("duration"),
+        Kind::Datetime => Some("time"),
+        Kind::Bytes => Some("bytes"),
+        Kind::Record(_) => Some("record"),
+        Kind::Int | Kind::Float | Kind::Decimal | Kind::Number => Some("math"),
+        // Kinds with no function family of their own (`bool`, `uuid`,
+        // `geometry`, `range`, …) still take the generic methods below.
+        _ => None,
     };
-    let call = crate::analyzer::function::synthetic_call(&format!("{family}::{method}"));
+    if let Some(family) = family {
+        if let Some(kind) = builtin_method_kind(&format!("{family}::{method}"), args, ctx) {
+            return Some(kind);
+        }
+    }
+    // A `set` receiver also answers two methods its function family doesn't
+    // name, borrowed from `array` (verified on SurrealDB 3.0.5: `.every()`
+    // and `.includes()` dispatch, while the rest of `array`'s surface —
+    // `.sort()`, `.push()`, `.distinct()`, … — does not).
+    if matches!(base, Kind::Set(_, _)) && matches!(method, "every" | "includes") {
+        if let Some(kind) = builtin_method_kind(&format!("array::{method}"), args, ctx) {
+            return Some(kind);
+        }
+    }
+    builtin_method_kind(generic_method_path(method)?.as_str(), args, ctx)
+}
+
+/// The kind a builtin resolves to when called as a method, or `None` when
+/// no such builtin exists (the synthetic call reports nothing itself).
+fn builtin_method_kind(path: &str, args: &[Kind], ctx: &mut AnalysisContext<'_>) -> Option<Kind> {
+    let call = crate::analyzer::function::synthetic_call(path);
     let kind = crate::analyzer::function::analyze_builtin_function(ctx, &call, args);
     (kind != Kind::Any).then_some(kind)
+}
+
+/// Methods SurrealDB answers on *every* receiver, whatever its kind —
+/// verified on 3.0.5 across string/int/float/decimal/array/set/object/
+/// duration/datetime/bytes/uuid/bool/record/range receivers. They are the
+/// method spellings of the `type::`/`value::` builtins, plus `repeat`, which
+/// falls back to `array::repeat` for receivers whose own family has no
+/// `repeat` (`(5).repeat(2)` is `[5, 5]`).
+///
+/// Deliberately absent: `.chain(|$v| …)`, which returns whatever its closure
+/// returns — SurrealDB has no `value::chain` builtin for the signature table
+/// to describe, so it stays unresolved rather than being typed by guess.
+fn generic_method_path(method: &str) -> Option<String> {
+    Some(match method {
+        "to_string" => "type::string".to_string(),
+        "type_of" => "type::of".to_string(),
+        "diff" => "value::diff".to_string(),
+        "patch" => "value::patch".to_string(),
+        "repeat" => "array::repeat".to_string(),
+        // `type::is_*` predicates answer on any value; an `is_` name with no
+        // such builtin resolves to nothing, as it should.
+        other if other.starts_with("is_") => format!("type::{other}"),
+        _ => return None,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1540,6 +1588,78 @@ mod tests {
         let fact = infer_first_with_schema(&parsed, "Path", &schema, Some(table), &env);
 
         assert_eq!(fact.kind, Some(Kind::Int));
+    }
+
+    #[test]
+    fn generic_methods_resolve_on_any_receiver_kind() {
+        // SurrealDB answers `.to_string()`, `.type_of()` and the `type::is_*`
+        // predicates on every value, whatever its kind — including kinds with
+        // no function family of their own (verified on 3.0.5). Without this
+        // they were error-severity 5001 false positives on valid queries.
+        let schema = person_schema();
+        let table = schema.tables.get("person").unwrap();
+        let env = StatementEnv::default();
+
+        let cases = [
+            ("SELECT age.to_string() FROM person;", Kind::String),
+            ("SELECT name.type_of() FROM person;", Kind::String),
+            ("SELECT age.is_none() FROM person;", Kind::Bool),
+            ("SELECT name.is_number() FROM person;", Kind::Bool),
+            // A receiver kind with no family of its own still answers them.
+            ("SELECT (age > 1).to_string() FROM person;", Kind::String),
+        ];
+        for (query, expected) in cases {
+            let parsed = parse(query);
+            let fact = infer_first_with_schema(&parsed, "Path", &schema, Some(table), &env);
+            assert_eq!(fact.kind, Some(expected), "query: {query}");
+        }
+    }
+
+    #[test]
+    fn a_method_the_receiver_does_not_have_stays_unresolved() {
+        // The generic fallback must not turn every name into a resolved
+        // method: `string` has no `.abs()` and no `.frobnicate()`, and
+        // `int` has no `.len()` — all three are rejected by 3.0.5 too.
+        let schema = person_schema();
+        let table = schema.tables.get("person").unwrap();
+        let env = StatementEnv::default();
+
+        for query in [
+            "SELECT name.frobnicate() FROM person;",
+            "SELECT name.abs() FROM person;",
+            "SELECT age.len() FROM person;",
+        ] {
+            let parsed = parse(query);
+            let fact = infer_first_with_schema(&parsed, "Path", &schema, Some(table), &env);
+            assert_eq!(fact.kind, None, "query: {query}");
+        }
+    }
+
+    #[test]
+    fn a_set_receiver_answers_the_two_array_methods_it_borrows() {
+        // A `set` receiver dispatches `.every()`/`.includes()` (verified on
+        // 3.0.5) but not the rest of `array`'s surface: `.sort()` and
+        // `.push()` are rejected there.
+        let parsed = parse_source(
+            SourceId::new("infer:set-schema"),
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD tags ON person TYPE set<string>;",
+        )
+        .expect("schema parses");
+        let schema = extract_schema(&[parsed]).schema;
+        let table = schema.tables.get("person").unwrap();
+        let env = StatementEnv::default();
+
+        let parsed = parse("SELECT tags.includes('a') FROM person;");
+        let fact = infer_first_with_schema(&parsed, "Path", &schema, Some(table), &env);
+        assert_eq!(fact.kind, Some(Kind::Bool));
+
+        let parsed = parse("SELECT tags.len() FROM person;");
+        let fact = infer_first_with_schema(&parsed, "Path", &schema, Some(table), &env);
+        assert_eq!(fact.kind, Some(Kind::Int));
+
+        let parsed = parse("SELECT tags.sort() FROM person;");
+        let fact = infer_first_with_schema(&parsed, "Path", &schema, Some(table), &env);
+        assert_eq!(fact.kind, None);
     }
 
     fn schema_with_links() -> SchemaIndex {
