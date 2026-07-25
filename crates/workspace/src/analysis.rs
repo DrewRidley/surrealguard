@@ -487,6 +487,34 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn select_from_a_record_param_types_against_its_table() {
+        // `SELECT … FROM ONLY $p` where `$p: record<T>` projects against T's
+        // fields, not `Any`.
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE org SCHEMAFULL;\n\
+             DEFINE TABLE unit SCHEMAFULL;\n\
+             DEFINE FIELD org ON unit TYPE record<org>;\n\
+             DEFINE FUNCTION fn::u($id: record<unit>) { RETURN (SELECT org FROM ONLY $id); };"
+                .into(),
+        );
+        let query = workspace.add_virtual_source("query".into(), "RETURN fn::u($x);".into());
+
+        let output = analyze_workspace(&workspace);
+        let rendered = crate::render_kind(
+            output.sources[&query]
+                .response_kind
+                .as_ref()
+                .expect("response kind"),
+        );
+        assert!(
+            rendered.contains("org: record<org>"),
+            "expected the projected field typed, got {rendered}"
+        );
+    }
+
+    #[test]
     fn computed_back_reference_index_selects_the_element_record() {
         // `COMPUTED <~T[0]` selects ONE back-reference record, not the whole
         // `array<record<T>>` the bare `<~T` yields.

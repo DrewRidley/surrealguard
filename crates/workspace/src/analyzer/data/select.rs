@@ -139,8 +139,24 @@ fn resolve_from_table(
                 Kind::Array(Box::new(row_kind), literal_limit(stmt))
             })
         }
-        // A parameter source is constrained to the known table names.
+        // A parameter source. When it is already bound to a concrete
+        // `record<T>` (e.g. a `record<T>` function parameter, or a narrowed
+        // `$x.parent`), that IS the source table — project against it like a
+        // plain table. `record<a|b>` unions and unbound params fall through to
+        // the host-param path below.
         ast::Expr::Param(param) => {
+            if let Some(Kind::Record(tables)) =
+                ctx.env().let_fact(param).and_then(|fact| fact.kind.clone())
+            {
+                if let [table] = tables.as_slice() {
+                    // Only a DEFINED table is a usable source. A dangling
+                    // `record<undefined>` is already flagged at its declaration
+                    // (E1001) — don't re-report it here; fall through to `Any`.
+                    if ctx.schema().tables.contains_key(&table.to_string()) {
+                        return Ok(table.to_string());
+                    }
+                }
+            }
             let tables: Vec<surrealdb_types::Value> = ctx
                 .schema()
                 .tables
