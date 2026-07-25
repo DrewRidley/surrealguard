@@ -3,11 +3,102 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Diagnostics — SurrealGuard Docs</title>
-<meta name="description" content="The contract-first diagnostic model and the eight code families: schema refs, types, graph, statement misuse, functions, parameters, lints, and version compatibility." />
+<title>Diagnostics & lints — SurrealGuard Docs</title>
+<meta name="description" content="The complete SurrealGuard diagnostic catalog: every code across eight families, with its default level (allow / warn / deny), what triggers it, and how to fix it." />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
 <link rel="stylesheet" href="/styles.css" />
 <link rel="stylesheet" href="/docs/docs.css" />
+<style>
+  /* ===== Diagnostics catalog — colorful family/level UI ===== */
+  .cat-legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 8px; }
+  .cat-legend .lg { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+
+  /* level chips: the rustc-style default policy */
+  .lvl {
+    display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono);
+    font-size: 10.5px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase;
+    padding: 2px 8px; border-radius: 100px; border: 1px solid transparent; white-space: nowrap;
+  }
+  .lvl::before { content: ""; width: 6px; height: 6px; border-radius: 50%; }
+  .lvl.deny  { color: var(--red); background: rgba(248,113,113,.12); border-color: rgba(248,113,113,.32); }
+  .lvl.deny::before  { background: var(--red); }
+  .lvl.warn  { color: var(--amber); background: rgba(251,191,36,.12); border-color: rgba(251,191,36,.32); }
+  .lvl.warn::before  { background: var(--amber); }
+  .lvl.allow { color: var(--faint); background: rgba(107,114,128,.14); border-color: var(--border); }
+  .lvl.allow::before { background: var(--faint); }
+
+  /* severity letter badge on the code */
+  .sevb {
+    display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 4px;
+    font-family: var(--mono); font-size: 10.5px; font-weight: 700; margin-right: 7px; vertical-align: -3px;
+  }
+  .sevb.e { color: var(--red); background: rgba(248,113,113,.14); }
+  .sevb.w { color: var(--amber); background: rgba(251,191,36,.14); }
+  .sevb.i { color: var(--accent-2); background: rgba(52,211,153,.14); }
+  td .cd { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; }
+
+  /* family section header cards */
+  .fam { margin: 38px 0 0; border-top: none; padding-top: 0; scroll-margin-top: 76px; }
+  .fam-head {
+    display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-radius: 12px 12px 0 0;
+    border: 1px solid var(--border); border-bottom: none;
+    background: linear-gradient(180deg, var(--fam-tint), transparent);
+  }
+  .fam-badge {
+    font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--fam);
+    border: 1px solid var(--fam-b); background: var(--fam-tint); border-radius: 8px; padding: 4px 10px; flex: none;
+  }
+  .fam-head .ft { font-size: 16px; font-weight: 640; color: var(--text); letter-spacing: -.01em; }
+  .fam-head .fc { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--faint); flex: none; }
+  .fam-desc { font-size: 14px; color: var(--muted); margin: 0; padding: 12px 18px 0; }
+
+  .fam .tbl-wrap { margin: 0 0 4px; border-radius: 0 0 12px 12px; border-top-left-radius: 0; border-top-right-radius: 0; border-top: none; }
+  .fam-1 { --fam:#7dd3fc; --fam-b:rgba(125,211,252,.34); --fam-tint:rgba(125,211,252,.08); }
+  .fam-2 { --fam:#b9afff; --fam-b:rgba(139,124,255,.34); --fam-tint:rgba(139,124,255,.08); }
+  .fam-3 { --fam:#5eead4; --fam-b:rgba(94,234,212,.34); --fam-tint:rgba(94,234,212,.08); }
+  .fam-4 { --fam:#93c5fd; --fam-b:rgba(147,197,253,.34); --fam-tint:rgba(147,197,253,.08); }
+  .fam-5 { --fam:#f0abfc; --fam-b:rgba(240,171,252,.34); --fam-tint:rgba(240,171,252,.08); }
+  .fam-6 { --fam:#fbbf24; --fam-b:rgba(251,191,36,.34); --fam-tint:rgba(251,191,36,.09); }
+  .fam-7 { --fam:#34d399; --fam-b:rgba(52,211,153,.34); --fam-tint:rgba(52,211,153,.08); }
+  .fam-8 { --fam:#fb923c; --fam-b:rgba(251,146,60,.34); --fam-tint:rgba(251,146,60,.09); }
+
+  .fam table td:nth-child(2) { white-space: nowrap; }
+  .fam table th:first-child, .fam table td:first-child { width: 92px; }
+
+  /* family jump nav */
+  .fam-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 6px; }
+  .fam-nav a {
+    font-family: var(--mono); font-size: 12px; color: var(--jc); text-decoration: none;
+    border: 1px solid var(--jb); background: var(--jt); border-radius: 8px; padding: 5px 11px;
+    display: inline-flex; align-items: center; gap: 7px; transition: transform .12s;
+  }
+  .fam-nav a:hover { transform: translateY(-1px); }
+  .fam-nav a b { font-weight: 600; color: var(--text); }
+  .fam-nav .n1 { --jc:#7dd3fc; --jb:rgba(125,211,252,.34); --jt:rgba(125,211,252,.07); }
+  .fam-nav .n2 { --jc:#b9afff; --jb:rgba(139,124,255,.34); --jt:rgba(139,124,255,.07); }
+  .fam-nav .n3 { --jc:#5eead4; --jb:rgba(94,234,212,.34); --jt:rgba(94,234,212,.07); }
+  .fam-nav .n4 { --jc:#93c5fd; --jb:rgba(147,197,253,.34); --jt:rgba(147,197,253,.07); }
+  .fam-nav .n5 { --jc:#f0abfc; --jb:rgba(240,171,252,.34); --jt:rgba(240,171,252,.07); }
+  .fam-nav .n6 { --jc:#fbbf24; --jb:rgba(251,191,36,.34); --jt:rgba(251,191,36,.08); }
+  .fam-nav .n7 { --jc:#34d399; --jb:rgba(52,211,153,.34); --jt:rgba(52,211,153,.07); }
+  .fam-nav .n8 { --jc:#fb923c; --jb:rgba(251,146,60,.34); --jt:rgba(251,146,60,.08); }
+
+  .fam table tbody td:first-child { color: var(--text); }
+  .fam table td .cd .num { color: var(--fam, var(--text)); }
+
+  /* light theme: darken the pastel family accents so badges/labels keep
+     contrast on a white page (tints/borders are rgba and work either way) */
+  @media (prefers-color-scheme: light) {
+    .fam-1, .fam-nav .n1 { --fam:#0284c7; --jc:#0284c7; }
+    .fam-2, .fam-nav .n2 { --fam:#5b4bde; --jc:#5b4bde; }
+    .fam-3, .fam-nav .n3 { --fam:#0d9488; --jc:#0d9488; }
+    .fam-4, .fam-nav .n4 { --fam:#2563eb; --jc:#2563eb; }
+    .fam-5, .fam-nav .n5 { --fam:#c026d3; --jc:#c026d3; }
+    .fam-6, .fam-nav .n6 { --fam:#b45309; --jc:#b45309; }
+    .fam-7, .fam-nav .n7 { --fam:#0d9b68; --jc:#0d9b68; }
+    .fam-8, .fam-nav .n8 { --fam:#ea580c; --jc:#ea580c; }
+  }
+</style>
 </head>
 <body>
 
@@ -33,7 +124,7 @@
     <div class="group">Reference</div>
     <nav>
       <a href="/docs/cli.html">CLI</a>
-      <a href="/docs/diagnostics.html" aria-current="page">Diagnostics</a>
+      <a href="/docs/diagnostics.html" aria-current="page">Diagnostics &amp; lints</a>
     </nav>
     <div class="group">Integrations</div>
     <nav>
@@ -45,177 +136,286 @@
 
   <main class="docs-main">
     <span class="eyebrow-doc">// reference</span>
-    <h1>Diagnostics</h1>
-    <p class="lead-p">Every construct in SurrealQL has a <strong>contract</strong> — what the author must mean for the statement to make sense. A diagnostic exists when that contract is provably violated, whether or not SurrealDB would run the query.</p>
+    <h1>Diagnostics &amp; lints</h1>
+    <p class="lead-p">Every construct in SurrealQL has a <strong>contract</strong> — what the author must mean for the statement to make sense. A diagnostic fires when that contract is provably violated, whether or not SurrealDB would run the query. This is the complete catalog: <strong>88 codes</strong> across eight families.</p>
 
     <h2>The contract-first model</h2>
     <ul>
       <li><strong>Contracts, not engine behavior.</strong> Whether SurrealDB throws, silently tolerates (kind-ordered comparisons), or coerces is irrelevant to severity — tolerated misuse is the reason this tool exists. One code per contract; variations of the same violation are message variants, never new codes.</li>
       <li><strong>Inference is never affected.</strong> A finding never changes an inferred type. <code>UPDATE person SET age = 'x'</code> still types as <code>person</code> rows; poison (<code>any</code>) appears only where the type is genuinely unknowable.</li>
-      <li><strong>Detection site = emission site.</strong> The analyzer that owns a statement emits its findings; composite analyzers learn about inner findings by span overlap.</li>
-      <li><strong>Statically provable only.</strong> Every code is checkable from source + schema. When a value is a host <em>parameter</em>, the check is exported as a <a class="link" href="#params">constraint</a> instead of emitted as a finding.</li>
+      <li><strong>Statically provable only.</strong> Every code is checkable from source + schema. When a value is a host <em>parameter</em>, the check is exported as a <a class="link" href="#fam-6">constraint</a> instead of emitted as a finding.</li>
     </ul>
 
-    <h2>Severity is intrinsic; policy at the edge</h2>
-    <p>Each finding carries an intrinsic severity — <strong>error</strong> (provably fails or misbehaves), <strong>warning</strong> (provably suspicious but executable), or <strong>hint</strong> (analyzer limitation or style note). Severity is <em>data</em>, not policy.</p>
-    <p>Consumers apply policy at their edge through the workspace config: <code>warnings_as_errors</code> promotion, per-lint <code>allow</code>/<code>warn</code>/<code>deny</code> levels. The CLI uses it for exit codes, the LSP for editor severities, host adapters for build failures. Errors are never demotable; lints are fully configurable.</p>
-    <p>In rendered output the code's letter reflects the <em>resolved</em> severity — <code>E</code>, <code>W</code>, or <code>I</code> — while parse-level findings keep an <code>S</code> prefix (e.g. <code>S0001</code>). A promoted warning renders as <code>E…</code>.</p>
+    <h2>Severity vs. level</h2>
+    <p>Every code carries two things. <strong>Severity</strong> is intrinsic data — <span class="sevb e">E</span> error (provably fails or misbehaves), <span class="sevb w">W</span> warning (provably suspicious but executable), or <span class="sevb i">I</span> hint (analyzer limitation or style note). The <strong>default level</strong> is the rustc-style policy a consumer applies when no <code>[lints]</code> override names the code:</p>
+    <div class="cat-legend">
+      <span class="lg"><span class="lvl deny">deny</span> reported as an error — fails <code>check</code>, blocks CI</span>
+      <span class="lg"><span class="lvl warn">warn</span> reported as a warning — surfaced, non-blocking</span>
+      <span class="lg"><span class="lvl allow">allow</span> off by default — opt in per project</span>
+    </div>
+    <p>Consumers apply policy at their edge: the CLI uses it for exit codes, the LSP for editor severities, host adapters for build failures. A <code>deny</code> can be relaxed to <code>warn</code>/<code>allow</code>, and an <code>allow</code> lint opted into, through the workspace <code>[lints]</code> table — errors that are genuine contract violations are the ones you'll want to keep denied. In rendered output the code's letter reflects the resolved severity (<code>E</code>/<code>W</code>/<code>I</code>); parse-level findings keep an <code>S</code> prefix (e.g. <code>S0001</code>).</p>
 
     <h3>In-source suppression</h3>
-    <p>A suppression comment is source-authored intent, so it applies at analysis time, rustc-style — the directive covers the next line (or its own line when trailing a statement), and a suppressed finding never leaves the pipeline. Blanket suppressions are rejected; a directive that violates its own contract is <code>7013</code>.</p>
+    <p>A suppression comment is source-authored intent, so it applies at analysis time, rustc-style — the directive covers the next line (or its own line when trailing a statement), and a suppressed finding never leaves the pipeline. It must name a real catalog code; blanket suppressions are rejected, and a directive that violates its own contract (unknown code, or a missing <code>reason</code> where one is required) is <a class="link" href="#fam-7">7013</a>.</p>
     <pre class="code"><span class="c">-- surrealguard: allow(E1001) reason="table created by a migration tool at runtime"</span>
-<span class="k">SELECT</span> * <span class="k">FROM</span> external_table;</pre>
+<span class="k">SELECT</span> * <span class="k">FROM</span> external_table;
+
+<span class="k">SELECT</span> ssn <span class="k">FROM</span> user; <span class="c">-- surrealguard: allow(1002) reason="column added out-of-band"</span></pre>
+    <p>The directive accepts a code with or without its severity letter (<code>allow(E1001)</code> or <code>allow(1001)</code>). A <code>reason="…"</code> is required for any <code>deny</code>-level code so the waiver is self-documenting.</p>
 
     <div class="callout">
-      <strong>Flow-sensitive analysis.</strong> Several contracts are checked with occurrence typing rather than a purely local rule. The analyzer narrows <code>option&lt;T&gt;</code> and <code>record&lt;A|B&gt;</code> unions through <code>= NONE</code> guards and <code>type::table()</code> discriminants (including along field paths), so a branch sees the narrowed type and code after a diverging branch is flagged as unreachable (<code>4006</code>). It also reads inside <code>PERMISSIONS FOR</code> clauses — undefined fields, undefined <code>fn::</code> calls, non-boolean results, and always-false predicates — and catches comparison footguns: <code>= NONE</code>/<code>= NULL</code> against a kind that excludes it, <code>IN</code>/<code>CONTAINS</code> element-kind mismatches, and equality between record links whose tables can't overlap.
+      <strong>Flow-sensitive analysis.</strong> Several contracts are checked with occurrence typing rather than a purely local rule. The analyzer narrows <code>option&lt;T&gt;</code> and <code>record&lt;A|B&gt;</code> unions through <code>= NONE</code> guards and <code>type::table()</code> discriminants (including along field paths), so a branch sees the narrowed type — and a branch after a diverging one is flagged unreachable (<a class="link" href="#fam-4">4006</a>), a provably-constant guard folds to a dead branch (<a class="link" href="#fam-4">4024</a>). It also reads inside <code>PERMISSIONS FOR</code> clauses — undefined fields, undefined <code>fn::</code> calls, non-boolean results, always-false predicates — and catches comparison footguns: <code>= NONE</code>/<code>= NULL</code> against a kind that excludes it, <code>IN</code>/<code>CONTAINS</code> element-kind mismatches, and equality between record links whose tables can't overlap.
     </div>
 
-    <h2>The code scheme</h2>
-    <p>Codes are <code>&lt;family&gt;&lt;3 digits&gt;</code>, families numbered by category. The <code>E</code>/<code>W</code>/<code>I</code> prefix comes from severity at render time, not the code itself.</p>
-    <div class="pill-row">
-      <span class="p">0xxx syntax</span>
-      <span class="p">1xxx schema</span>
-      <span class="p">2xxx types</span>
-      <span class="p">3xxx graph</span>
-      <span class="p">4xxx statement</span>
-      <span class="p">5xxx functions</span>
-      <span class="p">6xxx parameters</span>
-      <span class="p">7xxx lints</span>
-      <span class="p">8xxx compat</span>
+    <h2>Graph edge-filter <code>WHERE</code></h2>
+    <p>A graph step may carry an inline predicate that filters the edge (or target) rows during traversal. SurrealGuard supports both spellings and type-checks the predicate <strong>against the fields of the filtered table</strong> — exactly as it would a top-level <code>WHERE</code>:</p>
+    <pre class="code"><span class="c">-- parenthesised edge filter</span>
+<span class="k">SELECT</span> -&gt;(likes <span class="k">WHERE</span> strength &gt; <span class="n">3</span>)-&gt;post <span class="k">FROM</span> user;
+
+<span class="c">-- bracketed edge filter (equivalent)</span>
+<span class="k">SELECT</span> -&gt;likes[<span class="k">WHERE</span> strength &gt; <span class="n">3</span>]-&gt;post <span class="k">FROM</span> user;</pre>
+    <p>The predicate is resolved in the scope of the <code>likes</code> edge table, so:</p>
+    <ul>
+      <li>an unknown field in the filter is <a class="link" href="#fam-1">1002</a> (<code>WHERE stength &gt; 3</code> → no field <code>stength</code> on <code>likes</code>);</li>
+      <li>a non-boolean predicate is <a class="link" href="#fam-2">2005</a> (<code>WHERE strength</code> where <code>strength</code> is <code>int</code>);</li>
+      <li>a comparison the field's kind can never satisfy is <a class="link" href="#fam-7">7005</a>;</li>
+      <li>calls and operators inside the filter are checked like anywhere else (<a class="link" href="#fam-5">5xxx</a>, <a class="link" href="#fam-2">2004</a>).</li>
+    </ul>
+
+    <h2>The eight families</h2>
+    <p>Codes are <code>&lt;family&gt;&lt;3 digits&gt;</code>. Jump to a family, or read the full catalog below — every code, its default level, and what trips it.</p>
+    <div class="fam-nav">
+      <a class="n1" href="#fam-1"><b>1xxx</b> schema · 11</a>
+      <a class="n2" href="#fam-2"><b>2xxx</b> types · 23</a>
+      <a class="n3" href="#fam-3"><b>3xxx</b> graph · 5</a>
+      <a class="n4" href="#fam-4"><b>4xxx</b> statement · 21</a>
+      <a class="n5" href="#fam-5"><b>5xxx</b> functions · 5</a>
+      <a class="n6" href="#fam-6"><b>6xxx</b> params · 7</a>
+      <a class="n7" href="#fam-7"><b>7xxx</b> lints · 14</a>
+      <a class="n8" href="#fam-8"><b>8xxx</b> compat · 2</a>
     </div>
-    <p>Roughly 85 contracts span eight families (0xxx syntax is emitted by the parser). Representative codes below — the catalog folds message variants into one code per contract, so numbers you don't see are usually variants, not gaps.</p>
 
-    <h2>1xxx — Schema references</h2>
-    <p>Contract: every name a query uses must resolve against the schema, wherever the schema constrains it.</p>
-    <div class="tbl-wrap"><table>
-      <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
-      <tbody>
-        <tr><td>1001</td><td>E</td><td>A table reference names a known table (FROM/targets, RELATE endpoints, <code>record&lt;t&gt;</code>, <code>DEFINE … ON</code>).</td></tr>
-        <tr><td>1002</td><td>E</td><td>A field reference names a declared field of its row's table (schemafull only; FLEXIBLE subtrees exempt).</td></tr>
-        <tr><td>1012</td><td>E</td><td>A schema-object reference names a known object of that kind (REMOVE/REBUILD INDEX, REMOVE EVENT, analyzers).</td></tr>
-        <tr><td>1021</td><td>W</td><td>REMOVE removes something that exists.</td></tr>
-        <tr><td>1022</td><td>W</td><td>A definition does not silently redefine (use OVERWRITE to state intent).</td></tr>
-        <tr><td>1023</td><td>E</td><td>FETCH names something that can hold records.</td></tr>
-        <tr><td>1025</td><td>E</td><td>A subfield is declared under an object-shaped parent.</td></tr>
-        <tr><td>1027</td><td>E</td><td>An index-backed operator has its supporting index (<code>@@</code>/search needs a SEARCH index; <code>&lt;|k|&gt;</code> needs MTREE/HNSW).</td></tr>
-        <tr><td>1032</td><td>E</td><td>DEFINE ANALYZER components name known tokenizers, filters, and languages.</td></tr>
-      </tbody>
-    </table></div>
+    <!-- ============ 1xxx ============ -->
+    <section class="fam fam-1" id="fam-1">
+      <div class="fam-head">
+        <span class="fam-badge">1xxx</span>
+        <span class="ft">Schema references</span>
+        <span class="fc">11 codes</span>
+      </div>
+      <p class="fam-desc">Every name a query uses must resolve against the schema, wherever the schema constrains it.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Code</th><th>Level</th><th>Contract &amp; trigger</th></tr></thead>
+        <tbody>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">1001</span></span></td><td><span class="lvl deny">deny</span></td><td>A table reference names a known table — FROM/targets, RELATE endpoints, <code>record&lt;t&gt;</code>, <code>DEFINE … ON</code>. <em>Fix:</em> correct the name or DEFINE the table.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">1002</span></span></td><td><span class="lvl deny">deny</span></td><td>A field reference names a declared field of its row's table (schemafull only; FLEXIBLE subtrees exempt). <em>Fix:</em> use a declared field or DEFINE it.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">1012</span></span></td><td><span class="lvl deny">deny</span></td><td>A schema-object reference names a known object of that kind — REMOVE/REBUILD INDEX, REMOVE EVENT, analyzers.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">1021</span></span></td><td><span class="lvl warn">warn</span></td><td>REMOVE removes something that exists. <em>Fix:</em> add IF EXISTS, or the target is a typo.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">1022</span></span></td><td><span class="lvl warn">warn</span></td><td>A definition does not silently redefine an existing object. <em>Fix:</em> add OVERWRITE to state the intent.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">1023</span></span></td><td><span class="lvl warn">warn</span></td><td>FETCH names something that can hold records (a <code>record</code> field or link), not a scalar.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">1024</span></span></td><td><span class="lvl warn">warn</span></td><td>SPLIT names a collection field (array/set), so there is something to split on.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">1025</span></span></td><td><span class="lvl deny">deny</span></td><td>A subfield is declared under an object-shaped parent — <code>DEFINE FIELD a.b</code> requires <code>a</code> to be an object.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">1027</span></span></td><td><span class="lvl deny">deny</span></td><td>An index-backed operator has its supporting index — <code>@@</code>/search needs a SEARCH index; <code>&lt;|k|&gt;</code> needs MTREE/HNSW.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">1029</span></span></td><td><span class="lvl warn">warn</span></td><td>Each index covers a distinct field set — two indexes on the same columns are redundant.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">1032</span></span></td><td><span class="lvl deny">deny</span></td><td>DEFINE ANALYZER components name known tokenizers, filters, and languages.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
 
-    <h2>2xxx — Types and nullability</h2>
-    <div class="tbl-wrap"><table>
-      <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
-      <tbody>
-        <tr><td>2001</td><td>E</td><td>A value written to a field inhabits the field's declared type (SET, CONTENT/MERGE/REPLACE, INSERT, DEFAULT/VALUE, record links, NONE into non-optional).</td></tr>
-        <tr><td>2004</td><td>E</td><td>The operands make sense together for the operator (binary/unary, arithmetic/comparison, compound assignment).</td></tr>
-        <tr><td>2005</td><td>W</td><td>A condition position expects a boolean (IF, ASSERT, bare WHERE).</td></tr>
-        <tr><td>2007</td><td>E</td><td>A cast names a known type (<code>&lt;ghost&gt; x</code>).</td></tr>
-        <tr><td>2008</td><td>E</td><td>A conversion can succeed (<code>&lt;int&gt; 'abc'</code>, <code>type::int('x')</code>).</td></tr>
-        <tr><td>2018</td><td>E</td><td>LIMIT/START take a non-negative integer.</td></tr>
-        <tr><td>2019</td><td>E</td><td>TIMEOUT takes a duration.</td></tr>
-        <tr><td>2020</td><td>E</td><td>KILL takes a live-query uuid.</td></tr>
-        <tr><td>2021</td><td>E</td><td>SHOW SINCE takes a versionstamp or datetime.</td></tr>
-        <tr><td>2025</td><td>E</td><td>READONLY fields are written only at creation.</td></tr>
-        <tr><td>2034</td><td>E</td><td>Required fields are provided at creation (<code>CREATE person;</code> with a non-optional, no-DEFAULT field).</td></tr>
-        <tr><td>2035</td><td>E</td><td>DEFINE ANALYZER filter arguments are valid.</td></tr>
-        <tr><td>2037</td><td>E</td><td>A field's DEFAULT satisfies its own ASSERT.</td></tr>
-      </tbody>
-    </table></div>
+    <!-- ============ 2xxx ============ -->
+    <section class="fam fam-2" id="fam-2">
+      <div class="fam-head">
+        <span class="fam-badge">2xxx</span>
+        <span class="ft">Types &amp; nullability</span>
+        <span class="fc">23 codes</span>
+      </div>
+      <p class="fam-desc">Values must inhabit the kinds their position demands; operators, casts, and clauses require operands they can act on.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Code</th><th>Level</th><th>Contract &amp; trigger</th></tr></thead>
+        <tbody>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2001</span></span></td><td><span class="lvl deny">deny</span></td><td>A value written to a field inhabits the field's declared type — SET, CONTENT/MERGE/REPLACE, INSERT, DEFAULT/VALUE, record links, NONE into non-optional.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2004</span></span></td><td><span class="lvl deny">deny</span></td><td>The operands make sense together for the operator — binary/unary, arithmetic/comparison, compound assignment (<code>age + name</code>).</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">2005</span></span></td><td><span class="lvl warn">warn</span></td><td>A condition position expects a boolean — IF, ASSERT, bare WHERE, edge-filter WHERE.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2007</span></span></td><td><span class="lvl deny">deny</span></td><td>A cast names a known type — <code>&lt;ghost&gt; x</code> names no such kind.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2008</span></span></td><td><span class="lvl deny">deny</span></td><td>A conversion can succeed — <code>&lt;int&gt; 'abc'</code>, <code>type::int('x')</code> provably fail.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2012</span></span></td><td><span class="lvl deny">deny</span></td><td>A body returns what it declares — a <code>DEFINE FUNCTION … -&gt; T</code> whose body can't produce <code>T</code>.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">2015</span></span></td><td><span class="lvl warn">warn</span></td><td>A value-requiring position gets a value that is always present — e.g. an <code>option&lt;T&gt;</code> used where a non-optional is needed.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2017</span></span></td><td><span class="lvl deny">deny</span></td><td>ORDER BY keys name fields available on the result rows (or RAND()).</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2018</span></span></td><td><span class="lvl deny">deny</span></td><td>LIMIT/START take a non-negative integer.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2019</span></span></td><td><span class="lvl deny">deny</span></td><td>TIMEOUT takes a duration.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2020</span></span></td><td><span class="lvl deny">deny</span></td><td>KILL takes a live-query uuid.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2021</span></span></td><td><span class="lvl deny">deny</span></td><td>SHOW SINCE takes a versionstamp or datetime.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2022</span></span></td><td><span class="lvl deny">deny</span></td><td>FOR iterates something iterable — an array/set/range, not a scalar.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2025</span></span></td><td><span class="lvl deny">deny</span></td><td>READONLY fields are written only at creation, never in a later UPDATE/SET.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">2026</span></span></td><td><span class="lvl warn">warn</span></td><td>Computed (VALUE-clause) fields are not hand-assigned — the assignment is overwritten by the computed value.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2030</span></span></td><td><span class="lvl deny">deny</span></td><td>Index/filter/splat apply to collections — <code>x[0]</code>, <code>x[WHERE …]</code>, <code>x.*</code> require an array/object.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2031</span></span></td><td><span class="lvl deny">deny</span></td><td>A regex literal compiles.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2032</span></span></td><td><span class="lvl deny">deny</span></td><td>Literal content is valid for its kind — a malformed <code>uuid</code>/<code>datetime</code>/<code>record</code> literal.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2033</span></span></td><td><span class="lvl deny">deny</span></td><td>PATCH operations are well-formed (valid op, path, and value).</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2034</span></span></td><td><span class="lvl deny">deny</span></td><td>Required fields are provided at creation — <code>CREATE person;</code> with a non-optional, no-DEFAULT field.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2035</span></span></td><td><span class="lvl deny">deny</span></td><td>DEFINE ANALYZER filter arguments are valid.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2036</span></span></td><td><span class="lvl deny">deny</span></td><td>GeoJSON literals have their declared shape (correct type + coordinates).</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2037</span></span></td><td><span class="lvl deny">deny</span></td><td>A field's DEFAULT satisfies its own ASSERT.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
 
-    <h2>3xxx — Graph and relations</h2>
-    <p>Contract: a traversal or RELATE must use relations as declared (<code>in</code>-&gt;edge-&gt;<code>out</code>).</p>
-    <div class="tbl-wrap"><table>
-      <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
-      <tbody>
-        <tr><td>3001</td><td>E</td><td>A step traverses a relation table (not a plain table).</td></tr>
-        <tr><td>3002</td><td>E</td><td>The usage matches the relation's declared shape — wrong direction, hop landing off the far side, RELATE writing endpoints on the wrong sides.</td></tr>
-        <tr><td>3004</td><td>E</td><td>A FROM-position chain is complete (edge-&gt;target pairs).</td></tr>
-        <tr><td>3009</td><td>E</td><td>A traversal starts from records.</td></tr>
-        <tr><td>3011</td><td>W</td><td>Graph recursion is bounded (<code>@{..}</code> with no upper bound).</td></tr>
-      </tbody>
-    </table></div>
+    <!-- ============ 3xxx ============ -->
+    <section class="fam fam-3" id="fam-3">
+      <div class="fam-head">
+        <span class="fam-badge">3xxx</span>
+        <span class="ft">Graph &amp; relations</span>
+        <span class="fc">5 codes</span>
+      </div>
+      <p class="fam-desc">A traversal or RELATE must use relations as declared — <code>in</code>-&gt;edge-&gt;<code>out</code>.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Code</th><th>Level</th><th>Contract &amp; trigger</th></tr></thead>
+        <tbody>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">3001</span></span></td><td><span class="lvl deny">deny</span></td><td>A step traverses a relation table (not a plain table).</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">3002</span></span></td><td><span class="lvl deny">deny</span></td><td>The usage matches the relation's declared shape — wrong direction, a hop landing off the far side, RELATE writing endpoints on the wrong sides.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">3004</span></span></td><td><span class="lvl warn">warn</span></td><td>A FROM-position chain is complete (edge-&gt;target pairs), not left dangling.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">3009</span></span></td><td><span class="lvl deny">deny</span></td><td>A traversal starts from records, not a scalar or table name.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">3011</span></span></td><td><span class="lvl warn">warn</span></td><td>Graph recursion is bounded — <code>@{..}</code> with no upper bound can run away.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
 
-    <h2>4xxx — Statement and clause misuse</h2>
-    <div class="tbl-wrap"><table>
-      <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
-      <tbody>
-        <tr><td>4001</td><td>E</td><td>Clause is valid on this statement (<code>SELECT … RETURN NONE</code>, <code>CREATE … WHERE</code>).</td></tr>
-        <tr><td>4003</td><td>E</td><td>ONLY on a table-wide target needs LIMIT 1 (deterministic <code>SingleOnlyOutput</code> error).</td></tr>
-        <tr><td>4005</td><td>E</td><td>BREAK/CONTINUE only inside a loop.</td></tr>
-        <tr><td>4007</td><td>E</td><td>Transaction pairing: BEGIN opens exactly one transaction that COMMIT/CANCEL closes.</td></tr>
-        <tr><td>4009</td><td>E</td><td>LIVE SELECT with an unsupported clause.</td></tr>
-        <tr><td>4010</td><td>W</td><td>No duplicate SET target in one statement.</td></tr>
-        <tr><td>4012</td><td>W</td><td>OMIT without a wildcard projection.</td></tr>
-        <tr><td>4013</td><td>W</td><td>GROUP BY field not in projections.</td></tr>
-        <tr><td>4016</td><td>I</td><td>Empty block.</td></tr>
-        <tr><td>4020</td><td>W</td><td>RETURN mode meaningless for the statement.</td></tr>
-        <tr><td>4022</td><td>W</td><td>SELECT from a DROP table (rows are never retained).</td></tr>
-        <tr><td>4023</td><td>W</td><td><code>count()</code> without GROUP BY yields 1 per row, not a total.</td></tr>
-      </tbody>
-    </table></div>
+    <!-- ============ 4xxx ============ -->
+    <section class="fam fam-4" id="fam-4">
+      <div class="fam-head">
+        <span class="fam-badge">4xxx</span>
+        <span class="ft">Statement &amp; clause / flow</span>
+        <span class="fc">21 codes</span>
+      </div>
+      <p class="fam-desc">Clauses must be valid on their statement, and control flow must be well-formed and reachable.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Code</th><th>Level</th><th>Contract &amp; trigger</th></tr></thead>
+        <tbody>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4001</span></span></td><td><span class="lvl deny">deny</span></td><td>Clause is valid on this statement — <code>SELECT … RETURN NONE</code>, <code>CREATE … WHERE</code>.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4002</span></span></td><td><span class="lvl deny">deny</span></td><td>SELECT VALUE has exactly one projection.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4003</span></span></td><td><span class="lvl deny">deny</span></td><td>ONLY on a table-wide target needs LIMIT 1 (deterministic <code>SingleOnlyOutput</code> error).</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4004</span></span></td><td><span class="lvl deny">deny</span></td><td>INSERT tuple column/value counts match.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4005</span></span></td><td><span class="lvl deny">deny</span></td><td>BREAK/CONTINUE only inside a loop.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4006</span></span></td><td><span class="lvl warn">warn</span></td><td>Unreachable statements after RETURN/BREAK/THROW.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4007</span></span></td><td><span class="lvl deny">deny</span></td><td>Transaction pairing: BEGIN opens exactly one transaction that COMMIT/CANCEL closes.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4009</span></span></td><td><span class="lvl deny">deny</span></td><td>LIVE SELECT with an unsupported clause.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4010</span></span></td><td><span class="lvl warn">warn</span></td><td>No duplicate SET target in one statement.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4011</span></span></td><td><span class="lvl warn">warn</span></td><td>No duplicate projection key/alias.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4012</span></span></td><td><span class="lvl warn">warn</span></td><td>OMIT without a wildcard projection has nothing to omit from.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4013</span></span></td><td><span class="lvl warn">warn</span></td><td>GROUP BY field not in projections.</td></tr>
+          <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">4016</span></span></td><td><span class="lvl allow">allow</span></td><td>Empty block.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4017</span></span></td><td><span class="lvl warn">warn</span></td><td>Block ends with LET — its value is NONE, likely a forgotten RETURN.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4018</span></span></td><td><span class="lvl warn">warn</span></td><td>Side-effecting subquery in a read position.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4019</span></span></td><td><span class="lvl warn">warn</span></td><td>CREATE/INSERT on a relation table without <code>in</code>/<code>out</code>.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4020</span></span></td><td><span class="lvl warn">warn</span></td><td>RETURN mode is meaningless for the statement.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4021</span></span></td><td><span class="lvl warn">warn</span></td><td>SHOW CHANGES on a table without CHANGEFEED returns nothing.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4022</span></span></td><td><span class="lvl warn">warn</span></td><td>SELECT from a DROP table (rows are never retained).</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4023</span></span></td><td><span class="lvl warn">warn</span></td><td><code>count()</code> without GROUP BY yields 1 per row, not a total.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4024</span></span></td><td><span class="lvl warn">warn</span></td><td>An IF branch is unreachable — its guard provably folds to a constant.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
 
-    <h2>5xxx — Functions and closures</h2>
-    <div class="tbl-wrap"><table>
-      <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
-      <tbody>
-        <tr><td>5001</td><td>E</td><td>A call resolves to a function that exists (unknown builtins, undefined <code>fn::</code>, methods unavailable on the receiver's kind).</td></tr>
-        <tr><td>5002</td><td>E</td><td>A call matches the function's signature (arity, per-argument kinds, <code>fn::</code> declared params, closure arity).</td></tr>
-        <tr><td>5005</td><td>E</td><td>A const argument satisfies the function's value contract (<code>type::field('aeg')</code> naming no field, <code>type::thing('ghost', …)</code>).</td></tr>
-        <tr><td>5009</td><td>W</td><td><code>fn::</code> definitions terminate (no direct/mutual recursion cycles).</td></tr>
-        <tr><td>5010</td><td>W</td><td>Events do not trigger themselves, directly or in a cycle.</td></tr>
-      </tbody>
-    </table></div>
+    <!-- ============ 5xxx ============ -->
+    <section class="fam fam-5" id="fam-5">
+      <div class="fam-head">
+        <span class="fam-badge">5xxx</span>
+        <span class="ft">Functions &amp; closures</span>
+        <span class="fc">5 codes</span>
+      </div>
+      <p class="fam-desc">Calls must resolve, match their signature, and terminate.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Code</th><th>Level</th><th>Contract &amp; trigger</th></tr></thead>
+        <tbody>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">5001</span></span></td><td><span class="lvl deny">deny</span></td><td>A call resolves to a function that exists — unknown builtins, undefined <code>fn::</code>, methods unavailable on the receiver's kind.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">5002</span></span></td><td><span class="lvl deny">deny</span></td><td>A call matches the function's signature — arity, per-argument kinds, <code>fn::</code> declared params, closure arity.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">5005</span></span></td><td><span class="lvl deny">deny</span></td><td>A const argument satisfies the function's value contract — <code>type::field('aeg')</code> naming no field, <code>type::thing('ghost', …)</code>.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">5009</span></span></td><td><span class="lvl warn">warn</span></td><td><code>fn::</code> definitions terminate (no direct/mutual recursion cycles).</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">5010</span></span></td><td><span class="lvl warn">warn</span></td><td>Events do not trigger themselves, directly or in a cycle.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
 
-    <h2 id="params">6xxx — Parameters</h2>
-    <p>A <code>$param</code> used in a checkable position produces a <strong>constraint</strong> that host adapters discharge, not a finding. Findings here fire only on contradictions and misuse.</p>
-    <div class="tbl-wrap"><table>
-      <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
-      <tbody>
-        <tr><td>6001</td><td>E</td><td>Constraints on one param unify — <code>WHERE $x &gt; 3 AND $x = 'abc'</code> has no satisfying value.</td></tr>
-        <tr><td>6003</td><td>I</td><td>Unresolvable dynamic construct (analyzer limitation).</td></tr>
-        <tr><td>6004</td><td>W</td><td>A param is not used before its LET in source order.</td></tr>
-        <tr><td>6005</td><td>E</td><td>A context param is used inside its context (<code>$before</code> outside an event, <code>$parent</code> outside a subquery).</td></tr>
-        <tr><td>6007</td><td>E</td><td>No assignment to a protected parameter (<code>$auth</code>, <code>$session</code>, <code>$token</code>, <code>$this</code>, …).</td></tr>
-      </tbody>
-    </table></div>
-    <p>Every use of an unbound <code>$param</code> exports the kind and value domain its uses imply — <code>SET age = $age</code> → <code>$age: int</code>; <code>string::len($s)</code> → <code>$s: string</code>; <code>LIMIT $n</code> → <code>$n: int</code> and <code>n &gt;= 0</code>; <code>type::field($f)</code> → <code>$f: string</code> and the value must be one of the table's field paths. Constraints from multiple uses intersect; an empty intersection is <code>6001</code>. Host adapters (the <a class="link" href="/docs/rust.html">Rust macro</a> and <a class="link" href="/docs/typescript.html">TS codegen</a>) enforce them at the call site.</p>
+    <!-- ============ 6xxx ============ -->
+    <section class="fam fam-6" id="fam-6">
+      <div class="fam-head">
+        <span class="fam-badge">6xxx</span>
+        <span class="ft">Parameters</span>
+        <span class="fc">7 codes</span>
+      </div>
+      <p class="fam-desc">A <code>$param</code> in a checkable position produces a <strong>constraint</strong> host adapters discharge, not a finding. Codes here fire only on contradictions and misuse.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Code</th><th>Level</th><th>Contract &amp; trigger</th></tr></thead>
+        <tbody>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">6001</span></span></td><td><span class="lvl deny">deny</span></td><td>Constraints on one param unify — <code>WHERE $x &gt; 3 AND $x = 'abc'</code> has no satisfying value.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">6002</span></span></td><td><span class="lvl warn">warn</span></td><td>A param does not shadow a DEFINE PARAM of a different kind.</td></tr>
+          <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">6003</span></span></td><td><span class="lvl allow">allow</span></td><td>Unresolvable dynamic construct (analyzer limitation) — flagged so you know a spot went unchecked.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">6004</span></span></td><td><span class="lvl warn">warn</span></td><td>A param is not used before its LET in source order.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">6005</span></span></td><td><span class="lvl deny">deny</span></td><td>A context param is used inside its context — <code>$before</code> outside an event, <code>$parent</code> outside a subquery.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">6006</span></span></td><td><span class="lvl deny">deny</span></td><td>A host-declared type does not contradict a query constraint — the caller's annotation must satisfy what the query needs.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">6007</span></span></td><td><span class="lvl deny">deny</span></td><td>No assignment to a protected parameter — <code>$auth</code>, <code>$session</code>, <code>$token</code>, <code>$this</code>, …</td></tr>
+        </tbody>
+      </table></div>
+      <p>Every use of an unbound <code>$param</code> exports the kind and value domain its uses imply — <code>SET age = $age</code> → <code>$age: int</code>; <code>string::len($s)</code> → <code>$s: string</code>; <code>LIMIT $n</code> → <code>$n: int</code> and <code>n &gt;= 0</code>; <code>type::field($f)</code> → <code>$f: string</code> and one of the table's field paths. Constraints from multiple uses intersect; an empty intersection is <code>6001</code>. Host adapters (the <a class="link" href="/docs/rust.html">Rust macro</a> and <a class="link" href="/docs/typescript.html">TS codegen</a>) enforce them at the call site.</p>
+      <h3>Context parameters</h3>
+      <p>SurrealQL injects parameters by context; the analyzer models them as implicitly bound, with kinds where the context defines them — so their bodies type-check and using one outside its context is <code>6005</code>.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Param</th><th>Context</th><th>Kind</th></tr></thead>
+        <tbody>
+          <tr><td><code>$this</code></td><td>any row scope</td><td>current row (table's object type)</td></tr>
+          <tr><td><code>$parent</code></td><td>subquery</td><td>enclosing row</td></tr>
+          <tr><td><code>$event</code></td><td>DEFINE EVENT</td><td><code>'CREATE' | 'UPDATE' | 'DELETE'</code></td></tr>
+          <tr><td><code>$before, $after</code></td><td>DEFINE EVENT</td><td>the table's row type</td></tr>
+          <tr><td><code>$value, $input</code></td><td>EVENT / FIELD VALUE·ASSERT</td><td>event row / the field's declared type</td></tr>
+          <tr><td><code>$auth, $session, $token, $scope</code></td><td>permissions / anywhere</td><td>session-shaped objects (open)</td></tr>
+        </tbody>
+      </table></div>
+    </section>
 
-    <h3>Context parameters</h3>
-    <p>SurrealQL injects parameters by context; the analyzer models them as implicitly bound, with kinds where the context defines them — so their bodies type-check and using one outside its context is <code>6005</code>.</p>
-    <div class="tbl-wrap"><table>
-      <thead><tr><th>Param</th><th>Context</th><th>Kind</th></tr></thead>
-      <tbody>
-        <tr><td>$this</td><td>any row scope</td><td>current row (table's object type)</td></tr>
-        <tr><td>$parent</td><td>subquery</td><td>enclosing row</td></tr>
-        <tr><td>$event</td><td>DEFINE EVENT</td><td><code>'CREATE' | 'UPDATE' | 'DELETE'</code></td></tr>
-        <tr><td>$before, $after</td><td>DEFINE EVENT</td><td>the table's row type</td></tr>
-        <tr><td>$value, $input</td><td>EVENT / FIELD VALUE·ASSERT</td><td>event row / the field's declared type</td></tr>
-        <tr><td>$auth, $session, $token, $scope</td><td>permissions / anywhere</td><td>session-shaped objects (open)</td></tr>
-      </tbody>
-    </table></div>
+    <!-- ============ 7xxx ============ -->
+    <section class="fam fam-7" id="fam-7">
+      <div class="fam-head">
+        <span class="fam-badge">7xxx</span>
+        <span class="ft">Lints &amp; style</span>
+        <span class="fc">14 codes</span>
+      </div>
+      <p class="fam-desc">Opinions, not contract violations — many ship <span class="lvl allow">allow</span> so you opt into the ones your team wants. All configurable via <code>[lints]</code>.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Code</th><th>Level</th><th>Contract &amp; trigger</th></tr></thead>
+        <tbody>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7001</span></span></td><td><span class="lvl warn">warn</span></td><td>Unused LET binding.</td></tr>
+          <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">7002</span></span></td><td><span class="lvl allow">allow</span></td><td>LET shadowing an outer binding.</td></tr>
+          <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">7003</span></span></td><td><span class="lvl allow">allow</span></td><td>Mixed-kind array literal.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7004</span></span></td><td><span class="lvl warn">warn</span></td><td>Control flow decided by a constant — <code>IF true</code>, <code>WHERE 1 = 1</code>, <code>FOR $x IN []</code>.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7005</span></span></td><td><span class="lvl warn">warn</span></td><td>A comparison against a closed literal set can never match — <code>WHEN $event = 'CRATE'</code>.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7006</span></span></td><td><span class="lvl warn">warn</span></td><td>Empty IN/CONTAINS list — the predicate is trivially false.</td></tr>
+          <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">7007</span></span></td><td><span class="lvl warn">warn</span></td><td><code>SELECT *</code> alongside explicit fields.</td></tr>
+          <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">7008</span></span></td><td><span class="lvl allow">allow</span></td><td>Schemaless table in an otherwise typed workspace.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7009</span></span></td><td><span class="lvl allow">allow</span></td><td>Whole-table UPDATE/DELETE without WHERE.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7011</span></span></td><td><span class="lvl warn">warn</span></td><td>Assignment to <code>id</code> in SET.</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7012</span></span></td><td><span class="lvl warn">warn</span></td><td>Blocking or side-effecting call in a computed context (VALUE/DEFAULT/ASSERT).</td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7013</span></span></td><td><span class="lvl warn">warn</span></td><td>A suppression directive names a catalog code (with a reason when required).</td></tr>
+          <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">7014</span></span></td><td><span class="lvl allow">allow</span></td><td>Whole-table SELECT without WHERE/LIMIT.</td></tr>
+          <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">7015</span></span></td><td><span class="lvl allow">allow</span></td><td>Bare <code>SELECT *</code> — over-fetch / schema-drift brittleness.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
 
-    <h2>7xxx — Lints</h2>
-    <div class="tbl-wrap"><table>
-      <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
-      <tbody>
-        <tr><td>7001</td><td>W</td><td>Unused LET binding.</td></tr>
-        <tr><td>7004</td><td>W</td><td>Control flow decided by a constant (<code>IF true</code>, <code>WHERE 1 = 1</code>, <code>FOR $x IN []</code>).</td></tr>
-        <tr><td>7005</td><td>W</td><td>A comparison against a closed literal set can never match (<code>WHEN $event = 'CRATE'</code>).</td></tr>
-        <tr><td>7007</td><td>I</td><td><code>SELECT *</code> alongside explicit fields.</td></tr>
-        <tr><td>7009</td><td>W</td><td>Whole-table UPDATE/DELETE without WHERE.</td></tr>
-        <tr><td>7013</td><td>W</td><td>A suppression directive names a catalog code (with a reason when required).</td></tr>
-      </tbody>
-    </table></div>
-
-    <h2>8xxx — Version compatibility</h2>
-    <p>Gated on <code>[analysis] surrealdb_version</code>. Checks resolve against a per-version registry of function availability and syntax support.</p>
-    <div class="tbl-wrap"><table>
-      <thead><tr><th>Code</th><th>Sev</th><th>Contract</th></tr></thead>
-      <tbody>
-        <tr><td>8001</td><td>E</td><td>Every function used exists in the configured target version (unavailable or renamed — the message suggests the new name).</td></tr>
-        <tr><td>8003</td><td>E</td><td>Syntax requires a newer version (closures, <code>??</code> on old targets).</td></tr>
-      </tbody>
-    </table></div>
+    <!-- ============ 8xxx ============ -->
+    <section class="fam fam-8" id="fam-8">
+      <div class="fam-head">
+        <span class="fam-badge">8xxx</span>
+        <span class="ft">Version compatibility</span>
+        <span class="fc">2 codes</span>
+      </div>
+      <p class="fam-desc">Gated on <code>[analysis] surrealdb_version</code>. Checks resolve against a per-version registry of function availability and syntax support.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Code</th><th>Level</th><th>Contract &amp; trigger</th></tr></thead>
+        <tbody>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">8001</span></span></td><td><span class="lvl deny">deny</span></td><td>Every function used exists in the configured target version — unavailable or renamed; the message suggests the new name.</td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">8003</span></span></td><td><span class="lvl deny">deny</span></td><td>Syntax requires a newer version — closures, <code>??</code> on old targets.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
 
     <div class="docs-pager">
       <a href="/docs/cli.html">

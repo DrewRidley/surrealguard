@@ -170,18 +170,24 @@
   </div>
 </section>
 
-<section class="sec" id="agents">
+<section class="sec grid-bg" id="agents">
   <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">// for AI agents</div>
+      <h2 class="reveal">A compile check for SurrealQL your agent can run</h2>
+      <p class="reveal">Agents like Claude Code already lean on <code>tsc</code> and <code>cargo check</code> to know their edits compile. SurrealGuard gives them the same signal for SurrealQL — run <code>surrealguard check</code> in the loop and every unknown table, missing field, or type mismatch comes back as a structured, byte-precise finding to fix.</p>
+    </div>
     <div class="agent reveal">
       <div class="agent-grid">
         <div>
-          <h3>Built for coding agents</h3>
-          <p style="color:var(--muted);font-size:15.5px">Point Claude Code, Cursor, or any agent at your project and let it wire everything up — then it gets structured, machine-readable diagnostics on every run.</p>
+          <h3>The check-and-fix loop</h3>
+          <p style="color:var(--muted);font-size:15.5px">Point the agent at your project once. From then on it runs the CLI on every change and reads the results — no editor integration required, works in any harness.</p>
           <ul>
-            <li>Structured findings via <code>surrealguard check --json</code></li>
-            <li><a href="/llms.txt" style="color:var(--accent)">llms.txt</a>, <a href="/llms-full.txt" style="color:var(--accent)">llms-full.txt</a> &amp; <a href="/AGENTS.md" style="color:var(--accent)">AGENTS.md</a></li>
-            <li>Compile-time errors your agent can read and fix</li>
-            <li>Byte-precise spans for surgical inline edits</li>
+            <li><code>surrealguard check --json</code> → code, severity, message, help &amp; byte range per finding</li>
+            <li><code>surrealguard generate</code> → typed query results, so downstream field access is checked too</li>
+            <li>Deterministic non-zero exit on error-severity findings — the loop knows when it's done</li>
+            <li>Context files: <a href="/llms.txt" style="color:var(--accent)">llms.txt</a>, <a href="/llms-full.txt" style="color:var(--accent)">llms-full.txt</a> &amp; <a href="/AGENTS.md" style="color:var(--accent)">AGENTS.md</a></li>
+            <li><span style="color:var(--faint)">Secondary:</span> the editor LSP for humans, and any MCP bridge that surfaces the same diagnostics</li>
           </ul>
         </div>
         <div class="prompt-box">
@@ -205,7 +211,7 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
     <div class="feat-grid">
       <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 16l9 5 9-5"/></svg></div><h4>Full statement coverage</h4><p>SELECT, the six mutations, RELATE, graph traversals, transactions, DEFINE/REMOVE/ALTER, LIVE/KILL — every statement lowers to a typed AST and is analyzed.</p></div>
       <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M8 4c-2 0-2 4-4 4 2 0 2 4 4 4"/><path d="M16 4c2 0 2 4 4 4-2 0-2 4-4 4"/><path d="M8 20c-2 0-2-4-4-4M16 20c2 0 2-4 4-4"/></svg></div><h4>Real type inference</h4><p>Response kinds as upstream <code>surrealdb_types::Kind</code>: object literals, IF/ELSE unions, record links, graph edges, function returns, closures, subqueries.</p></div>
-      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></svg></div><h4>~85 contract diagnostics</h4><p>One code per contract across eight families — schema refs, types, graph, statement misuse, functions, parameters, lints, version compat. Rust-analyzer-style messages with <code>help:</code> fixes and <code>note:</code> spans.</p></div>
+      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></svg></div><h4>88 contract diagnostics</h4><p>One code per contract across eight families — schema refs, types, graph, statement misuse, functions, parameters, lints, version compat. Rust-analyzer-style messages with <code>help:</code> fixes and <code>note:</code> spans.</p></div>
       <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M9 15l6-6"/><path d="M10.5 6l1-1a4 4 0 016 6l-1 1"/><path d="M13.5 18l-1 1a4 4 0 01-6-6l1-1"/></svg></div><h4>Parameter constraints</h4><p>Every <code>$param</code> is exported with the kind and value domain its uses imply — <code>UPDATE user SET age = $age</code> → <code>age: int</code>.</p></div>
       <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="2"/></svg></div><h4>Byte-precise spans</h4><p>Every finding carries an exact byte range — squiggles land on the right token, even inside a query embedded in a host file.</p></div>
       <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M4 7l5 5-5 5"/><path d="M13 17h7"/></svg></div><h4>Editor LSP</h4><p>Diagnostics for <code>.surql</code> and SurrealQL embedded in TypeScript, Svelte, Vue, and Astro — plus inlay type hints, hover on context params and table fields, greyed-out dead code, and live <code>[lints]</code> levels. Runs in Zed.</p></div>
@@ -221,8 +227,28 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
     <div class="sec-head">
       <div class="kicker">// install</div>
       <h2 class="reveal">Get it</h2>
-      <p class="reveal">Run the CLI with <code>npx surrealguard</code> — zero install. A Zed extension brings live diagnostics to your editor; the TypeScript packages are on npm. crates.io publishes are next.</p>
+      <p class="reveal">Run the CLI with <code>npx surrealguard</code> — zero install, no toolchain. The engine, Rust SDK, macros, and language server are published on crates.io; the TypeScript packages on npm; a Zed extension brings live diagnostics to your editor.</p>
     </div>
+
+    <div class="pkg-links reveal">
+      <a class="pkg-btn npm" href="https://www.npmjs.com/package/surrealguard">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M1.763 0C.786 0 0 .786 0 1.763v20.474C0 23.214.786 24 1.763 24h20.474c.977 0 1.763-.786 1.763-1.763V1.763C24 .786 23.214 0 22.237 0zM5.13 5.323l13.837.019-.009 13.836h-3.464l.01-10.382h-3.456L12.04 19.17H5.113z"/></svg>
+        <span>npm<em>surrealguard · @surrealguard/*</em></span>
+      </a>
+      <a class="pkg-btn crates" href="https://crates.io/crates/surrealguard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 8l9-5 9 5v8l-9 5-9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>
+        <span>crates.io<em>4 crates published</em></span>
+      </a>
+      <a class="pkg-btn docs" href="https://docs.rs/surrealguard-rs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2V5z"/><path d="M19 17H6a2 2 0 0 0-2 2M9 7h7M9 10h5"/></svg>
+        <span>docs.rs<em>full API reference</em></span>
+      </a>
+      <a class="pkg-btn gh" href="https://github.com/DrewRidley/surrealguard">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.37.5 0 5.78 0 12.29c0 5.2 3.44 9.6 8.2 11.16.6.1.82-.25.82-.56v-2c-3.34.72-4.04-1.6-4.04-1.6-.55-1.36-1.33-1.72-1.33-1.72-1.08-.73.08-.72.08-.72 1.2.08 1.83 1.22 1.83 1.22 1.07 1.8 2.8 1.28 3.49.98.1-.76.42-1.28.76-1.57-2.67-.3-5.47-1.31-5.47-5.84 0-1.29.47-2.34 1.23-3.17-.12-.3-.53-1.52.12-3.16 0 0 1-.32 3.3 1.21a11.5 11.5 0 0 1 6 0c2.3-1.53 3.3-1.21 3.3-1.21.65 1.64.24 2.86.12 3.16.77.83 1.23 1.88 1.23 3.17 0 4.54-2.81 5.53-5.49 5.83.43.37.81 1.1.81 2.22v3.29c0 .32.22.68.83.56C20.57 21.88 24 17.48 24 12.29 24 5.78 18.63.5 12 .5z"/></svg>
+        <span>GitHub<em>source · issues</em></span>
+      </a>
+    </div>
+
     <div class="install-grid">
       <div class="install-card reveal">
         <div class="label">CLI <span class="pill">npx · zero-install</span></div>
@@ -233,31 +259,25 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
             <div class="term-line"><span class="prompt">$</span><code>npx surrealguard init</code><button class="term-copy" data-copy="npx surrealguard init">Copy</button></div>
             <div class="term-line"><span class="prompt">$</span><code>npx surrealguard check</code><button class="term-copy" data-copy="npx surrealguard check">Copy</button></div>
             <div class="term-line"><span class="prompt">$</span><code>npx surrealguard generate</code><button class="term-copy" data-copy="npx surrealguard generate">Copy</button></div>
-            <div class="term-line comment"># or from source (Rust):</div>
-            <div class="term-line"><span class="prompt">$</span><code>cargo install --git https://github.com/DrewRidley/surrealguard surrealguard</code><button class="term-copy" data-copy="cargo install --git https://github.com/DrewRidley/surrealguard surrealguard">Copy</button></div>
+            <div class="term-line comment"># or install the binary from crates.io:</div>
+            <div class="term-line"><span class="prompt">$</span><code>cargo install surrealguard</code><button class="term-copy" data-copy="cargo install surrealguard">Copy</button></div>
           </div>
         </div>
       </div>
       <div class="install-card reveal">
-        <div class="label">Editor <span class="pill">zed</span></div>
+        <div class="label">Rust SDK <span class="pill">crates.io</span></div>
         <div class="term">
-          <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">zed extension</span></div>
+          <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">cargo</span></div>
           <div class="term-body">
-            <div class="term-line comment"># syntax highlighting + live diagnostics + hover / inlay</div>
-            <div class="term-line comment"># install as a Zed dev extension from the repo —</div>
-            <div class="term-line comment"># it auto-downloads the LSP binary for you</div>
-            <div class="term-line"><span class="prompt">›</span><code>github.com/DrewRidley/zed-surreal</code><button class="term-copy" data-copy="https://github.com/DrewRidley/zed-surreal">Copy</button></div>
+            <div class="term-line comment"># query! / surql! macros + typed SDK</div>
+            <div class="term-line"><span class="prompt">$</span><code>cargo add surrealguard-rs</code><button class="term-copy" data-copy="cargo add surrealguard-rs">Copy</button></div>
           </div>
         </div>
-      </div>
-      <div class="install-card reveal">
-        <div class="label">Rust library <span class="pill">Cargo.toml</span></div>
-        <div class="term">
-          <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">Cargo.toml</span></div>
-          <div class="term-body">
-            <div class="term-line comment"># query! / surql!, via git until crates.io</div>
-            <div class="term-line"><span class="prompt">›</span><code>surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }</code><button class="term-copy" data-copy='surrealguard-rs = { git = "https://github.com/DrewRidley/surrealguard" }'>Copy</button></div>
-          </div>
+        <div class="crate-list">
+          <a class="crate" href="https://crates.io/crates/surrealguard"><code>surrealguard</code><span>CLI + engine</span></a>
+          <a class="crate" href="https://crates.io/crates/surrealguard-rs"><code>surrealguard-rs</code><span>SDK + macros</span></a>
+          <a class="crate" href="https://crates.io/crates/surrealguard-macros"><code>surrealguard-macros</code><span>proc-macros</span></a>
+          <a class="crate" href="https://crates.io/crates/surrealguard-lsp"><code>surrealguard-lsp</code><span>language server</span></a>
         </div>
       </div>
       <div class="install-card reveal">
@@ -269,6 +289,21 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
             <div class="term-line comment"># + @surrealguard/{query,next,svelte}</div>
           </div>
         </div>
+      </div>
+      <div class="install-card reveal">
+        <div class="label">Editor <span class="pill">zed</span></div>
+        <div class="term">
+          <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">zed extension</span></div>
+          <div class="term-body">
+            <div class="term-line comment"># syntax highlighting + live diagnostics + hover / inlay</div>
+            <div class="term-line comment"># install as a Zed dev extension from the repo —</div>
+            <div class="term-line comment"># it auto-downloads the language-server binary for you</div>
+          </div>
+        </div>
+        <a class="crate solo gh-link" href="https://github.com/DrewRidley/zed-surreal">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.37.5 0 5.78 0 12.29c0 5.2 3.44 9.6 8.2 11.16.6.1.82-.25.82-.56v-2c-3.34.72-4.04-1.6-4.04-1.6-.55-1.36-1.33-1.72-1.33-1.72-1.08-.73.08-.72.08-.72 1.2.08 1.83 1.22 1.83 1.22 1.07 1.8 2.8 1.28 3.49.98.1-.76.42-1.28.76-1.57-2.67-.3-5.47-1.31-5.47-5.84 0-1.29.47-2.34 1.23-3.17-.12-.3-.53-1.52.12-3.16 0 0 1-.32 3.3 1.21a11.5 11.5 0 0 1 6 0c2.3-1.53 3.3-1.21 3.3-1.21.65 1.64.24 2.86.12 3.16.77.83 1.23 1.88 1.23 3.17 0 4.54-2.81 5.53-5.49 5.83.43.37.81 1.1.81 2.22v3.29c0 .32.22.68.83.56C20.57 21.88 24 17.48 24 12.29 24 5.78 18.63.5 12 .5z"/></svg>
+          <code>DrewRidley/zed-surreal</code><span>Zed extension repo</span>
+        </a>
       </div>
     </div>
   </div>

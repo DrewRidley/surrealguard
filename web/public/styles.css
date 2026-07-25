@@ -204,6 +204,37 @@ h1 .grad {
 .feat h4 { font-size: 16.5px; margin-bottom: 7px; letter-spacing: -0.01em; }
 .feat p { color: var(--muted); font-size: 14px; line-height: 1.55; }
 
+/* install — brand/package link row */
+.pkg-links { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+.pkg-btn {
+  display: flex; align-items: center; gap: 12px; padding: 14px 16px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  color: var(--text); transition: border-color .15s, transform .15s, background .15s;
+}
+.pkg-btn:hover { transform: translateY(-2px); }
+.pkg-btn svg { width: 24px; height: 24px; flex: none; }
+.pkg-btn span { display: flex; flex-direction: column; font-size: 14px; font-weight: 600; line-height: 1.25; min-width: 0; }
+.pkg-btn em { font-style: normal; font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--faint); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pkg-btn.npm svg { color: #cb3837; }        .pkg-btn.npm:hover { border-color: #cb3837; }
+.pkg-btn.crates svg { color: #dea584; }      .pkg-btn.crates:hover { border-color: #dea584; }
+.pkg-btn.docs svg { color: var(--accent-2); } .pkg-btn.docs:hover { border-color: var(--accent-2); }
+.pkg-btn.gh svg { color: var(--text); }      .pkg-btn.gh:hover { border-color: var(--muted); }
+
+/* install — published crate chips */
+.crate-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.crate {
+  display: flex; flex-direction: column; gap: 1px; padding: 9px 12px;
+  border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-2);
+  transition: border-color .15s;
+}
+.crate:hover { border-color: var(--accent); }
+.crate code { font-family: var(--mono); font-size: 12.5px; color: var(--accent); }
+.crate span { font-size: 11px; color: var(--faint); }
+.crate.solo { flex-direction: row; align-items: center; gap: 10px; grid-column: 1 / -1; }
+.crate.solo svg { width: 18px; height: 18px; flex: none; color: var(--text); }
+.crate.solo code { color: var(--text); }
+.crate.gh-link span { margin-left: auto; }
+
 /* install grid */
 .install-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
 .install-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 22px 24px; }
@@ -563,4 +594,45 @@ h1 .grad {
   .guard-code { font-size: 13.5px; }
   .guard-schema { display: none; }
   .guard-diag::before { display: none; }
+}
+
+/* pkg-links responsive */
+@media (max-width: 820px) { .pkg-links { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 480px) { .pkg-links { grid-template-columns: 1fr; } .crate-list { grid-template-columns: 1fr; } }
+
+/* ============================================================
+   Light theme — auto by system preference. Editor/terminal/code
+   surfaces stay dark on purpose (an intentional "engineered"
+   look); only the page chrome flips. Overrides the design tokens
+   plus the few hardcoded chrome backgrounds that need it.
+   ============================================================ */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --surface-2: #f0f2f5;
+    --border: #dce0e6;
+    --border-soft: #e8ebef;
+    --text: #16181d;
+    --muted: #55606e;
+    --faint: #838d9a;
+    --accent: #5b4bde;
+    --accent-2: #0d9b68;
+    --red: #d23b3b;
+    --amber: #b26a00;
+  }
+  body { color: var(--text); }
+  nav { background: rgba(246, 247, 249, 0.78); }
+  /* dotted grid: white dots are invisible on a light page */
+  .grid-bg::before { background-image: radial-gradient(rgba(20,22,28,0.05) 1px, transparent 1px); }
+  ::selection { background: rgba(91, 75, 222, 0.22); }
+
+  /* the hero Guard is an editor panel — keep it dark so its light
+     code text and squiggles stay legible regardless of page theme */
+  .guard { background: #0f1116; border-color: #23262e; }
+  .guard-top { background: #0b0d11; border-bottom-color: #23262e; }
+
+  /* colored inline code inside light diagnostic panels needs contrast */
+  .diag .msg code, .gd-msg code { color: #8b3fd0; background: rgba(139,63,208,.08); }
+  .btn-primary { color: #ffffff; }
 }
