@@ -916,6 +916,25 @@ fn legacy_body_block(node: Node<'_>, text: &str) -> crate::ast::Block {
         "ReturnStatement" | "ThrowStatement" => crate::ast::Block {
             statements: vec![lower_statement(node, text)],
         },
+        // The grammar's `Legacy` body accepts only `Block`/`SubQuery`/value/
+        // `RETURN`/`THROW`, so a bare `CONTINUE`/`BREAK` after `THEN` parses
+        // as a plain `Ident` value. SurrealDB executes it as the *statement*
+        // (verified on 3.0.5: `FOR $i IN [1,2] { IF $i = 1 THEN CONTINUE END;
+        // THROW 'reached ' + <string>$i }` throws `reached 2`, and the `BREAK`
+        // form exits the loop), so recover it here rather than modelling a
+        // diverging guard as a discarded value — which is what silently cost
+        // every following statement its fall-through narrowing.
+        "Ident" => {
+            let span = node_range(node);
+            let statement = match text[node.byte_range()].to_ascii_uppercase().as_str() {
+                "CONTINUE" => Statement::Continue(crate::ast::ContinueStmt::default()),
+                "BREAK" => Statement::Break(crate::ast::BreakStmt::default()),
+                _ => Statement::Expr(lower_expr(node, text)),
+            };
+            crate::ast::Block {
+                statements: vec![Spanned::new(statement, span)],
+            }
+        }
         _ => {
             let expr = lower_expr(node, text);
             let span = expr.span;

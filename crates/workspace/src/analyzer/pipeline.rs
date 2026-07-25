@@ -343,6 +343,11 @@ fn analyze_source_against(
                 None,
             );
             let kind = crate::analyzer::statement::analyze_lowered_statement(&mut ctx, lowered);
+            // A top-level guard that exits (`IF $x = NONE THEN THROW … END;`)
+            // narrows `$x` for every statement after it, exactly as it does
+            // inside a block. Without this the source's statement sequence was
+            // the one statement-sequence level that dropped the narrowing.
+            crate::analyzer::flow::block::apply_fall_through_narrowing(&mut ctx, &lowered.node);
             analyzer_env = ctx.into_env();
             kind
         };

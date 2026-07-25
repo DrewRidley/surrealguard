@@ -167,7 +167,15 @@ fn statement_flow(ctx: &mut AnalysisContext<'_>, statement: &ast::Spanned<ast::S
 /// After a preceding `IF` with no `ELSE` whose every branch diverges, the
 /// statements that follow are only reached when every branch condition was
 /// false — so their negations narrow the enclosing scope.
-fn apply_fall_through_narrowing(ctx: &mut AnalysisContext<'_>, stmt: &ast::Statement) {
+///
+/// Applies at every statement-sequence level: inside a block (here) and at a
+/// source's top level (the pipeline's statement loop), which is where the
+/// idiomatic `LET $x = SELECT … FROM ONLY …; IF $x = NONE THEN THROW … END;`
+/// guard lives.
+pub(crate) fn apply_fall_through_narrowing(
+    ctx: &mut AnalysisContext<'_>,
+    stmt: &ast::Statement,
+) {
     let ast::Statement::IfElse(if_else) = stmt else {
         return;
     };
