@@ -1,6 +1,6 @@
 {
   "name": "@surrealguard/query",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Framework-agnostic reactive core for SurrealGuard: cache, dedup, live reconciliation, SSR hydration.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
