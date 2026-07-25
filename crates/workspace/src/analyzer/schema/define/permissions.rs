@@ -95,7 +95,10 @@ fn bind_row_params(ctx: &mut AnalysisContext<'_>, table_name: &str, value_kind: 
     // generic shapes.
     define(ctx, "auth", Kind::Record(Vec::new()));
     define(ctx, "token", Kind::Object);
-    define(ctx, "session", Kind::Object);
+    // `$session` gets its fixed field composition (the leniency gate proves an
+    // unknown-field access on a closed literal object emits nothing, so no valid
+    // access can start erroring); `$token` stays open (arbitrary JWT claims).
+    define(ctx, "session", crate::context_params::session_kind());
     define(ctx, "access", Kind::String);
     define(ctx, "scope", Kind::String);
 }

@@ -204,7 +204,7 @@ fn insert_session_params(map: &mut BTreeMap<String, Kind>) {
 /// degrades to unresolved without emitting a finding — so an access to a key not
 /// listed here (or a deeper path) stays silent. Known keys type precisely;
 /// nothing false-flags. This is purely additive typing.
-fn session_kind() -> Kind {
+pub(crate) fn session_kind() -> Kind {
     let mut fields = BTreeMap::new();
     fields.insert("ac".to_string(), Kind::String);
     fields.insert("db".to_string(), Kind::String);
