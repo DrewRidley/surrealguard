@@ -81,10 +81,20 @@ type LoweredSource<'a> = (&'a ParsedSource, Vec<ast::Spanned<ast::Statement>>);
 /// isolates each broken construct as `Statement::Partial` (inert in every pass),
 /// so a syntax error in one statement never suppresses analysis of its
 /// well-formed siblings.
-fn lower_all(parsed_sources: &[ParsedSource]) -> Vec<LoweredSource<'_>> {
+///
+/// Generic over `Borrow<ParsedSource>` so a caller can pass owned
+/// `[ParsedSource]` (the full pass) or borrowed/`Arc`-shared handles (the
+/// symbol-incremental LSP path, which reuses cached `ParsedSource`s for the
+/// unchanged documents).
+fn lower_all<P: std::borrow::Borrow<ParsedSource>>(
+    parsed_sources: &[P],
+) -> Vec<LoweredSource<'_>> {
     parsed_sources
         .iter()
-        .map(|parsed| (parsed, surrealguard_syntax::lower::lower_statements(parsed)))
+        .map(|parsed| {
+            let parsed = parsed.borrow();
+            (parsed, surrealguard_syntax::lower::lower_statements(parsed))
+        })
         .collect()
 }
 
@@ -92,7 +102,9 @@ fn lower_all(parsed_sources: &[ParsedSource]) -> Vec<LoweredSource<'_>> {
 /// producing the reusable [`GlobalCatalog`]. This is the single source of truth
 /// for those pre-passes: both the full workspace walk and single-source
 /// re-analysis consume its output, so they can never diverge.
-pub fn build_global_catalog(parsed_sources: &[ParsedSource]) -> GlobalCatalog {
+pub fn build_global_catalog<P: std::borrow::Borrow<ParsedSource>>(
+    parsed_sources: &[P],
+) -> GlobalCatalog {
     let sources = lower_all(parsed_sources);
     build_global_catalog_from_lowered(&sources)
 }
@@ -471,6 +483,130 @@ pub(crate) fn analyze_one_source(
         analysis,
         diagnostics,
     }
+}
+
+/// The cross-source function-cycle findings (5009) implied by a catalog,
+/// spanned at each offending function's own definition. Computed purely from
+/// the catalog (the function call graph plus guardedness), so it can be derived
+/// once and reused across the symbol-incremental path — both to attribute a
+/// cycle change to the sources it touches and to inject the findings into each
+/// re-analyzed defining source.
+pub(crate) fn function_cycle_findings(global: &GlobalCatalog) -> Vec<Finding> {
+    let mut diagnostics = Vec::new();
+    check_function_cycles(&global.global_defined, &global.fn_guarded, &mut diagnostics);
+    diagnostics
+}
+
+/// Re-analyzes ONLY the `affected` sources against a prebuilt [`GlobalCatalog`],
+/// reproducing the exact per-source output the whole-workspace walk
+/// ([`analyze_sources_with`]) would produce for each — without re-walking the
+/// unaffected sources.
+///
+/// Unlike [`analyze_one_source`] (whose contract requires the source to
+/// contribute nothing to the catalog), this reproduces the whole-workspace
+/// loop's per-source `working` base for EVERY affected source, schema or query:
+/// the catalog's additive definitions MINUS the source's own, so within-source
+/// ordering contracts (duplicate definition, REMOVE) behave identically. It also
+/// injects the source's own 5009 cross-source cycle findings, so an affected
+/// *schema* source that defines a recursive function reproduces those too.
+///
+/// Soundness rests on the caller's `affected` set being a superset of every
+/// source whose output could differ from the previous catalog state — see
+/// [`crate::analysis::changed_symbols`] /
+/// [`crate::analysis::source_reference_set`] and the cross-source cycle
+/// attribution in [`crate::analysis::sources_with_changed_cycle_findings`].
+pub(crate) fn reanalyze_sources<P: std::borrow::Borrow<ParsedSource>>(
+    parsed_sources: &[P],
+    global: &GlobalCatalog,
+    affected: &BTreeSet<SourceId>,
+    require_suppression_reasons: bool,
+) -> BTreeMap<SourceId, OneSourceOutput> {
+    let sources = lower_all(parsed_sources);
+
+    // The whole 5009 finding set implied by the catalog, spanned in each
+    // offending function's defining source. Each affected source below claims
+    // the findings spanned in it, matching the whole-workspace pass which runs
+    // the cycle check once and distributes its findings by span.
+    let cycle_findings = function_cycle_findings(global);
+
+    let mut out = BTreeMap::new();
+    for (index, (parsed, statements)) in sources.iter().enumerate() {
+        if !affected.contains(parsed.source_id()) {
+            continue;
+        }
+
+        // Reproduce the whole-workspace loop's per-source base: every OTHER
+        // source's additive definitions. The source's own definitions
+        // accumulate during its walk, preserving within-source ordering
+        // contracts exactly as `analyze_sources_with` does.
+        let mut working = SchemaIndex::default();
+        for (other_index, (other, other_statements)) in sources.iter().enumerate() {
+            if other_index == index {
+                continue;
+            }
+            for stmt in other_statements {
+                apply_additive_define(stmt, other.source_id(), other.text(), &mut working);
+            }
+        }
+
+        let mut diagnostics = Vec::new();
+        let analysis =
+            analyze_source_against(global, parsed, statements, working, &mut diagnostics, None);
+
+        // This source's share of the cross-source cycle findings (5009).
+        for finding in &cycle_findings {
+            if finding.span().source() == parsed.source_id() {
+                diagnostics.push(finding.clone());
+            }
+        }
+
+        // Suppression runs last, exactly as the whole-workspace pass applies it
+        // per source at the end (covering the injected 5009 findings too).
+        if parsed.syntax_diagnostics().is_empty() {
+            crate::suppress::apply_suppressions(
+                parsed.source_id(),
+                parsed.text(),
+                require_suppression_reasons,
+                &mut diagnostics,
+            );
+        }
+
+        out.insert(
+            parsed.source_id().clone(),
+            OneSourceOutput {
+                analysis,
+                diagnostics,
+            },
+        );
+    }
+    out
+}
+
+/// Rebuilds the run-wide [`SchemaIndex`] exactly as [`analyze_sources_with`]
+/// does — sequential [`apply_schema_statement_effects`] over every source's
+/// statements in order — but WITHOUT the per-statement type-inference walk. The
+/// schema is the cheap part of a full pass; the symbol-incremental LSP path uses
+/// this to reproduce `analyze_workspace`'s `schema` when a schema edit made the
+/// cached one stale, so editor features keep resolving against the current
+/// catalog without re-analyzing every source.
+///
+/// [`apply_schema_statement_effects`]: crate::schema::apply_schema_statement_effects
+pub(crate) fn build_run_schema<P: std::borrow::Borrow<ParsedSource>>(
+    parsed_sources: &[P],
+) -> SchemaIndex {
+    let sources = lower_all(parsed_sources);
+    let mut schema = SchemaIndex::default();
+    for (parsed, statements) in &sources {
+        for stmt in statements {
+            crate::schema::apply_schema_statement_effects(
+                stmt,
+                parsed.source_id(),
+                parsed.text(),
+                &mut schema,
+            );
+        }
+    }
+    schema
 }
 
 pub(crate) fn analyze_sources(parsed_sources: &[ParsedSource]) -> PipelineOutput {

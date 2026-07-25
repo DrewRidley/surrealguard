@@ -2,13 +2,14 @@
 //! per-statement analysis, and assembles the public `AnalysisOutput`
 //! (response kinds, inferred params, findings) per source.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use surrealdb_types::Kind;
 use surrealguard_diagnostics::{Finding, FindingCode, Severity};
+use surrealguard_syntax::ast;
 use surrealguard_syntax::parse::{
-    parse_source, ParseError, SyntaxDiagnostic, SyntaxDiagnosticKind,
+    parse_source, ParseError, ParsedSource, SyntaxDiagnostic, SyntaxDiagnosticKind,
 };
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
@@ -320,7 +321,9 @@ pub use crate::analyzer::pipeline::GlobalCatalog;
 /// untyped-field value kinds, implicit tables, `fn::` guardedness). This is the
 /// expensive, source-set-wide part of analysis; cache it and reuse it across
 /// edits that don't change any schema-defining source.
-pub fn build_global_catalog(parsed_sources: &[surrealguard_syntax::parse::ParsedSource]) -> GlobalCatalog {
+pub fn build_global_catalog<P: std::borrow::Borrow<ParsedSource>>(
+    parsed_sources: &[P],
+) -> GlobalCatalog {
     crate::analyzer::pipeline::build_global_catalog(parsed_sources)
 }
 
@@ -355,6 +358,717 @@ pub fn analyze_one_source(
     output.inferred_params = one.analysis.params;
     output.let_bindings = one.analysis.let_bindings;
     output
+}
+
+// ============================================================================
+// Symbol-level incremental re-analysis
+// ============================================================================
+//
+// Editing a *schema* source (any `DEFINE`) used to force a whole-workspace
+// re-analysis, because any file could depend on the change. Symbol-level
+// invalidation narrows that: it diffs the cheap pre-built [`GlobalCatalog`]
+// (`build_global_catalog`, O(defines)) to learn WHICH catalog symbols actually
+// changed, then re-analyzes only the sources whose analysis could read one of
+// them. The rest keep their previous per-source output verbatim.
+//
+// Soundness is the whole point — a stale diagnostic is unacceptable — so both
+// halves err toward MORE work:
+//   * [`changed_symbols`] reports a symbol changed whenever its analysis-
+//     relevant shape differs (added, removed, or a callers-visible property).
+//   * [`source_reference_set`] is a conservative SUPERSET of the catalog
+//     symbols a source could read; when a construct is unanalyzable it degrades
+//     to "depends on everything" and is always re-run.
+// An over-set only costs extra re-analysis; an under-set is a correctness bug.
+
+/// A catalog symbol whose analysis-relevant shape a source's analysis can read:
+/// a table, one of its fields, or a `fn::` function. The unit of change tracking
+/// for symbol-level invalidation.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SymbolKey {
+    /// A table by name (defined or implicit).
+    Table(String),
+    /// A field by `(table, dotted-path)`.
+    Field(String, String),
+    /// A `fn::` function by its full path.
+    Func(String),
+}
+
+/// The catalog symbols whose analysis-relevant shape differs between two
+/// catalogs — added, removed, or reshaped in a way a reader's analysis could
+/// observe.
+///
+/// A symbol is "changed" when:
+///   * **function** — its parameter kinds, declared `return_kind`, inferred
+///     return, or guardedness differ (the properties a call site or the 5009
+///     cycle check reads). Callee lists and spans are ignored: a body edit that
+///     rewires an internal call without changing the signature does not change
+///     what *callers* see (cycle-graph changes are handled separately by
+///     [`sources_with_changed_cycle_findings`]).
+///   * **field** — its `kind`, `reference`, or `computed` flag differ (what a
+///     reader's type inference and reference traversal consume). A field
+///     add/remove also flips its table's field-key set, below.
+///   * **table** — its field-key SET, relation endpoints, `schemafull`, or
+///     `drop` differ, or it was added/removed (defined OR implicit).
+/// Purely cosmetic differences (spans, comments, defining source) are ignored.
+pub fn changed_symbols(old: &GlobalCatalog, new: &GlobalCatalog) -> BTreeSet<SymbolKey> {
+    use crate::schema::{FieldDef, FunctionDef, TableDef};
+
+    let mut changed = BTreeSet::new();
+    let old_schema = &old.global_defined;
+    let new_schema = &new.global_defined;
+
+    // ---- functions ----
+    let fn_shape = |f: &FunctionDef| {
+        (
+            f.args.clone(),
+            f.return_kind.clone(),
+            f.inferred_return.clone(),
+        )
+    };
+    let fn_names: BTreeSet<&String> = old_schema
+        .functions
+        .keys()
+        .chain(new_schema.functions.keys())
+        .collect();
+    for name in fn_names {
+        let old_fn = old_schema.functions.get(name);
+        let new_fn = new_schema.functions.get(name);
+        let guard_changed = old.fn_guarded.get(name) != new.fn_guarded.get(name);
+        let shape_changed = match (old_fn, new_fn) {
+            (Some(a), Some(b)) => fn_shape(a) != fn_shape(b),
+            _ => true, // added or removed
+        };
+        if shape_changed || guard_changed {
+            changed.insert(SymbolKey::Func(name.clone()));
+        }
+    }
+
+    // ---- tables + fields ----
+    let table_shape = |t: &TableDef| {
+        (
+            t.fields.keys().cloned().collect::<BTreeSet<_>>(),
+            t.relation
+                .as_ref()
+                .map(|r| (r.in_tables.clone(), r.out_tables.clone())),
+            t.schemafull,
+            t.drop_table,
+        )
+    };
+    let field_shape = |f: &FieldDef| (f.kind.clone(), f.reference, f.computed);
+
+    let table_names: BTreeSet<&String> = old_schema
+        .tables
+        .keys()
+        .chain(new_schema.tables.keys())
+        .collect();
+    for name in table_names {
+        match (old_schema.tables.get(name), new_schema.tables.get(name)) {
+            (Some(a), Some(b)) => {
+                if table_shape(a) != table_shape(b) {
+                    changed.insert(SymbolKey::Table(name.clone()));
+                }
+                // Per-field shape (a field-key add/remove already flipped the
+                // table shape above; this catches an in-place TYPE/flag change).
+                let field_keys: BTreeSet<&String> =
+                    a.fields.keys().chain(b.fields.keys()).collect();
+                for key in field_keys {
+                    let differ = match (a.fields.get(key), b.fields.get(key)) {
+                        (Some(fa), Some(fb)) => field_shape(fa) != field_shape(fb),
+                        _ => true,
+                    };
+                    if differ {
+                        changed.insert(SymbolKey::Field(name.clone(), key.clone()));
+                    }
+                }
+            }
+            _ => {
+                changed.insert(SymbolKey::Table(name.clone()));
+            }
+        }
+    }
+
+    // ---- implicit (schemaless, on-demand) tables ----
+    let implicit_set = |catalog: &GlobalCatalog| {
+        catalog
+            .implicit_tables
+            .iter()
+            .map(|table| table.name.clone())
+            .collect::<BTreeSet<_>>()
+    };
+    let old_implicit = implicit_set(old);
+    let new_implicit = implicit_set(new);
+    for name in old_implicit.symmetric_difference(&new_implicit) {
+        changed.insert(SymbolKey::Table(name.clone()));
+    }
+
+    changed
+}
+
+/// A conservative SUPERSET of the catalog symbols a single source's analysis
+/// could read, plus two escape hatches for reads it cannot pin down precisely.
+#[derive(Clone, Debug, Default)]
+pub struct SourceReferenceSet {
+    /// Tables and functions the source mentions (as `Table`/`Func`). Fields are
+    /// tracked coarsely through their table (see [`Self::is_affected_by`]).
+    pub symbols: BTreeSet<SymbolKey>,
+    /// The source navigates records (a graph step, a multi-hop field path, a
+    /// value-rooted idiom, a `FETCH`, ...), so it could read a field of a table
+    /// it never names — any field change is therefore potentially relevant.
+    pub navigates_records: bool,
+    /// The source contains an unmodeled construct whose reads cannot be
+    /// enumerated; it re-runs on any catalog change.
+    pub depends_on_all: bool,
+}
+
+impl SourceReferenceSet {
+    /// Whether any symbol in `changed` is (conservatively) one this source could
+    /// read, so the source must be re-analyzed.
+    pub fn is_affected_by(&self, changed: &BTreeSet<SymbolKey>) -> bool {
+        if changed.is_empty() {
+            return false;
+        }
+        if self.depends_on_all {
+            return true;
+        }
+        for symbol in changed {
+            match symbol {
+                SymbolKey::Table(_) | SymbolKey::Func(_) => {
+                    if self.symbols.contains(symbol) {
+                        return true;
+                    }
+                }
+                SymbolKey::Field(table, _) => {
+                    // A field is read either through its own table (named here)
+                    // or through a record link from some other table.
+                    if self.navigates_records
+                        || self.symbols.contains(&SymbolKey::Table(table.clone()))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+}
+
+/// Builds the [`SourceReferenceSet`] for one source: a conservative superset of
+/// every catalog symbol its analysis could read. Walks the lowered AST and
+/// collects every table name (FROM targets, `record<T>`, `DEFINE ... ON`, graph
+/// edges, RELATE endpoints, DEFINE TABLE, ...) and every `fn::` called or
+/// defined. Field reads are tracked coarsely: a bare single-hop field read is
+/// attributed to its named table, while any record-navigating construct sets
+/// [`SourceReferenceSet::navigates_records`] so a field change anywhere is
+/// treated as relevant. Unmodeled constructs set
+/// [`SourceReferenceSet::depends_on_all`].
+pub fn source_reference_set(parsed: &ParsedSource) -> SourceReferenceSet {
+    let statements = surrealguard_syntax::lower::lower_statements(parsed);
+    let mut refs = SourceReferenceSet::default();
+    for stmt in &statements {
+        walk_statement(&stmt.node, &mut refs);
+    }
+    refs
+}
+
+fn add_table(refs: &mut SourceReferenceSet, name: &str) {
+    refs.symbols.insert(SymbolKey::Table(name.to_string()));
+}
+
+fn walk_statement(stmt: &ast::Statement, refs: &mut SourceReferenceSet) {
+    use ast::Statement as S;
+    match stmt {
+        S::Select(s) => {
+            for from in &s.from {
+                walk_expr(&from.node, refs);
+            }
+            for projection in &s.projections {
+                walk_projection(projection, refs);
+            }
+            for idiom in s.omit.iter().chain(&s.split) {
+                walk_idiom(&idiom.node, refs);
+            }
+            if !s.fetch.is_empty() {
+                refs.navigates_records = true;
+                for idiom in &s.fetch {
+                    walk_idiom(&idiom.node, refs);
+                }
+            }
+            walk_opt_expr(&s.where_clause, refs);
+            if let Some(order) = &s.order {
+                for key in &order.keys {
+                    walk_expr(&key.expr.node, refs);
+                }
+            }
+            if let Some(group) = &s.group {
+                for key in &group.keys {
+                    walk_idiom(&key.node, refs);
+                }
+            }
+            walk_opt_expr(&s.limit, refs);
+            walk_opt_expr(&s.start, refs);
+            walk_opt_expr(&s.timeout, refs);
+        }
+        S::Create(s) => {
+            walk_targets(&s.targets, refs);
+            walk_data(&s.data, refs);
+        }
+        S::Update(s) => {
+            walk_targets(&s.targets, refs);
+            walk_data(&s.data, refs);
+            walk_opt_expr(&s.where_clause, refs);
+        }
+        S::Upsert(s) => {
+            walk_targets(&s.targets, refs);
+            walk_data(&s.data, refs);
+            walk_opt_expr(&s.where_clause, refs);
+        }
+        S::Delete(s) => {
+            walk_targets(&s.targets, refs);
+            walk_opt_expr(&s.where_clause, refs);
+        }
+        S::Insert(s) => {
+            if let Some(target) = &s.target {
+                walk_expr(&target.node, refs);
+            }
+            match &s.data {
+                ast::InsertData::Values(values) => {
+                    for value in values {
+                        walk_expr(&value.node, refs);
+                    }
+                }
+                ast::InsertData::Rows { rows, .. } => {
+                    for row in rows {
+                        for (_, value) in row {
+                            walk_expr(&value.node, refs);
+                        }
+                    }
+                }
+                ast::InsertData::Assignments(assignments) => {
+                    for (_, value) in assignments {
+                        walk_expr(&value.node, refs);
+                    }
+                }
+                ast::InsertData::Partial(_) => refs.depends_on_all = true,
+            }
+        }
+        S::Relate(s) => {
+            for endpoint in [&s.from, &s.edge, &s.to].into_iter().flatten() {
+                walk_expr(&endpoint.node, refs);
+            }
+            walk_data(&s.data, refs);
+        }
+        S::Define(def) => walk_define(def, refs),
+        S::Remove(_) | S::Alter(_) => {
+            // Order-sensitive schema effects force the full path upstream
+            // (`source_requires_full_reanalysis`); nothing precise to collect.
+            refs.depends_on_all = true;
+        }
+        S::Let(s) => walk_expr(&s.value.node, refs),
+        S::Return(s) => walk_opt_expr(&s.value, refs),
+        S::IfElse(s) => {
+            for branch in &s.branches {
+                walk_expr(&branch.condition.node, refs);
+                walk_block(&branch.body, refs);
+            }
+            if let Some(block) = &s.else_branch {
+                walk_block(block, refs);
+            }
+        }
+        S::For(s) => {
+            walk_expr(&s.iterable.node, refs);
+            walk_block(&s.body, refs);
+        }
+        S::Block(block) => walk_block(block, refs),
+        S::Throw(s) => walk_opt_expr(&s.value, refs),
+        S::Sleep(s) => walk_opt_expr(&s.duration, refs),
+        S::Kill(s) => walk_opt_expr(&s.id, refs),
+        S::LiveSelect(s) => {
+            if let Some(table) = &s.table {
+                add_table(refs, &table.node);
+            }
+        }
+        S::Show(s) => {
+            if let Some(table) = &s.table {
+                add_table(refs, &table.node);
+            }
+            walk_opt_expr(&s.since, refs);
+        }
+        S::Info(s) => {
+            if let Some(table) = &s.table {
+                add_table(refs, &table.node);
+            }
+        }
+        S::Rebuild(s) => {
+            if let Some(table) = &s.table {
+                add_table(refs, &table.node);
+            }
+        }
+        S::Expr(expr) => walk_expr(&expr.node, refs),
+        // No catalog reads: transaction control, USE, OPTION, BREAK/CONTINUE.
+        S::Begin(_) | S::Commit(_) | S::Cancel(_) | S::Use(_) | S::Option(_) | S::Break(_)
+        | S::Continue(_) => {}
+        S::Partial(_) => refs.depends_on_all = true,
+    }
+}
+
+fn walk_define(def: &ast::DefineStmt, refs: &mut SourceReferenceSet) {
+    use ast::DefineStmt as D;
+    match def {
+        D::Table(t) => {
+            add_table(refs, &t.name.node);
+            if let Some(relation) = &t.relation {
+                for endpoint in relation.in_tables.iter().chain(&relation.out_tables) {
+                    add_table(refs, &endpoint.node);
+                }
+            }
+            for predicate in &t.permissions {
+                walk_expr(&predicate.node, refs);
+            }
+        }
+        D::Field(f) => {
+            add_table(refs, &f.table.node);
+            if let Some(ty) = &f.ty {
+                walk_type(&ty.node, refs);
+            }
+            walk_opt_expr(&f.default, refs);
+            walk_opt_expr(&f.value, refs);
+            walk_opt_expr(&f.computed, refs);
+            walk_opt_expr(&f.assert, refs);
+            for predicate in &f.permissions {
+                walk_expr(&predicate.node, refs);
+            }
+        }
+        D::Index(i) => {
+            add_table(refs, &i.table.node);
+            for field in &i.fields {
+                walk_idiom(&field.node, refs);
+            }
+        }
+        D::Event(e) => {
+            add_table(refs, &e.table.node);
+            walk_opt_expr(&e.when, refs);
+            walk_opt_expr(&e.then, refs);
+        }
+        D::Function(func) => {
+            refs.symbols.insert(SymbolKey::Func(func.name.node.clone()));
+            if let Some(ty) = &func.return_ty {
+                walk_type(&ty.node, refs);
+            }
+            for (_, ty) in &func.params {
+                if let Some(ty) = ty {
+                    walk_type(&ty.node, refs);
+                }
+            }
+            if let Some(body) = &func.body {
+                walk_block(body, refs);
+            }
+        }
+        D::Param(p) => walk_opt_expr(&p.value, refs),
+        D::Analyzer(_) => {}
+        // Unmodeled DEFINE kinds (ACCESS/API/...): could read anything.
+        D::Other(_) => refs.depends_on_all = true,
+    }
+}
+
+fn walk_targets(targets: &[ast::Spanned<ast::Expr>], refs: &mut SourceReferenceSet) {
+    for target in targets {
+        walk_expr(&target.node, refs);
+    }
+}
+
+fn walk_data(data: &Option<ast::DataClause>, refs: &mut SourceReferenceSet) {
+    let Some(data) = data else { return };
+    match data {
+        ast::DataClause::Set(assignments) => {
+            for assignment in assignments {
+                walk_idiom(&assignment.target.node, refs);
+                walk_expr(&assignment.value.node, refs);
+            }
+        }
+        ast::DataClause::Unset(idioms) => {
+            for idiom in idioms {
+                walk_idiom(&idiom.node, refs);
+            }
+        }
+        ast::DataClause::Content(expr)
+        | ast::DataClause::Merge(expr)
+        | ast::DataClause::Patch(expr)
+        | ast::DataClause::Replace(expr)
+        | ast::DataClause::Single(expr) => walk_expr(&expr.node, refs),
+        ast::DataClause::Partial(_) => refs.depends_on_all = true,
+    }
+}
+
+fn walk_projection(projection: &ast::Projection, refs: &mut SourceReferenceSet) {
+    match projection {
+        ast::Projection::Wildcard(_) => {}
+        ast::Projection::Expr { expr, .. } => walk_expr(&expr.node, refs),
+        ast::Projection::Partial(_) => refs.depends_on_all = true,
+    }
+}
+
+fn walk_block(block: &ast::Block, refs: &mut SourceReferenceSet) {
+    for stmt in &block.statements {
+        walk_statement(&stmt.node, refs);
+    }
+}
+
+fn walk_opt_expr(expr: &Option<ast::Spanned<ast::Expr>>, refs: &mut SourceReferenceSet) {
+    if let Some(expr) = expr {
+        walk_expr(&expr.node, refs);
+    }
+}
+
+fn walk_expr(expr: &ast::Expr, refs: &mut SourceReferenceSet) {
+    use ast::Expr as E;
+    match expr {
+        E::Literal(_) | E::Param(_) => {}
+        E::Table(name) => add_table(refs, &name.node),
+        E::RecordId { table, .. } => add_table(refs, &table.node),
+        E::Idiom(idiom) => walk_idiom(idiom, refs),
+        E::Binary { lhs, rhs, .. } => {
+            walk_expr(&lhs.node, refs);
+            walk_expr(&rhs.node, refs);
+        }
+        E::Prefix { expr, .. } => walk_expr(&expr.node, refs),
+        E::Call(call) => {
+            if call.path.node.starts_with("fn::") {
+                refs.symbols
+                    .insert(SymbolKey::Func(call.path.node.clone()));
+            }
+            for arg in &call.args {
+                walk_expr(&arg.node, refs);
+            }
+        }
+        E::Object(fields) => {
+            for (_, value) in fields {
+                walk_expr(&value.node, refs);
+            }
+        }
+        E::Array(items) => {
+            for item in items {
+                walk_expr(&item.node, refs);
+            }
+        }
+        E::Subquery(stmt) => walk_statement(&stmt.node, refs),
+        E::Block(block) => walk_block(block, refs),
+        E::Cast { ty, expr } => {
+            walk_type(&ty.node, refs);
+            walk_expr(&expr.node, refs);
+        }
+        E::Closure(closure) => {
+            if let Some(ty) = &closure.return_ty {
+                walk_type(&ty.node, refs);
+            }
+            for (_, ty) in &closure.params {
+                if let Some(ty) = ty {
+                    walk_type(&ty.node, refs);
+                }
+            }
+            walk_expr(&closure.body.node, refs);
+        }
+        E::Partial(_) => refs.depends_on_all = true,
+    }
+}
+
+fn walk_idiom(idiom: &ast::Idiom, refs: &mut SourceReferenceSet) {
+    // A field read that hops more than once, traverses a graph/reference edge,
+    // or is rooted in a value could reach a field of a table this source never
+    // names — mark it as record-navigating so any field change is relevant.
+    let mut field_hops = 0usize;
+    for part in &idiom.parts {
+        match &part.node {
+            ast::IdiomPart::Start(expr) => {
+                refs.navigates_records = true;
+                walk_expr(&expr.node, refs);
+            }
+            ast::IdiomPart::Field(_) => field_hops += 1,
+            ast::IdiomPart::Index(expr) => walk_expr(&expr.node, refs),
+            ast::IdiomPart::Graph { step, .. } => {
+                refs.navigates_records = true;
+                for target in &step.targets {
+                    add_table(refs, &target.node);
+                }
+                if let Some(where_clause) = &step.where_clause {
+                    walk_expr(&where_clause.node, refs);
+                }
+            }
+            ast::IdiomPart::Destructure(idioms) => {
+                refs.navigates_records = true;
+                for inner in idioms {
+                    walk_idiom(&inner.node, refs);
+                }
+            }
+            ast::IdiomPart::Where(expr) => {
+                refs.navigates_records = true;
+                walk_expr(&expr.node, refs);
+            }
+            ast::IdiomPart::Method { args, .. } => {
+                refs.navigates_records = true;
+                for arg in args {
+                    walk_expr(&arg.node, refs);
+                }
+            }
+            ast::IdiomPart::Recurse { .. } => refs.navigates_records = true,
+            ast::IdiomPart::All | ast::IdiomPart::Last | ast::IdiomPart::Optional => {}
+            ast::IdiomPart::Partial(_) => refs.depends_on_all = true,
+        }
+    }
+    if field_hops >= 2 {
+        refs.navigates_records = true;
+    }
+}
+
+fn walk_type(ty: &ast::TypeExpr, refs: &mut SourceReferenceSet) {
+    use ast::TypeExpr as T;
+    match ty {
+        T::Name(_) => {}
+        T::Parameterized { name, args } => {
+            // `record<T>` / `references<T>` name tables directly.
+            if matches!(name.node.as_str(), "record" | "references") {
+                refs.navigates_records = true;
+                for arg in args {
+                    if let T::Name(table) = &arg.node {
+                        add_table(refs, &table.node);
+                    } else {
+                        walk_type(&arg.node, refs);
+                    }
+                }
+            } else {
+                for arg in args {
+                    walk_type(&arg.node, refs);
+                }
+            }
+        }
+        T::Union(variants) => {
+            for variant in variants {
+                walk_type(&variant.node, refs);
+            }
+        }
+        T::Optional(inner) => walk_type(&inner.node, refs),
+        T::Object(fields) => {
+            for (_, field_ty) in fields {
+                walk_type(&field_ty.node, refs);
+            }
+        }
+        T::Literal(_) => {}
+        T::Partial(_) => refs.depends_on_all = true,
+    }
+}
+
+/// Whether a source contains a schema construct the symbol diff cannot model
+/// soundly, so an edit touching it must fall back to a full re-analysis:
+///   * `REMOVE` / `ALTER` — order-sensitive, and additive-only catalog diffing
+///     cannot see a cross-source removal.
+///   * `DEFINE PARAM` — a parameter's *value* (hence a reader's inferred kind)
+///     is not captured by [`GlobalCatalog`], so a value change is invisible to
+///     [`changed_symbols`].
+///   * `DEFINE ANALYZER` — analyzer pipelines feed `SEARCH` indexes and are not
+///     tracked as reference-set symbols.
+/// The LSP gates dirty schema documents on this before taking the symbol path.
+pub fn source_requires_full_reanalysis(parsed: &ParsedSource) -> bool {
+    let statements = surrealguard_syntax::lower::lower_statements(parsed);
+    statements.iter().any(|stmt| {
+        matches!(
+            &stmt.node,
+            ast::Statement::Remove(_)
+                | ast::Statement::Alter(_)
+                | ast::Statement::Define(ast::DefineStmt::Param(_))
+                | ast::Statement::Define(ast::DefineStmt::Analyzer(_))
+        )
+    })
+}
+
+/// The sources whose cross-source function-cycle findings (5009) differ between
+/// two catalogs. The cycle check spans each finding at the offending function's
+/// own definition, so a body edit that creates or breaks a cycle can change the
+/// findings of a source that reads none of the changed symbols directly (e.g.
+/// the *other* function in a newly-formed mutual-recursion pair). Any such
+/// source must join the affected set; comparing the grouped finding sets catches
+/// it. Findings in edited (dirty) sources shift spans and are reported too, but
+/// those sources are already affected, so the extra entries are harmless.
+pub fn sources_with_changed_cycle_findings(
+    old: &GlobalCatalog,
+    new: &GlobalCatalog,
+) -> BTreeSet<SourceId> {
+    fn by_source(findings: Vec<Finding>) -> BTreeMap<SourceId, BTreeSet<(u16, String)>> {
+        let mut grouped: BTreeMap<SourceId, BTreeSet<(u16, String)>> = BTreeMap::new();
+        for finding in findings {
+            grouped
+                .entry(finding.span().source().clone())
+                .or_default()
+                .insert((finding.code().number(), finding.message().to_string()));
+        }
+        grouped
+    }
+
+    let old_by = by_source(crate::analyzer::pipeline::function_cycle_findings(old));
+    let new_by = by_source(crate::analyzer::pipeline::function_cycle_findings(new));
+
+    let mut changed = BTreeSet::new();
+    let sources: BTreeSet<&SourceId> = old_by.keys().chain(new_by.keys()).collect();
+    for source in sources {
+        if old_by.get(source) != new_by.get(source) {
+            changed.insert(source.clone());
+        }
+    }
+    changed
+}
+
+/// Re-analyzes ONLY the `affected` sources against a prebuilt [`GlobalCatalog`],
+/// reproducing the exact [`AnalysisOutput`] the whole-workspace pass
+/// ([`analyze_workspace`]) would produce for each — without re-walking the
+/// unaffected sources. Returns one output per affected source.
+///
+/// Unlike [`analyze_one_source`], this reproduces the whole-workspace loop's
+/// per-source `working` base for every affected source (schema or query) and
+/// injects each source's own 5009 cycle findings, so a *schema* source that
+/// contributes definitions is reproduced correctly. The caller
+/// ([`crate::analysis`] consumers / the LSP) must supply an `affected` set that
+/// is a superset of every source whose output could differ — see
+/// [`changed_symbols`], [`source_reference_set`], and
+/// [`sources_with_changed_cycle_findings`].
+pub fn reanalyze_sources<P: std::borrow::Borrow<ParsedSource>>(
+    parsed_sources: &[P],
+    global: &GlobalCatalog,
+    affected: &BTreeSet<SourceId>,
+    require_suppression_reasons: bool,
+) -> BTreeMap<SourceId, AnalysisOutput> {
+    let mut per_source =
+        pipeline::reanalyze_sources(parsed_sources, global, affected, require_suppression_reasons);
+
+    let mut outputs = BTreeMap::new();
+    for parsed in parsed_sources {
+        let parsed = parsed.borrow();
+        let Some(one) = per_source.remove(parsed.source_id()) else {
+            continue;
+        };
+        let mut output = AnalysisOutput {
+            diagnostics: parsed
+                .syntax_diagnostics()
+                .iter()
+                .map(syntax_diagnostic_to_finding)
+                .collect(),
+            ..AnalysisOutput::default()
+        };
+        output.diagnostics.extend(one.diagnostics);
+        output.response_kind = single_response_kind(&one.analysis.statements);
+        output.statements = one.analysis.statements;
+        output.inferred_params = one.analysis.params;
+        output.let_bindings = one.analysis.let_bindings;
+        outputs.insert(parsed.source_id().clone(), output);
+    }
+    outputs
+}
+
+/// Rebuilds the workspace [`SchemaIndex`] the whole-workspace pass
+/// ([`analyze_workspace`]) would produce, without the per-statement analysis
+/// walk. The symbol-incremental path uses this to refresh the cached schema
+/// after a schema edit while re-analyzing only the affected sources.
+pub fn build_workspace_schema<P: std::borrow::Borrow<ParsedSource>>(
+    parsed_sources: &[P],
+) -> crate::schema::SchemaIndex {
+    pipeline::build_run_schema(parsed_sources)
 }
 
 fn syntax_diagnostic_to_finding(diagnostic: &SyntaxDiagnostic) -> Finding {
@@ -4693,5 +5407,499 @@ INSERT INTO person { name: 'Ada' };
             assert_eq!(incremental.response_kind, full_target.response_kind, "query `{query}`");
             assert_eq!(incremental.let_bindings, full_target.let_bindings, "query `{query}`");
         }
+    }
+}
+
+#[cfg(test)]
+mod symbol_incremental_tests {
+    //! Equivalence + granularity coverage for symbol-level incremental
+    //! re-analysis. The invariant under test: merging the previous per-source
+    //! outputs with a fresh re-analysis of only the AFFECTED sources must equal
+    //! a from-scratch `analyze_workspace` at the post-edit state, for EVERY
+    //! source. A stale (unaffected-but-should-have-changed) source fails the
+    //! merge check, which is exactly the correctness bug we must never ship.
+
+    use super::*;
+    use std::path::PathBuf;
+
+    fn sid(name: &str) -> SourceId {
+        SourceId::new(format!("file:///{name}"))
+    }
+
+    fn parsed_for(sources: &[(&str, &str)]) -> Vec<ParsedSource> {
+        sources
+            .iter()
+            .map(|(name, text)| parse_source(sid(name), *text).expect("test sources parse"))
+            .collect()
+    }
+
+    /// Ground truth: a from-scratch whole-workspace pass over `sources`, using
+    /// file ids so they align with the incremental path.
+    fn full_workspace(sources: &[(&str, &str)]) -> WorkspaceAnalysis {
+        let mut workspace = Workspace::default();
+        for (name, text) in sources {
+            workspace.add_file_source(PathBuf::from(format!("/{name}")), (*text).to_string());
+        }
+        analyze_workspace(&workspace)
+    }
+
+    /// Computes the affected set for an edit exactly as the LSP does, then
+    /// returns `(affected_ids, merged_outputs)` where merged = the before-state
+    /// outputs with the affected sources replaced by a fresh re-analysis.
+    fn incremental(
+        before: &[(&str, &str)],
+        after: &[(&str, &str)],
+    ) -> (BTreeSet<SourceId>, BTreeMap<SourceId, AnalysisOutput>) {
+        assert_eq!(before.len(), after.len(), "harness expects a same-doc-set edit");
+        let before_parsed = parsed_for(before);
+        let after_parsed = parsed_for(after);
+        let before_catalog = build_global_catalog(&before_parsed);
+        let after_catalog = build_global_catalog(&after_parsed);
+
+        let dirty: BTreeSet<SourceId> = before
+            .iter()
+            .zip(after)
+            .filter(|((_, bt), (_, at))| bt != at)
+            .map(|((name, _), _)| sid(name))
+            .collect();
+        // The harness only covers edits the symbol path actually takes; an
+        // unmodeled dirty effect would force the (trivially equivalent) full
+        // pass in the LSP.
+        for parsed in &after_parsed {
+            if dirty.contains(parsed.source_id()) {
+                assert!(
+                    !source_requires_full_reanalysis(parsed),
+                    "dirty source {} carries an unmodeled effect; test the full-fallback instead",
+                    parsed.source_id()
+                );
+            }
+        }
+
+        let changed = changed_symbols(&before_catalog, &after_catalog);
+        let mut affected = dirty.clone();
+        for parsed in &after_parsed {
+            if source_reference_set(parsed).is_affected_by(&changed) {
+                affected.insert(parsed.source_id().clone());
+            }
+        }
+        for id in sources_with_changed_cycle_findings(&before_catalog, &after_catalog) {
+            affected.insert(id);
+        }
+
+        let reanalyzed = reanalyze_sources(&after_parsed, &after_catalog, &affected, false);
+        let mut merged: BTreeMap<SourceId, AnalysisOutput> =
+            full_workspace(before).sources;
+        for (id, output) in &reanalyzed {
+            merged.insert(id.clone(), output.clone());
+        }
+        (affected, merged)
+    }
+
+    /// Asserts the merged incremental result equals a full pass at `after` for
+    /// every source (diagnostics, response kind, statements, params, let
+    /// bindings) plus the rebuilt schema. Returns the affected-source count so
+    /// callers can also assert granularity.
+    fn assert_equivalent(before: &[(&str, &str)], after: &[(&str, &str)]) -> usize {
+        let (affected, merged) = incremental(before, after);
+        let after_full = full_workspace(after);
+
+        for (id, expected) in &after_full.sources {
+            let got = merged
+                .get(id)
+                .unwrap_or_else(|| panic!("merged result missing source {id}"));
+            assert_eq!(got.diagnostics, expected.diagnostics, "diagnostics for {id}");
+            assert_eq!(
+                got.response_kind, expected.response_kind,
+                "response_kind for {id}"
+            );
+            assert_eq!(got.statements, expected.statements, "statements for {id}");
+            assert_eq!(
+                got.inferred_params, expected.inferred_params,
+                "inferred_params for {id}"
+            );
+            assert_eq!(got.let_bindings, expected.let_bindings, "let_bindings for {id}");
+        }
+
+        // The incrementally-rebuilt schema must match a full pass' schema so
+        // editor features resolve against the current catalog.
+        let after_parsed = parsed_for(after);
+        assert_eq!(
+            build_workspace_schema(&after_parsed),
+            after_full.schema,
+            "rebuilt schema must equal the full-pass schema"
+        );
+
+        affected.len()
+    }
+
+    const SCHEMA: &str = "DEFINE TABLE person SCHEMAFULL;\n\
+         DEFINE FIELD name ON person TYPE string;\n\
+         DEFINE FIELD age ON person TYPE int;";
+
+    // (a) A query-file edit.
+    #[test]
+    fn query_edit_is_equivalent() {
+        let before = &[
+            ("schema.surql", SCHEMA),
+            ("q.surql", "SELECT name FROM person;"),
+        ];
+        let after = &[
+            ("schema.surql", SCHEMA),
+            ("q.surql", "SELECT name, age FROM person WHERE age > 18;"),
+        ];
+        assert_equivalent(before, after);
+    }
+
+    // (b) A function-body edit that CHANGES its inferred return, read by a caller.
+    #[test]
+    fn function_body_edit_changing_return_reanalyzes_callers() {
+        let before = &[
+            (
+                "fns.surql",
+                "DEFINE FUNCTION fn::pick() { RETURN 1; };",
+            ),
+            ("caller.surql", "RETURN fn::pick();"),
+        ];
+        let after = &[
+            (
+                "fns.surql",
+                "DEFINE FUNCTION fn::pick() { RETURN 'text'; };",
+            ),
+            ("caller.surql", "RETURN fn::pick();"),
+        ];
+        let (affected, _) = incremental(before, after);
+        assert!(
+            affected.contains(&sid("caller.surql")),
+            "the caller must re-analyze when the callee's return type changes"
+        );
+        assert_equivalent(before, after);
+    }
+
+    // (c) A function-body edit that does NOT change its signature.
+    #[test]
+    fn function_body_edit_preserving_signature_is_equivalent() {
+        let before = &[
+            (
+                "fns.surql",
+                "DEFINE FUNCTION fn::pick() -> int { RETURN 1; };",
+            ),
+            ("caller.surql", "RETURN fn::pick();"),
+        ];
+        let after = &[
+            (
+                "fns.surql",
+                "DEFINE FUNCTION fn::pick() -> int { RETURN 1 + 1; };",
+            ),
+            ("caller.surql", "RETURN fn::pick();"),
+        ];
+        assert_equivalent(before, after);
+    }
+
+    // (d) A field TYPE change.
+    #[test]
+    fn field_type_change_is_equivalent() {
+        let before = &[
+            (
+                "schema.surql",
+                "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD age ON person TYPE int;",
+            ),
+            ("q.surql", "SELECT age FROM person;"),
+        ];
+        let after = &[
+            (
+                "schema.surql",
+                "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD age ON person TYPE string;",
+            ),
+            ("q.surql", "SELECT age FROM person;"),
+        ];
+        let (affected, _) = incremental(before, after);
+        assert!(
+            affected.contains(&sid("q.surql")),
+            "a reader of the changed field must re-analyze"
+        );
+        assert_equivalent(before, after);
+    }
+
+    // (e) Editing a function OTHER sources call: every caller re-analyzes.
+    #[test]
+    fn editing_a_called_function_reanalyzes_every_caller() {
+        let before = &[
+            (
+                "fns.surql",
+                "DEFINE FUNCTION fn::v() { RETURN 1; };",
+            ),
+            ("a.surql", "RETURN fn::v();"),
+            ("b.surql", "RETURN fn::v() + 1;"),
+            ("c.surql", "RETURN 42;"),
+        ];
+        let after = &[
+            (
+                "fns.surql",
+                "DEFINE FUNCTION fn::v() { RETURN 'x'; };",
+            ),
+            ("a.surql", "RETURN fn::v();"),
+            ("b.surql", "RETURN fn::v() + 1;"),
+            ("c.surql", "RETURN 42;"),
+        ];
+        let (affected, _) = incremental(before, after);
+        assert!(affected.contains(&sid("a.surql")));
+        assert!(affected.contains(&sid("b.surql")));
+        assert!(
+            !affected.contains(&sid("c.surql")),
+            "a source that never calls the function must NOT re-analyze"
+        );
+        assert_equivalent(before, after);
+    }
+
+    // (f) A definition removed from a file (no REMOVE statement — the DEFINE
+    // text is deleted): the catalog loses the table, and its readers must see
+    // the new unknown-table finding.
+    #[test]
+    fn removing_a_definition_reanalyzes_readers() {
+        let before = &[
+            ("schema.surql", "DEFINE TABLE ghost;\nDEFINE TABLE person;"),
+            ("q.surql", "SELECT * FROM ghost;"),
+        ];
+        let after = &[
+            ("schema.surql", "DEFINE TABLE person;"),
+            ("q.surql", "SELECT * FROM ghost;"),
+        ];
+        let (affected, _) = incremental(before, after);
+        assert!(affected.contains(&sid("q.surql")));
+        assert_equivalent(before, after);
+    }
+
+    // (f') Adding a definition a reader depends on.
+    #[test]
+    fn adding_a_definition_reanalyzes_readers() {
+        let before = &[
+            ("schema.surql", "DEFINE TABLE person;"),
+            ("q.surql", "SELECT * FROM ghost;"),
+        ];
+        let after = &[
+            ("schema.surql", "DEFINE TABLE person;\nDEFINE TABLE ghost;"),
+            ("q.surql", "SELECT * FROM ghost;"),
+        ];
+        assert_equivalent(before, after);
+    }
+
+    // A REMOVE statement in a dirty doc forces the full fallback (unmodeled).
+    #[test]
+    fn remove_statement_requires_full_reanalysis() {
+        let parsed = parse_source(sid("s.surql"), "REMOVE TABLE person;").expect("parse");
+        assert!(source_requires_full_reanalysis(&parsed));
+        let alter = parse_source(sid("s.surql"), "ALTER TABLE person DROP;").expect("parse");
+        assert!(source_requires_full_reanalysis(&alter));
+        let define_param =
+            parse_source(sid("s.surql"), "DEFINE PARAM $x VALUE 1;").expect("parse");
+        assert!(source_requires_full_reanalysis(&define_param));
+        let plain = parse_source(sid("s.surql"), "DEFINE TABLE person;").expect("parse");
+        assert!(!source_requires_full_reanalysis(&plain));
+    }
+
+    // (g) An edit to a source many others reference: all readers re-analyze and
+    // the result stays equivalent.
+    #[test]
+    fn editing_a_widely_referenced_table_reanalyzes_all_readers() {
+        let before = &[
+            (
+                "schema.surql",
+                "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;",
+            ),
+            ("q1.surql", "SELECT name FROM person;"),
+            ("q2.surql", "SELECT name FROM person WHERE name != NONE;"),
+            ("q3.surql", "CREATE person SET name = 'a';"),
+            ("unrelated.surql", "RETURN 1 + 1;"),
+        ];
+        let after = &[
+            (
+                "schema.surql",
+                "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE int;",
+            ),
+            ("q1.surql", "SELECT name FROM person;"),
+            ("q2.surql", "SELECT name FROM person WHERE name != NONE;"),
+            ("q3.surql", "CREATE person SET name = 'a';"),
+            ("unrelated.surql", "RETURN 1 + 1;"),
+        ];
+        let (affected, _) = incremental(before, after);
+        assert!(!affected.contains(&sid("unrelated.surql")));
+        assert_equivalent(before, after);
+    }
+
+    // Mutual recursion: editing one function to close a cycle must flip the
+    // 5009 findings of BOTH functions' sources, even though only one is dirty.
+    #[test]
+    fn closing_a_recursion_cycle_reanalyzes_the_other_function() {
+        let before = &[
+            ("a.surql", "DEFINE FUNCTION fn::a() { RETURN fn::b(); };"),
+            ("b.surql", "DEFINE FUNCTION fn::b() { RETURN 1; };"),
+        ];
+        let after = &[
+            ("a.surql", "DEFINE FUNCTION fn::a() { RETURN fn::b(); };"),
+            ("b.surql", "DEFINE FUNCTION fn::b() { RETURN fn::a(); };"),
+        ];
+        let (affected, _) = incremental(before, after);
+        assert!(
+            affected.contains(&sid("a.surql")),
+            "the other function in the newly-formed cycle must re-analyze for 5009"
+        );
+        assert_equivalent(before, after);
+    }
+
+    /// Measurement hook (ignored by default): on a ~200-file synthetic corpus,
+    /// times a full whole-workspace pass against the symbol-incremental schema
+    /// path for a function-body edit, and reports how many sources re-analyze.
+    /// Run with:
+    ///   cargo test -p surrealguard-workspace symbol_incremental_schema_speedup -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn symbol_incremental_schema_speedup() {
+        use std::time::Instant;
+
+        // 20 schema files (100 tables, 20 helper functions) + 180 query files.
+        let mut before: Vec<(String, String)> = Vec::new();
+        for f in 0..20 {
+            let mut schema = String::new();
+            for t in 0..5 {
+                schema.push_str(&format!(
+                    "DEFINE TABLE t{f}_{t} SCHEMAFULL;\n\
+                     DEFINE FIELD name ON t{f}_{t} TYPE string;\n\
+                     DEFINE FIELD n ON t{f}_{t} TYPE int;\n\
+                     DEFINE FUNCTION fn::f{f}_{t}($x: record<t{f}_{t}>) {{ RETURN (SELECT VALUE n FROM ONLY $x); }};\n"
+                ));
+            }
+            before.push((format!("schema{f}.surql"), schema));
+        }
+        for q in 0..180 {
+            let f = q % 20;
+            let t = q % 5;
+            before.push((
+                format!("query{q}.surql"),
+                format!(
+                    "SELECT name, n FROM t{f}_{t} WHERE n > $min;\n\
+                     RETURN fn::f{f}_{t}(t{f}_{t}:one);"
+                ),
+            ));
+        }
+        // Edit ONE helper's body (add an arithmetic op). Nothing outside its own
+        // file changes shape, but its callers read its return, so they re-run.
+        let mut after = before.clone();
+        after[0].1 = after[0].1.replacen(
+            "DEFINE FUNCTION fn::f0_0($x: record<t0_0>) { RETURN (SELECT VALUE n FROM ONLY $x); };",
+            "DEFINE FUNCTION fn::f0_0($x: record<t0_0>) { RETURN (SELECT VALUE n FROM ONLY $x) + 1; };",
+            1,
+        );
+
+        let before_refs: Vec<(&str, &str)> =
+            before.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+        let after_refs: Vec<(&str, &str)> =
+            after.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+
+        let iters = 20;
+        // Full whole-workspace pass per keystroke.
+        let full_start = Instant::now();
+        for _ in 0..iters {
+            let _ = full_workspace(&after_refs);
+        }
+        let full = full_start.elapsed() / iters;
+
+        // Symbol-incremental path per keystroke: rebuild the catalog (O(defines)),
+        // diff it, and re-analyze only the affected sources.
+        let before_parsed = parsed_for(&before_refs);
+        let before_catalog = build_global_catalog(&before_parsed);
+        let mut affected_count = 0usize;
+        let incr_start = Instant::now();
+        for _ in 0..iters {
+            let after_parsed = parsed_for(&after_refs);
+            let after_catalog = build_global_catalog(&after_parsed);
+            let changed = changed_symbols(&before_catalog, &after_catalog);
+            let mut affected: BTreeSet<SourceId> = [sid("schema0.surql")].into_iter().collect();
+            for parsed in &after_parsed {
+                if source_reference_set(parsed).is_affected_by(&changed) {
+                    affected.insert(parsed.source_id().clone());
+                }
+            }
+            for id in sources_with_changed_cycle_findings(&before_catalog, &after_catalog) {
+                affected.insert(id);
+            }
+            affected_count = affected.len();
+            let _ = reanalyze_sources(&after_parsed, &after_catalog, &affected, false);
+        }
+        let incr = incr_start.elapsed() / iters;
+
+        eprintln!(
+            "200-file corpus [body edit, return type unchanged]: sources={}  full={full:?}  symbol_incremental={incr:?}  reanalyzed={affected_count}  speedup={:.1}x",
+            before.len(),
+            full.as_secs_f64() / incr.as_secs_f64().max(f64::MIN_POSITIVE)
+        );
+
+        // Scenario B: the edit CHANGES the helper's return type (int -> string),
+        // so every source that calls it re-analyzes — still far fewer than N.
+        let mut after_b = before.clone();
+        after_b[0].1 = after_b[0].1.replacen(
+            "DEFINE FUNCTION fn::f0_0($x: record<t0_0>) { RETURN (SELECT VALUE n FROM ONLY $x); };",
+            "DEFINE FUNCTION fn::f0_0($x: record<t0_0>) { RETURN 'label'; };",
+            1,
+        );
+        let after_b_refs: Vec<(&str, &str)> =
+            after_b.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+        let mut affected_b = 0usize;
+        let incr_b_start = Instant::now();
+        for _ in 0..iters {
+            let after_parsed = parsed_for(&after_b_refs);
+            let after_catalog = build_global_catalog(&after_parsed);
+            let changed = changed_symbols(&before_catalog, &after_catalog);
+            let mut affected: BTreeSet<SourceId> = [sid("schema0.surql")].into_iter().collect();
+            for parsed in &after_parsed {
+                if source_reference_set(parsed).is_affected_by(&changed) {
+                    affected.insert(parsed.source_id().clone());
+                }
+            }
+            for id in sources_with_changed_cycle_findings(&before_catalog, &after_catalog) {
+                affected.insert(id);
+            }
+            affected_b = affected.len();
+            let _ = reanalyze_sources(&after_parsed, &after_catalog, &affected, false);
+        }
+        let incr_b = incr_b_start.elapsed() / iters;
+        eprintln!(
+            "200-file corpus [body edit, return type int->string]: full={full:?}  symbol_incremental={incr_b:?}  reanalyzed={affected_b}  speedup={:.1}x",
+            full.as_secs_f64() / incr_b.as_secs_f64().max(f64::MIN_POSITIVE)
+        );
+    }
+
+    // Granularity: a function-body edit whose function nothing references
+    // re-analyzes ONLY the edited source, not the whole workspace.
+    #[test]
+    fn unreferenced_function_body_edit_reanalyzes_only_itself() {
+        let mut before: Vec<(String, String)> = Vec::new();
+        before.push((
+            "helper.surql".to_string(),
+            "DEFINE FUNCTION fn::helper() -> int { RETURN 1; };".to_string(),
+        ));
+        for i in 0..40 {
+            before.push((
+                format!("q{i}.surql"),
+                format!("RETURN {i};"),
+            ));
+        }
+        let before_refs: Vec<(&str, &str)> = before
+            .iter()
+            .map(|(n, t)| (n.as_str(), t.as_str()))
+            .collect();
+
+        let mut after = before.clone();
+        after[0].1 = "DEFINE FUNCTION fn::helper() -> int { RETURN 2; };".to_string();
+        let after_refs: Vec<(&str, &str)> = after
+            .iter()
+            .map(|(n, t)| (n.as_str(), t.as_str()))
+            .collect();
+
+        let affected = assert_equivalent(&before_refs, &after_refs);
+        assert_eq!(
+            affected, 1,
+            "an unreferenced function-body edit re-analyzes exactly one source, not {}",
+            before.len()
+        );
     }
 }
