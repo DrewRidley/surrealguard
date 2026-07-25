@@ -885,6 +885,22 @@ fn cast_kind(ty: &ast::TypeExpr) -> Option<Kind> {
 /// `duration * int`).
 pub fn binary_result_kind(op: &ast::BinaryOp, lhs: &Kind, rhs: &Kind) -> Option<Kind> {
     use ast::BinaryOp as Op;
+    // `??` yields its left operand only when that operand is *not* NONE/NULL,
+    // so the NONE variant of an `option<T>` can never reach the result. Strip
+    // it up front: an `option<string>` is `Either([none, string])`, which
+    // matches none of the NullCoalesce arms below and would otherwise fall to
+    // the catch-all that unions the NONE straight back in — leaving
+    // `(opt ?? 'd') + '!'` a false E2004. `narrow_out_none` is a no-op on
+    // `Kind::Any`, on bare `Kind::None`, and on a union that would empty out,
+    // so `any ?? x` and `NONE ?? x` keep their existing behaviour.
+    let coalesce_lhs;
+    let raw_lhs = lhs;
+    let lhs = if matches!(op, Op::NullCoalesce) {
+        coalesce_lhs = narrow_out_none(lhs);
+        &coalesce_lhs
+    } else {
+        lhs
+    };
     match op {
         Op::Add if matches!(lhs, Kind::String) && matches!(rhs, Kind::String) => Some(Kind::String),
         Op::Add | Op::Sub if matches!(lhs, Kind::Duration) && matches!(rhs, Kind::Duration) => {
@@ -931,7 +947,9 @@ pub fn binary_result_kind(op: &ast::BinaryOp, lhs: &Kind, rhs: &Kind) -> Option<
             Some(Kind::Bool)
         }
         Op::NullCoalesce if matches!(lhs, Kind::None | Kind::Null) => Some(rhs.clone()),
-        Op::NullCoalesce if matches!(rhs, Kind::None | Kind::Null) => Some(lhs.clone()),
+        // `x ?? NONE` is `x`: the default only surfaces when `x` is already
+        // NONE, so the NONE variant survives — report the *unstripped* left.
+        Op::NullCoalesce if matches!(rhs, Kind::None | Kind::Null) => Some(raw_lhs.clone()),
         // `x ?? []`: an empty-array literal default (max length 0) carries no
         // element constraint, so coalescing keeps the other side's collection
         // type (`->edge->target ?? []` stays `array<record<target>>`).
@@ -1182,6 +1200,55 @@ mod tests {
         let same = parse("RETURN 1 ?? 0;");
         let fact = infer_first(&same, "BinaryExpression", None, &env);
         assert_eq!(fact.kind, Some(Kind::Int));
+    }
+
+    #[test]
+    fn coalesce_strips_none_from_an_option_left_operand() {
+        use surrealguard_syntax::ast::BinaryOp;
+
+        // `option<string> ?? 'd'` is a `string`: the default is exactly what
+        // surfaces when the left side is NONE, so NONE cannot survive.
+        let opt_string = Kind::Either(vec![Kind::None, Kind::String]);
+        assert_eq!(
+            binary_result_kind(&BinaryOp::NullCoalesce, &opt_string, &Kind::String),
+            Some(Kind::String)
+        );
+
+        // The purpose-built arms now see the stripped kind too:
+        // `option<array<int>> ?? []` keeps the collection type ...
+        let opt_array = Kind::Either(vec![Kind::None, Kind::Array(Box::new(Kind::Int), None)]);
+        assert_eq!(
+            binary_result_kind(
+                &BinaryOp::NullCoalesce,
+                &opt_array,
+                &Kind::Array(Box::new(Kind::Any), Some(0)),
+            ),
+            Some(Kind::Array(Box::new(Kind::Int), None))
+        );
+        // ... and `option<int> ?? 0` stays an `int` rather than `int | none`.
+        let opt_int = Kind::Either(vec![Kind::None, Kind::Int]);
+        assert_eq!(
+            binary_result_kind(&BinaryOp::NullCoalesce, &opt_int, &Kind::Int),
+            Some(Kind::Int)
+        );
+
+        // Unchanged boundaries: a bare NONE left side still yields the
+        // default, and an `any` left side is untouched by the narrowing.
+        assert_eq!(
+            binary_result_kind(&BinaryOp::NullCoalesce, &Kind::None, &Kind::String),
+            Some(Kind::String)
+        );
+        assert_eq!(
+            binary_result_kind(&BinaryOp::NullCoalesce, &Kind::Any, &Kind::String),
+            Some(Kind::either(vec![Kind::Any, Kind::String]))
+        );
+
+        // `x ?? NONE` is `x`: the NONE survives, so the left side is *not*
+        // stripped when the default is itself NONE.
+        assert_eq!(
+            binary_result_kind(&BinaryOp::NullCoalesce, &opt_string, &Kind::None),
+            Some(opt_string.clone())
+        );
     }
 
     #[test]

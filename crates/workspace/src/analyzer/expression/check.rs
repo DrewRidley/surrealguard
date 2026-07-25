@@ -945,6 +945,32 @@ mod tests {
         codes(query).iter().any(|c| c == code)
     }
 
+    // ---- `??` strips NONE, so a coalesced option is a plain value (2004) ----
+
+    #[test]
+    fn coalesced_option_is_usable_in_arithmetic() {
+        // The user did exactly what the 2004 help text asks for; the result
+        // must not still be an `option<string>`.
+        let query = concat!(
+            "DEFINE TABLE t SCHEMAFULL;\n",
+            "DEFINE FIELD nick ON t TYPE option<string>;\n",
+            "SELECT VALUE (nick ?? 'd') + '!' FROM t;\n",
+        );
+        assert!(!fires(query, "E2004"), "codes: {:?}", codes(query));
+    }
+
+    #[test]
+    fn coalesce_does_not_hide_a_genuine_operand_mismatch() {
+        // The must-still-fire boundary: coalescing narrows the left side to
+        // `string`, which still cannot be added to an `int`.
+        let query = concat!(
+            "DEFINE TABLE t SCHEMAFULL;\n",
+            "DEFINE FIELD nick ON t TYPE option<string>;\n",
+            "SELECT VALUE (nick ?? 'd') + 1 FROM t;\n",
+        );
+        assert!(fires(query, "E2004"), "codes: {:?}", codes(query));
+    }
+
     // ---- C1: comparison to NULL/NONE a kind cannot be (7005) ----
 
     #[test]
