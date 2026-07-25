@@ -171,8 +171,9 @@ fn check_insert_required_fields(
     match &stmt.data {
         ast::InsertData::Values(values) => {
             for value in values {
-                let keys = mutation::object_keys(value);
-                if !keys.is_empty() {
+                // A payload whose key set isn't statically known (an unbound
+                // `$row`) is no evidence that a field is missing.
+                if let Some(keys) = mutation::payload_field_names(ctx, value) {
                     mutation::check_required_fields(ctx, table, &keys, target.span);
                 }
             }
@@ -252,5 +253,75 @@ mod tests {
         let kind = analyze(&schema, "INSERT INTO ghost { name: 'Ada' };");
 
         assert_eq!(kind, Kind::Any);
+    }
+
+    fn diagnostics_for(
+        schema: &SchemaIndex,
+        query: &str,
+    ) -> Vec<surrealguard_diagnostics::Finding> {
+        let parsed = parse_source(SourceId::new("query"), query).expect("query should parse");
+        let ast::Statement::Insert(stmt) =
+            surrealguard_syntax::lower::lower_first_statement(&parsed, "InsertStatement")
+                .expect("insert statement exists")
+                .node
+        else {
+            panic!("expected insert statement");
+        };
+        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        {
+            let mut ctx = AnalysisContext::scoped(
+                schema,
+                parsed.source_id().clone(),
+                parsed.text(),
+                &mut diagnostics,
+                StatementEnv::default(),
+                None,
+            );
+            insert_response_kind(&stmt, &mut ctx);
+        }
+        diagnostics
+    }
+
+    fn person_schema() -> SchemaIndex {
+        let parsed = parse_source(
+            SourceId::new("schema"),
+            "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD name ON person TYPE string;\n\
+             DEFINE FIELD age ON person TYPE int;",
+        )
+        .expect("schema should parse");
+        extract_schema(&[parsed]).schema
+    }
+
+    fn missing_fields(diagnostics: &[surrealguard_diagnostics::Finding]) -> usize {
+        diagnostics
+            .iter()
+            .filter(|finding| finding.code().number() == 2034)
+            .count()
+    }
+
+    #[test]
+    fn insert_payload_of_unknown_shape_claims_no_missing_field() {
+        let schema = person_schema();
+
+        let diagnostics = diagnostics_for(&schema, "INSERT INTO person $payload;");
+
+        assert_eq!(
+            missing_fields(&diagnostics),
+            0,
+            "an opaque payload must not report missing fields"
+        );
+    }
+
+    #[test]
+    fn insert_payload_omitting_a_required_field_still_errors() {
+        let schema = person_schema();
+
+        let diagnostics = diagnostics_for(&schema, "INSERT INTO person { name: 'Ada' };");
+
+        assert_eq!(missing_fields(&diagnostics), 1);
+        assert!(diagnostics
+            .iter()
+            .any(|finding| finding.message().contains("`age`")));
     }
 }

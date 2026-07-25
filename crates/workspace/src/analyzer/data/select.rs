@@ -54,8 +54,14 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     check_fetch_clauses(stmt, table, ctx);
     check_split_clauses(stmt, table, ctx);
     if let Some(group) = &stmt.group {
+        // GROUP BY keys name *result* columns, so a projection alias is a
+        // legal key even though the source table has no such field.
+        let projected = projected_row_names(stmt);
         for idiom in &group.keys {
             if let Some(segments) = plain_field_segments(&idiom.node) {
+                if projected_name_covers(&projected, &segments.join(".")) {
+                    continue;
+                }
                 crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
             }
         }
@@ -397,6 +403,9 @@ fn check_order_clause(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analys
                 .collect(),
         )
     };
+    // ORDER BY keys, like GROUP BY keys, name *result* columns: an alias is
+    // a legal key even though the source table has no such field.
+    let projected = projected_row_names(stmt);
     for key in &order.keys {
         let field = match &key.expr.node {
             ast::Expr::Idiom(idiom) => plain_field_segments(idiom),
@@ -414,7 +423,9 @@ fn check_order_clause(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analys
             ));
             continue;
         };
-        crate::analyzer::data::check_field_path(ctx, table, &segments, key.expr.span, 1002);
+        if !projected_name_covers(&projected, &segments.join(".")) {
+            crate::analyzer::data::check_field_path(ctx, table, &segments, key.expr.span, 1002);
+        }
         if let Some(keys) = &explicit_keys {
             let name = segments.join(".");
             if !keys.contains(&name) {
@@ -687,30 +698,13 @@ fn check_group_key_projection(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<
     }) {
         return;
     }
-    let projected: std::collections::BTreeSet<String> = stmt
-        .projections
-        .iter()
-        .filter_map(|projection| match projection {
-            ast::Projection::Expr {
-                alias: Some(alias),
-                ..
-            } => Some(alias.node.clone()),
-            ast::Projection::Expr { expr, alias: None } => match &expr.node {
-                ast::Expr::Idiom(idiom) => plain_field_segments(idiom).map(|s| s.join(".")),
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect();
+    let projected = projected_row_names(stmt);
     for key in &group.keys {
         let Some(segments) = plain_field_segments(&key.node) else {
             continue;
         };
         let name = segments.join(".");
-        let covered = projected.iter().any(|projected_name| {
-            projected_name == &name || name.starts_with(&format!("{projected_name}."))
-        });
-        if !covered {
+        if !projected_name_covers(&projected, &name) {
             let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), key.span);
             ctx.emit(
                 surrealguard_diagnostics::catalog::finding(
@@ -724,6 +718,38 @@ fn check_group_key_projection(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<
             );
         }
     }
+}
+
+/// The names this query's result rows carry: each projection's `AS` alias,
+/// and — for an unaliased plain field projection — its dotted path.
+///
+/// GROUP BY / ORDER BY keys are resolved against the *result* rows, not the
+/// source table: `SELECT price AS n FROM t GROUP BY n` is valid SurrealQL
+/// (verified against a live engine) even though `t` has no field `n`. This
+/// set is what makes an alias key legal; it is shared by the 1002
+/// suppression in both clauses and by 4013's "key isn't projected" check.
+fn projected_row_names(stmt: &ast::SelectStmt) -> std::collections::BTreeSet<String> {
+    stmt.projections
+        .iter()
+        .filter_map(|projection| match projection {
+            ast::Projection::Expr {
+                alias: Some(alias), ..
+            } => Some(alias.node.clone()),
+            ast::Projection::Expr { expr, alias: None } => match &expr.node {
+                ast::Expr::Idiom(idiom) => plain_field_segments(idiom).map(|s| s.join(".")),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether a clause key names a projected column — equal to one, or nested
+/// under one (projecting `address` covers `GROUP BY address.city`).
+fn projected_name_covers(names: &std::collections::BTreeSet<String>, name: &str) -> bool {
+    names
+        .iter()
+        .any(|projected| projected == name || name.starts_with(&format!("{projected}.")))
 }
 
 /// A bare zero-argument `count()` in a projection is an aggregate only under
@@ -1182,7 +1208,7 @@ fn computed_kind(
     // An aggregate over a projected column receives the *collected* column,
     // not one row's value — infer it as such so its `array` argument
     // contract is satisfied rather than false-positived.
-    if let Some(kind) = column_aggregate_kind(expr, table, ctx) {
+    if let Some(kind) = aggregate_expression_kind(expr, table, ctx) {
         return kind;
     }
     // Re-resolve the table from the schema so the borrow carries the
@@ -1197,44 +1223,184 @@ fn computed_kind(
 /// Aggregate functions collapse a *column collected across rows* into a
 /// single value. In a projection the author writes one row's value
 /// (`math::sum(size_bytes)`), but the aggregate is handed the whole column —
-/// so a scalar column is promoted to `array<column>` before the signature
-/// runs. Without this, the per-row `int` reading of `size_bytes` violates
-/// the `array` argument contract and false-positives (5002).
+/// so the argument's per-row kind is promoted to `array<per-row>` before the
+/// signature runs. Without this, the per-row `int` reading of `size_bytes`
+/// violates the `array` argument contract and false-positives (5002).
 ///
-/// The promotion is deliberately narrow: it fires only for a single bare
-/// column argument whose kind is a scalar. A column that is already a
-/// collection keeps the ordinary element-wise reading (`array::len(tags)`),
-/// and anything but a plain field falls through to normal inference.
+/// The argument may be any expression: SurrealDB's aggregate operator holds
+/// an `argument_expr` it evaluates per row (`math::sum(price * qty)` is as
+/// valid as `math::sum(price)`), and the aggregate itself may sit at any
+/// depth in the projection (`math::sum(a) + math::sum(b)`), which
+/// [`aggregate_expression_kind`] models.
+///
+/// Returns `None` only when the shape is one the caller should infer the
+/// ordinary way: not a single-argument call, or a plain column that is
+/// *already* a collection (`math::max(tags)` keeps its element-wise
+/// reading).
 fn column_aggregate_kind(
-    expr: &ast::Spanned<ast::Expr>,
+    call: &ast::Call,
     table: &TableDef,
     ctx: &mut AnalysisContext<'_>,
 ) -> Option<Kind> {
-    let ast::Expr::Call(call) = &expr.node else {
-        return None;
-    };
-    if !is_column_aggregate(call.path.node.as_str()) {
-        return None;
-    }
     let [arg] = call.args.as_slice() else {
         return None;
     };
-    let ast::Expr::Idiom(idiom) = &arg.node else {
-        return None;
+    // A plain column resolves straight from the schema — the established
+    // path, kept exactly as it was so its (absence of) findings is unchanged.
+    let plain_column = match &arg.node {
+        ast::Expr::Idiom(idiom) => {
+            plain_field_segments(idiom).and_then(|segments| kind_for_path(table, &segments))
+        }
+        _ => None,
     };
-    let segments = plain_field_segments(idiom)?;
-    let column = kind_for_path(table, &segments)?;
-    // Already a collection: the ordinary element-wise contract already fits.
+    let (column, already_checked) = match plain_column {
+        Some(column) => (column, false),
+        None => {
+            // Any other argument is one row's value: infer it under the row
+            // context, with its own invariants checked (the ordinary path
+            // would have checked it as part of the call).
+            let row_table = ctx.schema().tables.get(&table.name);
+            let kind = ctx.with_row_table(row_table, |ctx| {
+                crate::analyzer::expression::check::check_value_expression(ctx, arg);
+                infer_expression_fact(arg, ctx).kind.unwrap_or(Kind::Any)
+            });
+            (kind, true)
+        }
+    };
     let base = crate::kinds::literal_base_kind(&column).unwrap_or_else(|| column.clone());
-    if matches!(base, Kind::Array(_, _) | Kind::Set(_, _)) {
-        return None;
-    }
-    let collected = Kind::Array(Box::new(column), None);
+    let collected = if matches!(base, Kind::Array(_, _) | Kind::Set(_, _)) {
+        // Already a collection: the ordinary element-wise contract fits.
+        if !already_checked {
+            return None;
+        }
+        column
+    } else {
+        Kind::Array(Box::new(column), None)
+    };
     Some(crate::analyzer::function::analyze_builtin_function(
         ctx,
         call,
         &[collected],
     ))
+}
+
+/// A projection may compute *around* an aggregate — `math::sum(age) * 2`,
+/// `math::sum(price) + math::sum(qty)`, `<float> math::sum(x)`. SurrealDB's
+/// planner extracts the aggregate call from any depth and evaluates the
+/// surrounding expression over its result, so the whole projection is valid;
+/// inferring it per-row instead makes every one of those aggregates
+/// false-positive on its `array` argument contract (5002).
+///
+/// Returns `None` when the projection carries no aggregate, or carries one
+/// in a position this doesn't model (an aggregate nested in another
+/// aggregate — which SurrealDB itself rejects — or inside a container
+/// literal): the caller then falls back to ordinary per-row inference,
+/// exactly as before.
+fn aggregate_expression_kind(
+    expr: &ast::Spanned<ast::Expr>,
+    table: &TableDef,
+    ctx: &mut AnalysisContext<'_>,
+) -> Option<Kind> {
+    if !contains_column_aggregate(&expr.node) || !models_aggregate_shape(&expr.node) {
+        return None;
+    }
+    aggregate_operand_kind(expr, table, ctx)
+}
+
+/// One operand of an aggregate-bearing projection: the aggregate-carrying
+/// parts collapse the column, the rest are ordinary per-row values.
+/// Shape support is decided up front by [`models_aggregate_shape`], so this
+/// only returns `None` where that predicate already allows a fall-back.
+fn aggregate_operand_kind(
+    expr: &ast::Spanned<ast::Expr>,
+    table: &TableDef,
+    ctx: &mut AnalysisContext<'_>,
+) -> Option<Kind> {
+    if !contains_column_aggregate(&expr.node) {
+        let row_table = ctx.schema().tables.get(&table.name);
+        return Some(ctx.with_row_table(row_table, |ctx| {
+            crate::analyzer::expression::check::check_value_expression(ctx, expr);
+            infer_expression_fact(expr, ctx).kind.unwrap_or(Kind::Any)
+        }));
+    }
+    match &expr.node {
+        ast::Expr::Call(call) => column_aggregate_kind(call, table, ctx),
+        ast::Expr::Binary { lhs, op, rhs } => {
+            let lhs_kind = aggregate_operand_kind(lhs, table, ctx)?;
+            let rhs_kind = aggregate_operand_kind(rhs, table, ctx)?;
+            Some(
+                crate::analyzer::expression::infer::binary_result_kind(
+                    &op.node, &lhs_kind, &rhs_kind,
+                )
+                .unwrap_or(Kind::Any),
+            )
+        }
+        ast::Expr::Prefix { op, expr: operand } => {
+            let operand_kind = aggregate_operand_kind(operand, table, ctx)?;
+            Some(match op.node {
+                ast::PrefixOp::Not => Kind::Bool,
+                _ if crate::analyzer::expression::infer::is_numeric(&operand_kind) => operand_kind,
+                _ => Kind::Any,
+            })
+        }
+        ast::Expr::Cast { ty, expr: inner } => {
+            aggregate_operand_kind(inner, table, ctx)?;
+            Some(
+                crate::analyzer::expression::infer::cast_target_kind(&ty.node)
+                    .unwrap_or(Kind::Any),
+            )
+        }
+        _ => None,
+    }
+}
+
+/// Whether an aggregate-bearing expression is one whose surrounding
+/// computation is modeled. Decided structurally *before* anything is
+/// inferred so a fall-back to ordinary inference never double-reports the
+/// findings of a part already walked.
+fn models_aggregate_shape(expr: &ast::Expr) -> bool {
+    fn part(expr: &ast::Spanned<ast::Expr>) -> bool {
+        !contains_column_aggregate(&expr.node) || models_aggregate_shape(&expr.node)
+    }
+    match expr {
+        // A nested aggregate (`math::sum(math::max(x))`) is rejected by
+        // SurrealDB itself; leave it to ordinary inference.
+        ast::Expr::Call(call) => {
+            is_column_aggregate(call.path.node.as_str())
+                && call.args.len() == 1
+                && !contains_column_aggregate(&call.args[0].node)
+        }
+        ast::Expr::Binary { lhs, rhs, .. } => part(lhs) && part(rhs),
+        ast::Expr::Prefix { expr, .. } => part(expr),
+        ast::Expr::Cast { expr, .. } => part(expr),
+        _ => false,
+    }
+}
+
+/// Whether an aggregate call appears anywhere in an expression.
+fn contains_column_aggregate(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Call(call) => {
+            is_column_aggregate(call.path.node.as_str())
+                || call
+                    .args
+                    .iter()
+                    .any(|arg| contains_column_aggregate(&arg.node))
+        }
+        ast::Expr::Binary { lhs, rhs, .. } => {
+            contains_column_aggregate(&lhs.node) || contains_column_aggregate(&rhs.node)
+        }
+        ast::Expr::Prefix { expr, .. } | ast::Expr::Cast { expr, .. } => {
+            contains_column_aggregate(&expr.node)
+        }
+        ast::Expr::Array(elements) => elements
+            .iter()
+            .any(|element| contains_column_aggregate(&element.node)),
+        ast::Expr::Object(fields) => fields
+            .iter()
+            .any(|(_, value)| contains_column_aggregate(&value.node)),
+        _ => false,
+    }
 }
 
 /// Aggregate functions that reduce a numeric column to one scalar. These all
@@ -3044,5 +3210,212 @@ mod tests {
             "a typed link to an absent field must still emit 1002: {:?}",
             codes(&diagnostics)
         );
+    }
+
+    // -- GROUP BY / ORDER BY over a projection alias (DX-1) ------------------
+
+    fn alias_group_schema() -> SchemaIndex {
+        schema_from(
+            "DEFINE TABLE product SCHEMAFULL;\n\
+             DEFINE FIELD price ON product TYPE number;\n\
+             DEFINE FIELD team ON product TYPE string;",
+        )
+    }
+
+    #[test]
+    fn group_by_a_projection_alias_is_not_an_unknown_field() {
+        let schema = alias_group_schema();
+
+        for query in [
+            "SELECT price AS n FROM product GROUP BY n;",
+            "SELECT team AS t, count() FROM product GROUP BY t;",
+        ] {
+            let diagnostics = diagnostics_for(&schema, query);
+            assert!(
+                !codes(&diagnostics).contains(&1002),
+                "`{query}` must not report an unknown field: {:?}",
+                codes(&diagnostics)
+            );
+        }
+    }
+
+    #[test]
+    fn order_by_a_projection_alias_is_not_an_unknown_field() {
+        let schema = alias_group_schema();
+
+        for query in [
+            "SELECT price AS n FROM product ORDER BY n;",
+            "SELECT price AS n, count() FROM product GROUP BY n ORDER BY n;",
+        ] {
+            let diagnostics = diagnostics_for(&schema, query);
+            assert!(
+                !codes(&diagnostics).contains(&1002),
+                "`{query}` must not report an unknown field: {:?}",
+                codes(&diagnostics)
+            );
+        }
+    }
+
+    #[test]
+    fn group_by_an_alias_nested_path_is_covered_by_the_alias() {
+        let schema = schema_from(
+            "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD address ON person TYPE object;\n\
+             DEFINE FIELD address.city ON person TYPE string;",
+        );
+
+        let diagnostics =
+            diagnostics_for(&schema, "SELECT address AS a FROM person GROUP BY a.city;");
+        assert!(
+            !codes(&diagnostics).contains(&1002),
+            "a path under a projected alias must not report an unknown field: {:?}",
+            codes(&diagnostics)
+        );
+    }
+
+    // -- aggregates over computed columns (DX-2) -----------------------------
+
+    fn aggregate_schema() -> SchemaIndex {
+        schema_from(
+            "DEFINE TABLE post SCHEMAFULL;\n\
+             DEFINE FIELD price ON post TYPE number;\n\
+             DEFINE FIELD qty ON post TYPE int;\n\
+             DEFINE FIELD tags ON post TYPE array<string>;",
+        )
+    }
+
+    #[test]
+    fn aggregate_over_a_computed_column_is_not_a_scalar_argument() {
+        // The aggregate is handed the collected column whatever expression
+        // produced it, so none of these violate the `array` contract.
+        let schema = aggregate_schema();
+
+        for query in [
+            "SELECT math::sum(price * qty) AS a FROM post GROUP ALL;",
+            "SELECT math::mean(qty * 1) AS a FROM post GROUP ALL;",
+            "SELECT math::sum(<float> qty) AS a FROM post GROUP ALL;",
+        ] {
+            let (kind, diagnostics) = analyze_diagnostics(&schema, query);
+            assert!(
+                !codes(&diagnostics).contains(&5002),
+                "`{query}` must not report an argument violation: {:?}",
+                codes(&diagnostics)
+            );
+            assert_eq!(object_fields(array_element(&kind))["a"], Kind::Number);
+        }
+    }
+
+    #[test]
+    fn aggregate_nested_in_a_computation_is_still_promoted() {
+        let schema = aggregate_schema();
+
+        for query in [
+            "SELECT math::sum(qty) * 2 AS a FROM post GROUP ALL;",
+            "SELECT math::sum(price) + math::sum(qty) AS a FROM post GROUP ALL;",
+            "SELECT math::sum(price) / math::sum(qty) + qty AS a FROM post GROUP ALL;",
+        ] {
+            let (kind, diagnostics) = analyze_diagnostics(&schema, query);
+            assert!(
+                !codes(&diagnostics).contains(&5002),
+                "`{query}` must not report an argument violation: {:?}",
+                codes(&diagnostics)
+            );
+            // The computation around the aggregate types normally (the exact
+            // numeric kind is the arithmetic engine's business).
+            let computed = &object_fields(array_element(&kind))["a"];
+            assert!(
+                crate::analyzer::expression::infer::is_numeric(computed),
+                "`{query}` should compute a numeric column, got {computed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn aggregate_under_a_prefix_operator_is_still_promoted() {
+        let schema = aggregate_schema();
+
+        let (kind, diagnostics) =
+            analyze_diagnostics(&schema, "SELECT !math::sum(qty) AS a FROM post GROUP ALL;");
+        assert!(
+            !codes(&diagnostics).contains(&5002),
+            "a negated aggregate must not report an argument violation: {:?}",
+            codes(&diagnostics)
+        );
+        assert_eq!(object_fields(array_element(&kind))["a"], Kind::Bool);
+    }
+
+    #[test]
+    fn a_collection_column_keeps_its_element_wise_aggregate_reading() {
+        // The promotion must not double-wrap a column that is already an
+        // array: `math::max(tags)` takes the column itself.
+        let schema = aggregate_schema();
+
+        let (_, diagnostics) =
+            analyze_diagnostics(&schema, "SELECT math::max(tags) AS m FROM post GROUP ALL;");
+        assert!(
+            !codes(&diagnostics).contains(&5002),
+            "an array column must not report an argument violation: {:?}",
+            codes(&diagnostics)
+        );
+    }
+
+    #[test]
+    fn misuse_inside_and_around_an_aggregate_still_reports_once() {
+        // Guard against over-suppression: promoting the aggregate must not
+        // swallow the contract violations of the expressions it is built
+        // from, nor report them twice.
+        let schema = aggregate_schema();
+
+        for query in [
+            // scalar handed to a non-aggregate array function, beside an aggregate
+            "SELECT math::sum(price) + array::len(qty) AS a FROM post GROUP ALL;",
+            // ... and inside the aggregate's own argument
+            "SELECT math::sum(array::len(price)) AS a FROM post GROUP ALL;",
+        ] {
+            let (_, diagnostics) = analyze_diagnostics(&schema, query);
+            let violations = codes(&diagnostics)
+                .into_iter()
+                .filter(|code| *code == 5002)
+                .count();
+            assert_eq!(
+                violations, 1,
+                "`{query}` must report its argument violation exactly once: {:?}",
+                codes(&diagnostics)
+            );
+        }
+    }
+
+    #[test]
+    fn aggregate_arity_is_still_checked() {
+        let schema = aggregate_schema();
+
+        let (_, diagnostics) =
+            analyze_diagnostics(&schema, "SELECT math::sum(price, qty) AS a FROM post GROUP ALL;");
+        assert!(
+            codes(&diagnostics).contains(&5002),
+            "a two-argument `math::sum` must still be reported: {:?}",
+            codes(&diagnostics)
+        );
+    }
+
+    #[test]
+    fn group_by_and_order_by_a_genuinely_unknown_field_still_error() {
+        // Guard against over-suppression: the alias carve-out must not
+        // disable the check for a key that names nothing.
+        let schema = alias_group_schema();
+
+        for query in [
+            "SELECT price AS n FROM product GROUP BY nope;",
+            "SELECT price AS n FROM product ORDER BY nope;",
+            "SELECT * FROM product GROUP BY nope;",
+            "SELECT * FROM product ORDER BY nope;",
+        ] {
+            let diagnostics = diagnostics_for(&schema, query);
+            assert!(
+                codes(&diagnostics).contains(&1002),
+                "`{query}` must still report an unknown field: {:?}",
+                codes(&diagnostics)
+            );
+        }
     }
 }

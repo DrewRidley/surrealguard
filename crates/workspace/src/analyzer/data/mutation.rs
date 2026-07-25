@@ -143,29 +143,58 @@ pub fn check_required_fields(
     }
 }
 
-/// The top-level field names a data clause provides.
-pub fn provided_field_names(data: Option<&ast::DataClause>) -> Vec<String> {
+/// The top-level field names a data clause provides, or `None` when the
+/// clause's key set is not statically known.
+///
+/// The distinction is the whole contract of 2034: "provides nothing"
+/// (`CREATE person;`, `CONTENT {}`) is evidence that a required field is
+/// missing, but "shape unknown" (`CONTENT $payload`) is not. Conflating the
+/// two reported every required field as missing on a perfectly valid
+/// parameterized create — an error, so it also refused to write the
+/// registry for the whole project.
+pub fn provided_field_names(
+    ctx: &AnalysisContext<'_>,
+    data: Option<&ast::DataClause>,
+) -> Option<Vec<String>> {
     match data {
-        Some(ast::DataClause::Set(assignments)) => assignments
-            .iter()
-            .filter_map(|assignment| {
-                plain_field_segments(&assignment.target.node)
-                    .and_then(|segments| segments.first().cloned())
-            })
-            .collect(),
+        // No data clause at all: nothing is provided.
+        None => Some(Vec::new()),
+        Some(ast::DataClause::Set(assignments)) => Some(
+            assignments
+                .iter()
+                .filter_map(|assignment| {
+                    plain_field_segments(&assignment.target.node)
+                        .and_then(|segments| segments.first().cloned())
+                })
+                .collect(),
+        ),
         Some(
             ast::DataClause::Content(expr)
             | ast::DataClause::Replace(expr)
             | ast::DataClause::Merge(expr),
-        ) => object_keys(expr),
-        _ => Vec::new(),
+        ) => payload_field_names(ctx, expr),
+        // PATCH/UNSET/an unlowered clause: no key set to read.
+        Some(_) => None,
     }
 }
 
-pub fn object_keys(expr: &ast::Spanned<ast::Expr>) -> Vec<String> {
+/// The top-level keys a payload expression provides: an object literal's
+/// keys, or those of a `LET`-bound parameter the analyzer has already typed
+/// as a closed object. `None` for every other payload — an unbound
+/// `$payload`, a function call, a subquery — whose keys are unknowable here.
+pub fn payload_field_names(
+    ctx: &AnalysisContext<'_>,
+    expr: &ast::Spanned<ast::Expr>,
+) -> Option<Vec<String>> {
     match &expr.node {
-        ast::Expr::Object(fields) => fields.iter().map(|(key, _)| key.node.clone()).collect(),
-        _ => Vec::new(),
+        ast::Expr::Object(fields) => Some(fields.iter().map(|(key, _)| key.node.clone()).collect()),
+        ast::Expr::Param(name) => match ctx.env().let_fact(name)?.kind.as_ref()? {
+            Kind::Literal(KindLiteral::Object(fields)) => {
+                Some(fields.keys().cloned().collect::<Vec<_>>())
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }
 
