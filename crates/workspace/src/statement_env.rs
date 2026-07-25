@@ -30,6 +30,14 @@ pub struct StatementEnv {
     /// declared `option<record<folder>>`. Keyed on the `param.field.field`
     /// path; only the exact path narrows (never the base param or siblings).
     narrowed_paths: BTreeMap<String, surrealdb_types::Kind>,
+    /// Bare params whose binding was tightened by an *active flow narrowing*
+    /// in this scope (a prior guard's positive/negative effect), as opposed to
+    /// their base declared/seeded binding. Dead-branch folding consults this so
+    /// a verdict only ever fires on a subject a guard actually narrowed —
+    /// never on an idiomatic defensive check against a declared-non-optional
+    /// param. Inherited by child scopes (a branch body sees the outer
+    /// narrowing), like [`narrowed_paths`](Self::narrowed_paths).
+    narrowed_params: BTreeSet<String>,
     /// Every `LET` binding (and `FOR` loop variable) analysis has seen in
     /// this scope and its already-merged children, in source order. Pure
     /// editor-feature output: recorded as bodies are walked and drained up to
@@ -49,6 +57,7 @@ impl StatementEnv {
             params: BTreeMap::new(),
             table_discriminants: self.table_discriminants.clone(),
             narrowed_paths: self.narrowed_paths.clone(),
+            narrowed_params: self.narrowed_params.clone(),
             // Child records are collected fresh and drained back on merge, so
             // the parent's already-recorded bindings are not re-emitted.
             let_bindings: Vec::new(),
@@ -76,6 +85,18 @@ impl StatementEnv {
     /// The flow-narrowed kind for the idiom path `key`, if a guard proved one.
     pub fn narrowed_path(&self, key: &str) -> Option<&surrealdb_types::Kind> {
         self.narrowed_paths.get(key)
+    }
+
+    /// Records that the bare param `name`'s binding was tightened by an active
+    /// flow narrowing in this scope (see [`narrowed_params`](Self::narrowed_params)).
+    pub fn mark_param_narrowed(&mut self, name: String) {
+        self.narrowed_params.insert(name);
+    }
+
+    /// Whether the bare param `name` was tightened by an active flow narrowing
+    /// in this scope (as opposed to its base declared/seeded binding).
+    pub fn is_param_narrowed(&self, name: &str) -> bool {
+        self.narrowed_params.contains(name)
     }
 
     /// Records that `binding` holds `type::table($param)`, so an equality

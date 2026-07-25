@@ -20,6 +20,7 @@
 use surrealdb_types::{Kind, KindLiteral, Table};
 use surrealguard_syntax::ast;
 
+use crate::analyzer::const_eval::{BranchReach, Reachability};
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::expression::infer::narrow_out_none;
 use crate::statement_env::StatementEnv;
@@ -604,7 +605,9 @@ pub(crate) fn apply_effects(ctx: &mut AnalysisContext<'_>, effects: &[Effect]) {
             };
             let mut new_fact = base;
             new_fact.kind = Some(narrowed);
-            ctx.define_local(effect.path.param.clone(), new_fact);
+            // Mark this as a flow narrowing (not a base binding) so dead-branch
+            // folding may draw a verdict from the tightened kind.
+            ctx.narrow_local(effect.path.param.clone(), new_fact);
         } else {
             // Resolve the path's declared kind through the schema, then narrow
             // and record it under the exact path key.
@@ -723,6 +726,313 @@ fn narrow_record_without(kind: &Kind, table: &str) -> Option<Kind> {
             Some(Kind::either(narrowed))
         }
         _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Narrowing-aware guard verdicts (dead-branch folding beyond literal constants)
+// ---------------------------------------------------------------------------
+
+/// Whether a guard's outcome is provably fixed given the flow-narrowed kinds
+/// the env already knows for the guard's subject. This is the narrowing
+/// analogue of [`crate::analyzer::const_eval::const_eval_bool`]: where the
+/// const folder proves a guard true/false from *literals*, this proves it from
+/// *accumulated narrowing* (`$x` already known non-none, a record already
+/// pinned to one table, …).
+///
+/// **Soundness is one-directional.** A branch is greyed only on a `AlwaysFalse`
+/// / (later-branch-killing) `AlwaysTrue`, so the recognizers below return a
+/// definite verdict *only* when the env kind rules the guard out (or in) for
+/// **every** value the subject can still take. An `Unknown`/`Any`/still-
+/// possible kind yields [`Verdict::Unknown`] and keeps the branch. Greying a
+/// live branch is a real false positive; missing a dead one is merely
+/// incomplete — so every recognizer bails toward `Unknown`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Verdict {
+    /// The guard holds for every value the subject can now be.
+    AlwaysTrue,
+    /// The guard holds for no value the subject can now be.
+    AlwaysFalse,
+    /// The guard's outcome is not fixed — the branch must be kept.
+    Unknown,
+}
+
+impl Verdict {
+    /// The verdict of the negation of this guard (`!=` vs `=`, ELSE of a THEN).
+    fn negate(self) -> Verdict {
+        match self {
+            Verdict::AlwaysTrue => Verdict::AlwaysFalse,
+            Verdict::AlwaysFalse => Verdict::AlwaysTrue,
+            Verdict::Unknown => Verdict::Unknown,
+        }
+    }
+}
+
+/// The verdict of an `IF`/`ELSE IF` guard `cond` against the kinds `env`
+/// currently holds for its subject. Literal-constant guards fold first (the
+/// pure const path), so this preserves the constant-folding behavior exactly
+/// and only *adds* the narrowing-driven verdicts as a fallback.
+///
+/// Recognized narrowing shapes (mirroring [`effects`]/[`leaf_effect`]):
+/// - `$x = NONE` / `$x != NONE` (and `IS`/`IS NOT`), likewise `= NULL`;
+/// - `type::table($x) = 'tbl'` / `!= 'tbl'` on a record union;
+/// - `type::is_record($x, 'tbl')` used as a bare boolean guard.
+///
+/// Anything else — a compound `AND`/`OR` the const path could not decide, an
+/// unbound subject, an `Any`/open kind — is [`Verdict::Unknown`].
+pub(crate) fn guard_verdict(cond: &ast::Expr, env: &StatementEnv) -> Verdict {
+    // Literal-constant guards fold first, reusing the pure const path so the
+    // existing constant behavior is preserved verbatim.
+    if let Some(value) = crate::analyzer::const_eval::const_eval_bool(cond) {
+        return if value {
+            Verdict::AlwaysTrue
+        } else {
+            Verdict::AlwaysFalse
+        };
+    }
+    match cond {
+        ast::Expr::Binary { lhs, op, rhs } => binary_verdict(&lhs.node, &op.node, &rhs.node, env),
+        // A bare boolean guard call: `type::is_record($x, 'tbl')`.
+        ast::Expr::Call(call) => is_record_verdict(call, env),
+        _ => Verdict::Unknown,
+    }
+}
+
+/// The verdict of a single comparison guard under the env's narrowed kinds.
+/// Compound `AND`/`OR` guards are intentionally not decomposed here — only the
+/// const path (short-circuit) decides those — so a comparison the const folder
+/// could not settle is the only narrowing entry point.
+fn binary_verdict(
+    lhs: &ast::Expr,
+    op: &ast::BinaryOp,
+    rhs: &ast::Expr,
+    env: &StatementEnv,
+) -> Verdict {
+    // NONE / NULL equality guards: `$x = NONE` / `$x != NULL` / `$x IS NONE`…
+    if let Some(equals) = none_test_polarity(op) {
+        if let Some((path, is_none)) = none_or_null_guard(lhs, rhs) {
+            let Some(kind) = path_kind(&path, env) else {
+                return Verdict::Unknown;
+            };
+            let eq_verdict = sentinel_eq_verdict(&kind, is_none);
+            // `equals` is the `=`/`IS` polarity; `!=`/`IS NOT` negates it.
+            return if equals { eq_verdict } else { eq_verdict.negate() };
+        }
+    }
+    // Discriminant guard: `type::table($x) = 'tbl'` / `!= 'tbl'`, either the
+    // direct call form or a `LET`-bound indirect discriminant.
+    if matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::NotEq) {
+        if let Some((path, table)) = table_discriminant(lhs, rhs, env) {
+            let Some(kind) = path_kind(&path, env) else {
+                return Verdict::Unknown;
+            };
+            let eq_verdict = table_eq_verdict(&kind, &table);
+            return if matches!(op, ast::BinaryOp::Eq) {
+                eq_verdict
+            } else {
+                eq_verdict.negate()
+            };
+        }
+    }
+    Verdict::Unknown
+}
+
+/// The verdict of `type::is_record($x, 'tbl')` as a bare boolean guard: the
+/// same record-union discriminant as `type::table($x) = 'tbl'`. The bare
+/// `type::is_record($x)` (no table) is not settled here — it also turns FALSE
+/// on NONE/scalars, so a pure verdict would need more than the record union.
+fn is_record_verdict(call: &ast::Call, env: &StatementEnv) -> Verdict {
+    if call.path.node != "type::is_record" {
+        return Verdict::Unknown;
+    }
+    let Some(path) = call.args.first().and_then(|arg| guard_path_of(&arg.node)) else {
+        return Verdict::Unknown;
+    };
+    let Some(table_arg) = call.args.get(1) else {
+        return Verdict::Unknown;
+    };
+    let Some(table) = string_literal(&table_arg.node) else {
+        return Verdict::Unknown;
+    };
+    let Some(kind) = path_kind(&path, env) else {
+        return Verdict::Unknown;
+    };
+    table_eq_verdict(&kind, &table)
+}
+
+/// The `(subject path, is_none)` a `NONE`/`NULL` comparison names, from either
+/// operand order. `is_none` is `true` for the `NONE` sentinel, `false` for
+/// `NULL`.
+fn none_or_null_guard(lhs: &ast::Expr, rhs: &ast::Expr) -> Option<(GuardPath, bool)> {
+    if let Some(is_none) = none_or_null_literal(rhs) {
+        Some((guard_path_of(lhs)?, is_none))
+    } else if let Some(is_none) = none_or_null_literal(lhs) {
+        Some((guard_path_of(rhs)?, is_none))
+    } else {
+        None
+    }
+}
+
+/// The **flow-narrowed** kind in force for a guard subject, or `None` when the
+/// subject was not tightened by an active flow narrowing in this scope.
+///
+/// This is the gate that keeps dead-branch folding to *conditional-flow*
+/// deadness: a verdict is drawn **only** from a kind a prior guard actually
+/// narrowed — a bare param whose binding was flow-tightened
+/// ([`StatementEnv::is_param_narrowed`]) or a field path with a narrowing
+/// override ([`StatementEnv::narrowed_path`]). A subject sitting at its base
+/// declared/seeded binding returns `None` → `Unknown` → the branch is kept, so
+/// an idiomatic defensive `IF $p = NONE` on a declared-non-optional `$p` is
+/// never greyed. The schema-stepped *declared* kind is deliberately **not** a
+/// fallback here — that would fold on the base binding.
+fn path_kind(path: &GuardPath, env: &StatementEnv) -> Option<Kind> {
+    if path.is_bare() {
+        return env
+            .is_param_narrowed(&path.param)
+            .then(|| env.let_fact(&path.param).and_then(|fact| fact.kind.clone()))
+            .flatten();
+    }
+    env.narrowed_path(&path.key()).cloned()
+}
+
+/// The verdict of `$x = <sentinel>` (NONE when `is_none`, else NULL) against
+/// `kind`. `AlwaysFalse` when the value can never be that sentinel;
+/// `AlwaysTrue` when it can be *nothing but* that sentinel; else `Unknown`.
+/// `Kind::Any` can be anything, so it is `Unknown` in both directions.
+fn sentinel_eq_verdict(kind: &Kind, is_none: bool) -> Verdict {
+    let (can_be, has_other) = if is_none {
+        (kind_can_be_none(kind), kind_has_non_none(kind))
+    } else {
+        (kind_can_be_null(kind), kind_has_non_null(kind))
+    };
+    if !can_be {
+        // The value is never the sentinel → the equality never holds.
+        Verdict::AlwaysFalse
+    } else if !has_other {
+        // The value is *only* the sentinel → the equality always holds.
+        Verdict::AlwaysTrue
+    } else {
+        Verdict::Unknown
+    }
+}
+
+/// The verdict of `type::table($x) = 'table'` against `kind`. `AlwaysFalse`
+/// when the record union provably excludes `table`; `AlwaysTrue` only when the
+/// union is *exactly* `{table}`. Any kind that is not a pinned-down record
+/// union (an open `record<>`, an `Any`, a union with a non-record variant) is
+/// `Unknown` — [`record_tables`] bails, so no branch is greyed on an open union.
+fn table_eq_verdict(kind: &Kind, table: &str) -> Verdict {
+    let Some(tables) = record_tables(kind) else {
+        return Verdict::Unknown;
+    };
+    let present = tables.iter().any(|t| t == table);
+    if !present {
+        Verdict::AlwaysFalse
+    } else if tables.iter().all(|t| t == table) {
+        // The union is exactly `{table}` — the discriminant can be nothing else.
+        Verdict::AlwaysTrue
+    } else {
+        Verdict::Unknown
+    }
+}
+
+/// Whether some value of `kind` can be `NONE`. `Any` can, so it counts.
+fn kind_can_be_none(kind: &Kind) -> bool {
+    match kind {
+        Kind::None | Kind::Any => true,
+        Kind::Either(variants) => variants.iter().any(kind_can_be_none),
+        _ => false,
+    }
+}
+
+/// Whether some value of `kind` is *not* `NONE` (a `NULL` counts: `NULL = NONE`
+/// is FALSE). `Any` can be a non-none value, so it counts.
+fn kind_has_non_none(kind: &Kind) -> bool {
+    match kind {
+        Kind::None => false,
+        Kind::Either(variants) => variants.iter().any(kind_has_non_none),
+        _ => true,
+    }
+}
+
+/// Whether some value of `kind` can be `NULL`. `Any` can, so it counts.
+fn kind_can_be_null(kind: &Kind) -> bool {
+    match kind {
+        Kind::Null | Kind::Any => true,
+        Kind::Either(variants) => variants.iter().any(kind_can_be_null),
+        _ => false,
+    }
+}
+
+/// Whether some value of `kind` is *not* `NULL` (a `NONE` counts: `NONE = NULL`
+/// is FALSE). `Any` can be a non-null value, so it counts.
+fn kind_has_non_null(kind: &Kind) -> bool {
+    match kind {
+        Kind::Null => false,
+        Kind::Either(variants) => variants.iter().any(kind_has_non_null),
+        _ => true,
+    }
+}
+
+/// The concrete set of record tables `kind` can be, only when it is a **pinned
+/// record union** — a `record<a>` or `record<a | b>`, or an `Either` of such,
+/// with **no** other possibility (no `none`/`null`, no `Any`, no open
+/// `record<>`, no scalar variant). Any looseness returns `None`, so a verdict
+/// is only ever drawn from a fully-pinned record union.
+fn record_tables(kind: &Kind) -> Option<Vec<String>> {
+    match kind {
+        Kind::Record(tables) if !tables.is_empty() => {
+            Some(tables.iter().map(Table::to_string).collect())
+        }
+        Kind::Either(variants) => {
+            let mut all = Vec::new();
+            for variant in variants {
+                all.extend(record_tables(variant)?);
+            }
+            (!all.is_empty()).then_some(all)
+        }
+        _ => None,
+    }
+}
+
+/// Env-aware branch reachability: the narrowing analogue of
+/// [`crate::analyzer::const_eval::branch_reachability`]. It walks the branches
+/// in order, drawing each guard's [`Verdict`] against `env`, and maps it to the
+/// same [`BranchReach`] lattice the constant path uses:
+///
+/// * `AlwaysFalse` → [`BranchReach::DeadFalse`];
+/// * the first `AlwaysTrue` → [`BranchReach::Reachable`] and every later
+///   branch + the `ELSE` are dead;
+/// * `Unknown` → [`BranchReach::Reachable`], killing nothing.
+///
+/// **Why the base `env` is sound for every branch.** The env actually in force
+/// at branch *N* is `env` narrowed by the negation of branches `0..N` (each was
+/// false to reach *N*) — a *subset* of the values `env` allows. A guard proven
+/// `AlwaysFalse` over the whole of `env` is `AlwaysFalse` over any subset, and
+/// likewise for `AlwaysTrue`; so verdicts drawn against the un-accumulated base
+/// `env` can only *under*-report dead branches, never grey a live one. (That is
+/// the deliberately conservative trade: soundness over completeness.)
+pub(crate) fn branch_reachability_in_env(stmt: &ast::IfElseStmt, env: &StatementEnv) -> Reachability {
+    let mut branches = Vec::with_capacity(stmt.branches.len());
+    // Set once an earlier branch is proven always-taken.
+    let mut taken = false;
+    for branch in &stmt.branches {
+        if taken {
+            branches.push(BranchReach::DeadAfterTrue);
+            continue;
+        }
+        match guard_verdict(&branch.condition.node, env) {
+            Verdict::AlwaysFalse => branches.push(BranchReach::DeadFalse),
+            Verdict::AlwaysTrue => {
+                branches.push(BranchReach::Reachable);
+                taken = true;
+            }
+            Verdict::Unknown => branches.push(BranchReach::Reachable),
+        }
+    }
+    Reachability {
+        branches,
+        else_dead: taken,
     }
 }
 
@@ -1345,5 +1655,184 @@ mod tests {
              }};"
         );
         assert_eq!(code_count(&colon, 5002), 0, "type::is::record normalizes to type::is_record");
+    }
+
+    // --- Narrowing-aware guard verdicts ------------------------------------
+
+    use crate::expression::{ExpressionFact, ExpressionValueClass};
+    use surrealguard_syntax::span::{ByteRange, SourceSpan};
+
+    /// An env binding the bare param `$name` to `kind` and marking it as
+    /// **flow-narrowed** — the state a prior guard leaves behind, which is what
+    /// unlocks a dead-branch verdict. (A base binding is [`env_base`].)
+    fn env_with(name: &str, kind: Kind) -> StatementEnv {
+        let mut env = env_base(name, kind);
+        env.mark_param_narrowed(name.into());
+        env
+    }
+
+    /// An env binding `$name` to `kind` as its **base** declared/seeded binding,
+    /// without any flow narrowing — a verdict must never be drawn from this.
+    fn env_base(name: &str, kind: Kind) -> StatementEnv {
+        let mut env = StatementEnv::default();
+        let span = SourceSpan::new(SourceId::new("narrow:test"), ByteRange::new(0, 1).unwrap());
+        let fact = ExpressionFact::new(span, ExpressionValueClass::Variable).with_kind(kind);
+        env.define_let(name.into(), fact);
+        env
+    }
+
+    fn record(table: &str) -> Kind {
+        Kind::Record(vec![Table::from(table)])
+    }
+
+    /// The verdict of the guard in `IF <guard> { ... }`, against `env`.
+    fn verdict(guard: &str, env: &StatementEnv) -> Verdict {
+        let query = format!("RETURN {guard};");
+        // A bare boolean call guard (`type::is_record(...)`) lowers as a call;
+        // every other guard here is a comparison (binary) expression.
+        let expr = if guard.starts_with("type::is_record") {
+            call_cond(&query)
+        } else {
+            cond(&query)
+        };
+        guard_verdict(&expr, env)
+    }
+
+    #[test]
+    fn none_guard_verdict_folds_against_the_narrowed_kind() {
+        // `$x = NONE` on a non-none record can never hold; `!= NONE` always does.
+        let non_none = env_with("x", record("b"));
+        assert_eq!(verdict("$x = NONE", &non_none), Verdict::AlwaysFalse);
+        assert_eq!(verdict("$x != NONE", &non_none), Verdict::AlwaysTrue);
+        assert_eq!(verdict("$x IS NONE", &non_none), Verdict::AlwaysFalse);
+        assert_eq!(verdict("$x IS NOT NONE", &non_none), Verdict::AlwaysTrue);
+
+        // A subject that is *only* none folds the other way.
+        let only_none = env_with("x", Kind::None);
+        assert_eq!(verdict("$x = NONE", &only_none), Verdict::AlwaysTrue);
+        assert_eq!(verdict("$x != NONE", &only_none), Verdict::AlwaysFalse);
+    }
+
+    #[test]
+    fn none_guard_verdict_is_unknown_on_an_optional_subject() {
+        // The soundness floor: `option<record>` still might be none — keep it.
+        let option = env_with("x", Kind::Either(vec![Kind::None, Kind::Record(vec![])]));
+        assert_eq!(verdict("$x = NONE", &option), Verdict::Unknown);
+        assert_eq!(verdict("$x != NONE", &option), Verdict::Unknown);
+        // An `Any`/open subject is likewise never settled.
+        let any = env_with("x", Kind::Any);
+        assert_eq!(verdict("$x = NONE", &any), Verdict::Unknown);
+        // An unbound subject has no kind → Unknown.
+        assert_eq!(verdict("$x = NONE", &StatementEnv::default()), Verdict::Unknown);
+    }
+
+    #[test]
+    fn null_guard_verdict_distinguishes_none_from_null() {
+        // A bare record is neither null nor none: `= NULL` false, `!= NULL` true.
+        let non_null = env_with("x", record("b"));
+        assert_eq!(verdict("$x = NULL", &non_null), Verdict::AlwaysFalse);
+        assert_eq!(verdict("$x != NULL", &non_null), Verdict::AlwaysTrue);
+        // A none-only subject is *not* null (`NONE = NULL` is FALSE).
+        let only_none = env_with("x", Kind::None);
+        assert_eq!(verdict("$x = NULL", &only_none), Verdict::AlwaysFalse);
+        // A null-only subject folds true.
+        let only_null = env_with("x", Kind::Null);
+        assert_eq!(verdict("$x = NULL", &only_null), Verdict::AlwaysTrue);
+    }
+
+    #[test]
+    fn table_discriminant_verdict_folds_a_pinned_record() {
+        // `type::table($x) = 'a'` on a `record<b>` can never hold.
+        let rec_b = env_with("x", record("b"));
+        assert_eq!(verdict("type::table($x) = 'a'", &rec_b), Verdict::AlwaysFalse);
+        assert_eq!(verdict("type::table($x) != 'a'", &rec_b), Verdict::AlwaysTrue);
+        // Exactly `{a}` → always true; `!= 'a'` → always false.
+        let rec_a = env_with("x", record("a"));
+        assert_eq!(verdict("type::table($x) = 'a'", &rec_a), Verdict::AlwaysTrue);
+        assert_eq!(verdict("type::table($x) != 'a'", &rec_a), Verdict::AlwaysFalse);
+        // An open union `record<a | b>` is not pinned → Unknown either way.
+        let union = env_with("x", Kind::Record(vec![Table::from("a"), Table::from("b")]));
+        assert_eq!(verdict("type::table($x) = 'a'", &union), Verdict::Unknown);
+        // An unconstrained `record<>` is not a pinned union → Unknown.
+        let open = env_with("x", Kind::Record(vec![]));
+        assert_eq!(verdict("type::table($x) = 'a'", &open), Verdict::Unknown);
+    }
+
+    #[test]
+    fn is_record_verdict_mirrors_the_table_discriminant() {
+        let rec_b = env_with("x", record("b"));
+        assert_eq!(verdict("type::is_record($x, 'a')", &rec_b), Verdict::AlwaysFalse);
+        let rec_a = env_with("x", record("a"));
+        assert_eq!(verdict("type::is_record($x, 'a')", &rec_a), Verdict::AlwaysTrue);
+        // A none-carrying subject is not a pinned record union → Unknown (and
+        // indeed `is_record` genuinely varies: false on NONE, true on record<a>).
+        let opt_a = env_with("x", Kind::Either(vec![Kind::None, record("a")]));
+        assert_eq!(verdict("type::is_record($x, 'a')", &opt_a), Verdict::Unknown);
+    }
+
+    #[test]
+    fn constant_guards_still_fold_without_any_env() {
+        // The const path is consulted first, so literal guards are unchanged.
+        let empty = StatementEnv::default();
+        assert_eq!(verdict("1 == 1", &empty), Verdict::AlwaysTrue);
+        assert_eq!(verdict("2 > 3", &empty), Verdict::AlwaysFalse);
+        assert_eq!(verdict("$x > 3", &empty), Verdict::Unknown);
+    }
+
+    #[test]
+    fn a_base_binding_is_never_folded() {
+        // The refinement's core rule: a subject at its BASE declared binding —
+        // never touched by flow narrowing — yields no verdict, even though the
+        // kind technically excludes none / isn't the table. This is what keeps
+        // an idiomatic defensive `IF $organization = NONE` on a declared
+        // `record<organization>` param from being greyed.
+        let base = env_base("x", record("b"));
+        assert_eq!(verdict("$x = NONE", &base), Verdict::Unknown);
+        assert_eq!(verdict("$x != NONE", &base), Verdict::Unknown);
+        assert_eq!(verdict("$x = NULL", &base), Verdict::Unknown);
+        assert_eq!(verdict("type::table($x) = 'a'", &base), Verdict::Unknown);
+        assert_eq!(verdict("type::is_record($x, 'a')", &base), Verdict::Unknown);
+        // A literal-constant guard still folds — it does not depend on a subject.
+        assert_eq!(verdict("1 == 1", &base), Verdict::AlwaysTrue);
+    }
+
+    #[test]
+    fn reachability_in_env_greys_dead_branches_like_the_const_path() {
+        use crate::analyzer::const_eval::BranchReach;
+        let rec_b = env_with("x", record("b"));
+
+        // A provably-false first guard is DeadFalse; the ELSE survives.
+        let parsed = parse_source(
+            SourceId::new("narrow:test"),
+            "IF $x = NONE { RETURN 1 } ELSE { RETURN 2 };",
+        )
+        .expect("parses");
+        let ast::Statement::IfElse(stmt) =
+            surrealguard_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
+                .expect("if statement")
+                .node
+        else {
+            panic!("expected if");
+        };
+        let reach = branch_reachability_in_env(&stmt, &rec_b);
+        assert_eq!(reach.branches, vec![BranchReach::DeadFalse]);
+        assert!(!reach.else_dead);
+
+        // A provably-true first guard makes the ELSE dead.
+        let parsed = parse_source(
+            SourceId::new("narrow:test"),
+            "IF $x != NONE { RETURN 1 } ELSE { RETURN 2 };",
+        )
+        .expect("parses");
+        let ast::Statement::IfElse(stmt) =
+            surrealguard_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
+                .expect("if statement")
+                .node
+        else {
+            panic!("expected if");
+        };
+        let reach = branch_reachability_in_env(&stmt, &rec_b);
+        assert_eq!(reach.branches, vec![BranchReach::Reachable]);
+        assert!(reach.else_dead);
     }
 }

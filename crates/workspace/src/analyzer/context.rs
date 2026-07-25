@@ -162,6 +162,17 @@ impl<'a> AnalysisContext<'a> {
         self.env.set_narrowed_path(key, kind);
     }
 
+    /// Rebinds the bare param `name` to `fact` as the result of an *active flow
+    /// narrowing* (a guard's positive/negative effect), and marks it narrowed
+    /// so dead-branch folding may draw a verdict from the tightened kind. Unlike
+    /// [`define_local`](Self::define_local) (used for ordinary `LET`s and base
+    /// bindings), this records that the tightening came from flow, not from the
+    /// declared kind.
+    pub fn narrow_local(&mut self, name: String, fact: ExpressionFact) {
+        self.env.define_let(name.clone(), fact);
+        self.env.mark_param_narrowed(name);
+    }
+
     /// Looks up the fact for `LET` local `name`, or `None` if it is not bound
     /// in scope (in which case `$name` is a host parameter).
     pub fn local(&self, name: &str) -> Option<&ExpressionFact> {

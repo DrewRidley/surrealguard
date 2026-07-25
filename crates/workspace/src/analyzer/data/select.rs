@@ -82,6 +82,10 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     let row_kind = apply_split(row_kind, &stmt.split);
 
     if stmt.only {
+        // NOTE: `FROM ONLY` is really `option<row>` (NONE when nothing matches).
+        // Modeling that is deferred: it cascades into AND-guard narrowing that
+        // must reach function-call arguments (`IF $x != NONE AND f($x)`), which
+        // is follow-up work. Kept as a bare row for now to hold the oracle clean.
         row_kind
     } else {
         Kind::Array(Box::new(row_kind), literal_limit(stmt))

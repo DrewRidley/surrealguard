@@ -30,11 +30,16 @@ pub(crate) fn analyze_if_else(ctx: &mut AnalysisContext<'_>, stmt: &ast::IfElseS
 pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::IfElseStmt) -> Flow {
     use crate::analyzer::const_eval::BranchReach;
 
-    // Constant-fold each guard: a branch whose guard provably folds to `false`
-    // is dead, and the first branch whose guard provably folds to `true` makes
-    // every later branch and the `ELSE` dead. Only reachable arms contribute to
-    // the value/exit union; dead arms are greyed (4024) and dropped.
-    let reach = crate::analyzer::const_eval::branch_reachability(stmt);
+    // Decide each guard's reachability against the *narrowed* env in force at
+    // this `IF` — not just literal constants. A guard provably `false` given
+    // what narrowing already knows about its subject (`$x` shown non-none by an
+    // earlier guard's fall-through, a record pinned to one table, …) makes its
+    // branch dead exactly as a constant-false guard does; the first provably-
+    // true guard makes every later branch and the `ELSE` dead. Only reachable
+    // arms contribute to the value/exit union; dead arms are greyed (4024) and
+    // dropped. The env is read before any branch narrowing is applied below, so
+    // it reflects the facts that hold on entry to the whole `IF`.
+    let reach = crate::analyzer::flow::narrow::branch_reachability_in_env(stmt, ctx.env());
 
     let mut returns: Vec<Kind> = Vec::new();
     // Pass-through values: the trailing value of each reachable branch through
@@ -505,5 +510,171 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    // ---- Narrowing-aware dead-branch folding ------------------------------
+
+    /// Binds `$x` to `kind`, analyzes the first `IF`, and returns `(kind,
+    /// findings)`.
+    /// Binds `$x` to `kind`, analyzes the first `IF`, and returns `(kind,
+    /// findings)`. When `narrowed`, `$x` is marked as flow-narrowed (the state
+    /// a prior guard leaves); otherwise it is a plain base binding — the
+    /// distinction the dead-branch verdict gates on.
+    fn bound_if(kind: Kind, narrowed: bool, source: &str) -> (Kind, Vec<Finding>) {
+        use crate::expression::{ExpressionFact, ExpressionValueClass};
+        let parsed = parse_source(SourceId::new("flow:test"), source).expect("query parses");
+        let ast::Statement::IfElse(stmt) =
+            surrealguard_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
+                .expect("no IfElseStatement node in tree")
+                .node
+        else {
+            panic!("expected if statement");
+        };
+        let schema = SchemaIndex::default();
+        let mut diagnostics: Vec<Finding> = Vec::new();
+        let mut ctx = AnalysisContext::new(
+            &schema,
+            parsed.source_id().clone(),
+            parsed.text(),
+            &mut diagnostics,
+        );
+        let span = surrealguard_syntax::span::SourceSpan::new(
+            ctx.source().clone(),
+            surrealguard_syntax::span::ByteRange::new(0, 1).unwrap(),
+        );
+        let fact = ExpressionFact::new(span, ExpressionValueClass::Variable).with_kind(kind);
+        if narrowed {
+            ctx.narrow_local("x".into(), fact);
+        } else {
+            ctx.define_local("x".into(), fact);
+        }
+        let result = analyze_if_else(&mut ctx, &stmt);
+        (result, diagnostics)
+    }
+
+    fn dead_count(findings: &[Finding]) -> usize {
+        findings
+            .iter()
+            .filter(|finding| finding.code().number() == 4024)
+            .count()
+    }
+
+    fn record(table: &str) -> Kind {
+        Kind::Record(vec![surrealdb_types::Table::from(table)])
+    }
+
+    #[test]
+    fn none_guard_on_a_flow_narrowed_non_none_subject_greys_the_then_branch() {
+        // `$x` was narrowed to a bare `record<b>` by a prior guard, so a
+        // re-check `IF $x = NONE { ... }` can never run: the THEN is dead and
+        // only the ELSE contributes.
+        let (kind, findings) =
+            bound_if(record("b"), true, "IF $x = NONE { RETURN 1 } ELSE { RETURN 2 };");
+        assert_eq!(dead_count(&findings), 1, "exactly one greyed branch");
+        assert_eq!(
+            findings
+                .iter()
+                .find(|f| f.code().number() == 4024)
+                .unwrap()
+                .tags(),
+            &[surrealguard_diagnostics::FindingTag::Unnecessary]
+        );
+        // Only the ELSE runs → the IF's value is the ELSE's `int`.
+        assert_eq!(kind, Kind::Int);
+    }
+
+    #[test]
+    fn not_none_guard_on_a_flow_narrowed_non_none_subject_greys_the_else() {
+        // `$x != NONE` is always true for the narrowed record, so the ELSE is dead.
+        let (kind, findings) =
+            bound_if(record("b"), true, "IF $x != NONE { RETURN 1 } ELSE { RETURN 2 };");
+        assert_eq!(dead_count(&findings), 1, "the ELSE is greyed");
+        // Only the THEN runs → the value is the THEN's `int`.
+        assert_eq!(kind, Kind::Int);
+    }
+
+    #[test]
+    fn table_discriminant_that_cannot_hold_greys_the_then_branch() {
+        // `$x` narrowed to `record<b>`; `type::table($x) = 'a'` can never hold.
+        let (_kind, findings) = bound_if(
+            record("b"),
+            true,
+            "IF type::table($x) = 'a' { RETURN 1 } ELSE { RETURN 2 };",
+        );
+        assert_eq!(dead_count(&findings), 1, "the dead discriminant THEN is greyed");
+    }
+
+    #[test]
+    fn a_declared_non_optional_param_defensive_check_greys_nothing() {
+        // The refinement's headline regression: a bare declared `record<b>`
+        // param (never flow-narrowed) with an idiomatic defensive
+        // `IF $x = NONE { ... }` is technically dead but must NOT be greyed —
+        // it is a defensive check, not conditional-flow dead code.
+        let (_kind, findings) =
+            bound_if(record("b"), false, "IF $x = NONE { RETURN 1 } ELSE { RETURN 2 };");
+        assert_eq!(dead_count(&findings), 0, "defensive check on a base binding is kept");
+
+        // Likewise the discriminant and is_record forms on a base binding.
+        let (_k, f) = bound_if(
+            record("b"),
+            false,
+            "IF type::table($x) = 'a' { RETURN 1 } ELSE { RETURN 2 };",
+        );
+        assert_eq!(dead_count(&f), 0);
+    }
+
+    #[test]
+    fn optional_subject_first_check_greys_nothing() {
+        // A `$x : option<record>` still might be none, so even once narrowing is
+        // active the first `IF $x = NONE` proves nothing — no branch is dead.
+        let option = Kind::Either(vec![Kind::None, Kind::Record(vec![])]);
+        let (kind, findings) =
+            bound_if(option, true, "IF $x = NONE { RETURN 1 } ELSE { RETURN 2 };");
+        assert_eq!(dead_count(&findings), 0, "an unknown subject greys nothing");
+        // Both branches live → `int` union collapses to `int`.
+        assert_eq!(kind, Kind::Int);
+    }
+
+    /// The number of `code` findings for `source` analyzed as a workspace.
+    fn workspace_code_count(source: &str, code: u16) -> usize {
+        let mut workspace = crate::analysis::Workspace::default();
+        workspace.add_virtual_source("if-dead-e2e".into(), source.into());
+        crate::analysis::analyze_workspace(&workspace)
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code().number() == code)
+            .count()
+    }
+
+    #[test]
+    fn redundant_recheck_after_a_diverging_none_guard_is_dead_and_unchecked() {
+        // The user's case: the first guard's fall-through narrows `$x` to
+        // non-none, so the *second* `IF $x = NONE` is provably dead — greyed
+        // once, and its body (a bad SELECT) is never analyzed.
+        let source = "DEFINE TABLE b SCHEMAFULL;\n\
+             DEFINE FUNCTION fn::f($x: option<record<b>>) {\n\
+                IF $x = NONE THEN RETURN false END;\n\
+                IF $x = NONE { SELECT foo FROM nonexistent };\n\
+                RETURN 3;\n\
+             };";
+        // Exactly one dead-branch finding (the second, redundant guard).
+        assert_eq!(workspace_code_count(source, 4024), 1);
+        // Its body is never analyzed → the unknown-table SELECT raises no 1001.
+        assert_eq!(workspace_code_count(source, 1001), 0, "dead body not checked");
+    }
+
+    #[test]
+    fn nested_recheck_inside_a_narrowed_branch_is_dead() {
+        // `IF $x != NONE { ...; IF $x = NONE { <dead> } }` — inside the THEN,
+        // `$x` is narrowed non-none, so the inner re-check is provably dead.
+        let source = "DEFINE TABLE b SCHEMAFULL;\n\
+             DEFINE FUNCTION fn::f($x: option<record<b>>) {\n\
+                IF $x != NONE {\n\
+                   IF $x = NONE { SELECT foo FROM nonexistent };\n\
+                };\n\
+                RETURN 3;\n\
+             };";
+        assert_eq!(workspace_code_count(source, 4024), 1, "inner re-check greyed");
+        assert_eq!(workspace_code_count(source, 1001), 0, "dead body not checked");
     }
 }
