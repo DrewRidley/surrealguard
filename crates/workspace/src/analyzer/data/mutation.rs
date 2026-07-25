@@ -198,6 +198,20 @@ pub fn payload_field_names(
     }
 }
 
+/// The rows one `INSERT` payload expression carries.
+///
+/// The array form (`INSERT INTO t [{…}, {…}]`) is a *single* payload
+/// expression holding one object per row; every other form is itself the
+/// one row. Each element is an independent record, so key, value-kind and
+/// required-field checks all run per row — this is the one place that
+/// distinction is made, so no caller can forget the array form.
+pub fn insert_payload_rows(value: &ast::Spanned<ast::Expr>) -> Vec<&ast::Spanned<ast::Expr>> {
+    match &value.node {
+        ast::Expr::Array(rows) => rows.iter().collect(),
+        _ => vec![value],
+    }
+}
+
 /// A write to a whole table with no WHERE touches every row — legal, and
 /// occasionally intended, but worth a deliberate look (7009).
 pub fn check_whole_table_write(
@@ -293,7 +307,8 @@ pub fn check_relation_insert(
     let provided = match data {
         ast::InsertData::Values(values) => values
             .iter()
-            .all(|value| object_has(value, "in") && object_has(value, "out")),
+            .flat_map(|value| insert_payload_rows(value))
+            .all(|row| object_has(row, "in") && object_has(row, "out")),
         ast::InsertData::Rows { rows, .. } => rows.iter().all(|row| {
             let has = |key: &str| {
                 row.iter().any(|(column, _)| {

@@ -68,21 +68,25 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     }
     check_order_clause(stmt, table, ctx);
 
-    let row_kind = if stmt
+    let has_wildcard_projection = stmt
         .projections
         .iter()
-        .any(|projection| matches!(projection, ast::Projection::Wildcard(_)))
-    {
-        // A GROUP clause synthesizes result rows out of group keys and
-        // accumulators — they are not materialized records, so they carry no
-        // `id`/`in`/`out`. (That a wildcard under GROUP still lists every
-        // declared field is a separate, pre-existing gap; this only declines
-        // to add a new claim on top of it.)
-        if stmt.group.is_some() {
-            object_kind_for_declared_fields(table)
-        } else {
-            object_kind_for_all_fields(table)
-        }
+        .any(|projection| matches!(projection, ast::Projection::Wildcard(_)));
+
+    // A wildcard contributes the whole materialized row — but only when the
+    // rows are materialized. Under a GROUP clause the result rows are
+    // synthesized from the *projection* (group keys and accumulators), and a
+    // wildcard contributes nothing to that: SurrealDB 3.x rejects the query
+    // outright ("expression `*` within in selector cannot be aggregated in a
+    // group"), and 2.x builds its grouped output from the non-`*` fields
+    // only, so `SELECT * FROM t GROUP BY k` yields rows with no keys at all.
+    // Either way no declared field survives, so the wildcard is dropped and
+    // the remaining projections alone type the row (`SELECT *, count() FROM t
+    // GROUP BY k` is `{ count: number }`). Both behaviours verified against
+    // the engine: 3.0.5 live, 2.x via `dbs::group::GroupsCollector`, which
+    // iterates `fields.other()` and never sees `Field::All`.
+    let row_kind = if has_wildcard_projection && stmt.group.is_none() {
+        object_kind_for_all_fields(table)
     } else if let Some(value_kind) = value_projection_kind(stmt, &table_name, table, ctx) {
         value_kind
     } else {
@@ -686,9 +690,13 @@ fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContex
 /// appear in the result rows — the grouping label is silently dropped, so the
 /// rows can't be told apart. SurrealDB runs the query (it does not reject
 /// this), which is why it is a warning rather than an error. Conservative to
-/// zero false positives: suppressed when a wildcard `*` or an unparseable
-/// projection is present (the key may be covered), for `SELECT VALUE` (a
-/// single value projection carries no named keys), and for `GROUP ALL`. A key
+/// zero false positives: suppressed when an unparseable projection is present
+/// (the key may be covered by it), for `SELECT VALUE` (a single value
+/// projection carries no named keys), and for `GROUP ALL`. A wildcard does
+/// *not* suppress it: `*` covers no key under a GROUP clause — 3.x rejects
+/// such a query outright, 2.x builds grouped rows from the non-`*` fields
+/// only — so the key genuinely cannot appear in the result rows, and the
+/// finding's own advice (name the key in the projection) is the fix. A key
 /// counts as projected when its dotted path equals — or is a prefix of — a
 /// projected field path or alias (projecting `address` covers a
 /// `GROUP BY address.city`).
@@ -699,12 +707,11 @@ fn check_group_key_projection(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<
     if group.all || group.keys.is_empty() || stmt.value {
         return;
     }
-    if stmt.projections.iter().any(|projection| {
-        matches!(
-            projection,
-            ast::Projection::Wildcard(_) | ast::Projection::Partial(_)
-        )
-    }) {
+    if stmt
+        .projections
+        .iter()
+        .any(|projection| matches!(projection, ast::Projection::Partial(_)))
+    {
         return;
     }
     let projected = projected_row_names(stmt);
@@ -1934,13 +1941,6 @@ pub(crate) fn object_kind_for_all_fields(table: &TableDef) -> Kind {
     object_kind_for_field_prefix(table, &[], true)
 }
 
-/// The declared fields only, with no implicit record fields. For rows that are
-/// *synthesized* rather than materialized — a grouped/aggregate result row is
-/// built from group keys and accumulators and carries no record identity.
-pub(crate) fn object_kind_for_declared_fields(table: &TableDef) -> Kind {
-    object_kind_for_field_prefix(table, &[], false)
-}
-
 fn object_kind_for_field_prefix(table: &TableDef, prefix: &[String], implicit: bool) -> Kind {
     let mut fields = BTreeMap::new();
 
@@ -2521,6 +2521,58 @@ mod tests {
         let edge = row_fields(&schema, "SELECT * FROM likes GROUP BY since;");
         assert!(!edge.contains_key("id"), "got: {edge:?}");
         assert!(!edge.contains_key("in"), "got: {edge:?}");
+    }
+
+    #[test]
+    fn a_wildcard_under_group_contributes_no_fields() {
+        let schema = schema_from(RELATION_SCHEMA);
+
+        // Engine-verified: `*` names no column of a grouped row. SurrealDB
+        // 3.0.5 rejects the query ("expression `*` … cannot be aggregated in
+        // a group"); 2.x builds grouped rows out of the non-`*` fields only,
+        // so `SELECT * … GROUP BY name` returns rows with no keys at all.
+        // Listing every declared field was confidently wrong — consumers
+        // dereferenced fields that never exist.
+        for query in [
+            "SELECT * FROM person GROUP BY name;",
+            "SELECT * FROM person GROUP ALL;",
+        ] {
+            let fields = row_fields(&schema, query);
+            assert!(fields.is_empty(), "{query}: {fields:?}");
+        }
+
+        // The other projections still type the row; only `*` drops out.
+        let mixed = row_fields(&schema, "SELECT *, count() FROM person GROUP BY name;");
+        assert_eq!(mixed.keys().collect::<Vec<_>>(), vec!["count"]);
+    }
+
+    #[test]
+    fn an_ungrouped_wildcard_still_carries_every_field_and_the_implicit_id() {
+        let schema = schema_from(RELATION_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT * FROM person;");
+        assert_eq!(fields["name"], Kind::String);
+        assert_eq!(fields["id"], record_of("person"));
+    }
+
+    #[test]
+    fn a_group_key_a_wildcard_cannot_carry_is_reported() {
+        let schema = schema_from(RELATION_SCHEMA);
+
+        // `*` covers nothing under GROUP, so the key really is unprojected:
+        // 4013 fires and its help (project the key) is the actual fix.
+        let codes: Vec<u16> = diagnostics_for(&schema, "SELECT * FROM person GROUP BY name;")
+            .iter()
+            .map(|finding| finding.code().number())
+            .collect();
+        assert!(codes.contains(&4013), "got: {codes:?}");
+
+        // Projecting the key clears it.
+        let projected: Vec<u16> = diagnostics_for(&schema, "SELECT name FROM person GROUP BY name;")
+            .iter()
+            .map(|finding| finding.code().number())
+            .collect();
+        assert!(!projected.contains(&4013), "got: {projected:?}");
     }
 
     #[test]

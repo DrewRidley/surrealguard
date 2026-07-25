@@ -609,6 +609,21 @@ fn lower_insert(node: Node<'_>, text: &str) -> InsertStmt {
                 stmt.target = Some(lower_source(child, text));
             }
             _ if saw_values => values.push(lower_expr(child, text)),
+            // `INSERT INTO t [{…}, {…}]` — the grammar gives the bracketed
+            // payload its own `BulkInsert` node (`'[' csep(Object) ']'`)
+            // rather than an `Array`, so it must be lowered explicitly.
+            // It becomes an ordinary `Expr::Array` of the row objects: the
+            // payload keeps its source shape, and every payload check reads
+            // one array of rows instead of a special case.
+            "BulkInsert" => values.push(Spanned::new(
+                Expr::Array(
+                    named_children(child)
+                        .into_iter()
+                        .map(|row| lower_expr(row, text))
+                        .collect(),
+                ),
+                node_range(child),
+            )),
             "Object" | "Array" => values.push(lower_expr(child, text)),
             _ => {}
         }
@@ -1754,6 +1769,28 @@ mod tests {
         };
         assert_eq!(values.len(), 1);
         assert!(matches!(values[0].node, Expr::Object(_)));
+    }
+
+    #[test]
+    fn lowers_bulk_insert_array_as_an_array_of_row_objects() {
+        // The bracketed payload is its own `BulkInsert` grammar node; before
+        // it was lowered the whole payload vanished and nothing about those
+        // rows could be checked.
+        let parsed = parse("INSERT INTO person [{ name: 'A' }, { name: 'B' }];");
+        let stmt = lower_kind(&parsed, "InsertStatement", |s| match s {
+            Statement::Insert(stmt) => Some(stmt),
+            _ => None,
+        });
+
+        let InsertData::Values(values) = &stmt.data else {
+            panic!("expected values payload, got {:?}", stmt.data);
+        };
+        assert_eq!(values.len(), 1);
+        let Expr::Array(rows) = &values[0].node else {
+            panic!("expected an array payload, got {:?}", values[0].node);
+        };
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| matches!(row.node, Expr::Object(_))));
     }
 
     #[test]
