@@ -7,6 +7,7 @@ use crate::analyzer::context::AnalysisContext;
 
 pub mod add;
 pub mod all;
+pub mod range;
 pub mod any;
 pub mod append;
 pub mod at;
@@ -20,6 +21,10 @@ pub mod complement;
 pub mod concat;
 pub mod difference;
 pub mod distinct;
+pub mod reduce;
+pub mod remove;
+pub mod repeat;
+pub mod reverse;
 pub mod fill;
 pub mod filter;
 pub mod filter_index;
@@ -45,15 +50,12 @@ pub mod min;
 pub mod pop;
 pub mod prepend;
 pub mod push;
-pub mod range;
-pub mod reduce;
-pub mod remove;
-pub mod repeat;
-pub mod reverse;
 pub mod sequence;
 pub mod shuffle;
 pub mod slice;
 pub mod sort;
+pub mod sort_asc;
+pub mod sort_desc;
 pub mod sort_lexical;
 pub mod sort_natural;
 pub mod sort_natural_lexical;
@@ -93,6 +95,8 @@ pub(crate) fn analyze_array_function(
         "array::filter_index" => filter_index::analyze_array_filter_index(ctx, call, args),
         "array::find" => find::analyze_array_find(ctx, call, args),
         "array::find_index" => find_index::analyze_array_find_index(ctx, call, args),
+        // `array::index_of` is a documented alias of `array::find_index`.
+        "array::index_of" => find_index::analyze_array_find_index(ctx, call, args),
         "array::first" => first::analyze_array_first(ctx, call, args),
         "array::flatten" => flatten::analyze_array_flatten(ctx, call, args),
         "array::fold" => fold::analyze_array_fold(ctx, call, args),
@@ -131,6 +135,8 @@ pub(crate) fn analyze_array_function(
         "array::transpose" => transpose::analyze_array_transpose(ctx, call, args),
         "array::union" => union::analyze_array_union(ctx, call, args),
         "array::windows" => windows::analyze_array_windows(ctx, call, args),
+        "array::sort::asc" => sort_asc::analyze_array_sort_asc(ctx, call, args),
+        "array::sort::desc" => sort_desc::analyze_array_sort_desc(ctx, call, args),
         _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

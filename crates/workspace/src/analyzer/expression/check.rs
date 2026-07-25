@@ -297,13 +297,15 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
         if receiver == Kind::Any {
             continue;
         }
-        let base = crate::kinds::literal_base_kind(&receiver).unwrap_or_else(|| receiver.clone());
         match &part.node {
+            // Index/filter/splat needs a collection — and a union of
+            // collections is one: `[[1, 2], [3]]` is
+            // `array<int, 2> | array<int, 1>`, indexable on every arm.
             ast::IdiomPart::Index(_)
             | ast::IdiomPart::Where(_)
             | ast::IdiomPart::All
             | ast::IdiomPart::Last
-                if !matches!(base, Kind::Array(_, _) | Kind::Set(_, _) | Kind::Object) =>
+                if !crate::analyzer::expression::infer::is_indexable_kind(&receiver) =>
             {
                 emit(
                     ctx,
@@ -943,6 +945,69 @@ mod tests {
 
     fn fires(query: &str, code: &str) -> bool {
         codes(query).iter().any(|c| c == code)
+    }
+
+    // ---- `??` strips NONE, so a coalesced option is a plain value (2004) ----
+
+    #[test]
+    fn coalesced_option_is_usable_in_arithmetic() {
+        // The user did exactly what the 2004 help text asks for; the result
+        // must not still be an `option<string>`.
+        let query = concat!(
+            "DEFINE TABLE t SCHEMAFULL;\n",
+            "DEFINE FIELD nick ON t TYPE option<string>;\n",
+            "SELECT VALUE (nick ?? 'd') + '!' FROM t;\n",
+        );
+        assert!(!fires(query, "E2004"), "codes: {:?}", codes(query));
+    }
+
+    #[test]
+    fn coalesce_does_not_hide_a_genuine_operand_mismatch() {
+        // The must-still-fire boundary: coalescing narrows the left side to
+        // `string`, which still cannot be added to an `int`.
+        let query = concat!(
+            "DEFINE TABLE t SCHEMAFULL;\n",
+            "DEFINE FIELD nick ON t TYPE option<string>;\n",
+            "SELECT VALUE (nick ?? 'd') + 1 FROM t;\n",
+        );
+        assert!(fires(query, "E2004"), "codes: {:?}", codes(query));
+    }
+
+    // ---- index/filter and method contracts distribute over a union ----
+
+    #[test]
+    fn indexing_a_union_of_collections_is_not_a_contract_violation() {
+        // `[[1, 2], [3]]` is `array<int, 2> | array<int, 1>`; both arms are
+        // arrays, so indexing and `.len()` are valid SurrealQL.
+        for query in [
+            "RETURN { LET $a = [[1,2],[3]]; RETURN $a[0][0]; };",
+            "RETURN { LET $a = [[1,2],[3]]; RETURN $a[0].len(); };",
+            "RETURN { LET $a = [[1,2],['x']]; RETURN $a[0][0]; };",
+        ] {
+            let codes = codes(query);
+            assert!(
+                !codes.iter().any(|code| code == "E2030" || code == "E5001"),
+                "codes for {query:?}: {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn indexing_a_non_collection_still_fires() {
+        // The must-still-fire boundaries: a scalar receiver, a union with a
+        // definitely-non-collection arm, and a method no arm defines.
+        let scalar = "RETURN { LET $a = 5; RETURN $a[0]; };";
+        assert!(fires(scalar, "E2030"), "codes: {:?}", codes(scalar));
+
+        let optional = concat!(
+            "DEFINE TABLE t SCHEMAFULL;\n",
+            "DEFINE FIELD maybe ON t TYPE option<array<string>>;\n",
+            "SELECT VALUE maybe[0] FROM t;\n",
+        );
+        assert!(fires(optional, "E2030"), "codes: {:?}", codes(optional));
+
+        let method = "RETURN { LET $a = [[1,2],[3]]; RETURN $a[0].bogusmethod(); };";
+        assert!(fires(method, "E5001"), "codes: {:?}", codes(method));
     }
 
     // ---- C1: comparison to NULL/NONE a kind cannot be (7005) ----

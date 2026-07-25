@@ -9,12 +9,20 @@ pub mod bool;
 pub mod duration;
 pub mod r#enum;
 pub mod float;
+pub mod guid;
 pub mod id;
 pub mod int;
 pub mod string;
 pub mod time;
 pub mod ulid;
+// The bare `rand()` builtin has no path segment after its family, so the
+// file mirroring it is `rand/rand.rs` — the naming rule every other leaf
+// follows, not an accidentally nested module.
+#[allow(clippy::module_inception)]
+pub mod rand;
 pub mod uuid;
+pub mod uuid_v4;
+pub mod uuid_v7;
 
 pub(crate) fn analyze_rand_function(
     ctx: &mut AnalysisContext<'_>,
@@ -33,6 +41,10 @@ pub(crate) fn analyze_rand_function(
         "rand::time" => time::analyze_rand_time(ctx, call, args),
         "rand::ulid" => ulid::analyze_rand_ulid(ctx, call, args),
         "rand::uuid" => uuid::analyze_rand_uuid(ctx, call, args),
+        "rand" => rand::analyze_rand_rand(ctx, call, args),
+        "rand::guid" => guid::analyze_rand_guid(ctx, call, args),
+        "rand::uuid::v4" => uuid_v4::analyze_rand_uuid_v4(ctx, call, args),
+        "rand::uuid::v7" => uuid_v7::analyze_rand_uuid_v7(ctx, call, args),
         _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }
