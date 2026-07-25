@@ -25,6 +25,12 @@ pub(crate) fn infer_function_body_kind(
 ) -> Option<Kind> {
     let body = def.body.as_ref()?;
     let kind = ctx.with_child_env(|ctx| {
+        // Engine-supplied session params (`$auth`, ...) are available in every
+        // `fn::` body. Seeding here also covers the throwaway return-inference
+        // path (`schema::infer_untyped_return`), which builds a fresh env; the
+        // params bound below override the seed if they collide (they can't —
+        // `$auth` and friends are protected names).
+        ctx.seed_session_params();
         for (name, ty) in &def.params {
             let kind = ty
                 .as_ref()

@@ -257,6 +257,13 @@ pub(crate) fn analyze_sources_with(
 
         let mut source_analysis = SourceAnalysis::default();
         let mut analyzer_env = StatementEnv::default();
+        // Seed the engine-supplied session params (`$auth` as `option<record>`,
+        // `$token`/`$session`/`$access`/`$scope`) as bound facts, so a
+        // top-level `$auth` is never reported as a host param and guards can
+        // narrow it. `fn::` bodies analyzed during this walk inherit the seed
+        // through their child envs; the throwaway return-inference path seeds
+        // its own env in `infer_function_body_kind`.
+        analyzer_env.seed_session_params(parsed.source_id());
         // Transaction pairing (4007): BEGIN opens exactly one transaction
         // that COMMIT/CANCEL closes.
         let mut open_transaction: Option<ByteRange> = None;

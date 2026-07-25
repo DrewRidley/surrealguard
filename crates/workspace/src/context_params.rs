@@ -150,6 +150,26 @@ fn event_map(table: &str) -> BTreeMap<String, Kind> {
     map
 }
 
+/// The session/access params seeded as **bound facts** into every top-level
+/// query env and `fn::` body env, so `$auth` and its siblings are analyzed as
+/// engine-supplied values (never host params) and can be flow-narrowed.
+///
+/// This is the seeding source of truth. It differs from
+/// [`insert_session_params`] (the hover context map / permission-predicate
+/// binding) in exactly one entry: `$auth` is modeled as `option<record>` —
+/// `Either([None, Record([])])` — because core (`dbs/session.rs`) supplies
+/// NONE for root/NS/DB/JWT-without-subject sessions. Modeling the NONE is what
+/// lets `IF $auth != NONE` / `type::is_record($auth, 'user')` guards strip it.
+/// The open record (empty table list) is the sound top for "a record of
+/// unknown table": member access degrades to partial/Any (`field_of_kind`
+/// returns None on empty-Record targets), never a false 1002.
+pub(crate) fn session_context_params() -> BTreeMap<String, Kind> {
+    let mut map = BTreeMap::new();
+    insert_session_params(&mut map);
+    map.insert("auth".to_string(), Kind::option(Kind::Record(Vec::new())));
+    map
+}
+
 /// A map carrying only the session params — the set a `PERMISSIONS` clause or
 /// `DEFINE ACCESS` body binds.
 fn session_map() -> BTreeMap<String, Kind> {
@@ -327,6 +347,22 @@ mod tests {
         // Exactly the eight evidence-backed keys; nothing speculative.
         let keys: Vec<String> = session_fields().keys().cloned().collect();
         assert_eq!(keys, ["ac", "db", "id", "ip", "ns", "or", "rd", "tk"]);
+    }
+
+    #[test]
+    fn session_context_params_models_auth_as_option_record() {
+        // The env-seeding source of truth: `$auth` is `option<record>` (the
+        // authenticated record OR NONE), the siblings match the hover map.
+        let map = session_context_params();
+        assert_eq!(
+            map.get("auth"),
+            Some(&Kind::option(Kind::Record(Vec::new()))),
+            "`$auth` must model the NONE so guards can strip it"
+        );
+        assert_eq!(map.get("token"), Some(&Kind::Object));
+        assert_eq!(map.get("access"), Some(&Kind::String));
+        assert_eq!(map.get("scope"), Some(&Kind::String));
+        assert_eq!(map.get("session"), Some(&session_kind()));
     }
 
     #[test]

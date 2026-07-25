@@ -125,8 +125,37 @@ fn effects(cond: &ast::Expr, positive: bool, env: &StatementEnv) -> Vec<Effect> 
                 .into_iter()
                 .collect(),
         },
+        // A bare boolean guard call: `type::is_record($x)` /
+        // `type::is_record($x, 'tbl')`. Positive-only (see `is_record_effect`).
+        ast::Expr::Call(call) => is_record_effect(call, positive).into_iter().collect(),
         _ => Vec::new(),
     }
+}
+
+/// The refinement a `type::is_record` guard proves. This mirrors the
+/// `type::table(...) = 'lit'` discriminant, but the predicate is the *call
+/// itself* used as a boolean (not a comparison), and it narrows on the
+/// **positive branch only**: `type::is_record($x)` is FALSE when `$x` is NONE,
+/// a non-record scalar, or (with a table arg) a record of another table, so a
+/// false result proves nothing about the kind.
+///
+/// - `type::is_record($x)`        → `NotNone` (strip the `none`, leaving the
+///   non-none open `record`).
+/// - `type::is_record($x, 'tbl')` → `Table("tbl")` (narrow the record union to
+///   `record<tbl>`, also dropping the `none`).
+///
+/// Lowering normalizes `type::is::record` → `type::is_record`
+/// (`function/mod.rs:55`), so only the underscore spelling is matched here.
+fn is_record_effect(call: &ast::Call, positive: bool) -> Option<Effect> {
+    if !positive || call.path.node != "type::is_record" {
+        return None;
+    }
+    let path = guard_path_of(&call.args.first()?.node)?;
+    let narrowing = match call.args.get(1) {
+        Some(table_arg) => Narrowing::Table(string_literal(&table_arg.node)?),
+        None => Narrowing::NotNone,
+    };
+    Some(Effect { path, narrowing })
 }
 
 /// The refinement a single comparison proves under `positive`, if it is a
@@ -436,6 +465,58 @@ mod tests {
             .node
     }
 
+    fn call_cond(query: &str) -> ast::Expr {
+        let parsed = parse_source(SourceId::new("narrow:test"), query).expect("parses");
+        lower_first_expr(&parsed, "FunctionCall")
+            .expect("has a call condition")
+            .node
+    }
+
+    #[test]
+    fn type_is_record_with_table_narrows_positive_branch_only() {
+        // `type::is_record($auth, 'user')` narrows `$auth` to `record<user>` in
+        // the THEN branch; the ELSE branch narrows nothing — false is satisfied
+        // by NONE, a non-record scalar, or another table.
+        let env = StatementEnv::default();
+        let c = call_cond("RETURN type::is_record($auth, 'user');");
+        assert_eq!(
+            positive_effects(&c, &env),
+            vec![Effect {
+                path: GuardPath::bare("auth".into()),
+                narrowing: Narrowing::Table("user".into()),
+            }]
+        );
+        assert!(
+            negative_effects(&c, &env).is_empty(),
+            "the negative branch of type::is_record narrows nothing"
+        );
+    }
+
+    #[test]
+    fn bare_type_is_record_strips_none_on_positive_branch_only() {
+        // `type::is_record($auth)` (no table arg) strips the NONE, leaving the
+        // non-none open `record`; the negative branch narrows nothing.
+        let env = StatementEnv::default();
+        let c = call_cond("RETURN type::is_record($auth);");
+        assert_eq!(
+            positive_effects(&c, &env),
+            vec![Effect {
+                path: GuardPath::bare("auth".into()),
+                narrowing: Narrowing::NotNone,
+            }]
+        );
+        assert!(negative_effects(&c, &env).is_empty());
+    }
+
+    #[test]
+    fn non_is_record_call_narrows_nothing() {
+        // A different call is not a recognized guard.
+        let env = StatementEnv::default();
+        let c = call_cond("RETURN type::is_string($auth);");
+        assert!(positive_effects(&c, &env).is_empty());
+        assert!(negative_effects(&c, &env).is_empty());
+    }
+
     #[test]
     fn none_guards_narrow_both_polarities() {
         let env = StatementEnv::default();
@@ -727,5 +808,65 @@ mod tests {
             1,
             "the sibling path must not be narrowed"
         );
+    }
+
+    // --- `$auth` seed + narrowing (design §4 Phase 1) ----------------------
+
+    /// `$auth` seeds as `option<record>` in every env, so a callee wanting a
+    /// concrete/non-optional record needs a guard to clear the mismatch.
+    const AUTH_TABLES: &str = "DEFINE TABLE user SCHEMAFULL;\n\
+         DEFINE FUNCTION fn::user_only($u: record<user>) { RETURN true; };\n\
+         DEFINE FUNCTION fn::any_record($r: record) { RETURN true; };\n";
+
+    #[test]
+    fn auth_seeds_as_option_record_so_an_unguarded_record_call_fires() {
+        // Baseline: `$auth : option<record>` is not assignable to `record` —
+        // proving the seed carries the NONE and reaches a `fn::` body.
+        let unguarded = format!(
+            "{AUTH_TABLES}\
+             DEFINE FUNCTION fn::caller() {{\n\
+                RETURN fn::any_record($auth);\n\
+             }};"
+        );
+        assert_eq!(code_count(&unguarded, 5002), 1, "option<record> is not record");
+    }
+
+    #[test]
+    fn auth_none_guard_narrows_to_record_in_the_then_branch() {
+        // `IF $auth != NONE THEN ...` strips the NONE (existing narrow path),
+        // leaving the open `record`, so the `fn::any_record($auth)` call clears.
+        let guarded = format!(
+            "{AUTH_TABLES}\
+             DEFINE FUNCTION fn::caller() {{\n\
+                IF $auth != NONE THEN RETURN fn::any_record($auth) END;\n\
+                RETURN false;\n\
+             }};"
+        );
+        assert_eq!(code_count(&guarded, 5002), 0, "!= NONE narrows $auth to record");
+    }
+
+    #[test]
+    fn auth_type_is_record_with_table_narrows_to_that_table() {
+        // `type::is_record($auth, 'user')` narrows `$auth` to `record<user>` in
+        // the THEN branch, so the `fn::user_only($auth)` call type-checks.
+        let guarded = format!(
+            "{AUTH_TABLES}\
+             DEFINE FUNCTION fn::caller() {{\n\
+                IF type::is_record($auth, 'user') THEN RETURN fn::user_only($auth) END;\n\
+                RETURN false;\n\
+             }};"
+        );
+        assert_eq!(code_count(&guarded, 5002), 0, "positive branch narrows to record<user>");
+
+        // The same call without the guard genuinely fails — the guard is what
+        // clears it (also proves the double-colon spelling normalizes).
+        let colon = format!(
+            "{AUTH_TABLES}\
+             DEFINE FUNCTION fn::caller() {{\n\
+                IF type::is::record($auth, 'user') THEN RETURN fn::user_only($auth) END;\n\
+                RETURN false;\n\
+             }};"
+        );
+        assert_eq!(code_count(&colon, 5002), 0, "type::is::record normalizes to type::is_record");
     }
 }

@@ -130,6 +130,19 @@ impl<'a> AnalysisContext<'a> {
         self.env.define_let(name, fact);
     }
 
+    /// Seeds the engine-supplied session params (`$auth`, ...) into the current
+    /// scope's env (see [`StatementEnv::seed_session_params`]).
+    pub(crate) fn seed_session_params(&mut self) {
+        let source = self.source.clone();
+        self.env.seed_session_params(&source);
+    }
+
+    /// Reverts the engine-supplied session params to unmodeled in the current
+    /// scope (see [`StatementEnv::unbind_session_params`]).
+    pub(crate) fn unbind_session_params(&mut self) {
+        self.env.unbind_session_params();
+    }
+
     /// Records a `LET`/`FOR` binding for editor features (inlay hints, hover,
     /// go-to-def). Read-only w.r.t. diagnostics.
     pub fn record_let_binding(&mut self, binding: crate::analysis::LetBindingAnalysis) {

@@ -249,6 +249,13 @@ fn with_value_bound<T>(
     f: impl FnOnce(&mut AnalysisContext<'_>) -> T,
 ) -> T {
     ctx.with_child_env(|ctx| {
+        // A field's `ASSERT`/`VALUE`/`DEFAULT` is evaluated at write time, where
+        // the session is not statically known. The top-level
+        // `$auth: option<record>` seed must not reach here: a `DEFAULT $auth` on
+        // a `record<T>` field would otherwise read as a type mismatch
+        // (option<record> vs record<T>) — a false 2001. Reverting the session
+        // params to unmodeled restores the pre-seed behavior for these clauses.
+        ctx.unbind_session_params();
         let span = surrealguard_syntax::span::SourceSpan::new(
             ctx.source().clone(),
             surrealguard_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered"),

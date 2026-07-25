@@ -1422,6 +1422,105 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn analyze_workspace_seeds_auth_as_a_bound_fact_not_a_host_param() {
+        // `$auth` is engine-supplied (the authenticated record, or NONE), never
+        // host-supplied. A query comparing against it must not list it among
+        // the inferred params — only the genuine host param `$name` remains.
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE post;\nSELECT * FROM post WHERE owner = $auth AND title = $name;"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let names: Vec<_> = output.sources[&source]
+            .inferred_params
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["name"], "`$auth` is engine-supplied");
+    }
+
+    #[test]
+    fn analyze_workspace_seeds_all_session_params_not_as_host_params() {
+        // `$session`/`$access`/`$token`/`$scope` are engine-supplied too, so a
+        // query that only references those has no host params.
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE post;\nSELECT * FROM post WHERE a = $session AND b = $access AND c = $token AND d = $scope;"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        assert!(
+            output.sources[&source].inferred_params.is_empty(),
+            "session params are engine-supplied: {:?}",
+            output.sources[&source].inferred_params
+        );
+    }
+
+    #[test]
+    fn analyze_workspace_default_auth_on_record_field_stays_clean() {
+        // The workshop pattern (`organization.surql`): `DEFAULT $auth` on a
+        // `record<account>` field. A field's DEFAULT/VALUE is a write-time
+        // context whose session is not statically known, so the top-level
+        // `$auth: option<record>` seed must not leak in and there make the
+        // DEFAULT a false 2001 (option<record> vs record<account>).
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            concat!(
+                "DEFINE TABLE account SCHEMAFULL;\n",
+                "DEFINE TABLE organization SCHEMAFULL;\n",
+                "DEFINE FIELD owner ON organization TYPE record<account> DEFAULT $auth;\n",
+            )
+            .into(),
+        );
+        let output = analyze_workspace(&workspace);
+        assert_eq!(codes(&output, 2001), 0, "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn analyze_workspace_value_and_default_auth_field_clauses_stay_clean() {
+        // Other workshop field-clause shapes: `VALUE $auth` on a `record<T>`
+        // field, and `DEFAULT ALWAYS $auth` on an `option<record<...>>` field.
+        // None may raise a type mismatch from the session seed.
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            concat!(
+                "DEFINE TABLE account SCHEMAFULL;\n",
+                "DEFINE TABLE team SCHEMAFULL;\n",
+                "DEFINE TABLE invite SCHEMAFULL;\n",
+                "DEFINE FIELD created_by ON invite TYPE record<account> VALUE $auth READONLY;\n",
+                "DEFINE FIELD owner ON invite TYPE option<record<account | team>> DEFAULT ALWAYS $auth;\n",
+            )
+            .into(),
+        );
+        let output = analyze_workspace(&workspace);
+        assert_eq!(codes(&output, 2001), 0, "{:?}", output.diagnostics);
+        assert_eq!(codes(&output, 2005), 0, "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn analyze_workspace_auth_member_access_does_not_fire_1002() {
+        // `$auth` seeds as an open `option<record>`; member access degrades to
+        // partial/Any (`field_of_kind` returns None on an empty-Record target),
+        // so `$auth.id` / `$auth.whatever` never raise a false 1002.
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE TABLE post;\nSELECT * FROM post WHERE owner = $auth.id AND x = $auth.whatever;"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        assert_eq!(codes(&output, 1002), 0, "{:?}", output.diagnostics);
+    }
+
+    #[test]
     fn analyze_workspace_infers_return_shape_from_let_variable() {
         let mut workspace = Workspace::default();
         let source =

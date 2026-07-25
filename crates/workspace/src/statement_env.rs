@@ -4,10 +4,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use surrealguard_syntax::span::SourceSpan;
+use surrealguard_syntax::source::SourceId;
+use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analysis::{LetBindingAnalysis, ParamInference};
-use crate::expression::ExpressionFact;
+use crate::expression::{ExpressionFact, ExpressionValueClass};
 
 /// The bindings in scope for a statement: `LET` facts, param defaults, and
 /// the accumulated param uses, threaded through statements in source order.
@@ -105,6 +106,38 @@ impl StatementEnv {
     /// Binds `name` to `fact`, shadowing any existing binding.
     pub fn define_let(&mut self, name: String, fact: ExpressionFact) {
         self.lets.insert(name, fact);
+    }
+
+    /// Seeds the engine-supplied session/access params (`$auth`, `$token`,
+    /// `$session`, `$access`, `$scope`) as bound facts. Called on every
+    /// top-level query env and `fn::` body env so these resolve to their
+    /// runtime kinds instead of being misclassified as host params, and so a
+    /// guard can flow-narrow them. `$auth` seeds as `option<record>`; see
+    /// [`crate::context_params::session_context_params`].
+    pub fn seed_session_params(&mut self, source: &SourceId) {
+        let span = SourceSpan::new(
+            source.clone(),
+            ByteRange::new(0, 0).expect("empty range is ordered"),
+        );
+        for (name, kind) in crate::context_params::session_context_params() {
+            let mut fact = ExpressionFact::new(span.clone(), ExpressionValueClass::Variable);
+            fact.kind = Some(kind);
+            self.lets.insert(name, fact);
+        }
+    }
+
+    /// Removes the engine-supplied session params from this scope, reverting
+    /// them to *unmodeled* (a use resolves exactly as before any seeding).
+    /// Called at the `DEFINE` boundary: a schema construct establishes its own
+    /// context-param bindings — permission predicates bind `$auth` as the
+    /// accessed record, function bodies re-seed the session params — so the
+    /// top-level `$auth: option<record>` seed must not leak into a
+    /// `DEFAULT`/`VALUE`/`THEN` clause and there be treated as a concrete kind
+    /// (which would make `DEFAULT $auth` on a `record<T>` field a false 2001).
+    pub fn unbind_session_params(&mut self) {
+        for name in crate::context_params::session_context_params().keys() {
+            self.lets.remove(name);
+        }
     }
 
     /// The fact for the `LET` binding `name`, if in scope.
