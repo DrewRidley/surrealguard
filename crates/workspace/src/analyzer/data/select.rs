@@ -73,6 +73,10 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     } else {
         projected_object_kind(stmt, &table_name, table, ctx)
     };
+    // WHERE-narrowing (design §3.1): tighten each projected field the WHERE
+    // clause provably constrains. Runs before OMIT/FETCH/SPLIT, which operate
+    // on the same object-literal shape.
+    let row_kind = apply_where_narrowing(row_kind, stmt);
     let row_kind = apply_omit(row_kind, &stmt.omit);
     let row_kind = apply_fetch(row_kind, &stmt.fetch, ctx.schema());
     let row_kind = apply_split(row_kind, &stmt.split);
@@ -1382,6 +1386,65 @@ fn fetch_contains(fetch: &[ast::Spanned<ast::Idiom>], name: &str) -> bool {
         .any(|segments| segments.as_slice() == [name.to_string()])
 }
 
+/// WHERE-narrowing of the projected row type (design §3.1). A SELECT's WHERE
+/// is a single positive flow-guard over the result set — every returned row
+/// satisfies it — so each recognized guard tightens the matching projected
+/// field's kind. It only ever *tightens* a leaf already present under its own
+/// name, so aliased projections, computed columns, and fields the WHERE does
+/// not mention are left at their schema kind (prove-or-fall-back-to-schema).
+///
+/// The whole pass is disabled — the schema shape is returned unchanged — under
+/// any boundary condition where a projected field cannot be soundly keyed to a
+/// plain schema row: no WHERE clause, a `GROUP BY` (rows are groups, not source
+/// rows), a `VALUE` projection (P1), or a non-plain-table FROM (subquery /
+/// param / graph source).
+fn apply_where_narrowing(row_kind: Kind, stmt: &ast::SelectStmt) -> Kind {
+    let Some(cond) = &stmt.where_clause else {
+        return row_kind;
+    };
+    if stmt.group.is_some() || stmt.value {
+        return row_kind;
+    }
+    // A plain schema-object row is required to key row fields by name.
+    match stmt.from.first().map(|from| &from.node) {
+        Some(ast::Expr::Table(_) | ast::Expr::RecordId { .. }) => {}
+        _ => return row_kind,
+    }
+    let Kind::Literal(KindLiteral::Object(mut fields)) = row_kind else {
+        return row_kind;
+    };
+    for effect in crate::analyzer::flow::narrow::where_effects(&cond.node) {
+        narrow_kind_at_path(&mut fields, &effect.fields, &effect.narrowing);
+    }
+    object_literal(fields)
+}
+
+/// Tightens the leaf at `segments` in a projected object literal, if that exact
+/// path is present. Tighten-only: an absent key (a predicate on a non-projected
+/// or aliased field) is skipped, and a refinement that does not tighten the
+/// current leaf leaves it unchanged.
+fn narrow_kind_at_path(
+    fields: &mut BTreeMap<String, Kind>,
+    segments: &[String],
+    narrowing: &crate::analyzer::flow::narrow::Narrowing,
+) {
+    let Some((first, rest)) = segments.split_first() else {
+        return;
+    };
+    let Some(kind) = fields.get_mut(first) else {
+        return;
+    };
+    if rest.is_empty() {
+        if let Some(narrowed) = crate::analyzer::flow::narrow::narrow_kind(kind, narrowing) {
+            *kind = narrowed;
+        }
+        return;
+    }
+    if let Kind::Literal(KindLiteral::Object(child_fields)) = kind {
+        narrow_kind_at_path(child_fields, rest, narrowing);
+    }
+}
+
 fn apply_omit(kind: Kind, omit: &[ast::Spanned<ast::Idiom>]) -> Kind {
     let Kind::Literal(KindLiteral::Object(mut fields)) = kind else {
         return kind;
@@ -2619,6 +2682,168 @@ mod tests {
             "plain traversal through an opaque field must not emit 1002: {:?}",
             codes(&diagnostics)
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // WHERE-narrowing of the projected row type (design §3.1)
+    // -----------------------------------------------------------------------
+
+    fn narrowing_schema() -> SchemaIndex {
+        schema_from(
+            "DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE TABLE admin SCHEMAFULL;\n\
+             DEFINE FIELD name ON user TYPE string;\n\
+             DEFINE FIELD email ON user TYPE option<string>;\n\
+             DEFINE FIELD age ON user TYPE option<int>;\n\
+             DEFINE FIELD status ON user TYPE string;\n\
+             DEFINE FIELD role ON user TYPE string;\n\
+             DEFINE FIELD country ON user TYPE string;\n\
+             DEFINE FIELD owner ON user TYPE record<user | admin>;",
+        )
+    }
+
+    fn option_string() -> Kind {
+        Kind::Either(vec![Kind::None, Kind::String])
+    }
+
+    fn option_int() -> Kind {
+        Kind::Either(vec![Kind::None, Kind::Int])
+    }
+
+    #[test]
+    fn where_not_none_strips_none_from_the_projected_field() {
+        let schema = narrowing_schema();
+        // Baseline: without the guard, `email` keeps its option.
+        let baseline = analyze(&schema, "SELECT email FROM user;");
+        assert_eq!(object_fields(array_element(&baseline))["email"], option_string());
+
+        let kind = analyze(&schema, "SELECT email FROM user WHERE email != NONE;");
+        assert_eq!(object_fields(array_element(&kind))["email"], Kind::String);
+    }
+
+    #[test]
+    fn where_literal_eq_pins_the_field_to_the_literal() {
+        let schema = narrowing_schema();
+        let kind = analyze(&schema, "SELECT status FROM user WHERE status = 'active';");
+        assert_eq!(
+            object_fields(array_element(&kind))["status"],
+            Kind::Literal(KindLiteral::String("active".into()))
+        );
+    }
+
+    #[test]
+    fn where_greater_than_strips_the_option() {
+        let schema = narrowing_schema();
+        let kind = analyze(&schema, "SELECT age FROM user WHERE age > 18;");
+        assert_eq!(object_fields(array_element(&kind))["age"], Kind::Int);
+    }
+
+    #[test]
+    fn where_less_than_narrows_nothing() {
+        // Soundness regression guard: `NONE < 65` is TRUE, so NONE rows
+        // survive; `age` must keep its option.
+        let schema = narrowing_schema();
+        let kind = analyze(&schema, "SELECT age FROM user WHERE age < 65;");
+        assert_eq!(object_fields(array_element(&kind))["age"], option_int());
+    }
+
+    #[test]
+    fn where_type_table_narrows_the_record_union() {
+        let schema = narrowing_schema();
+        let baseline = analyze(&schema, "SELECT owner FROM user;");
+        assert_eq!(
+            object_fields(array_element(&baseline))["owner"],
+            Kind::Record(vec!["user".into(), "admin".into()])
+        );
+
+        let kind = analyze(
+            &schema,
+            "SELECT owner FROM user WHERE type::table(owner) = 'user';",
+        );
+        assert_eq!(
+            object_fields(array_element(&kind))["owner"],
+            Kind::Record(vec!["user".into()])
+        );
+    }
+
+    #[test]
+    fn where_and_unions_both_effects() {
+        let schema = narrowing_schema();
+        let kind = analyze(
+            &schema,
+            "SELECT email, owner FROM user WHERE email != NONE AND type::table(owner) = 'user';",
+        );
+        let fields = object_fields(array_element(&kind));
+        assert_eq!(fields["email"], Kind::String);
+        assert_eq!(fields["owner"], Kind::Record(vec!["user".into()]));
+    }
+
+    #[test]
+    fn where_or_narrows_nothing() {
+        let schema = narrowing_schema();
+        let kind = analyze(
+            &schema,
+            "SELECT role FROM user WHERE role = 'admin' OR role = 'mod';",
+        );
+        assert_eq!(object_fields(array_element(&kind))["role"], Kind::String);
+    }
+
+    #[test]
+    fn group_by_disables_narrowing() {
+        let schema = narrowing_schema();
+        let kind = analyze(
+            &schema,
+            "SELECT email FROM user WHERE email != NONE GROUP BY country;",
+        );
+        assert_eq!(object_fields(array_element(&kind))["email"], option_string());
+    }
+
+    #[test]
+    fn value_projection_disables_narrowing() {
+        let schema = narrowing_schema();
+        let kind = analyze(&schema, "SELECT VALUE email FROM user WHERE email != NONE;");
+        assert_eq!(kind, Kind::Array(Box::new(option_string()), None));
+    }
+
+    #[test]
+    fn aliased_projection_is_not_narrowed() {
+        // `email AS e` does not match by identity in P1 — the projected `e`
+        // keeps its schema kind.
+        let schema = narrowing_schema();
+        let kind = analyze(&schema, "SELECT email AS e FROM user WHERE email != NONE;");
+        assert_eq!(object_fields(array_element(&kind))["e"], option_string());
+    }
+
+    #[test]
+    fn a_guard_on_a_non_projected_field_is_a_noop() {
+        let schema = narrowing_schema();
+        let kind = analyze(&schema, "SELECT name FROM user WHERE email != NONE;");
+        let fields = object_fields(array_element(&kind));
+        assert_eq!(fields["name"], Kind::String);
+        assert!(!fields.contains_key("email"));
+    }
+
+    #[test]
+    fn a_sibling_field_untouched_by_any_guard_keeps_its_schema_kind() {
+        let schema = narrowing_schema();
+        let kind = analyze(
+            &schema,
+            "SELECT email, age FROM user WHERE email != NONE;",
+        );
+        let fields = object_fields(array_element(&kind));
+        assert_eq!(fields["email"], Kind::String);
+        // `age` is untouched by the guard.
+        assert_eq!(fields["age"], option_int());
+    }
+
+    #[test]
+    fn subquery_source_disables_narrowing() {
+        let schema = narrowing_schema();
+        let kind = analyze(
+            &schema,
+            "SELECT * FROM (SELECT email FROM user) WHERE email != NONE;",
+        );
+        assert_eq!(object_fields(array_element(&kind))["email"], option_string());
     }
 
     #[test]

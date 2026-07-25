@@ -17,7 +17,7 @@
 //! `= NONE OR` / `!= NONE AND` narrowing (`infer::none_guarded_param`) to
 //! statement and branch flow.
 
-use surrealdb_types::{Kind, Table};
+use surrealdb_types::{Kind, KindLiteral, Table};
 use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
@@ -29,8 +29,20 @@ use crate::statement_env::StatementEnv;
 pub(crate) enum Narrowing {
     /// The param is NONE.
     None,
-    /// The param is not NONE (strip `none`/`null` from its kind).
+    /// The param is not NONE *and* not NULL (strip both `none` and `null`).
+    /// Used by `> / >=` ordering guards and the legacy param `!= NONE` path.
     NotNone,
+    /// The value is not NONE, but MAY still be NULL — strip `none` only,
+    /// **keep `null`**. A NULL row has `is_none() == false`, so it survives a
+    /// `!= NONE` filter; stripping `null` here would be unsound.
+    StripNone,
+    /// The value is not NULL, but MAY still be NONE — strip `null` only,
+    /// **keep `none`**. `NONE != NULL` is TRUE, so a NONE row survives.
+    NotNull,
+    /// The value equals a literal: it becomes that literal's singleton
+    /// [`Kind::Literal`], but only when the literal's base kind unifies with
+    /// the field's non-none base (otherwise the refinement cannot apply).
+    Eq(Kind),
     /// The param's record narrows to a single table.
     Table(String),
     /// The param's record excludes a table.
@@ -93,6 +105,230 @@ pub(crate) fn positive_effects(cond: &ast::Expr, env: &StatementEnv) -> Vec<Effe
 /// ELSE body, or the fall-through after a diverging guard).
 pub(crate) fn negative_effects(cond: &ast::Expr, env: &StatementEnv) -> Vec<Effect> {
     effects(cond, false, env)
+}
+
+// ---------------------------------------------------------------------------
+// WHERE-narrowing of SELECT result rows (design §3.1)
+// ---------------------------------------------------------------------------
+
+/// A refinement a SELECT's `WHERE` provably makes about a **projected row
+/// field**, keyed by its schema field path (`["email"]`, `["profile","email"]`)
+/// rather than a param binding. Consumed by the SELECT result-type post-pass,
+/// which tightens the matching leaf of the projected object literal.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RowEffect {
+    /// The row field path the guard tightens.
+    pub fields: Vec<String>,
+    /// The refinement to apply at that path.
+    pub narrowing: Narrowing,
+}
+
+/// The refinements a SELECT's `WHERE` proves about the returned rows. Every
+/// surviving row satisfies the predicate, so this is a single **positive**
+/// flow-guard: `A AND B` contributes the union of both sides' effects (both
+/// hold on every row), `A OR B` contributes nothing (either disjunct may be
+/// the reason a row survives), and each recognized leaf yields one effect.
+///
+/// This mirrors the positive branch of [`effects`], but resolves **bare row
+/// fields** (`email`, not `$param`) rather than param bindings, so it produces
+/// [`RowEffect`]s keyed by field path.
+pub(crate) fn where_effects(cond: &ast::Expr) -> Vec<RowEffect> {
+    match cond {
+        ast::Expr::Binary { lhs, op, rhs } => match &op.node {
+            ast::BinaryOp::And => {
+                let mut effects = where_effects(&lhs.node);
+                effects.extend(where_effects(&rhs.node));
+                effects
+            }
+            // `A OR B` narrows nothing in P1 — a surviving row need only satisfy
+            // one disjunct, so neither is a fact about the whole result set.
+            ast::BinaryOp::Or => Vec::new(),
+            op => row_leaf_effect(&lhs.node, op, &rhs.node)
+                .into_iter()
+                .collect(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// The [`RowEffect`] a single WHERE comparison proves, if it is a recognized
+/// leaf shape. The order tries the most specific idioms first so a
+/// `type::table(f) = 'tbl'` discriminant is never mistaken for a literal-eq.
+fn row_leaf_effect(lhs: &ast::Expr, op: &ast::BinaryOp, rhs: &ast::Expr) -> Option<RowEffect> {
+    row_none_null_effect(lhs, op, rhs)
+        .or_else(|| row_table_effect(lhs, op, rhs))
+        .or_else(|| row_literal_eq_effect(lhs, op, rhs))
+        .or_else(|| row_order_effect(lhs, op, rhs))
+}
+
+/// `f != NONE` / `f IS NOT NONE` → `StripNone` (keep `null`);
+/// `f != NULL` / `f IS NOT NULL` → `NotNull` (keep `none`). Only the
+/// not-equals polarity narrows: `f = NONE` is not a recognized tightening (it
+/// is absent from the design table), so it is a no-op.
+fn row_none_null_effect(lhs: &ast::Expr, op: &ast::BinaryOp, rhs: &ast::Expr) -> Option<RowEffect> {
+    // `Some(false)` is the `!=` / `IS NOT` polarity; `= NONE` (Some(true)) and
+    // non-none comparisons narrow nothing.
+    if none_test_polarity(op) != Some(false) {
+        return None;
+    }
+    let (fields, is_none) = if let Some(is_none) = none_or_null_literal(rhs) {
+        (row_field_path(lhs)?, is_none)
+    } else if let Some(is_none) = none_or_null_literal(lhs) {
+        (row_field_path(rhs)?, is_none)
+    } else {
+        return None;
+    };
+    let narrowing = if is_none {
+        Narrowing::StripNone
+    } else {
+        Narrowing::NotNull
+    };
+    Some(RowEffect { fields, narrowing })
+}
+
+/// `f = <lit>` (either operand order) → `Eq(literal_kind)`. The unifiability of
+/// the literal against `f` is checked when the effect is applied (`narrow_kind`
+/// returns `None` when it cannot tighten), so a mistyped `f = <lit>` is a
+/// no-op rather than a wrong type.
+fn row_literal_eq_effect(
+    lhs: &ast::Expr,
+    op: &ast::BinaryOp,
+    rhs: &ast::Expr,
+) -> Option<RowEffect> {
+    if !matches!(op, ast::BinaryOp::Eq) {
+        return None;
+    }
+    let (fields, literal) = if let Some(literal) = eq_literal_kind(rhs) {
+        (row_field_path(lhs)?, literal)
+    } else if let Some(literal) = eq_literal_kind(lhs) {
+        (row_field_path(rhs)?, literal)
+    } else {
+        return None;
+    };
+    Some(RowEffect {
+        fields,
+        narrowing: Narrowing::Eq(literal),
+    })
+}
+
+/// `type::table(f) = 'tbl'` → `Table` (narrow the record union to `tbl`);
+/// `type::table(f) != 'tbl'` → `NotTable` (remove `tbl`). Either operand order.
+fn row_table_effect(lhs: &ast::Expr, op: &ast::BinaryOp, rhs: &ast::Expr) -> Option<RowEffect> {
+    if !matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::NotEq) {
+        return None;
+    }
+    let of = |disc: &ast::Expr, lit: &ast::Expr| {
+        Some((row_type_table_field(disc)?, string_literal(lit)?))
+    };
+    let (fields, table) = of(lhs, rhs).or_else(|| of(rhs, lhs))?;
+    let narrowing = if matches!(op, ast::BinaryOp::Eq) {
+        Narrowing::Table(table)
+    } else {
+        Narrowing::NotTable(table)
+    };
+    Some(RowEffect { fields, narrowing })
+}
+
+/// `f > lit` / `f >= lit` → `NotNone` (strip `none`+`null`: `NONE > 18` is
+/// FALSE, so NONE/NULL rows are filtered). `f < lit` / `f <= lit` narrows
+/// **nothing** — `NONE < 65` is TRUE (NONE is the lowest discriminant), so
+/// NONE rows survive and stripping the option would be unsound. Operand order
+/// is normalized: `18 < f` is treated as `f > 18`.
+fn row_order_effect(lhs: &ast::Expr, op: &ast::BinaryOp, rhs: &ast::Expr) -> Option<RowEffect> {
+    // Require one side a row field and the other an ordering literal, then
+    // re-orient the operator so the field is on the left.
+    let (fields, effective_op) = if let Some(fields) = row_field_path(lhs) {
+        if !is_ordering_literal(rhs) {
+            return None;
+        }
+        (fields, op.clone())
+    } else if let Some(fields) = row_field_path(rhs) {
+        if !is_ordering_literal(lhs) {
+            return None;
+        }
+        (fields, flip_order(op)?)
+    } else {
+        return None;
+    };
+    match effective_op {
+        ast::BinaryOp::Gt | ast::BinaryOp::GtEq => Some(RowEffect {
+            fields,
+            narrowing: Narrowing::NotNone,
+        }),
+        // `<` / `<=` on the field side: NONE survives, so narrow nothing.
+        _ => None,
+    }
+}
+
+/// The field-relative operator when the field is on the *right* of a
+/// comparison: `18 < f` is `f > 18`. Only the four ordering operators flip.
+fn flip_order(op: &ast::BinaryOp) -> Option<ast::BinaryOp> {
+    Some(match op {
+        ast::BinaryOp::Gt => ast::BinaryOp::Lt,
+        ast::BinaryOp::GtEq => ast::BinaryOp::LtEq,
+        ast::BinaryOp::Lt => ast::BinaryOp::Gt,
+        ast::BinaryOp::LtEq => ast::BinaryOp::GtEq,
+        _ => return None,
+    })
+}
+
+/// The bare row-field path an expression names — an idiom of plain `Field`
+/// segments only (`email`, `profile.email`). A param-rooted idiom (`$x.f`)
+/// has a `Start` first part and yields `None`, so it is never a row field.
+fn row_field_path(expr: &ast::Expr) -> Option<Vec<String>> {
+    let ast::Expr::Idiom(idiom) = expr else {
+        return None;
+    };
+    crate::analyzer::expression::infer::plain_field_segments(idiom)
+}
+
+/// The row-field argument of a `type::table(<field>)` call.
+fn row_type_table_field(expr: &ast::Expr) -> Option<Vec<String>> {
+    let ast::Expr::Call(call) = expr else {
+        return None;
+    };
+    if call.path.node != "type::table" {
+        return None;
+    }
+    let [arg] = call.args.as_slice() else {
+        return None;
+    };
+    row_field_path(&arg.node)
+}
+
+/// `Some(true)` for the `NONE` literal, `Some(false)` for `NULL`, else `None`.
+fn none_or_null_literal(expr: &ast::Expr) -> Option<bool> {
+    match expr {
+        ast::Expr::Literal(ast::Literal::None) => Some(true),
+        ast::Expr::Literal(ast::Literal::Null) => Some(false),
+        _ => None,
+    }
+}
+
+/// The singleton [`Kind::Literal`] a comparable scalar literal denotes, for the
+/// `f = <lit>` refinement. NONE/NULL and non-representable literals (datetime,
+/// uuid, regex) are excluded — they are handled elsewhere or not narrowed.
+fn eq_literal_kind(expr: &ast::Expr) -> Option<Kind> {
+    let ast::Expr::Literal(literal) = expr else {
+        return None;
+    };
+    match literal {
+        ast::Literal::String(text) => Some(Kind::Literal(KindLiteral::String(text.clone()))),
+        ast::Literal::Int(value) => Some(Kind::Literal(KindLiteral::Integer(*value))),
+        ast::Literal::Float(value) => Some(Kind::Literal(KindLiteral::Float(*value))),
+        ast::Literal::Bool(value) => Some(Kind::Literal(KindLiteral::Bool(*value))),
+        _ => None,
+    }
+}
+
+/// Whether an expression is a comparable ordering literal (any literal but
+/// `NONE`/`NULL`, which are the low discriminants the ordering rules turn on).
+fn is_ordering_literal(expr: &ast::Expr) -> bool {
+    matches!(
+        expr,
+        ast::Expr::Literal(literal)
+            if !matches!(literal, ast::Literal::None | ast::Literal::Null)
+    )
 }
 
 /// The refinements a condition proves under the requested polarity. Compound
@@ -389,16 +625,56 @@ pub(crate) fn apply_effects(ctx: &mut AnalysisContext<'_>, effects: &[Effect]) {
 
 /// The kind `kind` refines to under `narrowing`, or `None` when the
 /// refinement leaves it unchanged (or cannot apply).
-fn narrow_kind(kind: &Kind, narrowing: &Narrowing) -> Option<Kind> {
+pub(crate) fn narrow_kind(kind: &Kind, narrowing: &Narrowing) -> Option<Kind> {
     match narrowing {
         Narrowing::None => Some(Kind::None),
         Narrowing::NotNone => {
             let narrowed = narrow_out_none(kind);
             (narrowed != *kind).then_some(narrowed)
         }
+        Narrowing::StripNone => {
+            let narrowed = strip_variant(kind, Kind::None);
+            (narrowed != *kind).then_some(narrowed)
+        }
+        Narrowing::NotNull => {
+            let narrowed = strip_variant(kind, Kind::Null);
+            (narrowed != *kind).then_some(narrowed)
+        }
+        Narrowing::Eq(literal) => eq_narrow(kind, literal),
         Narrowing::Table(table) => narrow_record_to(kind, table),
         Narrowing::NotTable(table) => narrow_record_without(kind, table),
     }
+}
+
+/// Drops a single scalar variant (`Kind::None` or `Kind::Null`) from a union,
+/// collapsing a one-variant remainder. A non-union kind is unchanged. Unlike
+/// [`narrow_out_none`], this removes ONLY the requested variant, so the other
+/// option marker survives (`!= NONE` keeps `null`, `!= NULL` keeps `none`).
+fn strip_variant(kind: &Kind, drop: Kind) -> Kind {
+    let Kind::Either(variants) = kind else {
+        return kind.clone();
+    };
+    let kept: Vec<Kind> = variants.iter().filter(|v| **v != drop).cloned().collect();
+    match kept.len() {
+        0 => kind.clone(),
+        1 => kept.into_iter().next().expect("one variant"),
+        _ => Kind::Either(kept),
+    }
+}
+
+/// The kind of a field pinned to a literal by `f = <lit>`: the literal's
+/// singleton kind, but only when the literal's base kind unifies with the
+/// field's non-none base. When it does not (a mistyped comparison), the
+/// refinement cannot apply and the field keeps its schema kind.
+fn eq_narrow(field: &Kind, literal: &Kind) -> Option<Kind> {
+    let literal_base = crate::kinds::literal_base_kind(literal)?;
+    let stripped = narrow_out_none(field);
+    // Any is the universal top: a literal always unifies with it.
+    if stripped == Kind::Any {
+        return Some(literal.clone());
+    }
+    let field_base = crate::kinds::literal_base_kind(&stripped).unwrap_or(stripped);
+    (field_base == literal_base).then(|| literal.clone())
 }
 
 /// Narrows a `record<...>` (optionally wrapped in a union) to the single
@@ -470,6 +746,207 @@ mod tests {
         lower_first_expr(&parsed, "FunctionCall")
             .expect("has a call condition")
             .node
+    }
+
+    /// The WHERE condition of a SELECT, lowered exactly as the result-type
+    /// post-pass consumes it.
+    fn where_cond(query: &str) -> ast::Expr {
+        let parsed = parse_source(SourceId::new("narrow:test"), query).expect("parses");
+        match surrealguard_syntax::lower::lower_first_statement(&parsed, "SelectStatement")
+            .expect("select statement exists")
+            .node
+        {
+            ast::Statement::Select(stmt) => stmt.where_clause.expect("has a WHERE clause").node,
+            other => panic!("expected select, got {other:?}"),
+        }
+    }
+
+    // --- WHERE-narrowing: leaf-shape recognition (design §3.1) -------------
+
+    #[test]
+    fn where_not_none_strips_none_only() {
+        // `!= NONE` / `IS NOT NONE` keep `null` — a NULL row survives the filter.
+        for query in [
+            "SELECT * FROM user WHERE email != NONE;",
+            "SELECT * FROM user WHERE email IS NOT NONE;",
+        ] {
+            assert_eq!(
+                where_effects(&where_cond(query)),
+                vec![RowEffect {
+                    fields: vec!["email".into()],
+                    narrowing: Narrowing::StripNone,
+                }],
+                "{query}"
+            );
+        }
+    }
+
+    #[test]
+    fn where_not_null_strips_null_only() {
+        assert_eq!(
+            where_effects(&where_cond("SELECT * FROM user WHERE note != NULL;")),
+            vec![RowEffect {
+                fields: vec!["note".into()],
+                narrowing: Narrowing::NotNull,
+            }]
+        );
+    }
+
+    #[test]
+    fn where_eq_none_is_a_noop() {
+        // `f = NONE` is absent from the recognized table — no tightening.
+        assert!(where_effects(&where_cond("SELECT * FROM user WHERE email = NONE;")).is_empty());
+    }
+
+    #[test]
+    fn where_literal_eq_pins_the_field() {
+        assert_eq!(
+            where_effects(&where_cond("SELECT * FROM user WHERE status = 'active';")),
+            vec![RowEffect {
+                fields: vec!["status".into()],
+                narrowing: Narrowing::Eq(Kind::Literal(KindLiteral::String("active".into()))),
+            }]
+        );
+        // Reversed operand order recognizes the same effect.
+        assert_eq!(
+            where_effects(&where_cond("SELECT * FROM user WHERE 'active' = status;")),
+            vec![RowEffect {
+                fields: vec!["status".into()],
+                narrowing: Narrowing::Eq(Kind::Literal(KindLiteral::String("active".into()))),
+            }]
+        );
+    }
+
+    #[test]
+    fn where_greater_than_strips_none_and_null() {
+        for query in [
+            "SELECT * FROM user WHERE age > 18;",
+            "SELECT * FROM user WHERE age >= 18;",
+            // `18 < age` is `age > 18` — the field is on the high side.
+            "SELECT * FROM user WHERE 18 < age;",
+        ] {
+            assert_eq!(
+                where_effects(&where_cond(query)),
+                vec![RowEffect {
+                    fields: vec!["age".into()],
+                    narrowing: Narrowing::NotNone,
+                }],
+                "{query}"
+            );
+        }
+    }
+
+    #[test]
+    fn where_less_than_narrows_nothing() {
+        // The classic soundness trap: `NONE < 65` is TRUE, so NONE rows survive.
+        for query in [
+            "SELECT * FROM user WHERE age < 65;",
+            "SELECT * FROM user WHERE age <= 65;",
+            // `65 > age` is `age < 65` — still the low side.
+            "SELECT * FROM user WHERE 65 > age;",
+        ] {
+            assert!(
+                where_effects(&where_cond(query)).is_empty(),
+                "{query} must narrow nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn where_type_table_narrows_the_record_union() {
+        assert_eq!(
+            where_effects(&where_cond(
+                "SELECT * FROM file WHERE type::table(owner) = 'user';"
+            )),
+            vec![RowEffect {
+                fields: vec!["owner".into()],
+                narrowing: Narrowing::Table("user".into()),
+            }]
+        );
+        assert_eq!(
+            where_effects(&where_cond(
+                "SELECT * FROM file WHERE type::table(owner) != 'user';"
+            )),
+            vec![RowEffect {
+                fields: vec!["owner".into()],
+                narrowing: Narrowing::NotTable("user".into()),
+            }]
+        );
+    }
+
+    #[test]
+    fn where_and_unions_both_sides() {
+        assert_eq!(
+            where_effects(&where_cond(
+                "SELECT * FROM file WHERE email != NONE AND type::table(owner) = 'user';"
+            )),
+            vec![
+                RowEffect {
+                    fields: vec!["email".into()],
+                    narrowing: Narrowing::StripNone,
+                },
+                RowEffect {
+                    fields: vec!["owner".into()],
+                    narrowing: Narrowing::Table("user".into()),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn where_or_narrows_nothing() {
+        assert!(where_effects(&where_cond(
+            "SELECT * FROM user WHERE role = 'admin' OR role = 'mod';"
+        ))
+        .is_empty());
+    }
+
+    // --- WHERE-narrowing: narrow_kind soundness on the new arms ------------
+
+    #[test]
+    fn strip_none_keeps_null() {
+        // `email: string | none | null` → `string | null` (KEEP null).
+        let kind = Kind::Either(vec![Kind::None, Kind::Null, Kind::String]);
+        assert_eq!(
+            narrow_kind(&kind, &Narrowing::StripNone),
+            Some(Kind::Either(vec![Kind::Null, Kind::String]))
+        );
+        // `option<string>` collapses to `string`.
+        assert_eq!(
+            narrow_kind(&Kind::Either(vec![Kind::None, Kind::String]), &Narrowing::StripNone),
+            Some(Kind::String)
+        );
+        // No `none` present: unchanged.
+        assert_eq!(narrow_kind(&Kind::String, &Narrowing::StripNone), None);
+    }
+
+    #[test]
+    fn not_null_keeps_none() {
+        let kind = Kind::Either(vec![Kind::None, Kind::Null, Kind::String]);
+        assert_eq!(
+            narrow_kind(&kind, &Narrowing::NotNull),
+            Some(Kind::Either(vec![Kind::None, Kind::String]))
+        );
+    }
+
+    #[test]
+    fn eq_narrow_pins_only_when_the_base_unifies() {
+        let active = Kind::Literal(KindLiteral::String("active".into()));
+        // Base unifies (`string` = `string`): pin to the literal.
+        assert_eq!(
+            narrow_kind(&Kind::String, &Narrowing::Eq(active.clone())),
+            Some(active.clone())
+        );
+        // Through an option: `= lit` also drops the none.
+        assert_eq!(
+            narrow_kind(
+                &Kind::Either(vec![Kind::None, Kind::String]),
+                &Narrowing::Eq(active.clone())
+            ),
+            Some(active.clone())
+        );
+        // Base disjoint (`int` vs a string literal): cannot apply.
+        assert_eq!(narrow_kind(&Kind::Int, &Narrowing::Eq(active)), None);
     }
 
     #[test]
