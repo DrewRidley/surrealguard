@@ -59,6 +59,19 @@ impl Flow {
         if exits.iter().any(|kind| matches!(kind, Kind::Any)) {
             return Kind::Any;
         }
+        // An empty-array literal (`array<_, 0>` — only the empty array) is a
+        // member of every `array<E>`/`set<E>`, so when a concrete collection
+        // exit is present the empty literal contributes no new inhabitant. Drop
+        // it, so a guard's `RETURN []` (e.g. `IF array::len($rows) = 0 THEN
+        // RETURN [] END; … RETURN $mapped`) yields `array<E>` rather than
+        // `array<any,0> | array<E>`.
+        let is_empty_collection = |k: &Kind| matches!(k, Kind::Array(_, Some(0)) | Kind::Set(_, Some(0)));
+        let has_concrete_collection = exits
+            .iter()
+            .any(|k| matches!(k, Kind::Array(_, _) | Kind::Set(_, _)) && !is_empty_collection(k));
+        if has_concrete_collection {
+            exits.retain(|k| !is_empty_collection(k));
+        }
         Kind::either(exits)
     }
 }
