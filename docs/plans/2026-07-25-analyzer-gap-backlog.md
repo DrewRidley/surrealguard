@@ -1000,6 +1000,29 @@ Note this is *pre-existing*, not caused by TG-1 — TG-1 correctly excluded grou
 the implicit `id` for exactly this reason (a grouped row is synthesized, not materialized) and
 deliberately did not stack a new claim on top of the existing one.
 
+### NEW-7 — A non-key, non-aggregate field under `GROUP` is typed as a scalar, but 3.x returns an array
+**Severity: medium. Effort: small–medium.** Found while fixing NEW-6, verified against a live
+SurrealDB 3.0.5 server and the 2.x core source.
+
+```surql
+SELECT dept, salary FROM emp GROUP BY dept;
+```
+3.x returns `{dept: 'a', salary: [10, 20]}` — the non-grouped field collapses to the **array** of
+that group's values. 2.x takes the first value. The analyzer types `salary` as the scalar in both
+cases, so under the 3.x target it is a wrong type, not a loose one. Version-gated behavior:
+`analysis.surrealdb_version` already exists in the config.
+
+### NEW-8 — `SELECT * … GROUP ALL` has no diagnostic
+**Severity: medium. Effort: small.** SurrealDB 3.x **rejects** a wildcard under any GROUP clause
+outright (`Incorrect selector for aggregate selection, expression `*` … cannot be aggregated in a
+group`), and 2.x silently drops it — so the query never does what its author intended under either
+engine. After NEW-6, `GROUP BY k` at least raises `W4013` ("project the key"), but the `GROUP ALL`
+form raises nothing at all.
+
+The contract-correct response is a dedicated error-severity code for "wildcard under GROUP", not
+just a better inferred type. That needs a new entry in `crates/diagnostics/src/catalog.rs` plus the
+catalog markdown, so the NEW-6 lane (scoped to `analyzer/data/`) deliberately left it.
+
 ## Status — FP wave complete (2026-07-25)
 
 Fixed and merged: **TI-1** (`??` NONE-strip), **TI-4** (literal-union writes, plus the exact-literal
