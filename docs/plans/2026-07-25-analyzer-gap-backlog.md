@@ -1058,6 +1058,26 @@ returns `fn::abc`, so every consumer of an unaliased call projection reads `unde
 (`method_return_kind`) failing to map `.len()` on a `string` receiver. Worth auditing the whole
 method-dispatch table against the builtin registry, since one missing entry implies others.
 
+### NEW-11 — Hover ignores flow narrowing (position-insensitive)
+**Severity: medium (visible on every hover). Effort: small–medium.** Verified over the real LSP.
+
+The *analysis* narrows correctly, but `hover_at` reports a binding's declared kind at every
+occurrence, so a guard's effect is invisible in the editor:
+
+```surql
+LET $x = (SELECT organization, parent FROM ONLY $unit_id);  -- option<{…}>  correct
+IF $x = NONE THEN RETURN '' END;                            -- option<{…}>  correct (at the guard)
+IF $x.parent = NONE THEN … END;                             -- option<{…}>  WRONG: narrowed here
+RETURN $x.organization;                                     -- option<{…}>  WRONG: narrowed here
+```
+
+Root cause: `hover_at` matches an offset against spans of already-analyzed items and reads the
+binding's recorded kind; it never consults the flow-narrowed environment in force *at that
+offset*. Correct behaviour: the declared kind at and before the guard, the narrowed kind after it.
+
+Note the same limitation likely affects inlay hints for later occurrences, and it is the reason a
+user reading types in the editor sees something different from what the analyzer actually believes.
+
 ## Status — FP wave complete (2026-07-25)
 
 Fixed and merged: **TI-1** (`??` NONE-strip), **TI-4** (literal-union writes, plus the exact-literal
