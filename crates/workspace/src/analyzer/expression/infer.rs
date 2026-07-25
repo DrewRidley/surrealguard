@@ -93,43 +93,25 @@ pub fn statement_value_kind(
             None => Kind::None,
         },
         ast::Statement::Expr(e) => infer_expression_fact(e, ctx).kind.unwrap_or(Kind::Any),
-        // An IF / block used as a value (`RETURN IF c { a } ELSE { b }`, which
-        // lowers to a `Subquery`): its kind is the union of its branch/exit
-        // values. Pure inference — no effects, no diagnostics.
-        ast::Statement::IfElse(s) => pure_if_else_kind(s, ctx),
+        // An IF used as a value (`RETURN IF c { a } ELSE { b }`, `LET $y = IF
+        // c { ... }`, which lower to a `Subquery`): route it through the same
+        // full flow analysis a statement `IF` uses, so every reachable branch
+        // body is checked with the complete rule set (unknown table/field,
+        // type mismatches, arg-kind, index-required, …) — not just the
+        // inference-side subset `pure_if_else_kind` happened to trigger. The
+        // analysis is scoped in a child env so any branch-guard narrowing is
+        // discarded (an IF-expression has no fall-through into the surrounding
+        // scope), and only reachable branches run (dead arms are greyed, never
+        // checked). Re-inference of the same expression re-emits identical
+        // findings, which `ctx.emit` dedupes — so this stays single-emit even
+        // when the subquery sits inside a binary/call that re-reads its kind.
+        ast::Statement::IfElse(s) => {
+            ctx.with_child_env(|ctx| crate::analyzer::flow::if_else::analyze_if_else_flow(ctx, s).into_kind())
+        }
         ast::Statement::Block(s) => pure_block_kind(s, ctx).unwrap_or(Kind::Any),
         _ => return None,
     };
     Some(kind)
-}
-
-/// The value of an IF used as an expression: the union of every *reachable*
-/// branch's block value, plus `none` when there is no `ELSE` and control can
-/// fall through. A guard that provably folds to a constant prunes the branches
-/// it decides — `IF 1 == 1 { a } ELSE { b }` is just `a`'s kind — so only the
-/// arms that can actually run contribute (see
-/// [`crate::analyzer::const_eval::branch_reachability`]). Pure inference — no
-/// effects, no diagnostics (mirrors [`pure_block_kind`]); an `Any` branch
-/// absorbs the union (any-is-top), matching `Flow::into_kind`.
-fn pure_if_else_kind(if_else: &ast::IfElseStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
-    let reach = crate::analyzer::const_eval::branch_reachability(if_else);
-    let mut kinds: Vec<Kind> = if_else
-        .branches
-        .iter()
-        .zip(&reach.branches)
-        .filter(|(_, branch_reach)| branch_reach.is_reachable())
-        .map(|(branch, _)| pure_block_kind(&branch.body, ctx).unwrap_or(Kind::Any))
-        .collect();
-    if !reach.else_dead {
-        match &if_else.else_branch {
-            Some(else_body) => kinds.push(pure_block_kind(else_body, ctx).unwrap_or(Kind::Any)),
-            None => kinds.push(Kind::None),
-        }
-    }
-    if kinds.iter().any(|kind| matches!(kind, Kind::Any)) {
-        return Kind::Any;
-    }
-    Kind::either(kinds)
 }
 
 /// A closure value's own type: `Kind::Function(params, return)`. The

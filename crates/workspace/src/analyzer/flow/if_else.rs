@@ -343,6 +343,156 @@ mod tests {
             .all(|finding| finding.code().number() != 4024));
     }
 
+    // ---- IF-as-a-value branch checking (routed through `analyze_if_else_flow`
+    //      from `statement_value_kind`) ----
+
+    /// The rendered codes a whole query produces (workspace end-to-end).
+    fn value_if_codes(query: &str) -> Vec<String> {
+        use crate::analysis::{analyze_query, Workspace};
+        let mut workspace = Workspace::default();
+        analyze_query(&mut workspace, query)
+            .diagnostics
+            .iter()
+            .map(|finding| finding.code().to_string())
+            .collect()
+    }
+
+    /// How many times `code` fires for `query`.
+    fn value_if_count(query: &str, code: &str) -> usize {
+        value_if_codes(query)
+            .iter()
+            .filter(|rendered| rendered.as_str() == code)
+            .count()
+    }
+
+    #[test]
+    fn reachable_if_value_branch_reports_a_check_side_type_error_exactly_once() {
+        // The core gap: `'a' + true` in a value-position IF branch is a
+        // check-side invariant (2004) that pure inference never triggered.
+        // Now it fires — and exactly once, despite re-inference of the
+        // subquery kind (dedup via `ctx.emit`).
+        let query = "RETURN IF $c { 'a' + true } ELSE { 1 };";
+        assert_eq!(value_if_count(query, "E2004"), 1, "codes: {:?}", value_if_codes(query));
+    }
+
+    #[test]
+    fn reachable_if_value_branch_reports_a_field_error_exactly_once() {
+        // A bad field on a schemaful table inside a reachable branch: exactly
+        // one E1002, end-to-end (single-emit).
+        let query = concat!(
+            "DEFINE TABLE thing SCHEMAFULL;\n",
+            "DEFINE FIELD name ON thing TYPE string;\n",
+            "RETURN IF $c { SELECT badfield FROM thing } ELSE { 1 };",
+        );
+        assert_eq!(value_if_count(query, "E1002"), 1, "codes: {:?}", value_if_codes(query));
+    }
+
+    #[test]
+    fn reachable_if_value_branch_reports_a_non_field_rule_exactly_once() {
+        // A NON-field rule must fire inside the branch too: an unknown-table
+        // SELECT (1001) in a reachable branch, exactly once.
+        let query = "RETURN IF $c { SELECT * FROM nonexistent } ELSE { 1 };";
+        assert_eq!(value_if_count(query, "E1001"), 1, "codes: {:?}", value_if_codes(query));
+
+        // And a function argument-kind mismatch (5002) inside a branch.
+        let arg = "RETURN IF $c { string::len(1) } ELSE { 1 };";
+        assert_eq!(value_if_count(arg, "E5002"), 1, "codes: {:?}", value_if_codes(arg));
+    }
+
+    #[test]
+    fn nested_if_value_in_a_binary_still_emits_a_branch_error_once() {
+        // The subquery kind is re-read by the operator check, re-inferring the
+        // branch — `ctx.emit` dedup keeps it a single finding.
+        let query = "RETURN (IF $c { 'a' + true } ELSE { 2 }) ?? 0;";
+        assert_eq!(value_if_count(query, "E2004"), 1, "codes: {:?}", value_if_codes(query));
+    }
+
+    #[test]
+    fn dead_if_value_branch_body_is_not_checked() {
+        // A provably-dead branch (`IF false`) is greyed, never checked: the bad
+        // field in its body raises no field error. (The dead branch is still
+        // greyed with 4024, matching statement-IF behavior — that is not a
+        // check of its contents.)
+        let query = concat!(
+            "DEFINE TABLE thing SCHEMAFULL;\n",
+            "DEFINE FIELD name ON thing TYPE string;\n",
+            "RETURN IF false { SELECT badfield FROM thing } ELSE { 1 };",
+        );
+        assert_eq!(value_if_count(query, "E1002"), 0, "codes: {:?}", value_if_codes(query));
+
+        // Likewise a check-side error in a dead branch stays silent.
+        let binary = "RETURN IF false { 'a' + true } ELSE { 1 };";
+        assert_eq!(value_if_count(binary, "E2004"), 0, "codes: {:?}", value_if_codes(binary));
+    }
+
+    #[test]
+    fn if_value_result_kind_is_unchanged_by_the_checking_route() {
+        use crate::analysis::{analyze_query, Workspace};
+        let response = |query: &str| {
+            let mut workspace = Workspace::default();
+            analyze_query(&mut workspace, query).response_kind
+        };
+        // A const-true guard still folds to just the THEN's kind.
+        assert_eq!(response("RETURN IF 1 == 1 { 1 } ELSE { 'x' };"), Some(Kind::Int));
+        // A dynamic guard still unions both branches.
+        assert_eq!(
+            response("RETURN IF $c { 1 } ELSE { 'x' };"),
+            Some(Kind::Either(vec![Kind::Int, Kind::String]))
+        );
+    }
+
+    #[test]
+    fn if_value_branch_narrowing_does_not_leak_into_the_surrounding_scope() {
+        // Checking `IF $x != NONE { ... }` narrows `$x` to its non-none kind
+        // *inside* the branch only — an IF-expression has no fall-through, so
+        // the outer `$x` binding must remain `option<int>` afterward.
+        let parsed = parse_source(
+            SourceId::new("flow:test"),
+            "LET $y = IF $x != NONE { 1 } ELSE { 2 };",
+        )
+        .expect("query parses");
+        let ast::Statement::Let(stmt) =
+            surrealguard_syntax::lower::lower_first_statement(&parsed, "LetStatement")
+                .expect("no LetStatement node in tree")
+                .node
+        else {
+            panic!("expected let statement");
+        };
+        let schema = SchemaIndex::default();
+        let mut diagnostics: Vec<Finding> = Vec::new();
+        let mut ctx = AnalysisContext::new(
+            &schema,
+            parsed.source_id().clone(),
+            parsed.text(),
+            &mut diagnostics,
+        );
+        let option_int = Kind::Either(vec![Kind::None, Kind::Int]);
+        let span = surrealguard_syntax::span::SourceSpan::new(
+            ctx.source().clone(),
+            surrealguard_syntax::span::ByteRange::new(0, 1).unwrap(),
+        );
+        ctx.define_local(
+            "x".into(),
+            crate::expression::ExpressionFact::new(
+                span,
+                crate::expression::ExpressionValueClass::Variable,
+            )
+            .with_kind(option_int.clone()),
+        );
+
+        crate::analyzer::flow::let_stmt::analyze_let(&mut ctx, &stmt);
+
+        assert_eq!(
+            ctx.env().let_fact("x").and_then(|fact| fact.kind.clone()),
+            Some(option_int),
+            "the branch guard narrowing must not leak past the IF-expression",
+        );
+        assert!(
+            ctx.env().narrowed_path("x").is_none(),
+            "no per-path narrowing should survive the IF-expression",
+        );
+    }
+
     #[test]
     fn a_const_true_guard_greys_the_dead_else() {
         // The always-true THEN makes the ELSE unreachable — the ELSE body is
