@@ -341,6 +341,45 @@ pub fn idiom_prefix_kinds<'i>(
     result
 }
 
+/// The element kind of a collection, distributed over a union.
+///
+/// `[[1, 2], [3]]` infers as `array<int, 2> | array<int, 1>` — every arm is
+/// a collection, so indexing it is valid SurrealQL and its element kind is
+/// the union of the arms' elements. A flat `matches!(k, Array | Set)` sees
+/// only the `Either` and gives up, which loses the type *and* (at the
+/// checking sites) manufactures a false 2030/5001.
+///
+/// Non-collection arms are skipped rather than failing the whole lookup:
+/// indexing an `option<array<T>>` is a contract violation worth reporting
+/// (see [`is_indexable_kind`]), but the reported expression still has the
+/// element type of its collection arms, so inference must not collapse.
+/// `None` means no arm was a collection at all.
+pub(crate) fn collection_element_kind(kind: &Kind) -> Option<Kind> {
+    match kind {
+        Kind::Array(element, _) | Kind::Set(element, _) => Some((**element).clone()),
+        Kind::Either(variants) => {
+            let elements: Vec<Kind> = variants.iter().filter_map(collection_element_kind).collect();
+            (!elements.is_empty()).then(|| Kind::either(elements))
+        }
+        _ => None,
+    }
+}
+
+/// Whether index/filter/splat applies to `kind`: a collection, an object,
+/// or — distributing over a union — a union whose arms *all* are. One
+/// definitely-non-collection arm (the `NONE` of an `option<array<T>>`)
+/// makes the access a genuine contract violation.
+///
+/// `Kind::Any` arms are permissive: an unknown arm proves nothing.
+pub(crate) fn is_indexable_kind(kind: &Kind) -> bool {
+    let base = crate::kinds::literal_base_kind(kind).unwrap_or_else(|| kind.clone());
+    match base {
+        Kind::Array(_, _) | Kind::Set(_, _) | Kind::Object | Kind::Any => true,
+        Kind::Either(variants) => variants.iter().all(is_indexable_kind),
+        _ => false,
+    }
+}
+
 /// One stepping rule shared by pure inference and position checking.
 fn step_part_kind(
     current: &Kind,
@@ -349,10 +388,7 @@ fn step_part_kind(
 ) -> Option<Kind> {
     match part {
         ast::IdiomPart::Field(name) => field_of_kind(current, name, ctx.schema()),
-        ast::IdiomPart::Index(_) | ast::IdiomPart::Last => match current {
-            Kind::Array(element, _) | Kind::Set(element, _) => Some((**element).clone()),
-            _ => None,
-        },
+        ast::IdiomPart::Index(_) | ast::IdiomPart::Last => collection_element_kind(current),
         ast::IdiomPart::All | ast::IdiomPart::Where(_) | ast::IdiomPart::Optional => {
             Some(current.clone())
         }
@@ -456,16 +492,10 @@ fn step_idiom_kind(idiom: &ast::Idiom, ctx: &mut AnalysisContext<'_>) -> Option<
     for part in parts {
         current = match &part.node {
             ast::IdiomPart::Field(name) => field_of_kind(&current, name, ctx.schema())?,
-            ast::IdiomPart::Index(_) => match current {
-                Kind::Array(element, _) | Kind::Set(element, _) => *element,
-                _ => return None,
-            },
+            ast::IdiomPart::Index(_) => collection_element_kind(&current)?,
             // `.*`, `[WHERE ...]`, and `?.` preserve the value's kind.
             ast::IdiomPart::All | ast::IdiomPart::Where(_) | ast::IdiomPart::Optional => current,
-            ast::IdiomPart::Last => match current {
-                Kind::Array(element, _) | Kind::Set(element, _) => *element,
-                _ => return None,
-            },
+            ast::IdiomPart::Last => collection_element_kind(&current)?,
             ast::IdiomPart::Method { name, args } => {
                 let arg_kinds: Vec<Kind> = std::iter::once(current.clone())
                     .chain(
@@ -528,6 +558,21 @@ fn method_return_kind(
     ctx: &mut AnalysisContext<'_>,
 ) -> Option<Kind> {
     let base = crate::kinds::literal_base_kind(receiver).unwrap_or_else(|| receiver.clone());
+    // A union receiver resolves the method on *every* arm and unions the
+    // results: `[[1, 2], [3]]` is `array<int, 2> | array<int, 1>`, and
+    // `.len()` is defined on both. One arm without the method leaves the
+    // call unresolved, as it should — `array<int> | int` has no `.len()`.
+    if let Kind::Either(variants) = &base {
+        let mut results = Vec::with_capacity(variants.len());
+        for variant in variants {
+            let mut variant_args = args.to_vec();
+            if let Some(first) = variant_args.first_mut() {
+                *first = variant.clone();
+            }
+            results.push(method_return_kind(variant, method, &variant_args, ctx)?);
+        }
+        return Some(Kind::either(results));
+    }
     let family = match base {
         Kind::Array(_, _) => "array",
         Kind::Set(_, _) => "set",
@@ -1249,6 +1294,41 @@ mod tests {
             binary_result_kind(&BinaryOp::NullCoalesce, &opt_string, &Kind::None),
             Some(opt_string.clone())
         );
+    }
+
+    #[test]
+    fn collection_operations_distribute_over_a_union() {
+        let int2 = Kind::Array(Box::new(Kind::Int), Some(2));
+        let int1 = Kind::Array(Box::new(Kind::Int), Some(1));
+        let str1 = Kind::Array(Box::new(Kind::String), Some(1));
+
+        // `[[1, 2], [3]]` — every arm is an array, so it is indexable and
+        // its element kind is the union of the arms' elements.
+        let same = Kind::Either(vec![int2.clone(), int1.clone()]);
+        assert!(is_indexable_kind(&same));
+        assert_eq!(collection_element_kind(&same), Some(Kind::Int));
+
+        let mixed = Kind::Either(vec![int2.clone(), str1]);
+        assert!(is_indexable_kind(&mixed));
+        assert_eq!(
+            collection_element_kind(&mixed),
+            Some(Kind::either(vec![Kind::Int, Kind::String]))
+        );
+
+        // `option<array<T>>` has a definitely-non-collection arm, so the
+        // contract is violated — but the element kind still resolves, so
+        // inference does not collapse to `any` on the reported expression.
+        let optional = Kind::Either(vec![Kind::None, int1]);
+        assert!(!is_indexable_kind(&optional));
+        assert_eq!(collection_element_kind(&optional), Some(Kind::Int));
+
+        // No arm is a collection: nothing to index, nothing to read.
+        let scalar = Kind::Either(vec![Kind::Int, Kind::String]);
+        assert!(!is_indexable_kind(&scalar));
+        assert_eq!(collection_element_kind(&scalar), None);
+
+        // An `any` arm proves nothing, so it stays permissive.
+        assert!(is_indexable_kind(&Kind::Either(vec![Kind::Any, int2])));
     }
 
     #[test]
