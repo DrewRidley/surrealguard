@@ -66,6 +66,33 @@ pub(crate) fn kind_is_assignable_to(actual: &Kind, expected: &Kind) -> bool {
     {
         return object_is_assignable_to(src, dst);
     }
+    // Prove-or-silent against a scalar *literal* target (`'active'`, `2`):
+    // a source that is merely the literal's base kind (`string`, `int`)
+    // carries no evidence about *which* value it holds, so it can never be
+    // proven to fall outside the target. Widening it to the base is what
+    // makes `DEFINE FIELD st TYPE 'active' | 'inactive'` writable at all —
+    // inference types a written `'active'` as `string`, so without this
+    // every valid write to a literal-union field is a false 2001.
+    //
+    // A *literal* source is the opposite case: its value is known, so
+    // `'crimson'` into `'marble' | 'euclid'` is a provable mismatch and
+    // must stay a finding. It falls through to the base reduction below,
+    // which compares the two literals' bases and then fails the equality
+    // test — so this rule is forward-compatible: the day a call site hands
+    // in a literal-kinded value, the exact-value check comes back for free.
+    //
+    // Restricted to scalar literals: object/array literal targets carry
+    // real structure that a bare `object`/`array` source would erase, and
+    // that structural comparison is handled above.
+    if let Some(expected_base) = scalar_literal_base_kind(expected) {
+        // A literal source that did not match `expected` exactly at the top
+        // is a *different* known value: provably wrong. Reducing it to its
+        // base here would make every string match every string literal.
+        if literal_base_kind(actual).is_some() {
+            return false;
+        }
+        return kind_is_assignable_to(actual, &expected_base);
+    }
     // A literal kind is assignable wherever its base kind is: `'active'` is
     // a string, `{ a: int }` is an object.
     if let Some(base) = literal_base_kind(actual) {
@@ -117,6 +144,17 @@ fn length_fits(src: Option<u64>, dst: Option<u64>) -> bool {
     match (src, dst) {
         (Some(src), Some(dst)) => src <= dst,
         _ => true,
+    }
+}
+
+/// The base kind of a *scalar* literal kind (`'active'` -> `string`,
+/// `2` -> `int`). Object and array literals are excluded: their base
+/// (`object` / `array<...>`) throws away the structure that assignability
+/// compares, so they are never widened.
+fn scalar_literal_base_kind(kind: &Kind) -> Option<Kind> {
+    match kind {
+        Kind::Literal(KindLiteral::Object(_) | KindLiteral::Array(_)) => None,
+        _ => literal_base_kind(kind),
     }
 }
 
@@ -370,6 +408,85 @@ mod tests {
             object(&[("flag", Kind::Literal(KindLiteral::Bool(true)))]),
         )]);
         assert!(kind_is_assignable_to(&nested_source, &nested_target));
+    }
+
+    #[test]
+    fn a_base_kind_fits_a_literal_union_but_a_wrong_literal_or_base_does_not() {
+        let status = Kind::Either(vec![string_literal("active"), string_literal("inactive")]);
+        let level = Kind::Either(vec![
+            Kind::Literal(KindLiteral::Integer(1)),
+            Kind::Literal(KindLiteral::Integer(2)),
+        ]);
+
+        // The false-2001 case: inference widens a written `'active'` to
+        // `string`, which carries no evidence of falling outside the union.
+        assert!(kind_is_assignable_to(&Kind::String, &status));
+        assert!(kind_is_assignable_to(&Kind::Int, &level));
+        assert!(kind_is_assignable_to(&Kind::String, &string_literal("active")));
+
+        // Must-still-fail boundaries. A wrong *base* is a provable mismatch.
+        assert!(!kind_is_assignable_to(&Kind::Int, &status));
+        assert!(!kind_is_assignable_to(&Kind::String, &level));
+        assert!(!kind_is_assignable_to(&Kind::None, &status));
+        assert!(!kind_is_assignable_to(&Kind::Float, &level));
+        // And a *known* value outside the union stays a mismatch, so the
+        // exact-value check returns the moment a call site supplies one.
+        assert!(!kind_is_assignable_to(&string_literal("bogus"), &status));
+        assert!(!kind_is_assignable_to(
+            &Kind::Literal(KindLiteral::Integer(9)),
+            &level
+        ));
+        // Widening never applies to structured literal targets: a bare
+        // `object` must not satisfy a structured object type.
+        assert!(!kind_is_assignable_to(
+            &Kind::Object,
+            &object(&[("theme", Kind::String)])
+        ));
+    }
+
+    /// The rendered codes a query produces end to end.
+    fn codes(query: &str) -> Vec<String> {
+        let mut workspace = crate::analysis::Workspace::default();
+        crate::analysis::analyze_query(&mut workspace, query)
+            .diagnostics
+            .iter()
+            .map(|finding| finding.code().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn writes_to_a_literal_union_field_are_not_false_type_errors() {
+        // Every write here is valid SurrealQL; a 2001 on any of them aborts
+        // `generate` for the entire workspace.
+        for query in [
+            "DEFINE FIELD st ON t TYPE 'active' | 'inactive';\nCREATE t SET st = 'active';",
+            "DEFINE FIELD st ON t TYPE 'active' | 'inactive';\nCREATE t CONTENT { st: 'active' };",
+            "DEFINE FIELD st ON t TYPE 'active' | 'inactive';\nUPDATE t SET st = 'inactive';",
+            "DEFINE FIELD lvl ON t TYPE 1 | 2 | 3;\nCREATE t SET lvl = 2;",
+        ] {
+            assert!(
+                !codes(query).iter().any(|code| code == "E2001"),
+                "codes for {query:?}: {:?}",
+                codes(query)
+            );
+        }
+    }
+
+    #[test]
+    fn a_wrong_typed_write_to_a_literal_union_field_still_fires() {
+        // The must-still-fire boundary: an `int` cannot inhabit a
+        // string-literal union no matter which string it turns out to be.
+        for query in [
+            "DEFINE FIELD st ON t TYPE 'active' | 'inactive';\nCREATE t SET st = 42;",
+            "DEFINE FIELD st ON t TYPE 'active' | 'inactive';\nCREATE t CONTENT { st: 42 };",
+            "DEFINE FIELD lvl ON t TYPE 1 | 2 | 3;\nCREATE t SET lvl = 'two';",
+        ] {
+            assert!(
+                codes(query).iter().any(|code| code == "E2001"),
+                "codes for {query:?}: {:?}",
+                codes(query)
+            );
+        }
     }
 
     #[test]
