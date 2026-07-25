@@ -49,14 +49,10 @@ fn check_insert_payload(
             for value in values {
                 crate::analyzer::expression::infer::infer_expression_fact(value, ctx);
                 if let Some(table) = row_table {
-                    match &value.node {
-                        // `INSERT INTO t [{...}, {...}]` — each element is a row.
-                        ast::Expr::Array(rows) => {
-                            for row in rows {
-                                mutation::check_payload_object_keys(ctx, table, row);
-                            }
-                        }
-                        _ => mutation::check_payload_object_keys(ctx, table, value),
+                    // `INSERT INTO t [{…}, {…}]` — each element is a row, and
+                    // each row's keys are checked against the table.
+                    for row in mutation::insert_payload_rows(value) {
+                        mutation::check_payload_object_keys(ctx, table, row);
                     }
                 }
             }
@@ -171,10 +167,24 @@ fn check_insert_required_fields(
     match &stmt.data {
         ast::InsertData::Values(values) => {
             for value in values {
-                // A payload whose key set isn't statically known (an unbound
-                // `$row`) is no evidence that a field is missing.
-                if let Some(keys) = mutation::payload_field_names(ctx, value) {
-                    mutation::check_required_fields(ctx, table, &keys, target.span);
+                // Each row of an array payload is an independent record, so a
+                // field missing from two rows is two findings — anchored on
+                // each row's own object, never twice on the same span. A
+                // single-object payload keeps the target as its anchor, like
+                // every other create form.
+                let per_row_anchor = matches!(value.node, ast::Expr::Array(_));
+                for row in mutation::insert_payload_rows(value) {
+                    // A payload whose key set isn't statically known (an unbound
+                    // `$row`) is no evidence that a field is missing.
+                    let Some(keys) = mutation::payload_field_names(ctx, row) else {
+                        continue;
+                    };
+                    let anchor = if per_row_anchor {
+                        row.span
+                    } else {
+                        target.span
+                    };
+                    mutation::check_required_fields(ctx, table, &keys, anchor);
                 }
             }
         }
@@ -323,5 +333,116 @@ mod tests {
         assert!(diagnostics
             .iter()
             .any(|finding| finding.message().contains("`age`")));
+    }
+
+    // -- array (bulk) payloads: every row is checked ------------------------
+
+    #[test]
+    fn array_payload_row_omitting_a_required_field_errors() {
+        let schema = person_schema();
+
+        let diagnostics = diagnostics_for(&schema, "INSERT INTO person [{ name: 'Ada' }];");
+
+        assert_eq!(missing_fields(&diagnostics), 1);
+        assert!(diagnostics
+            .iter()
+            .any(|finding| finding.message().contains("`age`")));
+    }
+
+    #[test]
+    fn array_payload_row_with_unknown_keys_reports_each_key() {
+        let schema = person_schema();
+
+        let diagnostics =
+            diagnostics_for(&schema, "INSERT INTO person [{ bogus: 1, another: 2 }];");
+
+        let unknown: Vec<_> = diagnostics
+            .iter()
+            .filter(|finding| finding.code().number() == 1002)
+            .collect();
+        assert_eq!(unknown.len(), 2, "got: {diagnostics:?}");
+        assert!(unknown.iter().any(|f| f.message().contains("`bogus`")));
+        assert!(unknown.iter().any(|f| f.message().contains("`another`")));
+    }
+
+    #[test]
+    fn array_payload_value_of_the_wrong_kind_errors() {
+        let schema = person_schema();
+
+        let diagnostics =
+            diagnostics_for(&schema, "INSERT INTO person [{ name: 'Ada', age: 'old' }];");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|finding| finding.code().number() == 2001
+                    && finding.message().contains("`age`")),
+            "got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn a_complete_array_payload_is_silent() {
+        let schema = person_schema();
+
+        let diagnostics = diagnostics_for(
+            &schema,
+            "INSERT INTO person [{ name: 'Ada', age: 36 }, { name: 'Bob', age: 41 }];",
+        );
+
+        assert!(diagnostics.is_empty(), "got: {diagnostics:?}");
+    }
+
+    #[test]
+    fn each_array_row_is_judged_on_its_own() {
+        let schema = person_schema();
+
+        // Two rows, one complete and one short: exactly one finding, on the
+        // row that is actually short — not one per row, and not one per
+        // statement.
+        let diagnostics = diagnostics_for(
+            &schema,
+            "INSERT INTO person [{ name: 'Ada', age: 36 }, { name: 'Bob' }];",
+        );
+
+        assert_eq!(missing_fields(&diagnostics), 1, "got: {diagnostics:?}");
+
+        // Both rows short: two findings, one anchored on each row.
+        let both = diagnostics_for(&schema, "INSERT INTO person [{ name: 'Ada' }, { name: 'Bob' }];");
+        assert_eq!(missing_fields(&both), 2, "got: {both:?}");
+        let spans: Vec<_> = both
+            .iter()
+            .filter(|finding| finding.code().number() == 2034)
+            .map(|finding| finding.span().range())
+            .collect();
+        assert_ne!(spans[0], spans[1], "each row's finding gets its own span");
+    }
+
+    #[test]
+    fn an_array_payload_on_a_relation_table_with_in_and_out_is_silent() {
+        let parsed = parse_source(
+            SourceId::new("schema"),
+            "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE TABLE org SCHEMAFULL;\n\
+             DEFINE TABLE works_at SCHEMAFULL TYPE RELATION IN person OUT org;",
+        )
+        .expect("schema should parse");
+        let schema = extract_schema(&[parsed]).schema;
+
+        let diagnostics = diagnostics_for(
+            &schema,
+            "INSERT INTO works_at [{ in: person:ada, out: org:acme }];",
+        );
+
+        assert!(diagnostics.is_empty(), "got: {diagnostics:?}");
+
+        // …and a row that omits them is still the 4019 it always was.
+        let missing = diagnostics_for(&schema, "INSERT INTO works_at [{ in: person:ada }];");
+        assert!(
+            missing
+                .iter()
+                .any(|finding| finding.code().number() == 4019),
+            "got: {missing:?}"
+        );
     }
 }
