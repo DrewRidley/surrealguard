@@ -8,7 +8,18 @@ use crate::analyzer::context::AnalysisContext;
 pub mod capitalize;
 pub mod concat;
 pub mod contains;
+pub mod distance_damerau_levenshtein;
+pub mod distance_hamming;
+pub mod distance_levenshtein;
+pub mod distance_normalized_damerau_levenshtein;
+pub mod distance_normalized_levenshtein;
+pub mod distance_osa;
 pub mod ends_with;
+pub mod repeat;
+pub mod replace;
+pub mod reverse;
+pub mod html_encode;
+pub mod html_sanitize;
 pub mod is_alpha;
 pub mod is_alphanum;
 pub mod is_ascii;
@@ -31,9 +42,21 @@ pub mod join;
 pub mod len;
 pub mod lowercase;
 pub mod matches;
-pub mod repeat;
-pub mod replace;
-pub mod reverse;
+pub mod semver_compare;
+pub mod semver_inc_major;
+pub mod semver_inc_minor;
+pub mod semver_inc_patch;
+pub mod semver_major;
+pub mod semver_minor;
+pub mod semver_patch;
+pub mod semver_set_major;
+pub mod semver_set_minor;
+pub mod semver_set_patch;
+pub mod similarity_fuzzy;
+pub mod similarity_jaro;
+pub mod similarity_jaro_winkler;
+pub mod similarity_smithwaterman;
+pub mod similarity_sorensen_dice;
 pub mod slice;
 pub mod slug;
 pub mod split;
@@ -85,6 +108,29 @@ pub(crate) fn analyze_string_function(
         "string::trim" => trim::analyze_string_trim(ctx, call, args),
         "string::uppercase" => uppercase::analyze_string_uppercase(ctx, call, args),
         "string::words" => words::analyze_string_words(ctx, call, args),
+        "string::distance::damerau_levenshtein" => distance_damerau_levenshtein::analyze_string_distance_damerau_levenshtein(ctx, call, args),
+        "string::distance::hamming" => distance_hamming::analyze_string_distance_hamming(ctx, call, args),
+        "string::distance::levenshtein" => distance_levenshtein::analyze_string_distance_levenshtein(ctx, call, args),
+        "string::distance::normalized_damerau_levenshtein" => distance_normalized_damerau_levenshtein::analyze_string_distance_normalized_damerau_levenshtein(ctx, call, args),
+        "string::distance::normalized_levenshtein" => distance_normalized_levenshtein::analyze_string_distance_normalized_levenshtein(ctx, call, args),
+        "string::distance::osa" => distance_osa::analyze_string_distance_osa(ctx, call, args),
+        "string::html::encode" => html_encode::analyze_string_html_encode(ctx, call, args),
+        "string::html::sanitize" => html_sanitize::analyze_string_html_sanitize(ctx, call, args),
+        "string::semver::compare" => semver_compare::analyze_string_semver_compare(ctx, call, args),
+        "string::semver::inc::major" => semver_inc_major::analyze_string_semver_inc_major(ctx, call, args),
+        "string::semver::inc::minor" => semver_inc_minor::analyze_string_semver_inc_minor(ctx, call, args),
+        "string::semver::inc::patch" => semver_inc_patch::analyze_string_semver_inc_patch(ctx, call, args),
+        "string::semver::major" => semver_major::analyze_string_semver_major(ctx, call, args),
+        "string::semver::minor" => semver_minor::analyze_string_semver_minor(ctx, call, args),
+        "string::semver::patch" => semver_patch::analyze_string_semver_patch(ctx, call, args),
+        "string::semver::set::major" => semver_set_major::analyze_string_semver_set_major(ctx, call, args),
+        "string::semver::set::minor" => semver_set_minor::analyze_string_semver_set_minor(ctx, call, args),
+        "string::semver::set::patch" => semver_set_patch::analyze_string_semver_set_patch(ctx, call, args),
+        "string::similarity::fuzzy" => similarity_fuzzy::analyze_string_similarity_fuzzy(ctx, call, args),
+        "string::similarity::jaro" => similarity_jaro::analyze_string_similarity_jaro(ctx, call, args),
+        "string::similarity::jaro_winkler" => similarity_jaro_winkler::analyze_string_similarity_jaro_winkler(ctx, call, args),
+        "string::similarity::smithwaterman" => similarity_smithwaterman::analyze_string_similarity_smithwaterman(ctx, call, args),
+        "string::similarity::sorensen_dice" => similarity_sorensen_dice::analyze_string_similarity_sorensen_dice(ctx, call, args),
         _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

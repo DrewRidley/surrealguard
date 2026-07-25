@@ -17,6 +17,7 @@ pub mod count;
 pub mod crypto;
 pub mod duration;
 pub mod encoding;
+pub mod eval;
 pub mod file;
 pub mod geo;
 pub mod http;
@@ -27,6 +28,7 @@ pub mod object;
 pub mod parse;
 pub mod rand;
 pub mod record;
+pub mod schema;
 pub mod search;
 pub mod sequence;
 pub mod session;
@@ -64,6 +66,7 @@ pub(crate) fn analyze_builtin_function(
         "crypto" => crypto::analyze_crypto_function(ctx, call, path, args),
         "duration" => duration::analyze_duration_function(ctx, call, path, args),
         "encoding" => encoding::analyze_encoding_function(ctx, call, path, args),
+        "eval" => eval::analyze_eval_function(ctx, call, path, args),
         "file" => file::analyze_file_function(ctx, call, path, args),
         "geo" => geo::analyze_geo_function(ctx, call, path, args),
         "http" => http::analyze_http_function(ctx, call, path, args),
@@ -74,6 +77,7 @@ pub(crate) fn analyze_builtin_function(
         "parse" => parse::analyze_parse_function(ctx, call, path, args),
         "rand" => rand::analyze_rand_function(ctx, call, path, args),
         "record" => record::analyze_record_function(ctx, call, path, args),
+        "schema" => schema::analyze_schema_function(ctx, call, path, args),
         "search" => search::analyze_search_function(ctx, call, path, args),
         "sequence" => sequence::analyze_sequence_function(ctx, call, path, args),
         "session" => session::analyze_session_function(ctx, call, path, args),
@@ -443,6 +447,90 @@ mod tests {
     fn diagnostics_of(query: &str) -> Vec<Finding> {
         let mut workspace = crate::analysis::Workspace::default();
         crate::analysis::analyze_query(&mut workspace, query).diagnostics
+    }
+
+    /// SX-4: whole builtin families (three- and four-segment names, plus
+    /// bare `rand()`) were absent from the registry, so real SurrealQL got
+    /// a false `E5001 unknown function` — which exits `check` non-zero and
+    /// aborts `generate` for the whole workspace.
+    #[test]
+    fn newly_registered_builtin_families_resolve_with_their_return_kinds() {
+        let cases: Vec<(&str, Kind)> = vec![
+            (
+                "RETURN vector::distance::euclidean([1.0], [2.0]);",
+                Kind::Number,
+            ),
+            (
+                "RETURN vector::distance::minkowski([1.0], [2.0], 3);",
+                Kind::Number,
+            ),
+            (
+                "RETURN vector::similarity::cosine([1.0], [2.0]);",
+                Kind::Number,
+            ),
+            (
+                "RETURN array::sort::asc([3, 1]);",
+                Kind::Array(Box::new(Kind::Int), Some(2)),
+            ),
+            (
+                "RETURN array::sort::desc([3, 1]);",
+                Kind::Array(Box::new(Kind::Int), Some(2)),
+            ),
+            ("RETURN rand();", Kind::Float),
+            ("RETURN rand::uuid::v4();", Kind::Uuid),
+            ("RETURN rand::uuid::v7();", Kind::Uuid),
+            ("RETURN rand::duration(1s, 2s);", Kind::Duration),
+            ("RETURN string::semver::major('1.2.3');", Kind::Int),
+            ("RETURN string::semver::inc::patch('1.2.3');", Kind::String),
+            ("RETURN string::semver::set::minor('1.2.3', 4);", Kind::String),
+            ("RETURN string::distance::levenshtein('a', 'b');", Kind::Int),
+            (
+                "RETURN string::distance::normalized_levenshtein('a', 'b');",
+                Kind::Float,
+            ),
+            (
+                "RETURN string::similarity::jaro_winkler('a', 'b');",
+                Kind::Float,
+            ),
+            ("RETURN string::html::encode('<b>');", Kind::String),
+            ("RETURN geo::hash::encode((0, 0), 8);", Kind::String),
+            ("RETURN schema::table::exists('user');", Kind::Bool),
+            ("RETURN duration::from::days(3);", Kind::Duration),
+            ("RETURN time::from::unix(1);", Kind::Datetime),
+            ("RETURN type::is_set([1]);", Kind::Bool),
+            ("RETURN array::index_of([1, 2], 2);", Kind::Int),
+        ];
+
+        for (query, expected) in cases {
+            assert_eq!(
+                diagnostics_of(query),
+                Vec::new(),
+                "`{query}` must analyze cleanly"
+            );
+            assert_eq!(response_kind_of(query), Some(expected), "kind of `{query}`");
+        }
+    }
+
+    #[test]
+    fn an_unregistered_name_in_a_registered_family_still_raises_unknown_function() {
+        // The must-still-fire boundary: adding the real `vector::distance::*`
+        // members must not turn the family into a wildcard.
+        for query in [
+            "RETURN vector::distance::bogus([1.0], [2.0]);",
+            "RETURN string::semver::bogus('1.2.3');",
+            "RETURN array::sort::sideways([1]);",
+            "RETURN rand::uuid::v9();",
+            "RETURN schema::table::bogus('user');",
+        ] {
+            let codes: Vec<String> = diagnostics_of(query)
+                .iter()
+                .map(|finding| finding.code().to_string())
+                .collect();
+            assert!(
+                codes.iter().any(|code| code == "E5001"),
+                "`{query}` should still be unknown, got {codes:?}"
+            );
+        }
     }
 
     #[test]

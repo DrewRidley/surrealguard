@@ -5,16 +5,19 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
+pub mod range;
 pub mod array;
 pub mod bool;
 pub mod bytes;
 pub mod datetime;
 pub mod decimal;
 pub mod duration;
+pub mod record;
 pub mod field;
 pub mod fields;
 pub mod file;
 pub mod float;
+pub mod geometry;
 pub mod int;
 pub mod is_array;
 pub mod is_bool;
@@ -38,13 +41,13 @@ pub mod is_point;
 pub mod is_polygon;
 pub mod is_range;
 pub mod is_record;
+pub mod is_set;
 pub mod is_string;
 pub mod is_uuid;
 pub mod number;
 pub mod of;
 pub mod point;
-pub mod range;
-pub mod record;
+pub mod set;
 pub mod string;
 pub mod string_lossy;
 pub mod table;
@@ -103,6 +106,9 @@ pub(crate) fn analyze_type_function(
         "type::table" => table::analyze_type_table(ctx, call, args),
         "type::thing" => thing::analyze_type_thing(ctx, call, args),
         "type::uuid" => uuid::analyze_type_uuid(ctx, call, args),
+        "type::geometry" => geometry::analyze_type_geometry(ctx, call, args),
+        "type::is_set" => is_set::analyze_type_is_set(ctx, call, args),
+        "type::set" => set::analyze_type_set(ctx, call, args),
         _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }
