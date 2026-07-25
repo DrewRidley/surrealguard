@@ -158,11 +158,11 @@ contract violation.
 | 4005 | BREAK/CONTINUE outside a loop | top-level `BREAK` | E | ✅ loop depth on ctx |
 | 4006 | unreachable statements after RETURN/BREAK/THROW | `RETURN 1; SELECT ...` in a block | W | ✅ |
 | 4007 | transaction pairing contract: BEGIN opens exactly one transaction that COMMIT/CANCEL closes | unopened COMMIT/CANCEL, nested BEGIN, BEGIN never closed | E | ✅ pipeline tracks the open transaction (nested/unpaired/unclosed variants) |
-| 4009 | LIVE SELECT with unsupported clause | `LIVE SELECT ... GROUP BY` | E | 🔶 LiveSelect lowering keeps clauses |
+| 4009 | LIVE SELECT with unsupported clause | `LIVE SELECT ... GROUP BY` | E | ☑ parser-covered — the grammar admits only projections/FROM/WHERE/FETCH on LIVE SELECT, so GROUP/ORDER/LIMIT/etc. are a parse error, never a lowered clause |
 | 4010 | duplicate SET target in one statement | `SET age = 1, age = 2` | W | ✅ assignments are structured |
 | 4011 | duplicate projection key/alias | `SELECT age, age FROM t`, two `AS x` | W | ✅ keys computed |
 | 4012 | OMIT without a wildcard projection | verified parser-covered: the grammar only accepts OMIT alongside `*` — code reserved, no emission | W | ☑ parser-covered |
-| 4013 | GROUP BY field not in projections | SurrealDB aggregate rules | W | 🔶 verify exact semantics first |
+| 4013 | GROUP BY field not in projections | SurrealDB aggregate rules | W | ✅ a group key absent from the projection can't label its rows (SurrealDB runs it → warning); `SELECT VALUE`/`*` exempt |
 | 4016 | empty block | verified unreachable: `{}` in value position is an empty *object* literal, and statement-position blocks don't have their value consumed — code reserved, no emission | I | ☑ unreachable |
 | 4017 | block ends with LET — its value is NONE | `{ LET $x = f(); }` consumed as a value | W | ✅ block value known |
 | 4018 | side-effecting subquery in read position | `SELECT (CREATE log) FROM t` | W | ✅ statement kinds known |
@@ -194,7 +194,7 @@ Folded by the contract audit (2026-07-09): 5003, 5004, 5006 → 5002; 5007,
 | Code | Finding | Example | Sev | Status |
 |---|---|---|---|---|
 | 6001 | conflicting constraints on one param | `WHERE $x > 3 AND $x = 'abc'` | E | ✅ unify at constraint sites; conflict emits at the second site |
-| 6002 | param shadows a DEFINE PARAM with a different kind | `LET $min_age = 'x'` vs defined int | W | 🔶 |
+| 6002 | param shadows a DEFINE PARAM with a different kind | `LET $min_age = 'x'` vs defined int | W | ✅ fires when the LET value's kind and the DEFINE PARAM's VALUE kind are both known and neither is assignable to the other |
 | 6003 | unresolvable dynamic construct (analyzer limitation) | current `dynamic(6001)` class | I | ✅ |
 | 6004 | param used before its LET in source order | `RETURN $x; LET $x = 1;` | W | ✅ env is source-ordered |
 | 6005 | context param used outside its context | `$before` outside an event, `$parent` outside a subquery | E | 🔶 context-param model below |
@@ -205,7 +205,7 @@ Folded by the contract audit (2026-07-09): 5003, 5004, 5006 → 5002; 5007,
 
 | Code | Finding | Example | Sev | Status |
 |---|---|---|---|---|
-| 7001 | unused LET binding | `LET $x = 1;` never read | W | 🔶 use-tracking exists in env |
+| 7001 | unused LET binding | `LET $x = 1;` never read | W | ✅ textual reference scan over the rest of scope; opt-in (default `allow`) |
 | 7002 | LET shadowing | inner `LET $x` over outer | I | ✅ scopes exist |
 | 7003 | mixed-kind array literal | `[1, 'a']` | I | ✅ (today's partial fact) |
 | 7004 | control flow is decided by a constant | `IF true`, `WHERE 1 = 1`, `FOR $x IN []` | W | ✅ emitting (IF); others 🔶 |
