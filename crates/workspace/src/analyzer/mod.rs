@@ -13,6 +13,7 @@
 //! order, dispatching every lowered statement to its analyzer against the
 //! schema built so far.
 
+pub mod const_eval;
 pub mod context;
 pub mod data;
 pub mod expression;

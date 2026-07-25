@@ -28,14 +28,22 @@ pub(crate) fn analyze_if_else(ctx: &mut AnalysisContext<'_>, stmt: &ast::IfElseS
 /// provably diverges (only when an `ELSE` is present and every branch and the
 /// `ELSE` diverge).
 pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::IfElseStmt) -> Flow {
+    use crate::analyzer::const_eval::BranchReach;
+
+    // Constant-fold each guard: a branch whose guard provably folds to `false`
+    // is dead, and the first branch whose guard provably folds to `true` makes
+    // every later branch and the `ELSE` dead. Only reachable arms contribute to
+    // the value/exit union; dead arms are greyed (4024) and dropped.
+    let reach = crate::analyzer::const_eval::branch_reachability(stmt);
+
     let mut returns: Vec<Kind> = Vec::new();
-    // Pass-through values: the trailing value of each branch through which
-    // control can continue past the `IF`.
+    // Pass-through values: the trailing value of each reachable branch through
+    // which control can continue past the `IF`.
     let mut pass_through: Vec<Kind> = Vec::new();
-    // Whether *every* arm (branches and the `ELSE`, if any) diverges.
+    // Whether *every* reachable arm diverges.
     let mut all_arms_diverge = true;
 
-    for branch in &stmt.branches {
+    for (branch, branch_reach) in stmt.branches.iter().zip(&reach.branches) {
         // Conditions are analyzed for their facts (params, dependencies),
         // not their value — but a condition whose kind can never be a bool
         // is worth a warning (truthiness makes it run regardless).
@@ -66,22 +74,53 @@ pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::If
                 .with_help("an IF chooses a branch on a true/false test; the condition must be a bool"),
             );
         }
-        // The THEN body runs only when the branch condition holds, so it
-        // sees the positive narrowing of that condition's guards.
-        let positive =
-            crate::analyzer::flow::narrow::positive_effects(&branch.condition.node, ctx.env());
-        let flow = ctx.with_child_env(|ctx| {
-            crate::analyzer::flow::narrow::apply_effects(ctx, &positive);
-            analyze_block_flow(ctx, &branch.body)
-        });
-        returns.extend(flow.returns);
-        if !flow.diverges {
-            all_arms_diverge = false;
-            pass_through.push(flow.value);
+
+        match branch_reach {
+            BranchReach::Reachable => {
+                // The THEN body runs only when the branch condition holds, so it
+                // sees the positive narrowing of that condition's guards.
+                let positive = crate::analyzer::flow::narrow::positive_effects(
+                    &branch.condition.node,
+                    ctx.env(),
+                );
+                let flow = ctx.with_child_env(|ctx| {
+                    crate::analyzer::flow::narrow::apply_effects(ctx, &positive);
+                    analyze_block_flow(ctx, &branch.body)
+                });
+                returns.extend(flow.returns);
+                if !flow.diverges {
+                    all_arms_diverge = false;
+                    pass_through.push(flow.value);
+                }
+            }
+            // A dead branch never runs: grey its body and drop it from the
+            // union. Its body is not analyzed — dead code raises no findings of
+            // its own.
+            BranchReach::DeadFalse => grey_dead_branch(
+                ctx,
+                &branch.body,
+                "this branch is never taken — its condition is always false",
+            ),
+            BranchReach::DeadAfterTrue => grey_dead_branch(
+                ctx,
+                &branch.body,
+                "this branch is unreachable — an earlier condition is always true",
+            ),
         }
     }
 
-    if let Some(else_branch) = &stmt.else_branch {
+    if reach.else_dead {
+        // An always-true branch is guaranteed to run, so the `ELSE` (or the
+        // implicit `NONE` fall-through) can never be reached: grey a written
+        // `ELSE`, and contribute no fall-through value.
+        if let Some(else_branch) = &stmt.else_branch {
+            grey_dead_branch(
+                ctx,
+                else_branch,
+                "this ELSE is unreachable — an earlier condition is always true",
+            );
+        }
+    } else if let Some(else_branch) = &stmt.else_branch {
         // The ELSE runs only when every preceding branch condition was false,
         // so it sees the negation of each.
         let mut negative = Vec::new();
@@ -106,15 +145,40 @@ pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::If
         pass_through.push(Kind::None);
     }
 
-    // The `IF` diverges only when an `ELSE` is present and every arm diverges —
-    // otherwise control can fall through (mirrors `block::statement_diverges`).
-    let diverges = stmt.else_branch.is_some() && !stmt.branches.is_empty() && all_arms_diverge;
+    // The `IF` diverges only when control cannot fall through: every reachable
+    // arm diverges *and* there is a guaranteed terminal arm — either a present
+    // `ELSE` (with at least one branch), or an always-true branch that makes
+    // the `ELSE`/fall-through dead.
+    let has_terminal_arm =
+        reach.else_dead || (stmt.else_branch.is_some() && !stmt.branches.is_empty());
+    let diverges = has_terminal_arm && all_arms_diverge;
 
     Flow {
         returns,
         value: Kind::either(pass_through),
         diverges,
     }
+}
+
+/// Emits the greyed dead-branch finding (4024) over a provably-dead branch or
+/// `ELSE` body. An empty body has nothing to grey, so it is skipped.
+fn grey_dead_branch(ctx: &mut AnalysisContext<'_>, body: &ast::Block, message: &str) {
+    let Some(range) = block_span(body) else {
+        return;
+    };
+    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), range);
+    ctx.emit(
+        surrealguard_diagnostics::catalog::finding(span, 4024, message.to_string())
+            .with_tag(surrealguard_diagnostics::FindingTag::Unnecessary),
+    );
+}
+
+/// The byte range spanning a block's statements (first start .. last end), or
+/// `None` for an empty block.
+fn block_span(block: &ast::Block) -> Option<surrealguard_syntax::span::ByteRange> {
+    let first = block.statements.first()?;
+    let last = block.statements.last()?;
+    surrealguard_syntax::span::ByteRange::new(first.span.start(), last.span.end()).ok()
 }
 
 /// Whether a condition of this kind can never evaluate to a boolean.
@@ -141,7 +205,9 @@ mod tests {
     fn merges_branch_values_and_scopes_branch_local_lets() {
         let parsed = parse_source(
             SourceId::new("flow:test"),
-            "IF true { LET $v = 1; RETURN $v; } ELSE { RETURN 's'; };",
+            // A dynamic guard keeps both branches reachable (a constant guard
+            // would fold to a single branch); this exercises the value union.
+            "IF $c { LET $v = 1; RETURN $v; } ELSE { RETURN 's'; };",
         )
         .expect("query parses");
         let ast::Statement::IfElse(stmt) =
@@ -205,6 +271,89 @@ mod tests {
         assert_eq!(
             if_else_kind("IF $c THEN RETURN 1 END;"),
             Kind::Either(vec![Kind::Int, Kind::None])
+        );
+    }
+
+    /// The diagnostics emitted for the first `IfElseStatement` in `source`.
+    fn if_else_findings(source: &str) -> Vec<Finding> {
+        let parsed = parse_source(SourceId::new("flow:test"), source).expect("query parses");
+        let ast::Statement::IfElse(stmt) =
+            surrealguard_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
+                .expect("no IfElseStatement node in tree")
+                .node
+        else {
+            panic!("expected if statement");
+        };
+        let schema = SchemaIndex::default();
+        let mut diagnostics: Vec<Finding> = Vec::new();
+        let mut ctx = AnalysisContext::new(
+            &schema,
+            parsed.source_id().clone(),
+            parsed.text(),
+            &mut diagnostics,
+        );
+        analyze_if_else(&mut ctx, &stmt);
+        diagnostics
+    }
+
+    #[test]
+    fn a_const_true_guard_folds_to_only_the_then_branch() {
+        // `IF 1 == 1 { 1 } ELSE { 'x' }` — the ELSE is dead, so the value is
+        // just the THEN's `int`, not `int | string`.
+        assert_eq!(if_else_kind("IF 1 == 1 { 1 } ELSE { 'x' };"), Kind::Int);
+    }
+
+    #[test]
+    fn a_const_false_guard_folds_to_only_the_else_branch() {
+        // `IF false { 1 } ELSE { 'x' }` — the THEN is dead, so the value is the
+        // ELSE's `string`.
+        assert_eq!(if_else_kind("IF false { 1 } ELSE { 'x' };"), Kind::String);
+    }
+
+    #[test]
+    fn an_unknown_guard_still_unions_both_branches() {
+        // Regression guard: a non-constant guard folds nothing, so both
+        // branches contribute — `int | string`.
+        assert_eq!(
+            if_else_kind("IF $x { 1 } ELSE { 'x' };"),
+            Kind::Either(vec![Kind::Int, Kind::String])
+        );
+    }
+
+    #[test]
+    fn a_const_false_branch_is_greyed_as_dead_code() {
+        // The provably-false branch body gets the 4024 finding, tagged
+        // Unnecessary so the LSP greys it.
+        let findings = if_else_findings("IF 2 > 3 { RETURN 1 } ELSE { RETURN 2 };");
+        let dead: Vec<_> = findings
+            .iter()
+            .filter(|finding| finding.code().number() == 4024)
+            .collect();
+        assert_eq!(dead.len(), 1, "exactly one dead-branch finding");
+        assert_eq!(dead[0].tags(), &[surrealguard_diagnostics::FindingTag::Unnecessary]);
+    }
+
+    #[test]
+    fn an_unknown_guard_greys_nothing() {
+        // Regression guard: a dynamic guard proves nothing, so no branch is
+        // dead and no 4024 fires.
+        let findings = if_else_findings("IF $x { RETURN 1 } ELSE { RETURN 2 };");
+        assert!(findings
+            .iter()
+            .all(|finding| finding.code().number() != 4024));
+    }
+
+    #[test]
+    fn a_const_true_guard_greys_the_dead_else() {
+        // The always-true THEN makes the ELSE unreachable — the ELSE body is
+        // greyed.
+        let findings = if_else_findings("IF true { RETURN 1 } ELSE { RETURN 2 };");
+        assert_eq!(
+            findings
+                .iter()
+                .filter(|finding| finding.code().number() == 4024)
+                .count(),
+            1
         );
     }
 }

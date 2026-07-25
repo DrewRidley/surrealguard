@@ -103,19 +103,28 @@ pub fn statement_value_kind(
     Some(kind)
 }
 
-/// The value of an IF used as an expression: the union of every branch's block
-/// value, plus `none` when there is no `ELSE` (control can fall through).
-/// Pure inference — no effects, no diagnostics (mirrors [`pure_block_kind`]); an
-/// `Any` branch absorbs the union (any-is-top), matching `Flow::into_kind`.
+/// The value of an IF used as an expression: the union of every *reachable*
+/// branch's block value, plus `none` when there is no `ELSE` and control can
+/// fall through. A guard that provably folds to a constant prunes the branches
+/// it decides — `IF 1 == 1 { a } ELSE { b }` is just `a`'s kind — so only the
+/// arms that can actually run contribute (see
+/// [`crate::analyzer::const_eval::branch_reachability`]). Pure inference — no
+/// effects, no diagnostics (mirrors [`pure_block_kind`]); an `Any` branch
+/// absorbs the union (any-is-top), matching `Flow::into_kind`.
 fn pure_if_else_kind(if_else: &ast::IfElseStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
+    let reach = crate::analyzer::const_eval::branch_reachability(if_else);
     let mut kinds: Vec<Kind> = if_else
         .branches
         .iter()
-        .map(|branch| pure_block_kind(&branch.body, ctx).unwrap_or(Kind::Any))
+        .zip(&reach.branches)
+        .filter(|(_, branch_reach)| branch_reach.is_reachable())
+        .map(|(branch, _)| pure_block_kind(&branch.body, ctx).unwrap_or(Kind::Any))
         .collect();
-    match &if_else.else_branch {
-        Some(else_body) => kinds.push(pure_block_kind(else_body, ctx).unwrap_or(Kind::Any)),
-        None => kinds.push(Kind::None),
+    if !reach.else_dead {
+        match &if_else.else_branch {
+            Some(else_body) => kinds.push(pure_block_kind(else_body, ctx).unwrap_or(Kind::Any)),
+            None => kinds.push(Kind::None),
+        }
     }
     if kinds.iter().any(|kind| matches!(kind, Kind::Any)) {
         return Kind::Any;

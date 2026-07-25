@@ -1655,7 +1655,9 @@ INSERT INTO person { name: 'Ada' };
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
             "query".into(),
-            "IF true { RETURN 1; } ELSE { RETURN 's'; };".into(),
+            // A dynamic guard keeps both branches reachable (a constant guard
+            // would fold to a single branch); this exercises the shape union.
+            "IF $c { RETURN 1; } ELSE { RETURN 's'; };".into(),
         );
 
         let output = analyze_workspace(&workspace);
@@ -1822,7 +1824,9 @@ INSERT INTO person { name: 'Ada' };
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
             "query".into(),
-            "IF true { LET $branch = 1; RETURN $branch; } ELSE { LET $branch = 's'; RETURN $branch; };".into(),
+            // A dynamic guard keeps both branches reachable (a constant guard
+            // would fold to a single branch); this exercises the value union.
+            "IF $c { LET $branch = 1; RETURN $branch; } ELSE { LET $branch = 's'; RETURN $branch; };".into(),
         );
 
         let output = analyze_workspace(&workspace);
