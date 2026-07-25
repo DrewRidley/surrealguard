@@ -112,7 +112,15 @@ pub(crate) fn analyze_block_flow(ctx: &mut AnalysisContext<'_>, block: &ast::Blo
         // A guard that exits on its condition (`IF g THEN RETURN … END`) leaves
         // the negation of `g` holding for the statements that follow it.
         apply_fall_through_narrowing(ctx, &statement.node);
-        terminated = statement_diverges(&statement.node);
+        // A block terminates on unambiguous divergence only: syntactic
+        // (RETURN/THROW/BREAK/CONTINUE, or an else-covered IF whose every arm
+        // diverges) OR constant (a compile-time-true guard with no reachable
+        // fall-through whose body diverges — `IF 1 == 1 { RETURN … }`). Dead code
+        // reachable only by TYPE-NARROWING exhaustiveness (a defensive final
+        // `RETURN` after branches that cover a record's whole table union) is
+        // deliberately NOT terminated here: it stays a live exit, neither dropped
+        // from the return type nor flagged 4006.
+        terminated = statement_diverges(&statement.node) || const_diverges(&statement.node);
     }
     Flow {
         returns,
@@ -203,6 +211,35 @@ pub(crate) fn statement_diverges(stmt: &ast::Statement) -> bool {
         ast::Statement::Block(block) => block_diverges(block),
         _ => false,
     }
+}
+
+/// Whether a statement provably diverges by CONSTANT reasoning alone: an `IF`
+/// whose guard is a compile-time constant (`IF 1 == 1 { RETURN … }`) that makes
+/// the `ELSE`/fall-through dead and whose every still-reachable branch body
+/// diverges. Uses the const-only [`branch_reachability`], never env narrowing.
+///
+/// Deliberately const-only: code proven unreachable *only* by type narrowing (a
+/// defensive `RETURN false` after branches that exhaustively cover a record's
+/// table union) is idiomatic and stays live — it is neither dropped from the
+/// exit-set type nor flagged 4006. Only unambiguous constant divergence (this)
+/// and syntactic divergence ([`statement_diverges`]) terminate a block.
+///
+/// [`branch_reachability`]: crate::analyzer::const_eval::branch_reachability
+fn const_diverges(stmt: &ast::Statement) -> bool {
+    let ast::Statement::IfElse(if_else) = stmt else {
+        return false;
+    };
+    let reach = crate::analyzer::const_eval::branch_reachability(if_else);
+    // `else_dead` means a compile-time-true branch is guaranteed to run, so there
+    // is no fall-through past the `IF`; it diverges iff every branch that can
+    // still run diverges.
+    reach.else_dead
+        && if_else
+            .branches
+            .iter()
+            .zip(&reach.branches)
+            .filter(|(_, branch_reach)| branch_reach.is_reachable())
+            .all(|(branch, _)| block_diverges(&branch.body))
 }
 
 /// Whether a block diverges: its last statement does.
