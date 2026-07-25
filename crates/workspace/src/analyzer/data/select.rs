@@ -747,24 +747,61 @@ fn graph_source_table(idiom: &ast::Idiom, schema: &SchemaIndex) -> Option<String
     resolve_graph_chain(source_table, rest, schema)
 }
 
-/// Walks graph steps in edge/target pairs, checking each edge's relation
-/// endpoints. Returns the final target table.
+/// Walks graph steps one hop at a time from `source_table`, returning the final
+/// target table. Inline `[WHERE …]` filters are skipped (they narrow rows but
+/// preserve the traversal's type). Each `->X` step either steps ONTO the edge
+/// table `X` (when the current table sits on the near side of `X`'s relation) or
+/// steps FROM the current edge onto its far-side node `X` — so both the common
+/// `->edge->node` shape and edge-to-edge chains (`->employee_of->member_of->team`,
+/// where `member_of` is a relation `FROM employee_of`) resolve. `None` if any hop
+/// can't be proven (prove-or-`Any`).
 fn resolve_graph_chain(
     source_table: &str,
     parts: &[ast::Spanned<ast::IdiomPart>],
     schema: &SchemaIndex,
 ) -> Option<String> {
-    if parts.is_empty() || !parts.len().is_multiple_of(2) {
-        return None;
-    }
-
     let mut current = source_table.to_string();
-    for pair in parts.chunks_exact(2) {
-        let (dir, edge) = single_graph_target(&pair[0].node)?;
-        let (_, target) = single_graph_target(&pair[1].node)?;
-        current = relation_step_target(&current, dir, edge, target, schema)?;
+    let mut stepped = false;
+    for part in parts {
+        match &part.node {
+            // A `[WHERE …]` filter narrows rows without changing the type.
+            ast::IdiomPart::Where(_) => continue,
+            ast::IdiomPart::Graph { .. } => {
+                let (dir, target) = single_graph_target(&part.node)?;
+                current = graph_hop_target(&current, dir, target, schema)?;
+                stepped = true;
+            }
+            _ => return None,
+        }
     }
-    Some(current)
+    stepped.then_some(current)
+}
+
+/// One graph hop from `current` in `dir` to table `next`: either stepping ONTO
+/// the edge `next` (when `next`'s relation admits `current` on its near side), or
+/// stepping FROM the current edge onto its far-side node `next`. `None` when the
+/// schema proves no such connection.
+fn graph_hop_target(
+    current: &str,
+    dir: ast::GraphDir,
+    next: &str,
+    schema: &SchemaIndex,
+) -> Option<String> {
+    // Step onto edge table `next` (`->edge`): `next`'s relation admits `current`.
+    if relation_accepts_source(current, dir, next, schema) {
+        return Some(next.to_string());
+    }
+    // Step from the current edge onto its far-side node `next` (`->node`).
+    let relation = schema.tables.get(current).and_then(|t| t.relation.as_ref())?;
+    let reaches = match dir {
+        ast::GraphDir::Out => relation.out_tables.iter().any(|t| t == next),
+        ast::GraphDir::In => relation.in_tables.iter().any(|t| t == next),
+        ast::GraphDir::Both => {
+            relation.out_tables.iter().any(|t| t == next)
+                || relation.in_tables.iter().any(|t| t == next)
+        }
+    };
+    reaches.then(|| next.to_string())
 }
 
 /// A graph part's direction and single target table. Multi-target steps
@@ -779,28 +816,6 @@ fn single_graph_target(part: &ast::IdiomPart) -> Option<(ast::GraphDir, &str)> {
     }
 }
 
-/// Does `edge`'s relation connect `source_table` to `target` in
-/// direction `dir`?
-fn relation_step_target(
-    source_table: &str,
-    dir: ast::GraphDir,
-    edge: &str,
-    target: &str,
-    schema: &SchemaIndex,
-) -> Option<String> {
-    let relation = schema.tables.get(edge)?.relation.as_ref()?;
-    let source_in = relation.in_tables.iter().any(|t| t == source_table);
-    let source_out = relation.out_tables.iter().any(|t| t == source_table);
-    let target_in = relation.in_tables.iter().any(|t| t == target);
-    let target_out = relation.out_tables.iter().any(|t| t == target);
-
-    let connected = match dir {
-        ast::GraphDir::Out => source_in && target_out,
-        ast::GraphDir::In => source_out && target_in,
-        ast::GraphDir::Both => (source_in && target_out) || (source_out && target_in),
-    };
-    connected.then(|| target.to_string())
-}
 
 /// Does `edge`'s relation accept `source_table` on the near side of a step
 /// in direction `dir`? (Single-hop edge-field projections need only this.)
@@ -1073,9 +1088,22 @@ fn project_expr(
     }
 
     // Computed projection: full expression inference.
-    let key = alias_name.unwrap_or_else(|| slice(ctx.source_text(), expr.span).to_string());
+    let key = alias_name.unwrap_or_else(|| unaliased_computed_key(expr, ctx.source_text()));
     let kind = computed_kind(expr, table, ctx);
     fields.insert(key, kind);
+}
+
+/// The result-object key for an unaliased computed projection. SurrealDB names
+/// a bare `count()` projection `count` (not its source text); every other
+/// computed projection is keyed by its own source text
+/// (`SELECT age >= 18 FROM ...` → the field `"age >= 18"`).
+fn unaliased_computed_key(expr: &ast::Spanned<ast::Expr>, source_text: &str) -> String {
+    if let ast::Expr::Call(call) = &expr.node {
+        if is_bare_count(call) {
+            return "count".to_string();
+        }
+    }
+    slice(source_text, expr.span).to_string()
 }
 
 fn computed_kind(
@@ -1178,7 +1206,8 @@ fn starts_with_graph(idiom: &ast::Idiom) -> bool {
     )
 }
 
-/// Splits a graph idiom into its leading graph steps and the projected tail.
+/// Splits a graph idiom into its leading graph section (graph steps plus any
+/// interleaved `[WHERE …]` filters) and the projected tail (fields/destructure).
 fn graph_split(
     idiom: &ast::Idiom,
 ) -> (
@@ -1188,9 +1217,25 @@ fn graph_split(
     let boundary = idiom
         .parts
         .iter()
-        .position(|part| !matches!(part.node, ast::IdiomPart::Graph { .. }))
+        .position(|part| {
+            !matches!(
+                part.node,
+                ast::IdiomPart::Graph { .. } | ast::IdiomPart::Where(_)
+            )
+        })
         .unwrap_or(idiom.parts.len());
     idiom.parts.split_at(boundary)
+}
+
+/// The graph steps within a graph section, dropping interleaved `[WHERE …]`
+/// filters (which narrow rows but preserve the traversal's type).
+fn graph_steps(
+    section: &[ast::Spanned<ast::IdiomPart>],
+) -> Vec<&ast::Spanned<ast::IdiomPart>> {
+    section
+        .iter()
+        .filter(|part| matches!(part.node, ast::IdiomPart::Graph { .. }))
+        .collect()
 }
 
 /// The type of one graph projection (`->likes->post`, `->likes.since`,
@@ -1202,11 +1247,12 @@ pub(crate) fn graph_projection_kind(
     materialize_target: bool,
 ) -> Option<Kind> {
     let (graphs, tail) = graph_split(idiom);
+    let steps = graph_steps(graphs);
 
-    let projected = if graphs.len() == 1 && !tail.is_empty() {
+    let projected = if steps.len() == 1 && !tail.is_empty() {
         // Single hop with a field tail projects off the *edge* table:
         // `->likes.since`.
-        let (dir, edge) = single_graph_target(&graphs[0].node)?;
+        let (dir, edge) = single_graph_target(&steps[0].node)?;
         if !relation_accepts_source(row_table_name, dir, edge, schema) {
             return None;
         }
@@ -1291,7 +1337,7 @@ fn graph_output_segments(idiom: &ast::Idiom) -> Option<Vec<String>> {
 }
 
 fn graph_segments_of(graphs: &[ast::Spanned<ast::IdiomPart>]) -> Option<Vec<String>> {
-    graphs
+    graph_steps(graphs)
         .iter()
         .map(|part| {
             let (dir, target) = single_graph_target(&part.node)?;
@@ -2070,6 +2116,48 @@ mod tests {
         let kind = analyze(&schema, "SELECT age >= 18 FROM person;");
         let fields = object_fields(array_element(&kind));
         assert_eq!(fields["age >= 18"], Kind::Bool);
+    }
+
+    #[test]
+    fn unaliased_bare_count_projection_is_keyed_count() {
+        // SurrealDB names a bare `count()` projection `count`, not its source
+        // text `count()`. (Other unaliased computed projections keep their
+        // source text — see `unaliased_computed_projections_are_keyed_by_source_text`.)
+        let schema = schema_from(
+            "DEFINE TABLE account SCHEMAFULL;\nDEFINE FIELD name ON account TYPE string;",
+        );
+
+        let kind = analyze(&schema, "SELECT count() FROM account GROUP ALL;");
+        let fields = object_fields(array_element(&kind));
+        assert!(!fields.contains_key("count()"));
+        assert_eq!(fields["count"], Kind::Int);
+    }
+
+    #[test]
+    fn grouped_projection_types_key_fields_and_aggregates() {
+        // GROUP BY must not degrade the result type: a grouped row is the group
+        // key fields plus the aggregate projections, keyed like an ungrouped
+        // projection (`count()` → `count`).
+        let schema = schema_from(
+            "DEFINE TABLE employee_of SCHEMAFULL;\nDEFINE FIELD status ON employee_of TYPE string;",
+        );
+
+        let kind = analyze(&schema, "SELECT status, count() FROM employee_of GROUP BY status;");
+        let fields = object_fields(array_element(&kind));
+        assert_eq!(fields["status"], Kind::String);
+        assert_eq!(fields["count"], Kind::Int);
+
+        // GROUP ALL keeps the array wrapper and the aggregate's type.
+        let total = analyze(&schema, "SELECT count() FROM employee_of GROUP ALL;");
+        assert_eq!(
+            total,
+            Kind::Array(
+                Box::new(object_literal(
+                    [("count".to_string(), Kind::Int)].into_iter().collect()
+                )),
+                None
+            )
+        );
     }
 
     #[test]

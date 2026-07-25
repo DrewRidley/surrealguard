@@ -893,6 +893,10 @@ pub(crate) fn infer_field_value_kind(
         }
     }
 
+    // The owning table becomes the row context so bare field references and
+    // graph traversals in a VALUE/COMPUTED clause resolve against it (available
+    // only in the schema-aware pass; the standalone pass sees no tables).
+    let self_table = schema.and_then(|s| s.tables.get(&def.table.node));
     let empty = SchemaIndex::default();
     let schema = schema.unwrap_or(&empty);
     let mut scratch: Vec<surrealguard_diagnostics::Finding> = Vec::new();
@@ -902,7 +906,10 @@ pub(crate) fn infer_field_value_kind(
         text,
         &mut scratch,
     );
-    match crate::analyzer::schema::define::field::infer_field_clause_kind(&mut ctx, expr) {
+    let inferred = ctx.with_row_table(self_table, |ctx| {
+        crate::analyzer::schema::define::field::infer_field_clause_kind(ctx, expr, &def.table.node)
+    });
+    match inferred {
         Some(Kind::Any) | None => None,
         Some(kind) => Some(kind),
     }
@@ -1496,6 +1503,100 @@ mod tests {
             ))
         );
         assert!(teams.computed, "a COMPUTED field is computed");
+    }
+
+    #[test]
+    fn computed_forward_graph_traversal_types_as_target_record_array() {
+        // A COMPUTED forward graph traversal resolves against the OWNING table
+        // as the row context: `account->employee_of->organization` is
+        // `array<record<organization>>`, with an interleaved `[WHERE …]` filter
+        // and a `?? []` default both preserving that type.
+        let parsed = parse_source(
+            SourceId::new("schema:computed-graph"),
+            "DEFINE TABLE account;\n\
+             DEFINE TABLE organization;\n\
+             DEFINE TABLE employee_of TYPE RELATION FROM account TO organization;\n\
+             DEFINE FIELD status ON employee_of TYPE string;\n\
+             DEFINE FIELD orgs ON account COMPUTED ->employee_of[WHERE status = 'active']->organization ?? [];",
+        )
+        .expect("schema parses");
+
+        let extraction = extract_schema(&[parsed]);
+        let orgs = extraction
+            .schema
+            .field("account", &FieldPath::parse("orgs"))
+            .expect("orgs field exists");
+        assert_eq!(
+            orgs.kind,
+            Some(Kind::Array(
+                Box::new(Kind::Record(vec![surrealdb_types::Table::from(
+                    "organization"
+                )])),
+                None
+            ))
+        );
+    }
+
+    #[test]
+    fn computed_edge_to_edge_graph_chain_resolves_to_final_node() {
+        // `->employee_of->member_of->team` steps edge → edge → node, where
+        // `member_of` is a relation `FROM employee_of`: the chain still resolves
+        // to `array<record<team>>`.
+        let parsed = parse_source(
+            SourceId::new("schema:computed-graph-chain"),
+            "DEFINE TABLE account;\n\
+             DEFINE TABLE organization;\n\
+             DEFINE TABLE team;\n\
+             DEFINE TABLE employee_of TYPE RELATION FROM account TO organization;\n\
+             DEFINE FIELD status ON employee_of TYPE string;\n\
+             DEFINE TABLE member_of TYPE RELATION FROM employee_of TO team;\n\
+             DEFINE FIELD teams ON account COMPUTED ->employee_of[WHERE status = 'active']->member_of->team ?? [];",
+        )
+        .expect("schema parses");
+
+        let extraction = extract_schema(&[parsed]);
+        let teams = extraction
+            .schema
+            .field("account", &FieldPath::parse("teams"))
+            .expect("teams field exists");
+        assert_eq!(
+            teams.kind,
+            Some(Kind::Array(
+                Box::new(Kind::Record(vec![surrealdb_types::Table::from("team")])),
+                None
+            ))
+        );
+    }
+
+    #[test]
+    fn computed_this_field_arithmetic_types_numeric() {
+        // `$this.field <op> $this.field` resolves each field against the owning
+        // table, so the arithmetic types numerically — even when the operands
+        // are themselves `math::sum(...) ?? 0` computed fields.
+        let parsed = parse_source(
+            SourceId::new("schema:computed-this"),
+            "DEFINE TABLE level;\n\
+             DEFINE FIELD item ON level TYPE record<item>;\n\
+             DEFINE FIELD qty ON level TYPE number;\n\
+             DEFINE TABLE item;\n\
+             DEFINE FIELD on_hand ON item COMPUTED math::sum(SELECT VALUE qty FROM level WHERE item = $parent) ?? 0;\n\
+             DEFINE FIELD available ON item COMPUTED $this.on_hand - 5;",
+        )
+        .expect("schema parses");
+
+        let extraction = extract_schema(&[parsed]);
+        let available = extraction
+            .schema
+            .field("item", &FieldPath::parse("available"))
+            .expect("available field exists");
+        assert!(
+            matches!(
+                available.kind,
+                Some(Kind::Int | Kind::Number | Kind::Float | Kind::Decimal)
+            ),
+            "expected a numeric kind, got {:?}",
+            available.kind
+        );
     }
 
     #[test]

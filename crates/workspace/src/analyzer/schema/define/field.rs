@@ -235,8 +235,19 @@ fn field_is_duplicate(table: &crate::schema::TableDef, path: &ast::Idiom, field_
 pub(crate) fn infer_field_clause_kind(
     ctx: &mut AnalysisContext<'_>,
     expr: &ast::Spanned<ast::Expr>,
+    this_table: &str,
 ) -> Option<Kind> {
     with_value_bound(ctx, None, |ctx| {
+        // `$this` is the record being written/computed, so `$this.field`
+        // resolves against the owning table. (Bare field references and graph
+        // traversals resolve through the row-table context the caller sets.)
+        let span = surrealguard_syntax::span::SourceSpan::new(
+            ctx.source().clone(),
+            surrealguard_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered"),
+        );
+        let mut this_fact = ExpressionFact::new(span, ExpressionValueClass::Variable);
+        this_fact.kind = Some(Kind::Record(vec![this_table.into()]));
+        ctx.define_local("this".to_string(), this_fact);
         crate::analyzer::expression::infer::infer_expression_fact(expr, ctx).kind
     })
 }

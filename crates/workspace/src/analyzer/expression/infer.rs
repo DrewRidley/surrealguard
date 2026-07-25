@@ -914,10 +914,37 @@ pub fn binary_result_kind(op: &ast::BinaryOp, lhs: &Kind, rhs: &Kind) -> Option<
         }
         Op::NullCoalesce if matches!(lhs, Kind::None | Kind::Null) => Some(rhs.clone()),
         Op::NullCoalesce if matches!(rhs, Kind::None | Kind::Null) => Some(lhs.clone()),
+        // `x ?? []`: an empty-array literal default (max length 0) carries no
+        // element constraint, so coalescing keeps the other side's collection
+        // type (`->edge->target ?? []` stays `array<record<target>>`).
+        Op::NullCoalesce
+            if is_empty_array_literal(rhs) && matches!(lhs, Kind::Array(_, _) | Kind::Set(_, _)) =>
+        {
+            Some(lhs.clone())
+        }
+        Op::NullCoalesce
+            if is_empty_array_literal(lhs) && matches!(rhs, Kind::Array(_, _) | Kind::Set(_, _)) =>
+        {
+            Some(rhs.clone())
+        }
+        // `numeric ?? numeric` (e.g. `math::sum(...) ?? 0`) stays numeric rather
+        // than becoming a `number | int` union: every numeric kind is a
+        // `number`, so the coalesced value is numeric and downstream arithmetic
+        // (`$this.total_on_hand - $this.total_committed`) keeps resolving.
+        Op::NullCoalesce if is_numeric(lhs) && is_numeric(rhs) => {
+            Some(if lhs == rhs { lhs.clone() } else { Kind::Number })
+        }
         // Coalescing two known kinds yields one of them.
         Op::NullCoalesce => Some(Kind::either(vec![lhs.clone(), rhs.clone()])),
         _ => None,
     }
+}
+
+/// An empty array literal (`[]`): an `array` whose max length is exactly 0.
+/// This is the shape [`array_fact`] produces for an empty literal, and a
+/// zero-length array default (`?? []`) constrains no element type.
+fn is_empty_array_literal(kind: &Kind) -> bool {
+    matches!(kind, Kind::Array(_, Some(0)))
 }
 
 fn numeric_result(lhs: &Kind, rhs: &Kind) -> Kind {
@@ -1110,6 +1137,33 @@ mod tests {
         let union = parse("RETURN 1 ?? 'fallback';");
         let fact = infer_first(&union, "BinaryExpression", None, &env);
         assert_eq!(fact.kind, Some(Kind::Either(vec![Kind::Int, Kind::String])));
+    }
+
+    #[test]
+    fn coalesce_with_empty_array_default_keeps_the_collection_type() {
+        let env = StatementEnv::default();
+
+        // `[1, 2] ?? []` — the empty-array default carries no element
+        // constraint, so the result stays `array<int>` rather than widening.
+        let coal = parse("RETURN [1, 2] ?? [];");
+        let fact = infer_first(&coal, "BinaryExpression", None, &env);
+        assert_eq!(fact.kind, Some(Kind::Array(Box::new(Kind::Int), Some(2))));
+    }
+
+    #[test]
+    fn coalesce_of_two_numerics_stays_numeric() {
+        let env = StatementEnv::default();
+
+        // `1.5 ?? 0` — differing numeric kinds coalesce to `number`, not a
+        // `float | int` union, so downstream arithmetic keeps resolving.
+        let differ = parse("RETURN 1.5 ?? 0;");
+        let fact = infer_first(&differ, "BinaryExpression", None, &env);
+        assert_eq!(fact.kind, Some(Kind::Number));
+
+        // Equal numeric kinds coalesce to that kind.
+        let same = parse("RETURN 1 ?? 0;");
+        let fact = infer_first(&same, "BinaryExpression", None, &env);
+        assert_eq!(fact.kind, Some(Kind::Int));
     }
 
     #[test]
