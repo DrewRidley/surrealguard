@@ -1340,9 +1340,13 @@ INSERT INTO person { name: 'Ada' };
 
         let output = analyze_workspace(&workspace);
 
+        // `option<string>`, not `string`: the body's `FROM ONLY unit` is
+        // optional (an empty `unit` table makes it NONE). The point of the
+        // test is that the call resolves the body's *table-bearing* type at
+        // all rather than degrading to `Any`.
         assert_eq!(
             output.sources[&query].response_kind,
-            Some(Kind::String),
+            Some(Kind::either(vec![Kind::None, Kind::String])),
             "cross-source UDF call must resolve its table-bearing body return"
         );
     }

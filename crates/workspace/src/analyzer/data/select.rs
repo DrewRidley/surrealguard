@@ -102,14 +102,14 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     let row_kind = apply_split(row_kind, &stmt.split);
 
     if stmt.only {
-        // NOTE: `FROM ONLY` is really `option<row>` (NONE when nothing matches).
-        // Deferred: the AND-operand occurrence typing now covers `IF $x != NONE
-        // AND f($x)`, but a fall-through guard (`IF $x = NONE THEN CONTINUE`)
-        // narrowing an `option` result still doesn't reach a *function arg
-        // inside a later SELECT's WHERE clause* — modeling ONLY as option
-        // surfaces one such false E5002. Kept as a bare row until that
-        // narrowing-coverage (fall-through → SELECT-WHERE call args) lands.
-        row_kind
+        // `FROM ONLY` is `option<row>`: the engine yields NONE (verified `IS
+        // NONE` on 3.0.5, not NULL) whenever the target produces no row —
+        // including a *concrete record id* that does not exist
+        // (`SELECT * FROM ONLY account:ghost` → NONE) and a filter that
+        // matches nothing. No `ONLY` form is statically guaranteed to produce
+        // a row, so every one of them is optional; a caller that needs the
+        // bare row narrows it with a guard (`IF $x = NONE THEN THROW … END`).
+        Kind::either(vec![Kind::None, row_kind])
     } else {
         Kind::Array(Box::new(row_kind), literal_limit(stmt))
     }
@@ -157,7 +157,10 @@ fn resolve_from_table(
                 None => return Err(Kind::Any),
             };
             Err(if stmt.only {
-                row_kind
+                // Same optionality as a table source: an inner query that
+                // produces no rows makes the `ONLY` result NONE (verified
+                // `IS NONE` on 3.0.5).
+                Kind::either(vec![Kind::None, row_kind])
             } else {
                 Kind::Array(Box::new(row_kind), literal_limit(stmt))
             })
@@ -2852,9 +2855,78 @@ mod tests {
             "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;",
         );
 
+        // `ONLY` drops the array wrapper — but the result is `option<row>`,
+        // not a bare row: even a concrete record id yields NONE when the
+        // record does not exist (verified on 3.0.5).
         let kind = analyze(&schema, "SELECT * FROM ONLY person:one;");
-        let fields = object_fields(&kind);
+        let fields = object_fields(option_payload(&kind));
         assert_eq!(fields["name"], Kind::String);
+    }
+
+    /// The non-NONE arm of an `option<T>` (`Either([None, T])`).
+    fn option_payload(kind: &Kind) -> &Kind {
+        let Kind::Either(arms) = kind else {
+            panic!("expected an option kind, got {kind:?}");
+        };
+        assert_eq!(arms.len(), 2, "expected option<T>, got {kind:?}");
+        assert_eq!(arms[0], Kind::None, "expected a NONE arm in {kind:?}");
+        &arms[1]
+    }
+
+    #[test]
+    fn every_only_form_is_optional() {
+        // No `FROM ONLY` form is statically guaranteed to produce a row: a
+        // missing record id, an unmatched filter and an over-filtered
+        // `LIMIT 1` all evaluate to NONE on 3.0.5.
+        let schema = schema_from(
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;",
+        );
+        for query in [
+            "SELECT * FROM ONLY person:one;",
+            "SELECT * FROM ONLY person WHERE id = person:one;",
+            "SELECT * FROM ONLY person LIMIT 1;",
+            "SELECT * FROM ONLY person WHERE name != 'a' LIMIT 1;",
+        ] {
+            let kind = analyze(&schema, query);
+            let fields = object_fields(option_payload(&kind));
+            assert_eq!(fields["name"], Kind::String, "for `{query}`");
+        }
+        // A VALUE projection is optional the same way.
+        assert_eq!(
+            analyze(&schema, "SELECT VALUE name FROM ONLY person:one;"),
+            Kind::either(vec![Kind::None, Kind::String]),
+        );
+    }
+
+    /// Analyzes `schema` + `query` as a two-source workspace and returns the
+    /// kind of the query's **last** statement together with all findings.
+    fn workspace_last_kind(
+        schema: &str,
+        query: &str,
+    ) -> (Option<Kind>, Vec<surrealguard_diagnostics::Finding>) {
+        let mut workspace = crate::analysis::Workspace::default();
+        workspace.add_virtual_source("schema".into(), schema.into());
+        let id = workspace.add_virtual_source("query".into(), query.into());
+        let output = crate::analysis::analyze_workspace(&workspace);
+        let last = output.sources[&id]
+            .statements
+            .last()
+            .and_then(|statement| statement.response_kind.clone());
+        (last, output.diagnostics.clone())
+    }
+
+    #[test]
+    fn a_none_guard_narrows_an_only_result_back_to_a_bare_row() {
+        // The other direction: after `IF $x = NONE THEN THROW … END` the
+        // optionality is gone and the row's fields resolve directly.
+        let (kind, findings) = workspace_last_kind(
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;",
+            "LET $p = SELECT name FROM ONLY person:one;\n\
+             IF $p = NONE THEN THROW 'missing' END;\n\
+             RETURN $p.name;",
+        );
+        assert_eq!(kind, Some(Kind::String));
+        assert!(findings.is_empty(), "unexpected findings: {findings:?}");
     }
 
     #[test]
