@@ -54,8 +54,14 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     check_fetch_clauses(stmt, table, ctx);
     check_split_clauses(stmt, table, ctx);
     if let Some(group) = &stmt.group {
+        // GROUP BY keys name *result* columns, so a projection alias is a
+        // legal key even though the source table has no such field.
+        let projected = projected_row_names(stmt);
         for idiom in &group.keys {
             if let Some(segments) = plain_field_segments(&idiom.node) {
+                if projected_name_covers(&projected, &segments.join(".")) {
+                    continue;
+                }
                 crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
             }
         }
@@ -397,6 +403,9 @@ fn check_order_clause(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analys
                 .collect(),
         )
     };
+    // ORDER BY keys, like GROUP BY keys, name *result* columns: an alias is
+    // a legal key even though the source table has no such field.
+    let projected = projected_row_names(stmt);
     for key in &order.keys {
         let field = match &key.expr.node {
             ast::Expr::Idiom(idiom) => plain_field_segments(idiom),
@@ -414,7 +423,9 @@ fn check_order_clause(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analys
             ));
             continue;
         };
-        crate::analyzer::data::check_field_path(ctx, table, &segments, key.expr.span, 1002);
+        if !projected_name_covers(&projected, &segments.join(".")) {
+            crate::analyzer::data::check_field_path(ctx, table, &segments, key.expr.span, 1002);
+        }
         if let Some(keys) = &explicit_keys {
             let name = segments.join(".");
             if !keys.contains(&name) {
@@ -687,30 +698,13 @@ fn check_group_key_projection(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<
     }) {
         return;
     }
-    let projected: std::collections::BTreeSet<String> = stmt
-        .projections
-        .iter()
-        .filter_map(|projection| match projection {
-            ast::Projection::Expr {
-                alias: Some(alias),
-                ..
-            } => Some(alias.node.clone()),
-            ast::Projection::Expr { expr, alias: None } => match &expr.node {
-                ast::Expr::Idiom(idiom) => plain_field_segments(idiom).map(|s| s.join(".")),
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect();
+    let projected = projected_row_names(stmt);
     for key in &group.keys {
         let Some(segments) = plain_field_segments(&key.node) else {
             continue;
         };
         let name = segments.join(".");
-        let covered = projected.iter().any(|projected_name| {
-            projected_name == &name || name.starts_with(&format!("{projected_name}."))
-        });
-        if !covered {
+        if !projected_name_covers(&projected, &name) {
             let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), key.span);
             ctx.emit(
                 surrealguard_diagnostics::catalog::finding(
@@ -724,6 +718,38 @@ fn check_group_key_projection(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<
             );
         }
     }
+}
+
+/// The names this query's result rows carry: each projection's `AS` alias,
+/// and — for an unaliased plain field projection — its dotted path.
+///
+/// GROUP BY / ORDER BY keys are resolved against the *result* rows, not the
+/// source table: `SELECT price AS n FROM t GROUP BY n` is valid SurrealQL
+/// (verified against a live engine) even though `t` has no field `n`. This
+/// set is what makes an alias key legal; it is shared by the 1002
+/// suppression in both clauses and by 4013's "key isn't projected" check.
+fn projected_row_names(stmt: &ast::SelectStmt) -> std::collections::BTreeSet<String> {
+    stmt.projections
+        .iter()
+        .filter_map(|projection| match projection {
+            ast::Projection::Expr {
+                alias: Some(alias), ..
+            } => Some(alias.node.clone()),
+            ast::Projection::Expr { expr, alias: None } => match &expr.node {
+                ast::Expr::Idiom(idiom) => plain_field_segments(idiom).map(|s| s.join(".")),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether a clause key names a projected column — equal to one, or nested
+/// under one (projecting `address` covers `GROUP BY address.city`).
+fn projected_name_covers(names: &std::collections::BTreeSet<String>, name: &str) -> bool {
+    names
+        .iter()
+        .any(|projected| projected == name || name.starts_with(&format!("{projected}.")))
 }
 
 /// A bare zero-argument `count()` in a projection is an aggregate only under
@@ -3044,5 +3070,86 @@ mod tests {
             "a typed link to an absent field must still emit 1002: {:?}",
             codes(&diagnostics)
         );
+    }
+
+    // -- GROUP BY / ORDER BY over a projection alias (DX-1) ------------------
+
+    fn alias_group_schema() -> SchemaIndex {
+        schema_from(
+            "DEFINE TABLE product SCHEMAFULL;\n\
+             DEFINE FIELD price ON product TYPE number;\n\
+             DEFINE FIELD team ON product TYPE string;",
+        )
+    }
+
+    #[test]
+    fn group_by_a_projection_alias_is_not_an_unknown_field() {
+        let schema = alias_group_schema();
+
+        for query in [
+            "SELECT price AS n FROM product GROUP BY n;",
+            "SELECT team AS t, count() FROM product GROUP BY t;",
+        ] {
+            let diagnostics = diagnostics_for(&schema, query);
+            assert!(
+                !codes(&diagnostics).contains(&1002),
+                "`{query}` must not report an unknown field: {:?}",
+                codes(&diagnostics)
+            );
+        }
+    }
+
+    #[test]
+    fn order_by_a_projection_alias_is_not_an_unknown_field() {
+        let schema = alias_group_schema();
+
+        for query in [
+            "SELECT price AS n FROM product ORDER BY n;",
+            "SELECT price AS n, count() FROM product GROUP BY n ORDER BY n;",
+        ] {
+            let diagnostics = diagnostics_for(&schema, query);
+            assert!(
+                !codes(&diagnostics).contains(&1002),
+                "`{query}` must not report an unknown field: {:?}",
+                codes(&diagnostics)
+            );
+        }
+    }
+
+    #[test]
+    fn group_by_an_alias_nested_path_is_covered_by_the_alias() {
+        let schema = schema_from(
+            "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD address ON person TYPE object;\n\
+             DEFINE FIELD address.city ON person TYPE string;",
+        );
+
+        let diagnostics = diagnostics_for(&schema, "SELECT address AS a FROM person GROUP BY a.city;");
+        assert!(
+            !codes(&diagnostics).contains(&1002),
+            "a path under a projected alias must not report an unknown field: {:?}",
+            codes(&diagnostics)
+        );
+    }
+
+    #[test]
+    fn group_by_and_order_by_a_genuinely_unknown_field_still_error() {
+        // Guard against over-suppression: the alias carve-out must not
+        // disable the check for a key that names nothing.
+        let schema = alias_group_schema();
+
+        for query in [
+            "SELECT price AS n FROM product GROUP BY nope;",
+            "SELECT price AS n FROM product ORDER BY nope;",
+            "SELECT * FROM product GROUP BY nope;",
+            "SELECT * FROM product ORDER BY nope;",
+        ] {
+            let diagnostics = diagnostics_for(&schema, query);
+            assert!(
+                codes(&diagnostics).contains(&1002),
+                "`{query}` must still report an unknown field: {:?}",
+                codes(&diagnostics)
+            );
+        }
     }
 }
