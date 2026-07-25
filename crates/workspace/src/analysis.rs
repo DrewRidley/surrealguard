@@ -487,6 +487,22 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn if_expression_in_value_position_types_as_the_branch_union() {
+        // An IF used as a value (`RETURN IF …`, which lowers to a subquery)
+        // types as the union of its branch values — not `unknown`.
+        let mut workspace = Workspace::default();
+        let query =
+            workspace.add_virtual_source("query".into(), "RETURN IF $c { 1 } ELSE { 'x' };".into());
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(
+            output.sources[&query].response_kind,
+            Some(Kind::Either(vec![Kind::Int, Kind::String])),
+        );
+    }
+
+    #[test]
     fn cross_source_udf_call_resolves_a_table_bearing_body_return() {
         // A function whose body reads a table, defined in one source and called
         // from another: the call must resolve the real return type, not `Any`.

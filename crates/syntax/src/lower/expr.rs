@@ -108,11 +108,12 @@ impl Lowerer<'_> {
             "TypeCast" => self.cast(node),
             "SubQuery" => self.subquery(node),
             // A bare responding statement in value position (`LET $x = SELECT
-            // …`, `RETURN CREATE …`) is a subquery without the parentheses:
-            // lower it to the same `Expr::Subquery` so its response shape types
-            // the surrounding expression.
+            // …`, `RETURN CREATE …`, `RETURN IF c { a } ELSE { b }`) is a
+            // subquery without the parentheses: lower it to the same
+            // `Expr::Subquery` so its response shape types the surrounding
+            // expression (an IF-as-value unions its branch values).
             "SelectStatement" | "CreateStatement" | "UpdateStatement" | "UpsertStatement"
-            | "DeleteStatement" | "InsertStatement" | "RelateStatement" => {
+            | "DeleteStatement" | "InsertStatement" | "RelateStatement" | "IfElseStatement" => {
                 Expr::Subquery(Box::new(super::statement::lower_statement(node, self.text)))
             }
             "Block" => Expr::Block(self.block(node)),

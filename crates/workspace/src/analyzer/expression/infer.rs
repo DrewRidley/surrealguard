@@ -93,9 +93,34 @@ pub fn statement_value_kind(
             None => Kind::None,
         },
         ast::Statement::Expr(e) => infer_expression_fact(e, ctx).kind.unwrap_or(Kind::Any),
+        // An IF / block used as a value (`RETURN IF c { a } ELSE { b }`, which
+        // lowers to a `Subquery`): its kind is the union of its branch/exit
+        // values. Pure inference — no effects, no diagnostics.
+        ast::Statement::IfElse(s) => pure_if_else_kind(s, ctx),
+        ast::Statement::Block(s) => pure_block_kind(s, ctx).unwrap_or(Kind::Any),
         _ => return None,
     };
     Some(kind)
+}
+
+/// The value of an IF used as an expression: the union of every branch's block
+/// value, plus `none` when there is no `ELSE` (control can fall through).
+/// Pure inference — no effects, no diagnostics (mirrors [`pure_block_kind`]); an
+/// `Any` branch absorbs the union (any-is-top), matching `Flow::into_kind`.
+fn pure_if_else_kind(if_else: &ast::IfElseStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
+    let mut kinds: Vec<Kind> = if_else
+        .branches
+        .iter()
+        .map(|branch| pure_block_kind(&branch.body, ctx).unwrap_or(Kind::Any))
+        .collect();
+    match &if_else.else_branch {
+        Some(else_body) => kinds.push(pure_block_kind(else_body, ctx).unwrap_or(Kind::Any)),
+        None => kinds.push(Kind::None),
+    }
+    if kinds.iter().any(|kind| matches!(kind, Kind::Any)) {
+        return Kind::Any;
+    }
+    Kind::either(kinds)
 }
 
 /// A closure value's own type: `Kind::Function(params, return)`. The
