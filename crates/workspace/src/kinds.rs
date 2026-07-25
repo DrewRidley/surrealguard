@@ -158,6 +158,43 @@ fn scalar_literal_base_kind(kind: &Kind) -> Option<Kind> {
     }
 }
 
+/// The exact scalar literal kind of a known constant value (`'active'` ->
+/// `Kind::Literal("active")`), if the value is a representable scalar.
+///
+/// Inference widens a written literal to its base (`'active'` reads as
+/// `string`), which is right for most positions but loses the one fact a
+/// scalar-literal target needs: *which* string it is. A caller that holds a
+/// const value can recover the exact kind here, so the equality branch of
+/// [`kind_is_assignable_to`] applies instead of the prove-or-silent widening.
+pub(crate) fn scalar_value_literal_kind(value: &surrealdb_types::Value) -> Option<Kind> {
+    use surrealdb_types::{KindLiteral, Number, Value};
+    let literal = match value {
+        Value::String(text) => KindLiteral::String(text.clone()),
+        Value::Bool(flag) => KindLiteral::Bool(*flag),
+        Value::Duration(duration) => KindLiteral::Duration(*duration),
+        Value::Number(Number::Int(int)) => KindLiteral::Integer(*int),
+        Value::Number(Number::Float(float)) => KindLiteral::Float(*float),
+        Value::Number(Number::Decimal(decimal)) => KindLiteral::Decimal(*decimal),
+        // NONE/NULL are their own kinds, not literals; everything else
+        // (datetime, uuid, records, collections) has no scalar literal kind.
+        _ => return None,
+    };
+    Some(Kind::Literal(literal))
+}
+
+/// Whether `kind` constrains a value to specific scalar literals — either a
+/// bare `'active'` or a union like `'active' | 'inactive'`. This is the only
+/// shape for which knowing a written value's *exact* literal changes the
+/// assignability verdict, so callers use it to bound when they substitute
+/// [`scalar_value_literal_kind`] for the widened inferred kind.
+pub(crate) fn constrains_scalar_literals(kind: &Kind) -> bool {
+    match kind {
+        Kind::Literal(_) => scalar_literal_base_kind(kind).is_some(),
+        Kind::Either(variants) => variants.iter().any(constrains_scalar_literals),
+        _ => false,
+    }
+}
+
 /// The base kind a `Kind::Literal` value inhabits, if `kind` is one.
 pub(crate) fn literal_base_kind(kind: &Kind) -> Option<Kind> {
     use surrealdb_types::KindLiteral;
@@ -483,6 +520,43 @@ mod tests {
         ] {
             assert!(
                 codes(query).iter().any(|code| code == "E2001"),
+                "codes for {query:?}: {:?}",
+                codes(query)
+            );
+        }
+    }
+
+    #[test]
+    fn a_wrong_literal_written_to_a_literal_union_field_fires() {
+        // The value is the *right base kind* but the wrong literal. Widening
+        // alone can't catch this (a `string` can't be shown to fall outside a
+        // string-literal union), so the write site recovers the constant's
+        // exact literal kind — otherwise every misspelled status slips through.
+        for query in [
+            "DEFINE FIELD st ON t TYPE 'active' | 'inactive';\nCREATE t SET st = 'bogus';",
+            "DEFINE FIELD st ON t TYPE 'active' | 'inactive';\nUPDATE t SET st = 'Active';",
+            "DEFINE FIELD lvl ON t TYPE 1 | 2 | 3;\nCREATE t SET lvl = 9;",
+        ] {
+            assert!(
+                codes(query).iter().any(|code| code == "E2001"),
+                "codes for {query:?}: {:?}",
+                codes(query)
+            );
+        }
+    }
+
+    #[test]
+    fn recovering_an_exact_literal_does_not_constrain_plain_fields() {
+        // The narrowing is bounded to literal-constrained targets: a plain
+        // `string` field still accepts any string, and a non-constant value
+        // (a param) is unaffected in both cases.
+        for query in [
+            "DEFINE FIELD t ON x TYPE string;\nCREATE x SET t = 'anything at all';",
+            "DEFINE FIELD st ON x TYPE 'active' | 'inactive';\nCREATE x SET st = $status;",
+            "DEFINE FIELD n ON x TYPE int;\nCREATE x SET n = 7;",
+        ] {
+            assert!(
+                !codes(query).iter().any(|code| code == "E2001"),
                 "codes for {query:?}: {:?}",
                 codes(query)
             );

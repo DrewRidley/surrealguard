@@ -546,9 +546,23 @@ fn check_assignment_value(
             return;
         }
     }
-    let Some(value_kind) = infer_expression_fact(&assignment.value, ctx).kind else {
+    let value_fact = infer_expression_fact(&assignment.value, ctx);
+    let Some(value_kind) = value_fact.kind else {
         return;
     };
+    // Against a scalar-literal field (`'active' | 'inactive'`), a written
+    // constant must be compared as the literal it *is*: inference widens
+    // `'bogus'` to `string`, which the field's literal union has to accept
+    // (a `string` can't be shown to fall outside it), so the wrong value
+    // would slip through. Recovering the exact literal restores the equality
+    // check. Bounded to literal-constrained fields — everywhere else a
+    // literal is assignable exactly where its base is, so this changes nothing.
+    let value_kind = value_fact
+        .value
+        .as_ref()
+        .filter(|_| crate::kinds::constrains_scalar_literals(&field_kind))
+        .and_then(crate::kinds::scalar_value_literal_kind)
+        .unwrap_or(value_kind);
     if value_kind == Kind::Any || crate::kinds::kind_is_assignable_to(&value_kind, &field_kind) {
         return;
     }
