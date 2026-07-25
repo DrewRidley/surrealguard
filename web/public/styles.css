@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg: #0a0b0e;
   --surface: #131519;
   --surface-2: #1a1d23;
@@ -606,33 +607,7 @@ h1 .grad {
    look); only the page chrome flips. Overrides the design tokens
    plus the few hardcoded chrome backgrounds that need it.
    ============================================================ */
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f6f7f9;
-    --surface: #ffffff;
-    --surface-2: #f0f2f5;
-    --border: #dce0e6;
-    --border-soft: #e8ebef;
-    --text: #16181d;
-    --muted: #55606e;
-    --faint: #838d9a;
-    --accent: #5b4bde;
-    --accent-2: #0d9b68;
-    --red: #d23b3b;
-    --amber: #b26a00;
-  }
-  body { color: var(--text); }
-  nav { background: rgba(246, 247, 249, 0.78); }
-  /* dotted grid: white dots are invisible on a light page */
-  .grid-bg::before { background-image: radial-gradient(rgba(20,22,28,0.05) 1px, transparent 1px); }
-  ::selection { background: rgba(91, 75, 222, 0.22); }
-
-  /* the hero Guard is an editor panel — keep it dark so its light
-     code text and squiggles stay legible regardless of page theme */
-  .guard { background: #0f1116; border-color: #23262e; }
-  .guard-top { background: #0b0d11; border-bottom-color: #23262e; }
-
-  /* colored inline code inside light diagnostic panels needs contrast */
-  .diag .msg code, .gd-msg code { color: #8b3fd0; background: rgba(139,63,208,.08); }
-  .btn-primary { color: #ffffff; }
-}
+/* Dark-only: the engineered look depends on the dark surfaces, and most
+   panels (editor, terminal, code) are intentionally hardcoded dark. A light
+   flip left those inconsistent, so the site renders dark regardless of the
+   system theme (see `color-scheme: dark` on :root). */

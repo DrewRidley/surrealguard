@@ -86,18 +86,7 @@
   .fam table tbody td:first-child { color: var(--text); }
   .fam table td .cd .num { color: var(--fam, var(--text)); }
 
-  /* light theme: darken the pastel family accents so badges/labels keep
-     contrast on a white page (tints/borders are rgba and work either way) */
-  @media (prefers-color-scheme: light) {
-    .fam-1, .fam-nav .n1 { --fam:#0284c7; --jc:#0284c7; }
-    .fam-2, .fam-nav .n2 { --fam:#5b4bde; --jc:#5b4bde; }
-    .fam-3, .fam-nav .n3 { --fam:#0d9488; --jc:#0d9488; }
-    .fam-4, .fam-nav .n4 { --fam:#2563eb; --jc:#2563eb; }
-    .fam-5, .fam-nav .n5 { --fam:#c026d3; --jc:#c026d3; }
-    .fam-6, .fam-nav .n6 { --fam:#b45309; --jc:#b45309; }
-    .fam-7, .fam-nav .n7 { --fam:#0d9b68; --jc:#0d9b68; }
-    .fam-8, .fam-nav .n8 { --fam:#ea580c; --jc:#ea580c; }
-  }
+  /* Dark-only (matches the main site); no light flip. */
 </style>
 </head>
 <body>
