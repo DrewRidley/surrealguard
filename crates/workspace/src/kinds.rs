@@ -217,6 +217,95 @@ pub(crate) fn literal_base_kind(kind: &Kind) -> Option<Kind> {
     Some(base)
 }
 
+/// One layer peeled off a kind by [`peel_wrappers`], outermost first.
+///
+/// A wrapper carries no information about *what* it wraps, so the same list
+/// re-applies to whatever a traversal resolves on the far side of the payload
+/// — that is how `option<record<user>>.name` keeps its optionality.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KindWrapper {
+    /// An `option<...>`: an `Either` of exactly one payload arm plus at least
+    /// one `NONE`/`NULL` arm.
+    Optional,
+    Array(Option<u64>),
+    Set(Option<u64>),
+}
+
+/// Splits `kind` into the `option`/`array`/`set` layers around it and the
+/// single payload kind underneath (`option<array<record<user>>>` →
+/// `[Optional, Array(None)]` + `record<user>`). A bare kind peels to an empty
+/// wrapper list and itself.
+///
+/// A union with more than one non-`NONE` arm is *not* peeled: there is no
+/// single payload to traverse, so the caller keeps its conservative answer
+/// rather than picking an arm. The payload is returned as that whole `Either`,
+/// which no caller will recognise as a record link.
+pub(crate) fn peel_wrappers(kind: &Kind) -> (Vec<KindWrapper>, Kind) {
+    let mut wrappers = Vec::new();
+    let mut current = kind.clone();
+    loop {
+        let next = match &current {
+            Kind::Array(inner, len) => {
+                wrappers.push(KindWrapper::Array(*len));
+                (**inner).clone()
+            }
+            Kind::Set(inner, len) => {
+                wrappers.push(KindWrapper::Set(*len));
+                (**inner).clone()
+            }
+            Kind::Either(variants) => {
+                let mut payload = variants
+                    .iter()
+                    .filter(|variant| !matches!(variant, Kind::None | Kind::Null));
+                let Some(only) = payload.next().cloned() else {
+                    break;
+                };
+                if payload.next().is_some() {
+                    break;
+                }
+                // `Either([T])` (no NONE arm) is just `T` — no optionality to
+                // record, but still worth stepping into.
+                if variants.len() > 1 {
+                    wrappers.push(KindWrapper::Optional);
+                }
+                only
+            }
+            _ => break,
+        };
+        current = next;
+    }
+    (wrappers, current)
+}
+
+/// Re-applies the layers [`peel_wrappers`] removed, innermost last:
+/// `[Optional, Array(None)]` + `string` → `option<array<string>>`.
+pub(crate) fn rewrap_kind(wrappers: &[KindWrapper], inner: Kind) -> Kind {
+    wrappers
+        .iter()
+        .rev()
+        .fold(inner, |acc, wrapper| match wrapper {
+            KindWrapper::Optional => Kind::either(vec![Kind::None, acc]),
+            KindWrapper::Array(len) => Kind::Array(Box::new(acc), *len),
+            KindWrapper::Set(len) => Kind::Set(Box::new(acc), *len),
+        })
+}
+
+/// The linked tables of a kind that is a record link under any number of
+/// `option`/`array`/`set` wrappers, together with those wrappers.
+///
+/// `record<user>` → `([], [user])`; `option<record<user>>` →
+/// `([Optional], [user])`; `array<record<user>>` → `([Array], [user])`.
+/// Anything whose payload is not a `record<...>` — including a union with two
+/// unrelated arms — is not a link, so callers stay conservative.
+pub(crate) fn record_link_shape(
+    kind: &Kind,
+) -> Option<(Vec<KindWrapper>, Vec<surrealdb_types::Table>)> {
+    match peel_wrappers(kind) {
+        (wrappers, Kind::Record(targets)) => Some((wrappers, targets)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,5 +665,96 @@ mod tests {
         );
         // A plain (non-literal) kind has no literal base.
         assert_eq!(literal_base_kind(&Kind::String), None);
+    }
+
+    fn user_link() -> Kind {
+        Kind::Record(vec![Table::from("user")])
+    }
+
+    fn option_of(inner: Kind) -> Kind {
+        Kind::Either(vec![Kind::None, inner])
+    }
+
+    #[test]
+    fn wrappers_peel_outermost_first_and_rewrap_to_the_original() {
+        let cases: &[(&str, Kind, Vec<KindWrapper>)] = &[
+            ("bare", user_link(), vec![]),
+            ("option", option_of(user_link()), vec![KindWrapper::Optional]),
+            (
+                "array",
+                Kind::Array(Box::new(user_link()), None),
+                vec![KindWrapper::Array(None)],
+            ),
+            (
+                "set",
+                Kind::Set(Box::new(user_link()), None),
+                vec![KindWrapper::Set(None)],
+            ),
+            (
+                "option of array",
+                option_of(Kind::Array(Box::new(user_link()), None)),
+                vec![KindWrapper::Optional, KindWrapper::Array(None)],
+            ),
+            (
+                "sized array keeps its bound",
+                Kind::Array(Box::new(user_link()), Some(3)),
+                vec![KindWrapper::Array(Some(3))],
+            ),
+        ];
+        for (label, kind, expected) in cases {
+            let (wrappers, payload) = peel_wrappers(kind);
+            assert_eq!(&wrappers, expected, "{label}: wrappers");
+            assert_eq!(payload, user_link(), "{label}: payload");
+            // Re-applying the wrappers to the payload reconstructs the input,
+            // which is what makes `option<record<user>>.name` an
+            // `option<string>` rather than a bare `string`.
+            assert_eq!(rewrap_kind(&wrappers, payload), *kind, "{label}: rewrap");
+        }
+    }
+
+    #[test]
+    fn a_multi_arm_union_is_not_peeled() {
+        // Two real arms: there is no single payload to traverse, so the caller
+        // must keep its conservative answer instead of picking an arm.
+        let ambiguous = Kind::Either(vec![user_link(), Kind::Int]);
+        let (wrappers, payload) = peel_wrappers(&ambiguous);
+        assert!(wrappers.is_empty());
+        assert_eq!(payload, ambiguous);
+        assert!(record_link_shape(&ambiguous).is_none());
+
+        // …and neither is a union of two *different* collections.
+        let mixed = Kind::Either(vec![
+            Kind::Array(Box::new(user_link()), None),
+            Kind::Array(Box::new(Kind::Int), None),
+        ]);
+        assert!(record_link_shape(&mixed).is_none());
+    }
+
+    #[test]
+    fn record_link_shape_reports_the_targets_under_any_wrapping() {
+        let targets = vec![Table::from("user")];
+        assert_eq!(
+            record_link_shape(&option_of(user_link())),
+            Some((vec![KindWrapper::Optional], targets.clone()))
+        );
+        assert_eq!(
+            record_link_shape(&Kind::Array(Box::new(user_link()), None)),
+            Some((vec![KindWrapper::Array(None)], targets))
+        );
+        // A union link (`record<a | b>`) is one `Kind::Record` with two
+        // targets — still a link, and both targets are reported.
+        assert_eq!(
+            record_link_shape(&option_of(Kind::Record(vec![
+                Table::from("a"),
+                Table::from("b")
+            ]))),
+            Some((
+                vec![KindWrapper::Optional],
+                vec![Table::from("a"), Table::from("b")]
+            ))
+        );
+        // Not a link at all.
+        assert!(record_link_shape(&option_of(Kind::String)).is_none());
+        assert!(record_link_shape(&Kind::Any).is_none());
     }
 }

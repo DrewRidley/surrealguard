@@ -1981,8 +1981,14 @@ pub(crate) fn kind_for_path(table: &TableDef, segments: &[String]) -> Option<Kin
         .and_then(|field| field.kind.clone())
         .or_else(|| table.implicit_field_kind(head));
     match head_kind {
-        Some(kind @ Kind::Record(_)) if rest.is_empty() => Some(kind),
-        Some(Kind::Record(_)) => Some(Kind::Any),
+        // A link under any number of `option`/`array`/`set` wrappers is still
+        // a link: `option<record<user>>` crosses into `user` exactly as a bare
+        // `record<user>` does. Resolving what lies past it needs the schema,
+        // which this resolver doesn't have — `resolve_field_path` is the
+        // schema-aware entry point.
+        Some(kind) if crate::kinds::record_link_shape(&kind).is_some() => {
+            Some(if rest.is_empty() { kind } else { Kind::Any })
+        }
         _ => None,
     }
 }
@@ -2004,8 +2010,9 @@ pub(crate) fn resolve_field_path(
 ) -> Option<Kind> {
     for split in 1..segments.len() {
         let (prefix, rest) = segments.split_at(split);
-        if let Some(targets) = record_link_targets_at(table, prefix) {
-            return Some(resolve_across_link(schema, &targets, rest));
+        if let Some((wrappers, targets)) = record_link_targets_at(table, prefix) {
+            let resolved = resolve_across_link(schema, &targets, rest);
+            return Some(rewrap_link_result(&wrappers, resolved));
         }
     }
     kind_for_path(table, segments)
@@ -2013,24 +2020,42 @@ pub(crate) fn resolve_field_path(
 
 /// The linked tables when `prefix` names a record link on `table` — a declared
 /// `record<...>` field (leaf) or, for a single head segment, an implicit
-/// `id`/`in`/`out`. `None` when `prefix` is not a record link, so callers keep
+/// `id`/`in`/`out` — paired with the `option`/`array`/`set` wrappers around
+/// the link. `None` when `prefix` is not a record link, so callers keep
 /// resolving within the same table.
+///
+/// The wrappers matter: `option<record<user>>` and `array<record<user>>` are
+/// the two most common link shapes in real schemas, and both cross into `user`
+/// just as a bare `record<user>` does — but what the traversal *yields* must
+/// carry the wrappers back (see [`rewrap_link_result`]).
 fn record_link_targets_at(
     table: &TableDef,
     prefix: &[String],
-) -> Option<Vec<surrealdb_types::Table>> {
+) -> Option<(Vec<crate::kinds::KindWrapper>, Vec<surrealdb_types::Table>)> {
     if let Some(field) = table.fields.get(&prefix.join(".")) {
-        return match &field.kind {
-            Some(Kind::Record(targets)) => Some(targets.clone()),
-            _ => None,
-        };
+        return field.kind.as_ref().and_then(crate::kinds::record_link_shape);
     }
     if let [head] = prefix {
-        if let Some(Kind::Record(targets)) = table.implicit_field_kind(head) {
-            return Some(targets);
+        if let Some(kind) = table.implicit_field_kind(head) {
+            return crate::kinds::record_link_shape(&kind);
         }
     }
     None
+}
+
+/// Re-applies a link's `option`/`array`/`set` wrappers to what the traversal
+/// resolved on the far side: `option<record<user>>.name` is `option<string>`
+/// (the link can be NONE, so the field access can be too) and
+/// `array<record<user>>.name` is `array<string>` (field access distributes
+/// over a collection of links).
+///
+/// `Kind::Any` is already the "not provable" answer and absorbs the wrappers:
+/// `option<any>` claims no more than `any` and only clutters the rendering.
+fn rewrap_link_result(wrappers: &[crate::kinds::KindWrapper], resolved: Kind) -> Kind {
+    if matches!(resolved, Kind::Any) {
+        return Kind::Any;
+    }
+    crate::kinds::rewrap_kind(wrappers, resolved)
 }
 
 /// Resolves `rest` across a record link to `targets`, widening to `Kind::Any`
@@ -2077,7 +2102,7 @@ pub(crate) fn validate_field_path(
 ) {
     for split in 1..segments.len() {
         let (prefix, rest) = segments.split_at(split);
-        if let Some(targets) = record_link_targets_at(table, prefix) {
+        if let Some((_wrappers, targets)) = record_link_targets_at(table, prefix) {
             let [only] = targets.as_slice() else {
                 return;
             };
@@ -2107,7 +2132,12 @@ pub(crate) fn validate_field_path(
 /// field at all are both *not* opaque: their absence/children are enumerable.
 fn field_is_opaque_boundary(table: &TableDef, prefix: &[String]) -> bool {
     match table.fields.get(&prefix.join(".")) {
-        Some(field) => !matches!(&field.kind, Some(Kind::Record(_))),
+        // A link under `option`/`array`/`set` wrappers is traversable, so it
+        // is not a boundary — the remainder is checked on the linked table.
+        Some(field) => !field
+            .kind
+            .as_ref()
+            .is_some_and(|kind| crate::kinds::record_link_shape(kind).is_some()),
         None => false,
     }
 }
@@ -3181,6 +3211,141 @@ mod tests {
             finding.message().contains("`team` has no field `nope`"),
             "unexpected message: {}",
             finding.message()
+        );
+    }
+
+    /// TI-2: `option`/`array`/`set`-wrapped record links are links too. The
+    /// traversal must resolve on the linked table and carry the wrappers back,
+    /// so optionality is preserved and field access distributes over a
+    /// collection of links.
+    #[test]
+    fn wrapped_record_links_resolve_and_keep_their_wrappers() {
+        let schema = schema_from(
+            "DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE FIELD name ON user TYPE string;\n\
+             DEFINE TABLE team SCHEMAFULL;\n\
+             DEFINE FIELD owner ON team TYPE record<user>;\n\
+             DEFINE FIELD lead ON team TYPE option<record<user>>;\n\
+             DEFINE FIELD members ON team TYPE array<record<user>>;\n\
+             DEFINE FIELD watchers ON team TYPE set<record<user>>;\n\
+             DEFINE FIELD opt_members ON team TYPE option<array<record<user>>>;",
+        );
+
+        let (kind, diagnostics) = analyze_diagnostics(
+            &schema,
+            "SELECT owner.name AS o, lead.name AS l, members.name AS m, \
+             watchers.name AS w, opt_members.name AS om FROM team;",
+        );
+        let fields = object_fields(array_element(&kind));
+
+        // Control: a bare link is unchanged.
+        assert_eq!(fields["o"], Kind::String);
+        // The link can be NONE, so the field access can be too — the
+        // optionality must survive the traversal, not be silently stripped.
+        assert_eq!(fields["l"], Kind::Either(vec![Kind::None, Kind::String]));
+        // Field access distributes over a collection of links.
+        assert_eq!(fields["m"], Kind::Array(Box::new(Kind::String), None));
+        assert_eq!(fields["w"], Kind::Set(Box::new(Kind::String), None));
+        // Both wrappers, outermost first.
+        assert_eq!(
+            fields["om"],
+            Kind::Either(vec![
+                Kind::None,
+                Kind::Array(Box::new(Kind::String), None)
+            ])
+        );
+        assert!(
+            !codes(&diagnostics).contains(&1002),
+            "valid paths through wrapped links must not emit 1002: {:?}",
+            codes(&diagnostics)
+        );
+    }
+
+    /// TI-2: once a wrapped link resolves, the unknown-field check that
+    /// `field_is_opaque_boundary` used to suppress must come back — the
+    /// remainder is checked on the *linked* table, exactly as for a bare link.
+    #[test]
+    fn an_absent_field_past_a_wrapped_link_emits_1002() {
+        let schema = schema_from(
+            "DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE FIELD name ON user TYPE string;\n\
+             DEFINE TABLE team SCHEMAFULL;\n\
+             DEFINE FIELD lead ON team TYPE option<record<user>>;\n\
+             DEFINE FIELD members ON team TYPE array<record<user>>;",
+        );
+
+        for query in [
+            "SELECT lead.bogus FROM team;",
+            "SELECT members.bogus FROM team;",
+            "SELECT lead.{bogus} FROM team;",
+        ] {
+            let (_, diagnostics) = analyze_diagnostics(&schema, query);
+            let finding = diagnostics
+                .iter()
+                .find(|f| f.code().number() == 1002)
+                .unwrap_or_else(|| panic!("expected 1002 for `{query}`"));
+            assert!(
+                finding.message().contains("`user` has no field `bogus`"),
+                "unexpected message: {}",
+                finding.message()
+            );
+        }
+    }
+
+    /// TI-2: expression positions check the path against the row table without
+    /// crossing links, so an unresolvable wrapped link used to read as an
+    /// absent field — a false 1002 on a perfectly valid `WHERE`.
+    #[test]
+    fn a_wrapped_link_in_a_where_clause_is_not_a_missing_field() {
+        let schema = schema_from(
+            "DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE FIELD name ON user TYPE string;\n\
+             DEFINE TABLE team SCHEMAFULL;\n\
+             DEFINE FIELD owner ON team TYPE record<user>;\n\
+             DEFINE FIELD lead ON team TYPE option<record<user>>;\n\
+             DEFINE FIELD members ON team TYPE array<record<user>>;",
+        );
+
+        let (_, diagnostics) = analyze_diagnostics(
+            &schema,
+            "SELECT id FROM team WHERE lead.name = 'x' AND owner.name = 'y' \
+             AND members.name CONTAINS 'z';",
+        );
+        assert!(
+            !codes(&diagnostics).contains(&1002),
+            "a valid path through a wrapped link must not read as an absent field: {:?}",
+            codes(&diagnostics)
+        );
+    }
+
+    /// TI-2, negative: a union with a record arm *and* an unrelated arm has no
+    /// single payload to traverse. Stay conservative — no invented type, and
+    /// no 1002 on a remainder we cannot prove absent.
+    #[test]
+    fn a_union_that_is_only_partly_a_link_stays_conservative() {
+        let schema = schema_from(
+            "DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE FIELD name ON user TYPE string;\n\
+             DEFINE TABLE team SCHEMAFULL;\n\
+             DEFINE FIELD ambiguous ON team TYPE record<user> | int;",
+        );
+        // Sanity: the field really is a two-armed union, not a plain link.
+        assert!(
+            crate::kinds::record_link_shape(
+                schema.tables["team"].fields["ambiguous"]
+                    .kind
+                    .as_ref()
+                    .expect("declared kind")
+            )
+            .is_none(),
+            "the probe field must not peel to a record link"
+        );
+
+        let (_, diagnostics) = analyze_diagnostics(&schema, "SELECT ambiguous.bogus FROM team;");
+        assert!(
+            !codes(&diagnostics).contains(&1002),
+            "an unprovable union must not be traversed: {:?}",
+            codes(&diagnostics)
         );
     }
 
