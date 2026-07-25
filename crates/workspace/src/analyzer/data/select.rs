@@ -1153,10 +1153,36 @@ pub(crate) fn reference_back_traversal_kind(
     idiom: &ast::Idiom,
     schema: &SchemaIndex,
 ) -> Option<Kind> {
-    // A back-reference is `<~T` (the graph step), optionally followed by a
-    // single `[index]` subscript that selects ONE element out of the array
-    // (`<~T[0]` → `record<T>`, not `array<record<T>>`). A `[WHERE …]` filter or
-    // any deeper path is not modeled (stays `Any`).
+    let (target, indexed) = reference_back_target(idiom)?;
+    let target_name = target.node.as_str();
+    let target_table = schema.tables.get(target_name)?;
+    let points_back = target_table
+        .fields
+        .values()
+        .any(|field| field.reference && kind_targets_table(field.kind.as_ref(), self_table));
+    if !points_back {
+        return None;
+    }
+    let element = Kind::Record(vec![target_name.into()]);
+    Some(if indexed {
+        element
+    } else {
+        Kind::Array(Box::new(element), None)
+    })
+}
+
+/// The *syntactic* half of [`reference_back_traversal_kind`]: the table a
+/// record-reference back-traversal names, plus whether a single `[index]`
+/// subscript follows it.
+///
+/// A back-reference is `<~T` (the graph step), optionally followed by a single
+/// `[index]` subscript that selects ONE element out of the array (`<~T[0]` →
+/// `record<T>`, not `array<record<T>>`). A `[WHERE …]` filter or any deeper
+/// path is not modeled. This says only which table the step *names* — the
+/// table need not exist and need not carry a matching `REFERENCE` field, which
+/// is exactly what lets a caller tell the two apart: an unknown table is a
+/// typo (1001), a known table with no back-link is genuinely unresolvable.
+pub(crate) fn reference_back_target(idiom: &ast::Idiom) -> Option<(&ast::Spanned<String>, bool)> {
     let (graph, indexed) = match idiom.parts.as_slice() {
         [graph] => (graph, false),
         [graph, subscript] if matches!(subscript.node, ast::IdiomPart::Index(_)) => (graph, true),
@@ -1173,21 +1199,7 @@ pub(crate) fn reference_back_traversal_kind(
     let [target] = step.targets.as_slice() else {
         return None;
     };
-    let target_name = target.node.as_str();
-    let target_table = schema.tables.get(target_name)?;
-    let points_back = target_table
-        .fields
-        .values()
-        .any(|field| field.reference && kind_targets_table(field.kind.as_ref(), self_table));
-    if !points_back {
-        return None;
-    }
-    let element = Kind::Record(vec![target_name.into()]);
-    Some(if indexed {
-        element
-    } else {
-        Kind::Array(Box::new(element), None)
-    })
+    Some((target, indexed))
 }
 
 /// Whether a field's declared kind is (or wraps, through `option`/union/array)

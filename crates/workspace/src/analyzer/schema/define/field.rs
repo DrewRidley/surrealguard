@@ -27,6 +27,7 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
         .map_or(&no_partial, |parsed| &parsed.partial);
     check_field_definition(ctx, stmt, partial);
     check_record_targets(ctx, stmt, declared.as_ref());
+    check_reference_back_target(ctx, stmt);
 
     for (clause, checks_type) in [(&stmt.default, true), (&stmt.value, true)] {
         let Some(expr) = clause else {
@@ -98,6 +99,33 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
     );
 
     Kind::None
+}
+
+/// A record-reference back-traversal clause (`COMPUTED <~passkey`) must name a
+/// table that exists (1001).
+///
+/// Without this a typo'd target silently produced `unknown` and no finding:
+/// [`reference_back_traversal_kind`] returns `None` both for "the table does
+/// not exist" and for "the table exists but nothing references back", so the
+/// degraded type could not tell a typo from an unmodellable-but-legitimate
+/// shape. Only the first is reported — a known table whose `REFERENCE` fields
+/// point elsewhere is genuinely unresolvable, and `any` is the honest answer
+/// there.
+///
+/// [`reference_back_traversal_kind`]: crate::analyzer::data::select::reference_back_traversal_kind
+fn check_reference_back_target(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineField) {
+    for clause in [&stmt.computed, &stmt.value, &stmt.default] {
+        let Some(expr) = clause else {
+            continue;
+        };
+        let ast::Expr::Idiom(idiom) = &expr.node else {
+            continue;
+        };
+        let Some((target, _)) = crate::analyzer::data::select::reference_back_target(idiom) else {
+            continue;
+        };
+        crate::analyzer::data::check_table_reference(ctx, &target.node, target.span);
+    }
 }
 
 /// E2 — every table named in the field's declared type (`record<...>`) must

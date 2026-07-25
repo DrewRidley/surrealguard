@@ -1306,6 +1306,44 @@ INSERT INTO person { name: 'Ada' };
         );
     }
 
+    /// The 1001 findings raised for a one-source schema workspace.
+    fn unknown_table_findings(schema: &str) -> Vec<String> {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source("schema".into(), schema.into());
+        analyze_workspace(&workspace)
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code().number() == 1001)
+            .map(|finding| finding.message().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_back_reference_to_an_undefined_table_is_an_unknown_table_error() {
+        // `<~passkey` with no `passkey` table is a typo. It used to type as
+        // `unknown` with zero diagnostics, silently hiding the mistake.
+        let findings = unknown_table_findings(
+            "DEFINE TABLE account SCHEMAFULL;\n\
+             DEFINE FIELD passkeys ON account COMPUTED <~passkey;",
+        );
+        assert_eq!(findings, vec!["`passkey` is not a defined table".to_string()]);
+    }
+
+    #[test]
+    fn a_back_reference_to_a_table_without_a_backlink_stays_silent() {
+        // `task` exists but its REFERENCE fields point elsewhere, so the
+        // traversal is genuinely unresolvable — `any` is correct and there is
+        // nothing to report. (The workshop oracle's real `<~task` shape.)
+        let findings = unknown_table_findings(
+            "DEFINE TABLE project SCHEMAFULL;\n\
+             DEFINE TABLE task SCHEMAFULL;\n\
+             DEFINE FIELD project ON task TYPE record<project> REFERENCE;\n\
+             DEFINE TABLE sprint SCHEMAFULL;\n\
+             DEFINE FIELD tasks ON sprint COMPUTED <~task;",
+        );
+        assert!(findings.is_empty(), "unexpected findings: {findings:?}");
+    }
+
     #[test]
     fn if_expression_in_value_position_types_as_the_branch_union() {
         // An IF used as a value (`RETURN IF …`, which lowers to a subquery)
