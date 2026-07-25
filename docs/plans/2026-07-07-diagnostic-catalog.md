@@ -171,6 +171,7 @@ contract violation.
 | 4021 | SHOW CHANGES on a table without CHANGEFEED | | E | ✅ |
 | 4022 | SELECT from a DROP table | rows are never retained | W | ✅ |
 | 4023 | count() without GROUP BY yields 1 per row, not a total | add GROUP ALL for a total | W | ✅ |
+| 4024 | an IF branch is unreachable — its guard provably folds to a constant | `IF false { ... }`, the ELSE after `IF true { ... }` | W | ✅ constant-folded guard |
 
 Folded by the contract audit (2026-07-09): 4008, 4015 → 4007. Deleted:
 4014 — no statable contract (RETURN is legal at top level and in blocks).
