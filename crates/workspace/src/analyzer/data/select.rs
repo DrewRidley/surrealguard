@@ -4,9 +4,12 @@
 //! are `Kind::Literal(KindLiteral::Object(...))`, undeterminable positions
 //! are `Kind::Any` poison values. Graph traversals, destructure selections,
 //! and modifier clauses are consumed as structured `ast::*` values. The
-//! only use of source text is *naming*: an unaliased computed projection is
-//! keyed by its own source text (`SELECT age >= 18 FROM ...` produces the
-//! field `"age >= 18"`).
+//! only use of source text is *naming*, and only where SurrealDB itself
+//! falls back to it: an unaliased projection is keyed by its *simplified*
+//! form — a call by its bare function name (`string::len(name)` →
+//! `string::len`), an idiom by its `Field`/`Graph` parts alone
+//! (`name.len()` → `name`) — and by its own source text otherwise
+//! (`SELECT age >= 18 FROM ...` produces the field `"age >= 18"`).
 
 use std::collections::BTreeMap;
 
@@ -1198,16 +1201,47 @@ fn project_expr(
             return;
         }
 
-        // Idioms with parts we don't project yet (Start/Index/Method/...)
-        // still get their invariants checked.
+        // Idioms with parts the branches above don't project (Start/Index/
+        // Method/...) still get their invariants checked.
         ctx.with_row_table(ctx.schema().tables.get(&table.name), |ctx| {
             crate::analyzer::expression::check::check_value_expression(ctx, expr);
         });
-        fields.insert(
-            alias_name.unwrap_or_else(|| slice(ctx.source_text(), expr.span).to_string()),
-            Kind::Any,
-        );
+        match alias_name {
+            Some(alias) => {
+                fields.insert(alias, Kind::Any);
+            }
+            // Unaliased, the key follows SurrealDB's own simplification rule
+            // (`name.len()` → `name`, `tags[0]` → `tags`).
+            None => match simplified_key_segments(idiom) {
+                Some(segments) => insert_kind_at_path(fields, &segments, Kind::Any),
+                None => {
+                    fields.insert(slice(ctx.source_text(), expr.span).to_string(), Kind::Any);
+                }
+            },
+        }
         return;
+    }
+
+    // `type::field(path)` / `type::fields([paths])` are *named* projections:
+    // SurrealDB expands them into the fields their path strings name, so
+    // `type::field('meta.inner')` lands at the nested `meta.inner` and
+    // `type::fields(['a', 'b'])` produces both keys (verified on 3.0.5). An
+    // alias overrides the expansion, and a path that isn't statically known
+    // falls through to the ordinary naming below.
+    if alias_name.is_none() {
+        if let ast::Expr::Call(call) = &expr.node {
+            if let Some(paths) = const_field_path_args(call, ctx) {
+                // Check the call as usual (its own 5005 contract) — only the
+                // naming differs.
+                let _ = computed_kind(expr, table, ctx);
+                for path in paths {
+                    let segments: Vec<String> = path.split('.').map(str::to_string).collect();
+                    let kind = kind_for_path(table, &segments).unwrap_or(Kind::Any);
+                    insert_kind_at_path(fields, &segments, kind);
+                }
+                return;
+            }
+        }
     }
 
     // Computed projection: full expression inference.
@@ -1216,17 +1250,100 @@ fn project_expr(
     fields.insert(key, kind);
 }
 
-/// The result-object key for an unaliased computed projection. SurrealDB names
-/// a bare `count()` projection `count` (not its source text); every other
-/// computed projection is keyed by its own source text
-/// (`SELECT age >= 18 FROM ...` → the field `"age >= 18"`).
-fn unaliased_computed_key(expr: &ast::Spanned<ast::Expr>, source_text: &str) -> String {
+/// The statically-known field paths a `type::field` / `type::fields` call
+/// projects, when its argument is a constant (a literal, or a `LET` binding
+/// tracing back to one). `None` when the call is neither, or when the path
+/// argument isn't statically a string / list of strings — the projection is
+/// then named the ordinary way, since its runtime key is unknowable.
+fn const_field_path_args(call: &ast::Call, ctx: &mut AnalysisContext<'_>) -> Option<Vec<String>> {
+    use surrealdb_types::Value;
+
+    match call.path.node.as_str() {
+        "type::field" => match crate::analyzer::function::const_value_arg(ctx, call, 0)? {
+            Value::String(path) => Some(vec![path]),
+            _ => None,
+        },
+        "type::fields" => match crate::analyzer::function::const_value_arg(ctx, call, 0)? {
+            Value::Array(paths) => paths
+                .iter()
+                .map(|value| match value {
+                    Value::String(path) => Some(path.clone()),
+                    _ => None,
+                })
+                .collect(),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The result-object key for an unaliased computed projection.
+///
+/// SurrealDB names a projection after the *top-level* node, not its source
+/// text: a call is named by its bare function name — no parens, no arguments
+/// (`string::len(name)` → `string::len`, `time::now()` → `time::now`,
+/// `fn::abc(age)` → `fn::abc`, `count()` → `count`). Everything else keeps
+/// its source text, which is why a call *inside* a larger expression does
+/// not shorten it (`math::abs(age) + 1` is a binary, so it stays
+/// `"math::abs(age) + 1"`). Verified against SurrealDB 3.0.5.
+///
+/// A path-less call is a param invocation (`$f(age)`), which the engine names
+/// `($f)(age)` — a rendering we don't reproduce; those keep their source text.
+pub(crate) fn unaliased_computed_key(expr: &ast::Spanned<ast::Expr>, source_text: &str) -> String {
     if let ast::Expr::Call(call) = &expr.node {
-        if is_bare_count(call) {
-            return "count".to_string();
+        if !call.path.node.is_empty() {
+            return call.path.node.clone();
         }
     }
     slice(source_text, expr.span).to_string()
+}
+
+/// The result-object key path of an unaliased idiom projection SurrealDB
+/// *simplifies*: only `Field` and `Graph` parts name a key segment, so method
+/// calls, indexes, `[WHERE …]` filters, `[*]`/`[$]`, and `?.` contribute
+/// nothing (`name.len()` → `name`, `tags[0].len()` → `tags`,
+/// `meta.inner.deep.len()` → the nested `meta.inner.deep`,
+/// `tags.map(…).a` → the nested `tags.a`,
+/// `->knows->person.name.len()` → the nested `->knows.->person.name`).
+///
+/// `None` for shapes whose simplified rendering isn't a plain path — a
+/// leading `Start` value (`$obj.a.len()`, which the engine keys under a
+/// literal `$obj` segment), a destructure, or recursion — leaving those on
+/// the source-text fallback. Verified against SurrealDB 3.0.5.
+pub(crate) fn simplified_key_segments(idiom: &ast::Idiom) -> Option<Vec<String>> {
+    if !matches!(
+        idiom.parts.first().map(|part| &part.node),
+        Some(ast::IdiomPart::Field(_) | ast::IdiomPart::Graph { .. })
+    ) {
+        return None;
+    }
+    let mut segments = Vec::new();
+    for part in &idiom.parts {
+        match &part.node {
+            ast::IdiomPart::Field(name) => segments.push(name.clone()),
+            ast::IdiomPart::Graph { .. } => {
+                let (dir, target) = single_graph_target(&part.node)?;
+                let arrow = match dir {
+                    ast::GraphDir::Out => "->",
+                    ast::GraphDir::In => "<-",
+                    ast::GraphDir::Both => "<->",
+                };
+                segments.push(format!("{arrow}{target}"));
+            }
+            // Dropped by the engine's simplification.
+            ast::IdiomPart::Method { .. }
+            | ast::IdiomPart::Index(_)
+            | ast::IdiomPart::All
+            | ast::IdiomPart::Last
+            | ast::IdiomPart::Where(_)
+            | ast::IdiomPart::Optional => {}
+            ast::IdiomPart::Start(_)
+            | ast::IdiomPart::Destructure(_)
+            | ast::IdiomPart::Recurse { .. }
+            | ast::IdiomPart::Partial(_) => return None,
+        }
+    }
+    (!segments.is_empty()).then_some(segments)
 }
 
 fn computed_kind(
@@ -2710,6 +2827,124 @@ mod tests {
         let fields = object_fields(array_element(&kind));
         assert!(!fields.contains_key("count()"));
         assert_eq!(fields["count"], Kind::Int);
+    }
+
+    const KEY_SCHEMA: &str = "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD tags ON person TYPE array<string>;\nDEFINE FIELD meta ON person TYPE object;\nDEFINE FIELD meta.inner ON person TYPE object;\nDEFINE FIELD meta.inner.deep ON person TYPE string;\nDEFINE FUNCTION fn::abc($x: int) { RETURN $x + 1; };";
+
+    #[test]
+    fn an_unaliased_call_projection_is_keyed_by_the_bare_function_name() {
+        // Verified against SurrealDB 3.0.5: a top-level call is named by its
+        // function name, with no parens and no arguments — the *outer* one
+        // when calls nest.
+        let schema = schema_from(KEY_SCHEMA);
+
+        let fields = row_fields(
+            &schema,
+            "SELECT string::len(name), time::now(), fn::abc(age), string::len(string::uppercase(name)) FROM person;",
+        );
+
+        assert_eq!(fields["string::len"], Kind::Int);
+        assert_eq!(fields["time::now"], Kind::Datetime);
+        assert_eq!(fields["fn::abc"], Kind::Int);
+        assert!(!fields.contains_key("string::len(name)"), "got: {fields:?}");
+        assert!(!fields.contains_key("time::now()"), "got: {fields:?}");
+        assert!(!fields.contains_key("fn::abc(age)"), "got: {fields:?}");
+    }
+
+    #[test]
+    fn a_projection_that_is_not_a_top_level_call_keeps_its_source_text() {
+        // The rule is about the *top-level* node: a call nested inside a
+        // binary/cast/container leaves the projection keyed by source text
+        // (all four verified on 3.0.5).
+        let schema = schema_from(KEY_SCHEMA);
+
+        let fields = row_fields(
+            &schema,
+            "SELECT math::abs(age) + 1, age + 1, age > 20, <int> string::len(name) FROM person;",
+        );
+
+        assert!(fields.contains_key("math::abs(age) + 1"), "got: {fields:?}");
+        assert!(fields.contains_key("age + 1"), "got: {fields:?}");
+        assert!(fields.contains_key("age > 20"), "got: {fields:?}");
+        assert!(
+            fields.contains_key("<int> string::len(name)"),
+            "got: {fields:?}"
+        );
+        assert!(!fields.contains_key("math::abs"), "got: {fields:?}");
+    }
+
+    #[test]
+    fn an_unaliased_method_projection_drops_the_method_from_its_key() {
+        // `name.len()` returns under `name`, and a multi-part path keeps its
+        // nesting (`meta.inner.deep.len()` → `{meta: {inner: {deep: …}}}`).
+        // Indexes, filters and splats are dropped from the key the same way.
+        // All verified on 3.0.5.
+        let schema = schema_from(KEY_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT name.len() FROM person;");
+        assert!(fields.contains_key("name"), "got: {fields:?}");
+        assert!(!fields.contains_key("name.len()"), "got: {fields:?}");
+
+        let nested = row_fields(&schema, "SELECT meta.inner.deep.len() FROM person;");
+        let meta = object_fields(&nested["meta"]);
+        let inner = object_fields(&meta["inner"]);
+        assert!(inner.contains_key("deep"), "got: {nested:?}");
+
+        // Chained methods drop together; an index part drops too.
+        let chained = row_fields(&schema, "SELECT name.len().to_string(), tags[0] FROM person;");
+        assert!(chained.contains_key("name"), "got: {chained:?}");
+        assert!(chained.contains_key("tags"), "got: {chained:?}");
+        assert!(!chained.contains_key("tags[0]"), "got: {chained:?}");
+    }
+
+    #[test]
+    fn a_method_on_a_graph_traversal_keys_under_the_traversal_segments() {
+        // `->knows->person.name.len()` returns
+        // `{"->knows": {"->person": {name: …}}}` on 3.0.5 — the method drops,
+        // the traversal segments and field tail stay.
+        let schema = schema_from(
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;\nDEFINE TABLE knows TYPE RELATION IN person OUT person;",
+        );
+
+        let fields = row_fields(&schema, "SELECT ->knows->person.name.len() FROM person;");
+        let knows = object_fields(&fields["->knows"]);
+        let target = object_fields(&knows["->person"]);
+        assert!(target.contains_key("name"), "got: {fields:?}");
+    }
+
+    #[test]
+    fn a_leading_value_idiom_keeps_its_source_text_key() {
+        // `$obj.a.len()` is keyed under a literal `$obj` segment by the
+        // engine, a rendering we don't reproduce — those keep source text
+        // rather than silently claiming a wrong path.
+        let schema = schema_from(KEY_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT $obj.a.len() FROM person;");
+        assert!(fields.contains_key("$obj.a.len()"), "got: {fields:?}");
+        assert!(!fields.contains_key("a"), "got: {fields:?}");
+    }
+
+    #[test]
+    fn type_field_projections_are_named_by_the_fields_they_select() {
+        // 3.0.5 expands `type::field`/`type::fields` into the named fields
+        // themselves — `type::fields(['name', 'age'])` returns `{name, age}`.
+        let schema = schema_from(KEY_SCHEMA);
+
+        let single = row_fields(&schema, "SELECT type::field('meta.inner.deep') FROM person;");
+        let meta = object_fields(&single["meta"]);
+        let inner = object_fields(&meta["inner"]);
+        assert_eq!(inner["deep"], Kind::String);
+
+        let many = row_fields(&schema, "SELECT type::fields(['name', 'age']) FROM person;");
+        assert_eq!(many["name"], Kind::String);
+        assert_eq!(many["age"], Kind::Int);
+
+        // An alias overrides the expansion, and a non-constant path falls
+        // back to the ordinary naming (the runtime key is unknowable).
+        let aliased = row_fields(&schema, "SELECT type::field('name') AS n FROM person;");
+        assert!(aliased.contains_key("n"), "got: {aliased:?}");
+        let dynamic = row_fields(&schema, "SELECT type::field($path) FROM person;");
+        assert!(dynamic.contains_key("type::field"), "got: {dynamic:?}");
     }
 
     #[test]
