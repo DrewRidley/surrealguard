@@ -792,7 +792,7 @@ pub(crate) fn function_def_from_ast(
 /// analyzed here only to read its type — a scratch diagnostics sink is
 /// discarded, so this never emits findings (the walk's `DEFINE FUNCTION`
 /// analyzer owns the body's real diagnostics).
-fn infer_untyped_return(
+pub(crate) fn infer_untyped_return(
     def: &ast::DefineFunction,
     source: &SourceId,
     text: &str,

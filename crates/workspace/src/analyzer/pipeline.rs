@@ -145,6 +145,43 @@ pub(crate) fn analyze_sources_with(
             }
         }
 
+        // Cross-source function returns: `apply_additive_define` (and the hoist
+        // above) imported functions with their bodies inferred against an empty
+        // catalog, so a body reading a *table* degraded to `Any`. Now that
+        // `working` holds every other source's tables, re-infer each still-
+        // untyped function's return against it so a caller in this source
+        // resolves the real type instead of `Any`. Compute-then-apply because
+        // `infer_untyped_return` borrows `working` immutably; only functions
+        // with neither a declared nor an already-inferred return are touched,
+        // and a body that stays `Any` is left as-is (no false precision).
+        let mut reinferred: Vec<(String, surrealdb_types::Kind)> = Vec::new();
+        for (other, other_statements) in &sources {
+            for stmt in other_statements {
+                let ast::Statement::Define(ast::DefineStmt::Function(def)) = &stmt.node else {
+                    continue;
+                };
+                match working.function(&def.name.node) {
+                    Some(function)
+                        if function.return_kind.is_none()
+                            && function.inferred_return.is_none() => {}
+                    _ => continue,
+                }
+                if let Some(kind) = crate::schema::infer_untyped_return(
+                    def,
+                    other.source_id(),
+                    other.text(),
+                    Some(&working),
+                ) {
+                    reinferred.push((def.name.node.clone(), kind));
+                }
+            }
+        }
+        for (name, kind) in reinferred {
+            if let Some(function) = working.functions.get_mut(&name) {
+                function.inferred_return = Some(kind);
+            }
+        }
+
         let mut source_analysis = SourceAnalysis::default();
         let mut analyzer_env = StatementEnv::default();
         // Transaction pairing (4007): BEGIN opens exactly one transaction

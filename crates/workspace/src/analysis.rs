@@ -487,6 +487,31 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn cross_source_udf_call_resolves_a_table_bearing_body_return() {
+        // A function whose body reads a table, defined in one source and called
+        // from another: the call must resolve the real return type, not `Any`.
+        // (The cross-source catalog import used to infer the body against an
+        // empty schema, degrading table-bearing bodies to `Any`.)
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE unit SCHEMAFULL;\n\
+             DEFINE FIELD label ON unit TYPE string;\n\
+             DEFINE FUNCTION fn::pick() { RETURN (SELECT VALUE label FROM ONLY unit); };"
+                .into(),
+        );
+        let query = workspace.add_virtual_source("query".into(), "RETURN fn::pick();".into());
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(
+            output.sources[&query].response_kind,
+            Some(Kind::String),
+            "cross-source UDF call must resolve its table-bearing body return"
+        );
+    }
+
+    #[test]
     fn analyze_workspace_returns_outputs_for_all_registered_sources() {
         let mut workspace = Workspace::default();
         let good = workspace.add_virtual_source("schema".into(), "DEFINE TABLE person;".into());
