@@ -15,11 +15,11 @@ import { SurrealGuardClient, type LiveDescriptor, type RecordId } from "../src/i
 declare module "../src/registry.js" {
   interface SurqlRegistry {
     "LIVE SELECT * FROM user": {
-      result: Array<{ id: RecordId<"user">; name: string; age: number }>;
+      result: [Array<{ id: RecordId<"user">; name: string; age: number }>];
       params: Record<string, never>;
     };
     "SELECT name FROM user": {
-      result: Array<{ name: string }>;
+      result: [Array<{ name: string }>];
       params: Record<string, never>;
     };
   }

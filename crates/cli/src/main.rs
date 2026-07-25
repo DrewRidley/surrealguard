@@ -444,10 +444,20 @@ fn run_generate(root: &Path, out: Option<&Path>) -> Result<GenerateReport, Box<d
         .iter()
         .filter_map(|(source_id, query, _host_id)| {
             let output = analysis.sources.get(source_id)?;
-            let result_type = output
-                .response_kind
-                .as_ref()
-                .map_or_else(|| "unknown".into(), surrealguard_codegen::ts_type);
+            // The SurrealDB SDK returns one result per statement, in order. Build
+            // the per-statement response tuple: a responding statement contributes
+            // its rendered result kind, a non-responder contributes `null`.
+            let elements: Vec<String> = output
+                .statements
+                .iter()
+                .map(|statement| {
+                    statement
+                        .response_kind
+                        .as_ref()
+                        .map_or_else(|| "null".into(), surrealguard_codegen::ts_type)
+                })
+                .collect();
+            let result_type = format!("[{}]", elements.join(", "));
             Some(surrealguard_codegen::QueryEntry {
                 parts: query.parts(),
                 result_type,

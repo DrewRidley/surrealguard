@@ -8,16 +8,22 @@
 
 import { SurrealGuardClient, type RecordId } from "../src/index.js";
 
-// Stand in for what `surrealguard generate` emits.
+// Stand in for what `surrealguard generate` emits. Each `result` is the
+// per-statement response tuple: one element per statement, `null` for a
+// non-responder. A single-statement query is a one-element tuple.
 declare module "../src/registry.js" {
   interface SurqlRegistry {
     "SELECT * FROM user": {
-      result: Array<{ id: RecordId<"user">; name: string; age: number }>;
+      result: [Array<{ id: RecordId<"user">; name: string; age: number }>];
       params: Record<string, never>;
     };
     "SELECT * FROM user WHERE team = $team": {
-      result: Array<{ id: RecordId<"user">; name: string }>;
+      result: [Array<{ id: RecordId<"user">; name: string }>];
       params: { team: string };
+    };
+    "SELECT name FROM user; SELECT age FROM user": {
+      result: [Array<{ name: string }>, Array<{ age: number }>];
+      params: Record<string, never>;
     };
   }
 }
@@ -34,6 +40,15 @@ async function main() {
   // Params required and typed from the query text.
   const [team] = await db.query("SELECT * FROM user WHERE team = $team", { team: "red" });
   team[0]!.name.length;
+
+  // Multi-statement: one result per statement, in order. Each destructured
+  // element is typed from its own statement.
+  const [names, ages] = await db.query("SELECT name FROM user; SELECT age FROM user");
+  names[0]!.name.toUpperCase();
+  ages[0]!.age.toFixed(0);
+  // @ts-expect-error the tuple has exactly two statements — no third element
+  const [, , third] = await db.query("SELECT name FROM user; SELECT age FROM user");
+  void third;
 
   // The SDK's fluent builder is still available on a typed query. Chaining a
   // builder method resolves to the SDK's own `unknown[]` (its generic default);

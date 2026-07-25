@@ -12,9 +12,11 @@
  * await db.connect("ws://localhost:8000/rpc");
  *
  * // Result + params inferred from the query text. The SDK's `query` resolves
- * // to the per-statement tuple, so destructure the first statement's result:
+ * // to the per-statement tuple (one element per statement), so destructure the
+ * // statements in order:
  * const [users] = await db.query("SELECT * FROM user");
  * const [team] = await db.query("SELECT * FROM user WHERE team = $team", { team: "red" });
+ * const [names, ages] = await db.query("SELECT name FROM user; SELECT age FROM user");
  * ```
  */
 
@@ -35,12 +37,14 @@ export type ArgsOf<Q extends string> = Q extends keyof SurqlRegistry
 
 /**
  * The value a `db.query(...)` promise resolves to. SurrealDB returns one result
- * per statement, so a registered (single-statement) query resolves to a
- * one-element tuple carrying its result; a dynamic string resolves to the
- * SDK's `unknown[]`.
+ * per statement, in source order. A registered query's `result` **is** that
+ * per-statement tuple (one element per statement, `null` for a non-responder
+ * like `LET`/`DEFINE`), so it resolves directly to that tuple — a single-
+ * statement query is a one-element tuple you destructure with `const [rows]`. A
+ * dynamic string resolves to the SDK's `unknown[]`.
  */
 export type QueryResultOf<Q extends string> = Q extends keyof SurqlRegistry
-  ? [SurqlRegistry[Q]["result"]]
+  ? SurqlRegistry[Q]["result"]
   : unknown[];
 
 /**

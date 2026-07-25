@@ -9,6 +9,12 @@
 //! tagged-template string arrays — the TS#33304 limit, the same reason gql.tada
 //! uses the call form `graphql("...")`).
 //!
+//! Each entry's `result` is the query's **per-statement response tuple**: the
+//! SurrealDB SDK returns one result per statement, in source order, so the tuple
+//! has one element per statement. A responding statement (SELECT/RETURN/…)
+//! contributes its result type; a non-responding statement (LET/DEFINE/…)
+//! contributes `null`. A single-statement query is therefore a one-element tuple.
+//!
 //! ```ts
 //! import { SurrealGuardClient } from "./surrealguard.generated";
 //!
@@ -17,9 +23,14 @@
 //!
 //! // ...augments @surrealguard/client with:
 //! //   "SELECT name FROM person WHERE team = $team":
-//! //     { result: Array<{ name: string }>; params: { team: string } }
+//! //     { result: [Array<{ name: string }>]; params: { team: string } }
 //! const [rows] = await db.query("SELECT name FROM person WHERE team = $team", { team: "red" });
-//! //     ^ Array<{ name: string }> — one result per statement, params typed from the text
+//! //     ^ Array<{ name: string }> — the first (only) statement's result
+//!
+//! //   "LET $t = time::now(); SELECT name FROM person":
+//! //     { result: [null, Array<{ name: string }>]; params: Record<string, never> }
+//! const [, people] = await db.query("LET $t = time::now(); SELECT name FROM person");
+//! //     ^ the LET responds with null; the SELECT's result is the second element
 //! ```
 
 use surrealguard_workspace::analysis::ParamInference;
@@ -29,7 +40,9 @@ pub struct QueryEntry {
     /// The template's static parts, in order (one part, no substitutions,
     /// for a plain template).
     pub parts: Vec<String>,
-    /// The inferred response kind rendered as TypeScript.
+    /// The per-statement response tuple rendered as TypeScript: one element per
+    /// statement in source order, each a responding statement's result type or
+    /// `null` for a non-responder (e.g. `[Array<{ name: string }>]`).
     pub result_type: String,
     /// The query's inferred parameters (named + `__hostN` substitutions).
     pub params: Vec<ParamInference>,
@@ -109,7 +122,7 @@ mod tests {
                 "SELECT name FROM person WHERE age > ".into(),
                 " AND team = $team".into(),
             ],
-            result_type: "Array<{ name: string }>".into(),
+            result_type: "[Array<{ name: string }>]".into(),
             params: vec![
                 ParamInference {
                     name: "team".into(),
@@ -131,7 +144,7 @@ mod tests {
         let rendered = render_registry(&entries);
 
         assert!(rendered.contains("\"SELECT name FROM person WHERE age > ${} AND team = $team\""));
-        assert!(rendered.contains("result: Array<{ name: string }>;"));
+        assert!(rendered.contains("result: [Array<{ name: string }>];"));
         assert!(rendered.contains("params: { team: string }"));
         assert!(rendered.contains("declare module \"@surrealguard/client\""));
         assert!(rendered.contains("interface SurqlRegistry"));

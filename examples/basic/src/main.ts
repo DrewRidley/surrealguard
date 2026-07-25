@@ -35,6 +35,23 @@ async function main() {
     console.log(person.name, person.age, person.team);
   }
 
+  // ---- Multi-statement: one result per statement, in order ------------------
+  // The SDK returns one result per statement, so a two-statement query resolves
+  // to a two-element tuple. Each destructured element is typed from its own
+  // statement: `names` is the first SELECT's rows, `ages` the second's.
+  const [names, ages] = await db.query(
+    "SELECT name FROM person; SELECT age FROM person",
+  );
+  for (const { name } of names) console.log(name.toUpperCase());
+  for (const { age } of ages) console.log(age.toFixed(0));
+
+  // The tuple has exactly two statements — a third element is out of range.
+  // @ts-expect-error the result tuple has no third statement.
+  const [, , third] = await db.query(
+    "SELECT name FROM person; SELECT age FROM person",
+  );
+  void third;
+
   // ---- The guarantee, made concrete ---------------------------------------
   // A wrong param type is a *compile* error, not a runtime surprise. `team` is
   // a `RecordId<"team">` (a branded string); a number is rejected. The

@@ -16,8 +16,8 @@ export { SurrealGuardClient } from "@surrealguard/client";
 
 declare module "@surrealguard/client" {
   interface SurqlRegistry {
-    "SELECT name, age FROM person WHERE age > ${}": { result: Array<{ age: number; name: string }>; params: Record<string, never> };
-    "SELECT name FROM person WHERE team = $team": { result: Array<{ name: string }>; params: { team: string } };
+    "SELECT name, age FROM person WHERE age > ${}": { result: [Array<{ age: number; name: string }>]; params: Record<string, never> };
+    "SELECT name FROM person WHERE team = $team": { result: [Array<{ name: string }>]; params: { team: string } };
   }
 }
 

@@ -18,8 +18,9 @@ export type { RecordId, GeoJSON } from "@surrealguard/client";
 
 declare module "@surrealguard/client" {
   interface SurqlRegistry {
-    "SELECT name FROM person WHERE team = $team": { result: Array<{ name: string }>; params: { team: RecordId<"team"> } };
-    "SELECT name, age, team FROM person": { result: Array<{ age: number; name: string; team: RecordId<"team"> }>; params: Record<string, never> };
+    "SELECT name FROM person WHERE team = $team": { result: [Array<{ name: string }>]; params: { team: RecordId<"team"> } };
+    "SELECT name, age, team FROM person": { result: [Array<{ age: number; name: string; team: RecordId<"team"> }>]; params: Record<string, never> };
+    "SELECT name FROM person; SELECT age FROM person": { result: [Array<{ name: string }>, Array<{ age: number }>]; params: Record<string, never> };
   }
 }
 

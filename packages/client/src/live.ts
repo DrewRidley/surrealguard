@@ -39,6 +39,14 @@ export interface LiveDescriptor<Row = unknown> {
 export type RowOf<T> = T extends ReadonlyArray<infer E> ? E : T;
 
 /**
+ * A registry `result` is the per-statement response tuple (one element per
+ * statement). A live query is a single statement, so its live row comes from
+ * that one element's `Array<Row>`. Unwrap the first tuple element; a plain
+ * (non-tuple) result passes through so either shape resolves.
+ */
+type FirstStatement<T> = T extends readonly [infer First, ...unknown[]] ? First : T;
+
+/**
  * Resolve a live query's row type from the registry. The generator keys a live
  * query by its analyzed text, which is `LIVE`-prefixed; the tagged template is
  * written without the prefix. So the `LIVE `-prefixed key is tried first, then
@@ -46,9 +54,9 @@ export type RowOf<T> = T extends ReadonlyArray<infer E> ? E : T;
  * degrades to `unknown` — the same non-`any` fallback `db.query` uses.
  */
 export type LiveRowOf<Q extends string> = `LIVE ${Q}` extends keyof SurqlRegistry
-  ? RowOf<SurqlRegistry[`LIVE ${Q}`]["result"]>
+  ? RowOf<FirstStatement<SurqlRegistry[`LIVE ${Q}`]["result"]>>
   : Q extends keyof SurqlRegistry
-    ? RowOf<SurqlRegistry[Q]["result"]>
+    ? RowOf<FirstStatement<SurqlRegistry[Q]["result"]>>
     : unknown;
 
 /** Prefix `LIVE ` unless the text already begins with it. */
