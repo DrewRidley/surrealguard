@@ -73,7 +73,16 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
         .iter()
         .any(|projection| matches!(projection, ast::Projection::Wildcard(_)))
     {
-        object_kind_for_all_fields(table)
+        // A GROUP clause synthesizes result rows out of group keys and
+        // accumulators — they are not materialized records, so they carry no
+        // `id`/`in`/`out`. (That a wildcard under GROUP still lists every
+        // declared field is a separate, pre-existing gap; this only declines
+        // to add a new claim on top of it.)
+        if stmt.group.is_some() {
+            object_kind_for_declared_fields(table)
+        } else {
+            object_kind_for_all_fields(table)
+        }
     } else if let Some(value_kind) = value_projection_kind(stmt, &table_name, table, ctx) {
         value_kind
     } else {
@@ -1877,12 +1886,25 @@ fn slice(text: &str, range: surrealguard_syntax::span::ByteRange) -> &str {
 // Shared schema-typed kind builders (used by both worlds and by mutations)
 // ---------------------------------------------------------------------------
 
-/// The closed object type of a table's full schema.
+/// The closed object type of a materialized row of `table`: every declared
+/// field plus the implicit record fields SurrealDB provides on every stored
+/// record — `id`, and `in`/`out` on a `TYPE RELATION` edge. Those live outside
+/// `table.fields` (see [`TableDef::implicit_field_kind`]) but they are part of
+/// every row the engine hands back, so every materialized-row context (`SELECT
+/// *`, a mutation's returned rows, a FETCH-materialized link, `$before`/
+/// `$after`) must carry them.
 pub(crate) fn object_kind_for_all_fields(table: &TableDef) -> Kind {
-    object_kind_for_field_prefix(table, &[])
+    object_kind_for_field_prefix(table, &[], true)
 }
 
-fn object_kind_for_field_prefix(table: &TableDef, prefix: &[String]) -> Kind {
+/// The declared fields only, with no implicit record fields. For rows that are
+/// *synthesized* rather than materialized — a grouped/aggregate result row is
+/// built from group keys and accumulators and carries no record identity.
+pub(crate) fn object_kind_for_declared_fields(table: &TableDef) -> Kind {
+    object_kind_for_field_prefix(table, &[], false)
+}
+
+fn object_kind_for_field_prefix(table: &TableDef, prefix: &[String], implicit: bool) -> Kind {
     let mut fields = BTreeMap::new();
 
     for field in table.fields.values() {
@@ -1905,11 +1927,23 @@ fn object_kind_for_field_prefix(table: &TableDef, prefix: &[String]) -> Kind {
         });
 
         let kind = if has_descendants {
-            object_kind_for_field_prefix(table, &child_prefix)
+            // A nested object is not a record: only the row itself carries
+            // `id`/`in`/`out`.
+            object_kind_for_field_prefix(table, &child_prefix, false)
         } else {
             field.kind.clone().unwrap_or(Kind::Any)
         };
         fields.insert(segment, kind);
+    }
+
+    if implicit && prefix.is_empty() {
+        // `or_insert`: an explicit `DEFINE FIELD id/in/out` always wins over
+        // the implicit kind.
+        for head in ["id", "in", "out"] {
+            if let Some(kind) = table.implicit_field_kind(head) {
+                fields.entry(head.to_string()).or_insert(kind);
+            }
+        }
     }
 
     object_literal(fields)
@@ -1925,7 +1959,7 @@ pub(crate) fn kind_for_path(table: &TableDef, segments: &[String]) -> Option<Kin
         .any(|field| field.path.len() > segments.len() && field.path.starts_with(segments));
 
     if has_descendants {
-        return Some(object_kind_for_field_prefix(table, segments));
+        return Some(object_kind_for_field_prefix(table, segments, false));
     }
 
     if let Some(field) = table.fields.get(&segments.join(".")) {
@@ -2251,6 +2285,184 @@ mod tests {
         let fields = object_fields(array_element(&kind));
         assert_eq!(fields["name"], Kind::String);
         assert_eq!(fields["age"], Kind::Int);
+        // Every stored record has an `id`; `*` returns it (TG-1).
+        assert_eq!(fields["id"], record_of("person"));
+        assert_eq!(fields.len(), 3);
+    }
+
+    fn record_of(table: &str) -> Kind {
+        Kind::Record(vec![surrealdb_types::Table::from(table)])
+    }
+
+    /// The row object of a SELECT's response (unwrapping the array).
+    fn row_fields(schema: &SchemaIndex, query: &str) -> BTreeMap<String, Kind> {
+        object_fields(array_element(&analyze(schema, query))).clone()
+    }
+
+    const RELATION_SCHEMA: &str = "DEFINE TABLE person SCHEMAFULL;\n\
+         DEFINE FIELD name ON person TYPE string;\n\
+         DEFINE TABLE post SCHEMAFULL;\n\
+         DEFINE FIELD title ON post TYPE string;\n\
+         DEFINE TABLE likes SCHEMAFULL TYPE RELATION FROM person TO post;\n\
+         DEFINE FIELD since ON likes TYPE datetime;";
+
+    #[test]
+    fn wildcard_rows_on_a_relation_carry_in_and_out_with_the_endpoint_kinds() {
+        let schema = schema_from(RELATION_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT * FROM likes;");
+        assert_eq!(fields["id"], record_of("likes"));
+        assert_eq!(fields["in"], record_of("person"));
+        assert_eq!(fields["out"], record_of("post"));
+        assert_eq!(fields["since"], Kind::Datetime);
+        assert_eq!(fields.len(), 4);
+    }
+
+    #[test]
+    fn a_multi_endpoint_relation_unions_its_in_kinds() {
+        let schema = schema_from(
+            "DEFINE TABLE a SCHEMAFULL;\nDEFINE FIELD x ON a TYPE int;\n\
+             DEFINE TABLE b SCHEMAFULL;\nDEFINE FIELD x ON b TYPE int;\n\
+             DEFINE TABLE e SCHEMAFULL TYPE RELATION FROM a|b TO b;\n\
+             DEFINE FIELD w ON e TYPE int;",
+        );
+
+        let fields = row_fields(&schema, "SELECT * FROM e;");
+        assert_eq!(
+            fields["in"],
+            Kind::Record(vec![
+                surrealdb_types::Table::from("a"),
+                surrealdb_types::Table::from("b"),
+            ])
+        );
+        assert_eq!(fields["out"], record_of("b"));
+    }
+
+    #[test]
+    fn a_non_relation_table_gets_no_in_or_out() {
+        let schema = schema_from(RELATION_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT * FROM person;");
+        assert!(!fields.contains_key("in"));
+        assert!(!fields.contains_key("out"));
+        assert!(fields.contains_key("id"));
+    }
+
+    #[test]
+    fn a_declared_id_field_wins_over_the_implicit_kind() {
+        let schema = schema_from(
+            "DEFINE TABLE custom SCHEMAFULL;\n\
+             DEFINE FIELD id ON custom TYPE string;\n\
+             DEFINE FIELD v ON custom TYPE int;",
+        );
+
+        let fields = row_fields(&schema, "SELECT * FROM custom;");
+        assert_eq!(fields["id"], Kind::String);
+    }
+
+    #[test]
+    fn nested_objects_inside_a_wildcard_row_carry_no_id() {
+        let schema = schema_from(
+            "DEFINE TABLE nest SCHEMAFULL;\n\
+             DEFINE FIELD o ON nest TYPE object;\n\
+             DEFINE FIELD o.q ON nest TYPE string;",
+        );
+
+        let fields = row_fields(&schema, "SELECT * FROM nest;");
+        assert_eq!(fields["id"], record_of("nest"));
+        // A nested object is not a record: only the row itself has identity.
+        let nested = object_fields(&fields["o"]);
+        assert!(!nested.contains_key("id"), "got: {nested:?}");
+        assert_eq!(nested["q"], Kind::String);
+    }
+
+    #[test]
+    fn omit_id_now_removes_the_implicit_id() {
+        let schema = schema_from(RELATION_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT * OMIT id FROM person;");
+        assert!(!fields.contains_key("id"), "got: {fields:?}");
+        assert_eq!(fields["name"], Kind::String);
+
+        let edge = row_fields(&schema, "SELECT * OMIT in, out FROM likes;");
+        assert!(!edge.contains_key("in"), "got: {edge:?}");
+        assert!(!edge.contains_key("out"), "got: {edge:?}");
+        assert_eq!(edge["id"], record_of("likes"));
+    }
+
+    #[test]
+    fn a_fetched_graph_target_materializes_with_its_id() {
+        let schema = schema_from(RELATION_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT ->likes->post AS p FROM person FETCH p;");
+        let post = object_fields(array_element(&fields["p"]));
+        assert_eq!(post["id"], record_of("post"));
+        assert_eq!(post["title"], Kind::String);
+    }
+
+    #[test]
+    fn a_fetched_record_link_materializes_with_its_id() {
+        let schema = schema_from(
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;\n\
+             DEFINE TABLE team SCHEMAFULL;\nDEFINE FIELD owner ON team TYPE record<person>;",
+        );
+
+        let fields = row_fields(&schema, "SELECT * FROM team FETCH owner;");
+        let owner = object_fields(&fields["owner"]);
+        assert_eq!(owner["id"], record_of("person"));
+        assert_eq!(owner["name"], Kind::String);
+    }
+
+    // --- shapes that must NOT gain an implicit `id` -------------------------
+
+    #[test]
+    fn an_explicit_projection_that_did_not_ask_for_id_does_not_gain_one() {
+        let schema = schema_from(RELATION_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT name FROM person;");
+        assert_eq!(fields.len(), 1);
+        assert!(!fields.contains_key("id"), "got: {fields:?}");
+
+        let edge = row_fields(&schema, "SELECT since FROM likes;");
+        assert_eq!(edge.len(), 1);
+        assert!(!edge.contains_key("in"), "got: {edge:?}");
+    }
+
+    #[test]
+    fn select_value_stays_scalar_and_gains_no_id() {
+        let schema = schema_from(RELATION_SCHEMA);
+
+        assert_eq!(
+            analyze(&schema, "SELECT VALUE name FROM person;"),
+            Kind::Array(Box::new(Kind::String), None)
+        );
+    }
+
+    #[test]
+    fn grouped_wildcard_rows_carry_no_implicit_id() {
+        let schema = schema_from(RELATION_SCHEMA);
+
+        // GROUP synthesizes result rows out of group keys and accumulators;
+        // they are not materialized records, so they have no identity.
+        for query in [
+            "SELECT * FROM person GROUP BY name;",
+            "SELECT * FROM person GROUP ALL;",
+        ] {
+            let fields = row_fields(&schema, query);
+            assert!(!fields.contains_key("id"), "{query}: {fields:?}");
+        }
+        let edge = row_fields(&schema, "SELECT * FROM likes GROUP BY since;");
+        assert!(!edge.contains_key("id"), "got: {edge:?}");
+        assert!(!edge.contains_key("in"), "got: {edge:?}");
+    }
+
+    #[test]
+    fn an_aggregate_projection_row_gains_no_id() {
+        let schema = schema_from(RELATION_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT count() AS c FROM person GROUP ALL;");
+        assert_eq!(fields.len(), 1);
+        assert!(!fields.contains_key("id"), "got: {fields:?}");
     }
 
     #[test]

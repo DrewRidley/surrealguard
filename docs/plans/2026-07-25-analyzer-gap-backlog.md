@@ -267,6 +267,21 @@ CREATE user SET name = 2 ** 3;     -- NOTHING
 ### TG-1 — Wildcard and mutation rows omit the implicit `id` (and `in`/`out` on RELATION tables)
 **Merged from:** 5 filings (typegen-inventory, select-projection, mutation-return, graph-references, schema-extraction). **Effort: small code / medium test fallout.**
 
+> **FIXED (2026-07-25).** `object_kind_for_field_prefix` injects `id` (and `in`/`out`
+> when `table.relation.is_some()`) at `prefix == []` only, via `entry().or_insert()`
+> so a declared `DEFINE FIELD id/in/out` wins. That covers all six materialized-row
+> callers at once: `SELECT *`, every mutation return row, FETCH/graph
+> materialization, and `DEFINE EVENT`'s `$before`/`$after`/`$value`.
+> **Deliberately excluded:** nested objects inside a row (a sub-object is not a
+> record); `SELECT VALUE`; explicit projections that didn't ask for `id`;
+> `RETURN NONE`/`RETURN DIFF`; and **wildcard-under-GROUP** — a grouped row is
+> synthesized from group keys and accumulators, not materialized, so
+> `object_kind_for_declared_fields` is used there instead. (That a wildcard under
+> GROUP still lists every declared field remains a separate pre-existing gap; the
+> carve-out only declines to stack a new false claim on top of it.)
+> `SELECT * OMIT id` stops being a silent no-op, and W7007 on `SELECT *, id`
+> becomes truthful. Oracle unchanged at 40 findings with the same distribution.
+
 **Root cause.** `object_kind_for_field_prefix` iterates `table.fields.values()` only. `TableDef::implicit_field_kind` — which already returns `record<self>` for `id` and the FROM/TO record kinds for `in`/`out` — is reached only from `kind_for_path`/`resolve_field_path`, i.e. the *explicit-projection* path. That's exactly why `SELECT id` works and `SELECT *` doesn't. Its doc comment ("they live outside `self.fields` so the schemaless `fields.is_empty()` gate stays untouched") explains *where* they're stored, not a decision to exclude them from `*`.
 
 **Symptom list (all one fix):**

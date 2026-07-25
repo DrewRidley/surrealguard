@@ -249,4 +249,57 @@ mod tests {
             finding.related()
         );
     }
+
+    #[test]
+    fn event_row_params_carry_the_implicit_id() {
+        // `$before`/`$after`/`$value` are full materialized rows, so `id`
+        // resolves on them (TG-1). Observed through the assignment contract:
+        // `$after.id` is a `record<t>`, not an untyped `any`.
+        let query = concat!(
+            "DEFINE TABLE t SCHEMAFULL;\n",
+            "DEFINE FIELD name ON t TYPE string;\n",
+            "DEFINE EVENT ev ON t WHEN $event = 'CREATE' THEN {\n",
+            "  UPDATE t SET name = $after.id;\n",
+            "};\n",
+        );
+        let mut workspace = Workspace::default();
+        let output = analyze_query(&mut workspace, query);
+        let finding = output
+            .diagnostics
+            .iter()
+            .find(|finding| finding.code().number() == 2001)
+            .expect("`$after.id` is a record<t>, which is not assignable to a string field");
+        assert!(
+            finding.message().contains("record<t>"),
+            "got: {}",
+            finding.message()
+        );
+    }
+
+    #[test]
+    fn event_row_params_on_a_relation_carry_in_and_out() {
+        let query = concat!(
+            "DEFINE TABLE person SCHEMAFULL;\n",
+            "DEFINE FIELD name ON person TYPE string;\n",
+            "DEFINE TABLE post SCHEMAFULL;\n",
+            "DEFINE FIELD title ON post TYPE string;\n",
+            "DEFINE TABLE likes SCHEMAFULL TYPE RELATION FROM person TO post;\n",
+            "DEFINE FIELD since ON likes TYPE datetime;\n",
+            "DEFINE EVENT ev ON likes WHEN $event = 'CREATE' THEN {\n",
+            "  UPDATE person SET name = $after.in;\n",
+            "};\n",
+        );
+        let mut workspace = Workspace::default();
+        let output = analyze_query(&mut workspace, query);
+        let finding = output
+            .diagnostics
+            .iter()
+            .find(|finding| finding.code().number() == 2001)
+            .expect("`$after.in` is a record<person>, not a string");
+        assert!(
+            finding.message().contains("record<person>"),
+            "got: {}",
+            finding.message()
+        );
+    }
 }

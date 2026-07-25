@@ -940,4 +940,97 @@ mod tests {
         let fields = object_fields(array_element(&kind));
         assert_eq!(fields["nonexistent_field"], Kind::Any);
     }
+
+    // --- TG-1: implicit `id` / `in` / `out` on returned rows ---------------
+
+    fn record_of(table: &str) -> Kind {
+        Kind::Record(vec![surrealdb_types::Table::from(table)])
+    }
+
+    /// The returned row object of a mutation (unwrapping the array).
+    fn row_fields(schema_src: &str, query: &str, statement_kind: &str) -> BTreeMap<String, Kind> {
+        object_fields(array_element(&build_kind(schema_src, query, statement_kind))).clone()
+    }
+
+    #[test]
+    fn every_full_row_return_mode_carries_the_implicit_id() {
+        // Default, RETURN AFTER, RETURN BEFORE and RETURN * all yield full
+        // materialized rows — every one of them has an `id`.
+        for (query, statement_kind) in [
+            ("CREATE person;", "CreateStatement"),
+            ("CREATE person RETURN AFTER;", "CreateStatement"),
+            ("UPDATE person SET age = 1 RETURN AFTER;", "UpdateStatement"),
+            ("UPDATE person SET age = 1 RETURN BEFORE;", "UpdateStatement"),
+            ("UPDATE person SET age = 1 RETURN *;", "UpdateStatement"),
+        ] {
+            let fields = row_fields(PERSON_SCHEMA, query, statement_kind);
+            assert_eq!(fields["id"], record_of("person"), "{query}");
+            assert_eq!(fields["name"], Kind::String, "{query}");
+            assert_eq!(fields.len(), 3, "{query}: {fields:?}");
+        }
+    }
+
+    #[test]
+    fn only_mutation_rows_carry_the_implicit_id_too() {
+        let kind = build_kind(PERSON_SCHEMA, "CREATE ONLY person:one;", "CreateStatement");
+
+        let fields = object_fields(&kind);
+        assert_eq!(fields["id"], record_of("person"));
+    }
+
+    #[test]
+    fn a_relation_edge_row_carries_id_in_and_out() {
+        const EDGE_SCHEMA: &str = "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD name ON person TYPE string;\n\
+             DEFINE TABLE post SCHEMAFULL;\n\
+             DEFINE FIELD title ON post TYPE string;\n\
+             DEFINE TABLE likes SCHEMAFULL TYPE RELATION FROM person TO post;\n\
+             DEFINE FIELD since ON likes TYPE datetime;";
+
+        // `build_kind` resolves the `person` table; go through the shared
+        // builder directly so the edge table is the target.
+        let parsed = parse_source(SourceId::new("schema"), EDGE_SCHEMA).expect("schema parses");
+        let schema = extract_schema(&[parsed]).schema;
+        let table = schema.tables.get("likes").expect("likes indexed");
+        let query = parse_source(SourceId::new("q"), "RELATE person:a->likes->post:b;")
+            .expect("query parses");
+        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        let mut ctx = AnalysisContext::scoped(
+            &schema,
+            query.source_id().clone(),
+            query.text(),
+            &mut diagnostics,
+            crate::statement_env::StatementEnv::default(),
+            None,
+        );
+        let kind = response_kind_for_target(false, None, table, &mut ctx);
+
+        let fields = object_fields(array_element(&kind));
+        assert_eq!(fields["id"], record_of("likes"));
+        assert_eq!(fields["in"], record_of("person"));
+        assert_eq!(fields["out"], record_of("post"));
+        assert_eq!(fields["since"], Kind::Datetime);
+    }
+
+    #[test]
+    fn return_modes_that_produce_no_row_gain_no_id() {
+        // RETURN NONE: an empty array, not a row.
+        assert_eq!(
+            build_kind(PERSON_SCHEMA, "CREATE person RETURN NONE;", "CreateStatement"),
+            Kind::Array(Box::new(Kind::Any), Some(0))
+        );
+        // RETURN DIFF: a patch list, not a row.
+        let diff = build_kind(PERSON_SCHEMA, "UPDATE person RETURN DIFF;", "UpdateStatement");
+        let patch = object_fields(array_element(array_element(&diff)));
+        assert!(!patch.contains_key("id"), "got: {patch:?}");
+        assert_eq!(patch.len(), 3);
+        // RETURN <fields> projects exactly what was asked for.
+        let projected = row_fields(
+            PERSON_SCHEMA,
+            "UPDATE person SET age = 30 RETURN age;",
+            "UpdateStatement",
+        );
+        assert_eq!(projected.len(), 1);
+        assert!(!projected.contains_key("id"), "got: {projected:?}");
+    }
 }
