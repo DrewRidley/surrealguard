@@ -46,6 +46,12 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
     `UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test precision_snapshot`.
     The snapshot records *current* behaviour, not correct behaviour: read every
     diff before accepting it.
+  - `crates/workspace/tests/any_ratchet.rs` — a per-site `any`/`unknown` count
+    held against a committed baseline. Precision may improve freely, never
+    degrade. Failures list the *sites*, not a total. A genuinely unknowable site
+    is frozen with a `# expected: <reason>` note in the baseline. Regenerate with
+    `UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test any_ratchet`
+    (regenerating preserves the `# expected:` notes).
 - **Grammar:** the parser is `tree-sitter-surrealql`, a path dependency at the
   sibling `../tree-sitter-surrealql`. CI checks it out alongside this repo.
 - **Design principle — contract-first diagnostics:** every construct has a
