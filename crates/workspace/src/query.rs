@@ -68,6 +68,62 @@ pub fn let_binding_hints(output: &AnalysisOutput) -> Vec<TypeHint> {
         .collect()
 }
 
+/// Inferred return-type ghosts for `DEFINE FUNCTION`s with no explicit `-> T`.
+///
+/// Emits a grey `-> <kind>` right after the parameter list's `)` (or `-> none`
+/// for a unit body), mirroring rust-analyzer's inferred return hint. A function
+/// that already declares `-> T` gets no ghost (it's written), and an
+/// undeterminable (`Any`) return produces none either — matching the
+/// low-noise policy of [`let_binding_hints`]. The return kind is read from the
+/// schema's `FunctionDef::inferred_return` (now resolved even cross-source).
+pub fn function_return_hints(text: &str, source: &SourceId, schema: &SchemaIndex) -> Vec<TypeHint> {
+    let Ok(parsed) = parse_source(source.clone(), text) else {
+        return Vec::new();
+    };
+    let mut hints = Vec::new();
+    for statement in &surrealguard_syntax::lower::lower_statements(&parsed) {
+        let ast::Statement::Define(ast::DefineStmt::Function(def)) = &statement.node else {
+            continue;
+        };
+        // Only a body with no written return type earns a ghost.
+        if def.return_ty.is_some() || def.body.is_none() {
+            continue;
+        }
+        // `inferred_return` is absent when the body is `Any` — suppress (no
+        // information worth an inline annotation); `Some(none)` is the unit body.
+        let Some(kind) = schema
+            .function(&def.name.node)
+            .and_then(|function| function.inferred_return.clone())
+        else {
+            continue;
+        };
+        // Anchor right after the parameters' closing `)`: scan from the last
+        // param's end (or the name, for a no-arg function) to the first `)`.
+        let search_from = def
+            .params
+            .last()
+            .map(|(name, ty)| ty.as_ref().map_or(name.span.end(), |ty| ty.span.end()))
+            .unwrap_or_else(|| def.name.span.end()) as usize;
+        let Some(relative) = text.get(search_from..).and_then(|rest| rest.find(')')) else {
+            continue;
+        };
+        let close = (search_from + relative + 1) as u32;
+        let Ok(range) = ByteRange::new(close.saturating_sub(1), close) else {
+            continue;
+        };
+        let label = if matches!(kind, Kind::None) {
+            "-> none".to_string()
+        } else {
+            format!("-> <{}>", elide_label(&render_kind(&kind)))
+        };
+        hints.push(TypeHint {
+            name_span: SourceSpan::new(source.clone(), range),
+            label,
+        });
+    }
+    hints
+}
+
 /// Truncates a rendered kind to [`INLAY_LABEL_MAX`] characters, appending `…`
 /// when it overruns. Operates on chars so a multibyte boundary is never split.
 fn elide_label(rendered: &str) -> String {
@@ -1694,6 +1750,21 @@ mod tests {
         let output = analyze_workspace(&workspace);
         let analysis = output.sources[&source].clone();
         (analysis, output.schema, source)
+    }
+
+    #[test]
+    fn function_return_hints_ghost_untyped_bodies_only() {
+        let text = "DEFINE FUNCTION fn::double($x: int) { RETURN $x * 2; };\n\
+                    DEFINE FUNCTION fn::noop($x: int) { LET $y = $x; };\n\
+                    DEFINE FUNCTION fn::greet() -> string { RETURN 'hi'; };";
+        let (_output, schema, source) = analyze(text);
+        let labels: Vec<String> = function_return_hints(text, &source, &schema)
+            .into_iter()
+            .map(|hint| hint.label)
+            .collect();
+        // `double`'s inferred `int` and `noop`'s unit body get ghosts, in source
+        // order; the explicitly-typed `greet` gets none (its return is written).
+        assert_eq!(labels, vec!["-> <int>".to_string(), "-> none".to_string()]);
     }
 
     #[test]

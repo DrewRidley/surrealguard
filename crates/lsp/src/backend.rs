@@ -167,6 +167,11 @@ impl LanguageServer for Backend {
 
         let hints = surrealguard_workspace::let_binding_hints(&analysis.output)
             .into_iter()
+            .chain(surrealguard_workspace::function_return_hints(
+                &analysis.text,
+                &analysis.source,
+                &analysis.schema,
+            ))
             .map(|hint| {
                 // The grey `: <kind>` sits right after the `$name` token.
                 let position = crate::text::offset_to_position(

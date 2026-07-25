@@ -21,7 +21,8 @@ pub use analysis::{
 };
 pub use expression::{ExpressionFact, ExpressionValueClass, PartialReason};
 pub use query::{
-    definition_at, hover_at, let_binding_hints, render_kind, DefinitionTarget, HoverInfo, TypeHint,
+    definition_at, function_return_hints, hover_at, let_binding_hints, render_kind,
+    DefinitionTarget, HoverInfo, TypeHint,
 };
 pub use schema::{
     AnalyzerDef, FieldDef, FieldPath, FunctionDef, ParamDef, RelationDef, SchemaIndex, TableDef,
