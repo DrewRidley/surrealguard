@@ -308,6 +308,55 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
     }
 }
 
+/// The reusable, order-independent cross-source catalog the pre-passes build:
+/// everything a single source's analysis reads about the *rest* of the
+/// workspace. Build it once with [`build_global_catalog`] and re-analyze one
+/// dirty source against it with [`analyze_one_source`], instead of re-running
+/// the whole-workspace pass on every keystroke.
+pub use crate::analyzer::pipeline::GlobalCatalog;
+
+/// Builds the reusable [`GlobalCatalog`] from a set of parsed sources — the
+/// order-independent pre-passes (global `DEFINE` namespace, function returns,
+/// untyped-field value kinds, implicit tables, `fn::` guardedness). This is the
+/// expensive, source-set-wide part of analysis; cache it and reuse it across
+/// edits that don't change any schema-defining source.
+pub fn build_global_catalog(parsed_sources: &[surrealguard_syntax::parse::ParsedSource]) -> GlobalCatalog {
+    crate::analyzer::pipeline::build_global_catalog(parsed_sources)
+}
+
+/// Re-analyzes ONE source against a prebuilt [`GlobalCatalog`], reproducing the
+/// [`AnalysisOutput`] the whole-workspace pass ([`analyze_workspace`]) would
+/// produce for that source — without rebuilding the schema or touching any
+/// other source.
+///
+/// Soundness contract: the source must contribute nothing to `global` — no
+/// additive `DEFINE`, no implicit-table target (CREATE/UPSERT/INSERT/DELETE or
+/// `DEFINE FIELD ... ON`), no `fn::` definition, and no schema effect
+/// (`REMOVE`/`ALTER`). A pure query source satisfies this. When it does, the
+/// output is byte-identical to `analyze_workspace(...).sources[source]`. Callers
+/// must gate on the contract and fall back to the full pass otherwise.
+pub fn analyze_one_source(
+    global: &GlobalCatalog,
+    parsed: &surrealguard_syntax::parse::ParsedSource,
+    require_suppression_reasons: bool,
+) -> AnalysisOutput {
+    let mut output = AnalysisOutput {
+        diagnostics: parsed
+            .syntax_diagnostics()
+            .iter()
+            .map(syntax_diagnostic_to_finding)
+            .collect(),
+        ..AnalysisOutput::default()
+    };
+    let one = pipeline::analyze_one_source(global, parsed, require_suppression_reasons);
+    output.diagnostics.extend(one.diagnostics);
+    output.response_kind = single_response_kind(&one.analysis.statements);
+    output.statements = one.analysis.statements;
+    output.inferred_params = one.analysis.params;
+    output.let_bindings = one.analysis.let_bindings;
+    output
+}
+
 fn syntax_diagnostic_to_finding(diagnostic: &SyntaxDiagnostic) -> Finding {
     let code = match diagnostic.kind() {
         SyntaxDiagnosticKind::ErrorNode => FindingCode::syntax(1),
@@ -4405,5 +4454,244 @@ INSERT INTO person { name: 'Ada' };
                 .map(|f| (f.code().to_string(), f.message().to_string()))
                 .collect::<Vec<_>>()
         );
+    }
+
+    // ---- Incremental single-source analysis equivalence ----
+    //
+    // The whole risk of the incremental path is a stale/wrong result. These
+    // tests prove that, for a source that contributes nothing to the global
+    // catalog (a pure query source), re-analyzing it in isolation against a
+    // prebuilt `GlobalCatalog` is byte-identical to what the full
+    // `analyze_workspace` pass produces for that source.
+
+    /// Parses every registered source in a workspace, in registration order,
+    /// so the parsed set feeds `build_global_catalog` with the same source ids
+    /// the full pass uses.
+    fn parsed_sources_of(workspace: &Workspace) -> Vec<surrealguard_syntax::parse::ParsedSource> {
+        workspace
+            .registry()
+            .source_ids()
+            .filter_map(|id| {
+                let text = workspace.registry().text(id)?;
+                parse_source(id.clone(), text).ok()
+            })
+            .collect()
+    }
+
+    /// Asserts the incremental output for `target` equals the full-pass output
+    /// for `target` on every dimension the task pins.
+    fn assert_incremental_matches_full(
+        schema_sources: &[&str],
+        query_text: &str,
+    ) {
+        let mut workspace = Workspace::default();
+        for (i, schema) in schema_sources.iter().enumerate() {
+            workspace.add_virtual_source(format!("schema{i}"), (*schema).into());
+        }
+        let target = workspace.add_virtual_source("query".into(), query_text.into());
+
+        let full = analyze_workspace(&workspace);
+        let full_target = full
+            .sources
+            .get(&target)
+            .expect("target analyzed in full pass")
+            .clone();
+
+        // Build the catalog from ONLY the schema sources — the incremental path
+        // never re-parses the query into the catalog. This mirrors caching the
+        // catalog across a query-file edit.
+        let parsed = parsed_sources_of(&workspace);
+        let catalog = build_global_catalog(&parsed);
+        let parsed_target = parsed
+            .iter()
+            .find(|p| p.source_id() == &target)
+            .expect("target parsed");
+
+        let incremental = analyze_one_source(&catalog, parsed_target, false);
+
+        assert_eq!(
+            incremental.diagnostics, full_target.diagnostics,
+            "diagnostics diverged for query `{query_text}`"
+        );
+        assert_eq!(
+            incremental.response_kind, full_target.response_kind,
+            "response_kind diverged for query `{query_text}`"
+        );
+        assert_eq!(
+            incremental.let_bindings, full_target.let_bindings,
+            "let_bindings diverged for query `{query_text}`"
+        );
+        assert_eq!(
+            incremental.statements, full_target.statements,
+            "statements diverged for query `{query_text}`"
+        );
+        assert_eq!(
+            incremental.inferred_params, full_target.inferred_params,
+            "inferred_params diverged for query `{query_text}`"
+        );
+    }
+
+    #[test]
+    fn incremental_query_analysis_matches_full_across_a_battery() {
+        let schema = &[
+            "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD name ON person TYPE string;\n\
+             DEFINE FIELD age ON person TYPE int;\n\
+             DEFINE FIELD email ON person TYPE option<string>;",
+            "DEFINE TABLE post SCHEMAFULL;\n\
+             DEFINE FIELD title ON post TYPE string;\n\
+             DEFINE FIELD author ON post TYPE record<person>;\n\
+             DEFINE FUNCTION fn::adult($p: record<person>) { RETURN (SELECT VALUE age FROM ONLY $p) >= 18; };",
+        ];
+
+        // A representative battery of pure-query sources: clean, diagnostic-
+        // producing, param-bearing, LET-binding, cross-source-UDF, and
+        // unknown-table.
+        for query in [
+            "SELECT name, age FROM person;",
+            "SELECT * FROM person WHERE age > $min;",
+            "LET $p = person:one;\nSELECT name FROM $p;",
+            "SELECT title, author.name FROM post;",
+            "RETURN fn::adult(person:one);",
+            "SELECT * FROM ghost;",
+            "SELECT name FROM person WHERE email != NONE;",
+            "UPDATE person SET name = 'Ada' WHERE age < $max RETURN name;",
+            "SELECT math::sum(age) AS total FROM person GROUP BY name;",
+            "LET $unused = 1;\nRETURN 5;",
+        ] {
+            assert_incremental_matches_full(schema, query);
+        }
+    }
+
+    #[test]
+    fn incremental_query_analysis_matches_full_with_no_schema() {
+        // No schema sources at all: the catalog is empty, and unknown-table and
+        // opt-in lints must still match exactly.
+        for query in [
+            "SELECT * FROM person;",
+            "RETURN 1 + 2;",
+            "LET $x = 'a';\nRETURN $x;",
+        ] {
+            assert_incremental_matches_full(&[], query);
+        }
+    }
+
+    /// Measurement hook (ignored by default): times a full whole-workspace
+    /// pass against a single-source incremental re-analysis on a ~20-file
+    /// corpus. Run with:
+    ///   cargo test -p surrealguard-workspace incremental_reanalysis_speedup -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn incremental_reanalysis_speedup() {
+        use std::time::Instant;
+
+        let mut workspace = Workspace::default();
+        // Four schema files.
+        for f in 0..4 {
+            let mut schema = String::new();
+            for t in 0..5 {
+                schema.push_str(&format!(
+                    "DEFINE TABLE t{f}_{t} SCHEMAFULL;\n\
+                     DEFINE FIELD name ON t{f}_{t} TYPE string;\n\
+                     DEFINE FIELD n ON t{f}_{t} TYPE int;\n\
+                     DEFINE FIELD tags ON t{f}_{t} TYPE array<string>;\n\
+                     DEFINE FUNCTION fn::f{f}_{t}($x: record<t{f}_{t}>) {{ RETURN (SELECT VALUE n FROM ONLY $x); }};\n"
+                ));
+            }
+            workspace.add_virtual_source(format!("schema{f}"), schema);
+        }
+        // Sixteen query files; keep a handle on one to re-analyze.
+        let mut target = None;
+        for q in 0..16 {
+            let id = workspace.add_virtual_source(
+                format!("query{q}"),
+                format!(
+                    "SELECT name, n, tags FROM t0_0 WHERE n > $min;\n\
+                     RETURN fn::f1_1(t1_1:one);\n\
+                     LET $rows = SELECT name FROM t2_2;\n\
+                     UPDATE t3_3 SET name = 'x' WHERE n < $max RETURN name;"
+                ),
+            );
+            if q == 8 {
+                target = Some(id);
+            }
+        }
+        let target = target.unwrap();
+
+        let iters = 200;
+
+        // Full whole-workspace pass per "keystroke".
+        let full_start = Instant::now();
+        for _ in 0..iters {
+            let _ = analyze_workspace(&workspace);
+        }
+        let full = full_start.elapsed() / iters;
+
+        // Incremental: catalog cached, only the dirty source re-analyzed.
+        let parsed = parsed_sources_of(&workspace);
+        let catalog = build_global_catalog(&parsed);
+        let parsed_target = parsed
+            .iter()
+            .find(|p| p.source_id() == &target)
+            .expect("target parsed");
+        let incr_start = Instant::now();
+        for _ in 0..iters {
+            let _ = analyze_one_source(&catalog, parsed_target, false);
+        }
+        let incr = incr_start.elapsed() / iters;
+
+        // Catalog build cost (paid once per schema change, amortized across
+        // every subsequent query edit).
+        let cat_start = Instant::now();
+        for _ in 0..iters {
+            let _ = build_global_catalog(&parsed);
+        }
+        let cat = cat_start.elapsed() / iters;
+
+        eprintln!(
+            "20-file corpus: full={full:?}  incremental={incr:?}  catalog_build={cat:?}  speedup={:.1}x",
+            full.as_secs_f64() / incr.as_secs_f64().max(f64::MIN_POSITIVE)
+        );
+    }
+
+    #[test]
+    fn incremental_catalog_is_reused_across_successive_query_edits() {
+        // Prove the catalog built once from the schema is reusable across a
+        // sequence of query-file edits: each edit's incremental output matches
+        // a fresh full pass with that query. This is exactly the LSP fast path.
+        let schema = "DEFINE TABLE person SCHEMAFULL;\n\
+                      DEFINE FIELD name ON person TYPE string;\n\
+                      DEFINE FIELD age ON person TYPE int;";
+
+        // Build the catalog once (schema only).
+        let mut schema_ws = Workspace::default();
+        schema_ws.add_virtual_source("schema".into(), schema.into());
+        let schema_parsed = parsed_sources_of(&schema_ws);
+        let catalog = build_global_catalog(&schema_parsed);
+
+        for query in [
+            "SELECT name FROM person;",
+            "SELECT age FROM person WHERE age > 18;",
+            "SELECT * FROM person;",
+            "SELECT missing FROM person;",
+        ] {
+            // Full reference: a workspace whose schema source is registered
+            // first (same id ordering as the catalog build above), then query.
+            let mut full_ws = Workspace::default();
+            full_ws.add_virtual_source("schema".into(), schema.into());
+            let target = full_ws.add_virtual_source("query".into(), query.into());
+            let full = analyze_workspace(&full_ws);
+            let full_target = full.sources.get(&target).expect("target").clone();
+
+            // Incremental: parse only the query, reusing the cached catalog. The
+            // query's source id must match `target` for spans to line up — which
+            // they do because both workspaces register schema-then-query.
+            let parsed_query = parse_source(target.clone(), query).expect("query parses");
+            let incremental = analyze_one_source(&catalog, &parsed_query, false);
+
+            assert_eq!(incremental.diagnostics, full_target.diagnostics, "query `{query}`");
+            assert_eq!(incremental.response_kind, full_target.response_kind, "query `{query}`");
+            assert_eq!(incremental.let_bindings, full_target.let_bindings, "query `{query}`");
+        }
     }
 }

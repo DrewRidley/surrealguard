@@ -28,11 +28,12 @@ use std::sync::Mutex;
 use tower_lsp::lsp_types::Url;
 
 use surrealguard_diagnostics::Finding;
+use surrealguard_syntax::parse::parse_source;
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
 use surrealguard_workspace::{
-    analyze_workspace, AnalysisOutput, SchemaIndex, Workspace as AnalysisWorkspace,
-    WorkspaceAnalysis,
+    analyze_one_source, analyze_workspace, build_global_catalog, AnalysisOutput, GlobalCatalog,
+    SchemaIndex, Workspace as AnalysisWorkspace, WorkspaceAnalysis,
 };
 
 /// A tracked document in the workspace.
@@ -51,8 +52,18 @@ pub struct Document {
 #[derive(Debug)]
 struct SurqlCache {
     /// Hash of the sorted `(uri, text)` set of every `.surql` document — the
-    /// exact inputs [`analyze_workspace`] consumes.
+    /// exact inputs [`analyze_workspace`] consumes. A mismatch forces a
+    /// recompute (which may be the incremental fast path).
     key: u64,
+    /// Hash of the schema-defining inputs: every `.surql` URI (so add/remove/
+    /// reorder invalidates) plus the *text* of only the schema-relevant
+    /// documents (those containing a DEFINE/REMOVE/ALTER/CREATE/UPSERT/INSERT/
+    /// DELETE). Editing a pure query document leaves this unchanged, which is
+    /// what makes the cached [`GlobalCatalog`] reusable across such an edit.
+    global_key: u64,
+    /// The reusable cross-source catalog behind this analysis, cached so a
+    /// query-only edit can re-analyze just the dirty document against it.
+    catalog: GlobalCatalog,
     /// The whole-workspace analysis result.
     analysis: WorkspaceAnalysis,
     /// Every `.surql` document in analysis order, with the source id it was
@@ -118,8 +129,13 @@ pub struct Workspace {
     /// Per-host-document diagnostics cache, keyed by URI.
     host_cache: Mutex<HashMap<Url, HostCache>>,
     /// Number of full [`analyze_workspace`] passes actually executed (cache
-    /// misses). Observability + a test hook proving the cache is reused.
+    /// misses that rebuilt the whole workspace). Observability + a test hook
+    /// proving the cache is reused.
     analyze_runs: AtomicU64,
+    /// Number of incremental single-source re-analyses (the fast path: a
+    /// query-only edit that reused the cached [`GlobalCatalog`] instead of
+    /// re-running the whole-workspace pass).
+    incremental_runs: AtomicU64,
 }
 
 impl Workspace {
@@ -155,6 +171,13 @@ impl Workspace {
         self.analyze_runs.load(Ordering::Relaxed)
     }
 
+    /// Number of incremental single-source re-analyses executed so far. A
+    /// query-only edit increments this instead of [`Self::analyze_run_count`],
+    /// proving the fast path reused the cached [`GlobalCatalog`].
+    pub fn incremental_run_count(&self) -> u64 {
+        self.incremental_runs.load(Ordering::Relaxed)
+    }
+
     /// The current input hash: the sorted `(uri, text)` set of every tracked
     /// `.surql` document. Any add, remove, or edit changes it.
     fn surql_key(&self) -> u64 {
@@ -169,6 +192,30 @@ impl Workspace {
         for doc in documents {
             doc.uri.as_str().hash(&mut hasher);
             doc.text.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    /// The schema-defining input hash: every `.surql` URI in sorted order (so
+    /// any add/remove/reorder invalidates it) plus the *text* of only the
+    /// schema-relevant documents. A pure query document's text is excluded, so
+    /// editing it does not change this key — that is precisely the condition
+    /// under which the cached [`GlobalCatalog`] stays valid and the dirty file
+    /// can be re-analyzed alone.
+    fn global_key(&self) -> u64 {
+        let mut documents: Vec<_> = self
+            .documents
+            .values()
+            .filter(|doc| is_surrealql_uri(&doc.uri))
+            .collect();
+        documents.sort_by(|left, right| left.uri.as_str().cmp(right.uri.as_str()));
+
+        let mut hasher = DefaultHasher::new();
+        for doc in documents {
+            doc.uri.as_str().hash(&mut hasher);
+            if is_schema_relevant(&doc.text) {
+                doc.text.hash(&mut hasher);
+            }
         }
         hasher.finish()
     }
@@ -214,17 +261,125 @@ impl Workspace {
             .expect("surql analysis cache mutex poisoned");
 
         if guard.as_ref().is_none_or(|cache| cache.key != key) {
-            let (analysis_workspace, sources) = self.build_surql_workspace();
-            let analysis = analyze_workspace(&analysis_workspace);
-            self.analyze_runs.fetch_add(1, Ordering::Relaxed);
-            *guard = Some(SurqlCache {
-                key,
-                analysis,
-                sources,
-            });
+            let fresh = self.compute_surql_cache(guard.as_ref(), key);
+            *guard = Some(fresh);
         }
 
         read(guard.as_ref().expect("cache populated above"))
+    }
+
+    /// Recomputes the `.surql` analysis cache for the current document state.
+    /// Takes the fast path when the schema-defining inputs are unchanged since
+    /// `prev` — re-analyzing only the dirty (query-only) documents against the
+    /// cached [`GlobalCatalog`] — and otherwise falls back to a full
+    /// whole-workspace pass. Either way the result is equivalent to a full
+    /// `analyze_workspace` at the current state.
+    fn compute_surql_cache(&self, prev: Option<&SurqlCache>, key: u64) -> SurqlCache {
+        let (analysis_workspace, sources) = self.build_surql_workspace();
+        let global_key = self.global_key();
+
+        // Fast path: the schema-defining inputs are unchanged, so the cached
+        // catalog is still valid and only query-only documents can have moved.
+        if let Some(prev) = prev {
+            if prev.global_key == global_key {
+                if let Some(fresh) = self.try_incremental(
+                    prev,
+                    &analysis_workspace,
+                    &sources,
+                    key,
+                    global_key,
+                ) {
+                    return fresh;
+                }
+            }
+        }
+
+        // Full path: rebuild the whole-workspace analysis and the catalog.
+        let analysis = analyze_workspace(&analysis_workspace);
+        let parsed: Vec<_> = sources
+            .iter()
+            .filter_map(|(id, _, text)| parse_source(id.clone(), text.as_str()).ok())
+            .collect();
+        let catalog = build_global_catalog(&parsed);
+        self.analyze_runs.fetch_add(1, Ordering::Relaxed);
+        SurqlCache {
+            key,
+            global_key,
+            catalog,
+            analysis,
+            sources,
+        }
+    }
+
+    /// Attempts to build the new cache incrementally from `prev`: re-analyze
+    /// only the documents whose text changed (all of which are query-only,
+    /// since the schema-defining inputs matched), reusing `prev`'s catalog,
+    /// schema, and every unchanged source's output. Returns `None` — forcing
+    /// the full fallback — if any dirty document fails to parse cleanly or is
+    /// new (not present in `prev`), so a divergent case is never served stale.
+    fn try_incremental(
+        &self,
+        prev: &SurqlCache,
+        analysis_workspace: &AnalysisWorkspace,
+        sources: &[(SourceId, Url, String)],
+        key: u64,
+        global_key: u64,
+    ) -> Option<SurqlCache> {
+        // Same schema-defining inputs implies the same `.surql` URI set and
+        // order, hence the same source ids; a differing count means something
+        // unexpected changed — bail to the safe full path.
+        if sources.len() != prev.sources.len() {
+            return None;
+        }
+
+        let prev_text: HashMap<&SourceId, &str> = prev
+            .sources
+            .iter()
+            .map(|(id, _, text)| (id, text.as_str()))
+            .collect();
+
+        let require_suppression_reasons = analysis_workspace
+            .config()
+            .diagnostics
+            .require_suppression_reasons;
+
+        let mut analysis = prev.analysis.clone();
+        let mut dirty = 0usize;
+        for (id, _uri, text) in sources {
+            match prev_text.get(id) {
+                Some(previous) if *previous == text.as_str() => continue, // unchanged
+                Some(_) => {}         // same source, new text -> re-analyze
+                None => return None,  // unknown source id -> bail to full
+            }
+
+            // Re-analyze this dirty (query-only) source against the cached
+            // catalog. A hard parse failure has no `ParsedSource`; bail so the
+            // full pass emits the parse-error finding exactly as before.
+            let parsed = parse_source(id.clone(), text.as_str()).ok()?;
+            let output = analyze_one_source(&prev.catalog, &parsed, require_suppression_reasons);
+            analysis.sources.insert(id.clone(), output);
+            dirty += 1;
+        }
+
+        // Rebuild the flattened diagnostics from the (mostly reused) per-source
+        // outputs. The schema is unchanged: a query-only source contributes no
+        // DEFINE/REMOVE/ALTER, so `prev`'s schema still holds.
+        analysis.diagnostics = analysis
+            .sources
+            .values()
+            .flat_map(|output| output.diagnostics.iter().cloned())
+            .collect();
+
+        self.incremental_runs
+            .fetch_add(dirty as u64, Ordering::Relaxed);
+
+        Some(SurqlCache {
+            key,
+            global_key,
+            catalog: prev.catalog.clone(),
+            analysis,
+            sources: sources.to_vec(),
+        })
     }
 
     /// Analyze a document through the shared `surrealguard-workspace`
@@ -436,6 +591,46 @@ fn is_surrealql_uri(uri: &Url) -> bool {
     path.ends_with(".surql") || path.ends_with(".surrealql")
 }
 
+/// Whether a document might contribute to the global catalog or the workspace
+/// schema — i.e. contains any statement that a *pure query* file does not. Used
+/// to decide catalog-cache invalidation: if a `.surql` document is NOT
+/// schema-relevant, editing it can only change its own analysis, so the cached
+/// catalog (and every other source's output) stays valid.
+///
+/// The check is conservative: it whole-word-matches the schema-affecting
+/// keywords, over-reporting (e.g. a keyword inside a string literal marks the
+/// file relevant → a full rebuild), but never under-reporting — every
+/// DEFINE/REMOVE/ALTER and every implicit-table-creating write
+/// (CREATE/UPSERT/INSERT/DELETE) leads with one of these keywords.
+fn is_schema_relevant(text: &str) -> bool {
+    const KEYWORDS: [&str; 7] = [
+        "define", "remove", "alter", "create", "upsert", "insert", "delete",
+    ];
+    let lower = text.to_ascii_lowercase();
+    KEYWORDS
+        .iter()
+        .any(|keyword| contains_whole_word(&lower, keyword))
+}
+
+/// Whether `haystack` (already lowercased) contains `keyword` as a whole word,
+/// so a field named `created_at` does not mark a file as `CREATE`-relevant.
+fn contains_whole_word(haystack: &str, keyword: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut from = 0;
+    while let Some(pos) = haystack[from..].find(keyword) {
+        let start = from + pos;
+        let end = start + keyword.len();
+        let before_ok = start == 0 || !is_ident(bytes[start - 1]);
+        let after_ok = end >= bytes.len() || !is_ident(bytes[end]);
+        if before_ok && after_ok {
+            return true;
+        }
+        from = start + 1;
+    }
+    false
+}
+
 /// Rebuilds a finding computed on an embedded query so its primary span
 /// points into the host file. Related spans (schema declarations) stay
 /// where they are.
@@ -558,30 +753,111 @@ mod tests {
     }
 
     #[test]
-    fn document_change_invalidates_the_cache() {
+    fn editing_a_query_document_takes_the_incremental_fast_path() {
         let (mut workspace, _schema, query) = workspace_with_schema_and_query();
 
         let _ = workspace.feature_analysis(&query).expect("features");
         assert_eq!(workspace.analyze_run_count(), 1);
+        assert_eq!(workspace.incremental_run_count(), 0);
 
-        // An edit changes the input hash -> the next request recomputes.
+        // Editing the pure query document leaves the schema-defining inputs
+        // unchanged -> the cached GlobalCatalog is reused and only the query is
+        // re-analyzed. No new full workspace pass runs.
         workspace.upsert(query.clone(), "SELECT name FROM person WHERE name != NONE;".into());
         let _ = workspace
             .diagnostic_analysis(&query)
             .expect("re-analyzed after edit");
         assert_eq!(
             workspace.analyze_run_count(),
-            2,
-            "an edit forces exactly one recompute"
+            1,
+            "a query-only edit does NOT rebuild the whole workspace"
+        );
+        assert_eq!(
+            workspace.incremental_run_count(),
+            1,
+            "a query-only edit re-analyzes exactly the dirty source"
         );
 
-        // Re-upserting identical text keeps the same hash -> cache hit.
+        // Re-upserting identical text keeps the same hash -> cache hit, no work.
         workspace.upsert(query.clone(), "SELECT name FROM person WHERE name != NONE;".into());
         let _ = workspace.feature_analysis(&query).expect("features");
+        assert_eq!(workspace.analyze_run_count(), 1);
+        assert_eq!(
+            workspace.incremental_run_count(),
+            1,
+            "re-upserting identical text does not recompute"
+        );
+    }
+
+    #[test]
+    fn editing_a_schema_document_rebuilds_the_whole_workspace() {
+        let (mut workspace, schema, query) = workspace_with_schema_and_query();
+
+        let _ = workspace.feature_analysis(&query).expect("features");
+        assert_eq!(workspace.analyze_run_count(), 1);
+        assert_eq!(workspace.incremental_run_count(), 0);
+
+        // Editing a schema-defining document (it contains DEFINE) changes the
+        // schema-defining inputs -> the catalog is rebuilt and the whole
+        // workspace is re-analyzed, because any file may depend on the change.
+        workspace.upsert(
+            schema.clone(),
+            "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD name ON person TYPE string;\n\
+             DEFINE FIELD age ON person TYPE int;"
+                .into(),
+        );
+        let _ = workspace
+            .diagnostic_analysis(&query)
+            .expect("re-analyzed after schema edit");
         assert_eq!(
             workspace.analyze_run_count(),
             2,
-            "re-upserting identical text does not recompute"
+            "a schema edit forces exactly one full recompute"
+        );
+        assert_eq!(
+            workspace.incremental_run_count(),
+            0,
+            "a schema edit never takes the incremental path"
+        );
+    }
+
+    #[test]
+    fn incremental_and_full_diagnostics_agree_for_a_query_edit() {
+        // The correctness guarantee end to end: the fast path's per-source
+        // diagnostics must equal what a from-scratch workspace produces for the
+        // same edited state.
+        let (mut workspace, _schema, query) = workspace_with_schema_and_query();
+        let _ = workspace.analyze_all();
+
+        let edited = "SELECT name, missing FROM person WHERE age > $min;";
+        workspace.upsert(query.clone(), edited.into());
+        let incremental = workspace
+            .diagnostic_analysis(&query)
+            .expect("incremental analysis");
+
+        // A pristine workspace at the edited state -> a guaranteed full pass.
+        let mut fresh = Workspace::new();
+        fresh.upsert(
+            Url::parse("file:///workspace/schema.surql").expect("uri"),
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;".into(),
+        );
+        fresh.upsert(query.clone(), edited.into());
+        let full = fresh
+            .diagnostic_analysis(&query)
+            .expect("full analysis");
+
+        let codes = |result: &DiagnosticAnalysisResult| {
+            result
+                .diagnostics
+                .iter()
+                .map(|f| (f.code().to_string(), f.span().range().start(), f.span().range().end()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            codes(&incremental),
+            codes(&full),
+            "incremental diagnostics must match a full pass at the same state"
         );
     }
 

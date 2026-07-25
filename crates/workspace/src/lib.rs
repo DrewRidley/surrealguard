@@ -16,8 +16,9 @@ mod suggest;
 mod suppress;
 
 pub use analysis::{
-    analyze_query, analyze_source, analyze_workspace, AnalysisOutput, LetBindingAnalysis,
-    ParamInference, SelectModifierAnalysis, StatementAnalysis, Workspace, WorkspaceAnalysis,
+    analyze_one_source, analyze_query, analyze_source, analyze_workspace, build_global_catalog,
+    AnalysisOutput, GlobalCatalog, LetBindingAnalysis, ParamInference, SelectModifierAnalysis,
+    StatementAnalysis, Workspace, WorkspaceAnalysis,
 };
 pub use expression::{ExpressionFact, ExpressionValueClass, PartialReason};
 pub use query::{

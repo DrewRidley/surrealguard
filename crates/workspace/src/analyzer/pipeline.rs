@@ -47,35 +47,64 @@ pub(crate) struct SourceAnalysis {
     pub let_bindings: Vec<LetBindingAnalysis>,
 }
 
-pub(crate) fn analyze_sources(parsed_sources: &[ParsedSource]) -> PipelineOutput {
-    analyze_sources_with(parsed_sources, false)
+/// The order-independent, cross-source outputs of the pipeline's pre-passes —
+/// everything a single source's analysis reads about the *rest* of the
+/// workspace. Building it is the expensive part of a whole-workspace pass that
+/// does NOT depend on which source is being analyzed, so it can be built once
+/// and reused to re-analyze one dirty source in isolation (see
+/// [`analyze_one_source`]).
+///
+/// A source contributes to this catalog only through *additive* `DEFINE`s
+/// (PRE-PASS 1/1b/1c), implicit schemaless-table targets (PRE-PASS 2), and its
+/// `fn::` guardedness. A source with none of those (a pure query file) adds
+/// nothing here, which is exactly what makes single-source re-analysis sound:
+/// its `GlobalCatalog` is identical whether or not that source is present.
+#[derive(Debug, Clone, Default)]
+pub struct GlobalCatalog {
+    /// PRE-PASS 1/1b/1c: the global additive `DEFINE` namespace, with function
+    /// returns and untyped-field value kinds resolved against the full catalog.
+    pub(crate) global_defined: SchemaIndex,
+    /// PRE-PASS 1b: each untyped `fn::`'s globally-inferred return kind.
+    pub(crate) global_fn_returns: BTreeMap<String, Kind>,
+    /// PRE-PASS 1c: each untyped field's globally-inferred stored-value kind.
+    pub(crate) global_field_kinds: BTreeMap<(String, String), Kind>,
+    /// PRE-PASS 2: the implicit schemaless tables created on demand.
+    pub(crate) implicit_tables: Vec<TableDef>,
+    /// Whether each `fn::` body branches (guards 5009).
+    pub(crate) fn_guarded: BTreeMap<String, bool>,
 }
 
-pub(crate) fn analyze_sources_with(
-    parsed_sources: &[ParsedSource],
-    require_suppression_reasons: bool,
-) -> PipelineOutput {
-    let mut output = PipelineOutput::default();
+/// One source paired with its lowered statements.
+type LoweredSource<'a> = (&'a ParsedSource, Vec<ast::Spanned<ast::Statement>>);
 
-    // Lower every source once — including sources with syntax errors. The
-    // lowerer isolates each broken construct as `Statement::Partial` (inert in
-    // every pass below: no schema effect, no response kind, no diagnostics), so
-    // a syntax error in one statement no longer suppresses analysis of its
-    // well-formed siblings. That graceful degradation is what lets editor
-    // features (hover, inlay hints, go-to-definition) keep resolving the parts
-    // that parsed, while the syntax diagnostic still fires on the broken part.
-    let sources: Vec<(&ParsedSource, Vec<ast::Spanned<ast::Statement>>)> = parsed_sources
+/// Lowers every source once. Sources with syntax errors are kept — the lowerer
+/// isolates each broken construct as `Statement::Partial` (inert in every pass),
+/// so a syntax error in one statement never suppresses analysis of its
+/// well-formed siblings.
+fn lower_all(parsed_sources: &[ParsedSource]) -> Vec<LoweredSource<'_>> {
+    parsed_sources
         .iter()
         .map(|parsed| (parsed, surrealguard_syntax::lower::lower_statements(parsed)))
-        .collect();
+        .collect()
+}
 
+/// Runs PRE-PASS 1/1b/1c/2 (and `fn::` guardedness) over the whole source set,
+/// producing the reusable [`GlobalCatalog`]. This is the single source of truth
+/// for those pre-passes: both the full workspace walk and single-source
+/// re-analysis consume its output, so they can never diverge.
+pub fn build_global_catalog(parsed_sources: &[ParsedSource]) -> GlobalCatalog {
+    let sources = lower_all(parsed_sources);
+    build_global_catalog_from_lowered(&sources)
+}
+
+fn build_global_catalog_from_lowered(sources: &[LoweredSource<'_>]) -> GlobalCatalog {
     // PRE-PASS 1 — the global additive catalog. A namespace is global: a
     // `DEFINE` in any source is a legitimate target for a reference in every
     // other source, regardless of file sort order. Only additive `DEFINE`
     // effects apply here; `REMOVE` and the order-sensitive contracts (4007,
     // 6004, duplicate definition) stay in the ordered walk below.
     let mut global_defined = SchemaIndex::default();
-    for (parsed, statements) in &sources {
+    for (parsed, statements) in sources {
         for stmt in statements {
             apply_additive_define(stmt, parsed.source_id(), parsed.text(), &mut global_defined);
         }
@@ -91,7 +120,7 @@ pub(crate) fn analyze_sources_with(
     // are applied back to `global_defined` in source order so a function that
     // calls an earlier-defined untyped helper resolves through it.
     let mut global_fn_returns: BTreeMap<String, surrealdb_types::Kind> = BTreeMap::new();
-    for (parsed, statements) in &sources {
+    for (parsed, statements) in sources {
         for stmt in statements {
             let ast::Statement::Define(ast::DefineStmt::Function(def)) = &stmt.node else {
                 continue;
@@ -125,7 +154,7 @@ pub(crate) fn analyze_sources_with(
     // Results are applied back to `global_defined` so a field whose value reads
     // an earlier-inferred field resolves through it.
     let mut global_field_kinds: BTreeMap<(String, String), Kind> = BTreeMap::new();
-    for (parsed, statements) in &sources {
+    for (parsed, statements) in sources {
         for stmt in statements {
             let ast::Statement::Define(ast::DefineStmt::Field(def)) = &stmt.node else {
                 continue;
@@ -171,7 +200,7 @@ pub(crate) fn analyze_sources_with(
     // firing there.
     let mut implicit_tables: Vec<TableDef> = Vec::new();
     let mut seen_implicit: BTreeSet<String> = BTreeSet::new();
-    for (parsed, statements) in &sources {
+    for (parsed, statements) in sources {
         for stmt in statements {
             for (name, range) in implicit_table_targets(stmt) {
                 if global_defined.tables.contains_key(&name) || !seen_implicit.insert(name.clone()) {
@@ -194,15 +223,273 @@ pub(crate) fn analyze_sources_with(
 
     // W5009 guardedness: whether each `fn::` body branches (any IF/FOR). A
     // recursion cycle only provably never terminates when no function in the
-    // cycle can branch to a base case.
+    // cycle can branch to a base case. Computed here in source order so a later
+    // same-named redefinition wins, matching the per-source hoist below.
     let mut fn_guarded: BTreeMap<String, bool> = BTreeMap::new();
+    for (parsed, statements) in sources {
+        for stmt in statements {
+            if let Some(function) =
+                crate::schema::extract_function_def(stmt, parsed.source_id(), parsed.text())
+            {
+                fn_guarded.insert(function.name.clone(), fn_body_branches(stmt, parsed.text()));
+            }
+        }
+    }
+
+    GlobalCatalog {
+        global_defined,
+        global_fn_returns,
+        global_field_kinds,
+        implicit_tables,
+        fn_guarded,
+    }
+}
+
+/// Runs the per-source walk for ONE source against a prebuilt [`GlobalCatalog`].
+///
+/// `working` is the source's *cross-source* catalog on entry — every OTHER
+/// source's additive `DEFINE`s (the whole-workspace walk excludes the source's
+/// own so within-source ordering contracts keep behaving; single-source
+/// re-analysis passes `global.global_defined` directly, valid only because such
+/// a source adds nothing to it). This function then layers on the implicit
+/// tables, the within-source `fn::` hoist, and the globally-computed function
+/// returns / field kinds, exactly as the whole-workspace loop did, and walks
+/// the statements. Findings append to `diagnostics`; schema effects apply to
+/// `working` and, when `schema_sink` is `Some`, to the run-wide schema too.
+fn analyze_source_against(
+    global: &GlobalCatalog,
+    parsed: &ParsedSource,
+    statements: &[ast::Spanned<ast::Statement>],
+    mut working: SchemaIndex,
+    diagnostics: &mut Vec<Finding>,
+    mut schema_sink: Option<&mut SchemaIndex>,
+) -> SourceAnalysis {
+    for table in &global.implicit_tables {
+        working.insert_table(table.clone(), false);
+    }
+    // Within-source fn:: hoist: a body may call functions defined later
+    // in the same file.
+    for stmt in statements {
+        if let Some(function) =
+            crate::schema::extract_function_def(stmt, parsed.source_id(), parsed.text())
+        {
+            working.insert_function(function);
+        }
+    }
+
+    // Reuse the globally-computed function returns (PRE-PASS 1b): a caller in
+    // this source resolves a table-bearing UDF's return type without any
+    // per-source re-inference.
+    for (name, kind) in &global.global_fn_returns {
+        if let Some(function) = working.functions.get_mut(name) {
+            if function.return_kind.is_none() {
+                function.inferred_return = Some(kind.clone());
+            }
+        }
+    }
+
+    // Reuse the globally-inferred untyped-field value kinds (PRE-PASS 1c).
+    for ((table, field_key), kind) in &global.global_field_kinds {
+        if let Some(field) = working
+            .tables
+            .get_mut(table)
+            .and_then(|t| t.fields.get_mut(field_key))
+        {
+            if field.kind.is_none() {
+                field.kind = Some(kind.clone());
+                field.partial.clear();
+            }
+        }
+    }
+
+    let mut source_analysis = SourceAnalysis::default();
+    let mut analyzer_env = StatementEnv::default();
+    // Seed the engine-supplied session params (`$auth` as `option<record>`,
+    // `$token`/`$session`/`$access`/`$scope`) as bound facts, so a
+    // top-level `$auth` is never reported as a host param and guards can
+    // narrow it.
+    analyzer_env.seed_session_params(parsed.source_id());
+    // Transaction pairing (4007): BEGIN opens exactly one transaction
+    // that COMMIT/CANCEL closes.
+    let mut open_transaction: Option<ByteRange> = None;
+
+    for lowered in statements {
+        let kind = {
+            let mut ctx = AnalysisContext::scoped(
+                &working,
+                parsed.source_id().clone(),
+                parsed.text(),
+                diagnostics,
+                analyzer_env,
+                None,
+            );
+            let kind = crate::analyzer::statement::analyze_lowered_statement(&mut ctx, lowered);
+            analyzer_env = ctx.into_env();
+            kind
+        };
+
+        source_analysis
+            .statements
+            .push(statement_analysis(parsed.source_id(), lowered, kind));
+
+        let span = || SourceSpan::new(parsed.source_id().clone(), lowered.span);
+        match &lowered.node {
+            ast::Statement::Begin(_) => {
+                if open_transaction.is_some() {
+                    diagnostics.push(surrealguard_diagnostics::catalog::finding(
+                        span(),
+                        4007,
+                        "BEGIN inside an open transaction; transactions do not nest".to_string(),
+                    ));
+                }
+                open_transaction = Some(lowered.span);
+            }
+            ast::Statement::Commit(_) | ast::Statement::Cancel(_)
+                if open_transaction.take().is_none() =>
+            {
+                diagnostics.push(surrealguard_diagnostics::catalog::finding(
+                    span(),
+                    4007,
+                    "COMMIT/CANCEL without an open BEGIN".to_string(),
+                ));
+            }
+            _ => {}
+        }
+
+        // Apply the statement's effects to both this source's working
+        // catalog (so later statements in the same file see them, and
+        // REMOVE stays order-sensitive) and, when present, the run-wide
+        // catalog returned to consumers.
+        crate::schema::apply_schema_statement_effects(
+            lowered,
+            parsed.source_id(),
+            parsed.text(),
+            &mut working,
+        );
+        if let Some(schema) = schema_sink.as_deref_mut() {
+            crate::schema::apply_schema_statement_effects(
+                lowered,
+                parsed.source_id(),
+                parsed.text(),
+                schema,
+            );
+        }
+    }
+
+    if let Some(open_span) = open_transaction {
+        diagnostics.push(surrealguard_diagnostics::catalog::finding(
+            SourceSpan::new(parsed.source_id().clone(), open_span),
+            4007,
+            "this BEGIN is never closed; add COMMIT or CANCEL".to_string(),
+        ));
+    }
+
+    // A parameter read before its LET in source order sees nothing (6004).
+    for param in analyzer_env.params() {
+        if let Some(binding) = analyzer_env.let_fact(&param.name) {
+            for use_span in &param.spans {
+                if use_span.source() == binding.span.source()
+                    && use_span.range().start() < binding.span.range().start()
+                {
+                    diagnostics.push(surrealguard_diagnostics::catalog::finding(
+                        use_span.clone(),
+                        6004,
+                        format!("`${}` is read before its LET on this line runs", param.name),
+                    ));
+                }
+            }
+        }
+    }
+
+    // Unused LET bindings (7001): a `LET $x` never read in the rest of its
+    // scope. Opt-in (catalog default `allow`), so it is filtered from the
+    // default oracle by policy resolution; emitted here as a raw finding.
+    crate::analyzer::flow::unused_let::check_unused_lets(
+        statements,
+        parsed.source_id(),
+        parsed.text(),
+        diagnostics,
+    );
+
+    // Recording already skipped LET-bound uses, so everything left is
+    // host-supplied — including forward uses that a later LET shadows.
+    source_analysis.params = analyzer_env.params();
+    // Every LET/FOR binding recorded during the walk (all nesting depths).
+    source_analysis.let_bindings = analyzer_env.let_bindings().to_vec();
+    source_analysis
+}
+
+/// The per-source walk output for a single source: its analysis record plus
+/// every finding spanned in it.
+pub(crate) struct OneSourceOutput {
+    pub analysis: SourceAnalysis,
+    pub diagnostics: Vec<Finding>,
+}
+
+/// Re-analyzes ONE source against a prebuilt [`GlobalCatalog`], reproducing the
+/// output the whole-workspace walk would produce for that source — WITHOUT
+/// rebuilding the schema or touching any other source.
+///
+/// Soundness contract: the source must contribute nothing to `global` — no
+/// additive `DEFINE`, no implicit-table target, no `fn::` definition — so that
+/// `global.global_defined` already equals "every other source's" catalog for
+/// it. Callers (the LSP fast path) gate on that; a source that fails it must be
+/// analyzed through the full [`analyze_sources_with`] pass instead. The
+/// cross-source function-cycle check (5009) is intentionally skipped: it spans
+/// findings at a function's own definition, and a qualifying source defines no
+/// functions, so it never owns one.
+pub(crate) fn analyze_one_source(
+    global: &GlobalCatalog,
+    parsed: &ParsedSource,
+    require_suppression_reasons: bool,
+) -> OneSourceOutput {
+    let statements = surrealguard_syntax::lower::lower_statements(parsed);
+    let working = global.global_defined.clone();
+    let mut diagnostics = Vec::new();
+    let analysis =
+        analyze_source_against(global, parsed, &statements, working, &mut diagnostics, None);
+
+    // Suppression runs last so directives can silence every finding kind, just
+    // as the whole-workspace pass applies it per source at the end.
+    if parsed.syntax_diagnostics().is_empty() {
+        crate::suppress::apply_suppressions(
+            parsed.source_id(),
+            parsed.text(),
+            require_suppression_reasons,
+            &mut diagnostics,
+        );
+    }
+
+    OneSourceOutput {
+        analysis,
+        diagnostics,
+    }
+}
+
+pub(crate) fn analyze_sources(parsed_sources: &[ParsedSource]) -> PipelineOutput {
+    analyze_sources_with(parsed_sources, false)
+}
+
+pub(crate) fn analyze_sources_with(
+    parsed_sources: &[ParsedSource],
+    require_suppression_reasons: bool,
+) -> PipelineOutput {
+    let mut output = PipelineOutput::default();
+
+    // Lower every source once and run the order-independent pre-passes into the
+    // reusable global catalog. Single-source re-analysis consumes the same
+    // `build_global_catalog` output, so the two paths can never diverge.
+    let sources = lower_all(parsed_sources);
+    let global = build_global_catalog_from_lowered(&sources);
 
     for (index, (parsed, statements)) in sources.iter().enumerate() {
         // The catalog this source is analyzed against: every OTHER source's
-        // definitions (cross-file visibility) plus the implicit schemaless
-        // tables. This source's own definitions accumulate incrementally
-        // during the walk, so within-source ordering contracts (duplicate
-        // definition, REMOVE) keep behaving exactly as before.
+        // additive definitions (cross-file visibility). This source's own
+        // definitions accumulate incrementally during the walk, so
+        // within-source ordering contracts (duplicate definition, REMOVE) keep
+        // behaving exactly as before. (The single-source path passes
+        // `global.global_defined` directly, valid only because a qualifying
+        // source contributes nothing to it.)
         let mut working = SchemaIndex::default();
         for (other_index, (other, other_statements)) in sources.iter().enumerate() {
             if other_index == index {
@@ -212,177 +499,15 @@ pub(crate) fn analyze_sources_with(
                 apply_additive_define(stmt, other.source_id(), other.text(), &mut working);
             }
         }
-        for table in &implicit_tables {
-            working.insert_table(table.clone(), false);
-        }
-        // Within-source fn:: hoist: a body may call functions defined later
-        // in the same file.
-        for stmt in statements {
-            if let Some(function) =
-                crate::schema::extract_function_def(stmt, parsed.source_id(), parsed.text())
-            {
-                fn_guarded.insert(function.name.clone(), fn_body_branches(stmt, parsed.text()));
-                working.insert_function(function);
-            }
-        }
 
-        // Reuse the globally-computed function returns (PRE-PASS 1b): a caller in
-        // this source resolves a table-bearing UDF's return type without any
-        // per-source re-inference. Cheap map application — the expensive body
-        // analysis ran once, above.
-        for (name, kind) in &global_fn_returns {
-            if let Some(function) = working.functions.get_mut(name) {
-                if function.return_kind.is_none() {
-                    function.inferred_return = Some(kind.clone());
-                }
-            }
-        }
-
-        // Reuse the globally-inferred untyped-field value kinds (PRE-PASS 1c):
-        // a source that SELECTs a table whose VALUE/COMPUTED field was defined in
-        // another source resolves that field's type without re-inference. Cheap
-        // map application — the expensive value analysis ran once, above.
-        for ((table, field_key), kind) in &global_field_kinds {
-            if let Some(field) = working
-                .tables
-                .get_mut(table)
-                .and_then(|t| t.fields.get_mut(field_key))
-            {
-                if field.kind.is_none() {
-                    field.kind = Some(kind.clone());
-                    field.partial.clear();
-                }
-            }
-        }
-
-        let mut source_analysis = SourceAnalysis::default();
-        let mut analyzer_env = StatementEnv::default();
-        // Seed the engine-supplied session params (`$auth` as `option<record>`,
-        // `$token`/`$session`/`$access`/`$scope`) as bound facts, so a
-        // top-level `$auth` is never reported as a host param and guards can
-        // narrow it. `fn::` bodies analyzed during this walk inherit the seed
-        // through their child envs; the throwaway return-inference path seeds
-        // its own env in `infer_function_body_kind`.
-        analyzer_env.seed_session_params(parsed.source_id());
-        // Transaction pairing (4007): BEGIN opens exactly one transaction
-        // that COMMIT/CANCEL closes.
-        let mut open_transaction: Option<ByteRange> = None;
-
-        for lowered in statements {
-            let kind = {
-                let mut ctx = AnalysisContext::scoped(
-                    &working,
-                    parsed.source_id().clone(),
-                    parsed.text(),
-                    &mut output.diagnostics,
-                    analyzer_env,
-                    None,
-                );
-                let kind = crate::analyzer::statement::analyze_lowered_statement(&mut ctx, lowered);
-                analyzer_env = ctx.into_env();
-                kind
-            };
-
-            source_analysis
-                .statements
-                .push(statement_analysis(parsed.source_id(), lowered, kind));
-
-            let span = || SourceSpan::new(parsed.source_id().clone(), lowered.span);
-            match &lowered.node {
-                ast::Statement::Begin(_) => {
-                    if open_transaction.is_some() {
-                        output
-                            .diagnostics
-                            .push(surrealguard_diagnostics::catalog::finding(
-                                span(),
-                                4007,
-                                "BEGIN inside an open transaction; transactions do not nest"
-                                    .to_string(),
-                            ));
-                    }
-                    open_transaction = Some(lowered.span);
-                }
-                ast::Statement::Commit(_) | ast::Statement::Cancel(_)
-                    if open_transaction.take().is_none() =>
-                {
-                    output
-                        .diagnostics
-                        .push(surrealguard_diagnostics::catalog::finding(
-                            span(),
-                            4007,
-                            "COMMIT/CANCEL without an open BEGIN".to_string(),
-                        ));
-                }
-                _ => {}
-            }
-
-            // Apply the statement's effects to both this source's working
-            // catalog (so later statements in the same file see them, and
-            // REMOVE stays order-sensitive) and the run-wide catalog
-            // returned to consumers.
-            crate::schema::apply_schema_statement_effects(
-                lowered,
-                parsed.source_id(),
-                parsed.text(),
-                &mut working,
-            );
-            crate::schema::apply_schema_statement_effects(
-                lowered,
-                parsed.source_id(),
-                parsed.text(),
-                &mut output.schema,
-            );
-        }
-
-        if let Some(open_span) = open_transaction {
-            output
-                .diagnostics
-                .push(surrealguard_diagnostics::catalog::finding(
-                    SourceSpan::new(parsed.source_id().clone(), open_span),
-                    4007,
-                    "this BEGIN is never closed; add COMMIT or CANCEL".to_string(),
-                ));
-        }
-
-        // A parameter read before its LET in source order sees nothing
-        // (6004).
-        for param in analyzer_env.params() {
-            if let Some(binding) = analyzer_env.let_fact(&param.name) {
-                for use_span in &param.spans {
-                    if use_span.source() == binding.span.source()
-                        && use_span.range().start() < binding.span.range().start()
-                    {
-                        output
-                            .diagnostics
-                            .push(surrealguard_diagnostics::catalog::finding(
-                                use_span.clone(),
-                                6004,
-                                format!(
-                                    "`${}` is read before its LET on this line runs",
-                                    param.name
-                                ),
-                            ));
-                    }
-                }
-            }
-        }
-
-        // Unused LET bindings (7001): a `LET $x` never read in the rest of its
-        // scope. Opt-in (catalog default `allow`), so it is filtered from the
-        // default oracle by policy resolution; emitted here as a raw finding.
-        crate::analyzer::flow::unused_let::check_unused_lets(
+        let source_analysis = analyze_source_against(
+            &global,
+            parsed,
             statements,
-            parsed.source_id(),
-            parsed.text(),
+            working,
             &mut output.diagnostics,
+            Some(&mut output.schema),
         );
-
-        // Recording already skipped LET-bound uses, so everything left is
-        // host-supplied — including forward uses that a later LET shadows.
-        source_analysis.params = analyzer_env.params();
-        // Every LET/FOR binding recorded during the walk (all nesting
-        // depths), drained up to this top-level env.
-        source_analysis.let_bindings = analyzer_env.let_bindings().to_vec();
         output
             .sources
             .insert(parsed.source_id().clone(), source_analysis);
@@ -391,7 +516,7 @@ pub(crate) fn analyze_sources_with(
     // fn:: definitions must terminate: an unconditional direct or mutual
     // recursion cycle never does (5009). Three-color DFS; each cycle reports
     // once, and only when no function in it can branch to a base case.
-    check_function_cycles(&output.schema, &fn_guarded, &mut output.diagnostics);
+    check_function_cycles(&output.schema, &global.fn_guarded, &mut output.diagnostics);
 
     // Suppression runs last so directives can silence every finding kind,
     // including the cross-source passes above.
