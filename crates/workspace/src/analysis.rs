@@ -1765,6 +1765,56 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn record_field_may_forward_reference_a_table_defined_later() {
+        // A schema is applied as a unit, so `record<bb>` above `DEFINE TABLE
+        // bb` is valid SurrealQL. The existence check consults the
+        // whole-workspace catalog, matching what its help text always claimed
+        // ("no `DEFINE TABLE bb` exists in the workspace"). Both the
+        // same-source and later-source orderings must be clean.
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE a SCHEMAFULL;\n\
+             DEFINE FIELD b ON a TYPE record<bb>;\n\
+             DEFINE TABLE bb SCHEMAFULL;"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 1001), 0, "unexpected: {:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn a_forward_reference_fix_does_not_excuse_a_never_defined_target() {
+        // The counterpart contract: order-independence must not weaken the
+        // genuine case. `never_defined` exists nowhere, before or after.
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE a SCHEMAFULL;\n\
+             DEFINE FIELD b ON a TYPE record<bb>;\n\
+             DEFINE FIELD c ON a TYPE option<record<never_defined>>;\n\
+             DEFINE TABLE bb SCHEMAFULL;"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 1001), 1, "unexpected: {:?}", output.diagnostics);
+        let finding = output
+            .diagnostics
+            .iter()
+            .find(|f| f.code().number() == 1001)
+            .expect("a 1001 finding");
+        assert!(
+            finding.message().contains("never_defined"),
+            "{}",
+            finding.message()
+        );
+    }
+
+    #[test]
     fn default_violating_own_assert_fires_2037() {
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(

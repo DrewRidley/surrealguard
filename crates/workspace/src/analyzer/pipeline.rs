@@ -341,7 +341,11 @@ fn analyze_source_against(
                 diagnostics,
                 analyzer_env,
                 None,
-            );
+            )
+            // Order-independent existence checks (a `record<T>` target) ask the
+            // whole-workspace catalog, not `working`, which by construction
+            // holds only what precedes this statement.
+            .with_workspace_catalog(&global.global_defined);
             let kind = crate::analyzer::statement::analyze_lowered_statement(&mut ctx, lowered);
             // A top-level guard that exits (`IF $x = NONE THEN THROW … END;`)
             // narrows `$x` for every statement after it, exactly as it does

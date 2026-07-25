@@ -129,8 +129,14 @@ fn check_reference_back_target(ctx: &mut AnalysisContext<'_>, stmt: &ast::Define
 }
 
 /// E2 — every table named in the field's declared type (`record<...>`) must
-/// exist in the schema (1001). The declared `Kind` no longer carries the
+/// exist in the workspace (1001). The declared `Kind` no longer carries the
 /// per-target sub-spans, so the finding points at the whole type annotation.
+///
+/// "Exists" is asked of the *workspace* catalog, not the incrementally-built
+/// one: a schema is applied as a unit, so `DEFINE FIELD b ON a TYPE record<bb>`
+/// written above `DEFINE TABLE bb` is valid SurrealQL, and the help text
+/// ("no `DEFINE TABLE bb` exists in the workspace") already claimed as much.
+/// A target defined nowhere still errors.
 fn check_record_targets(
     ctx: &mut AnalysisContext<'_>,
     stmt: &ast::DefineField,
@@ -146,7 +152,7 @@ fn check_record_targets(
     }
     let span = stmt.ty.as_ref().map_or(stmt.path.span, |ty| ty.span);
     for table in tables {
-        if ctx.schema().table(&table).is_none() {
+        if !ctx.table_defined_anywhere(&table) {
             let mut finding = surrealguard_diagnostics::catalog::finding(
                 surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span),
                 1001,
@@ -154,7 +160,7 @@ fn check_record_targets(
             )
             .with_help(format!("no `DEFINE TABLE {table}` exists in the workspace"));
             if let Some(suggestion) =
-                crate::suggest::closest(&table, ctx.schema().tables.keys().map(String::as_str))
+                crate::suggest::closest(&table, ctx.known_table_names().into_iter())
             {
                 finding = finding.with_help(format!("did you mean `{suggestion}`?"));
             }

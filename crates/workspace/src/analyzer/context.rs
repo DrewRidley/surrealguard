@@ -15,6 +15,17 @@ use crate::statement_env::StatementEnv;
 /// Shared state passed through statement, expression, and function analyzers.
 pub struct AnalysisContext<'a> {
     schema: &'a SchemaIndex,
+    /// Every `DEFINE` in the workspace, order-independently (the
+    /// `GlobalCatalog` pre-pass). [`schema`](Self::schema) is the *incremental*
+    /// catalog — what is defined at this point in the walk — which is the right
+    /// basis for the ordering contracts (duplicate definition, REMOVE,
+    /// read-before-LET). Whether a *reference target* exists at all is not an
+    /// ordering contract: SurrealQL applies a workspace as one unit, so a
+    /// `record<bb>` is satisfied by a `DEFINE TABLE bb` written anywhere,
+    /// before or after. Existence checks consult this; `None` (unit tests and
+    /// single-statement entry points, which have no workspace) falls back to
+    /// the incremental catalog alone.
+    workspace_catalog: Option<&'a SchemaIndex>,
     source: SourceId,
     source_text: &'a str,
     diagnostics: &'a mut Vec<Finding>,
@@ -34,6 +45,7 @@ impl<'a> AnalysisContext<'a> {
     ) -> Self {
         Self {
             schema,
+            workspace_catalog: None,
             source,
             source_text,
             diagnostics,
@@ -56,6 +68,7 @@ impl<'a> AnalysisContext<'a> {
     ) -> Self {
         Self {
             schema,
+            workspace_catalog: None,
             source,
             source_text,
             diagnostics,
@@ -63,6 +76,37 @@ impl<'a> AnalysisContext<'a> {
             row_table,
             loop_depth: 0,
         }
+    }
+
+    /// Attaches the order-independent workspace catalog (see
+    /// [`workspace_catalog`](Self::workspace_catalog)). The pipeline sets it on
+    /// every context it builds; entry points with no workspace leave it unset.
+    pub(crate) fn with_workspace_catalog(mut self, catalog: &'a SchemaIndex) -> Self {
+        self.workspace_catalog = Some(catalog);
+        self
+    }
+
+    /// Every table name known anywhere in the workspace, for "did you mean"
+    /// suggestions on a failed existence check.
+    pub(crate) fn known_table_names(&self) -> Vec<&'a str> {
+        let mut names: Vec<&'a str> = self.schema.tables.keys().map(String::as_str).collect();
+        if let Some(catalog) = self.workspace_catalog {
+            names.extend(catalog.tables.keys().map(String::as_str));
+        }
+        names.sort_unstable();
+        names.dedup();
+        names
+    }
+
+    /// Whether `name` is defined as a table *anywhere* in the workspace —
+    /// the order-independent existence question a reference target asks.
+    /// Falls back to the incremental catalog when no workspace catalog is
+    /// attached.
+    pub(crate) fn table_defined_anywhere(&self, name: &str) -> bool {
+        self.schema.table(name).is_some()
+            || self
+                .workspace_catalog
+                .is_some_and(|catalog| catalog.table(name).is_some())
     }
 
     /// Consumes the context, returning its environment — for callers that
@@ -290,6 +334,7 @@ impl<'a> AnalysisContext<'a> {
         let child_env = self.env.fork_child_scope();
         let mut child = AnalysisContext {
             schema: self.schema,
+            workspace_catalog: self.workspace_catalog,
             source: self.source.clone(),
             source_text: self.source_text,
             diagnostics: self.diagnostics,
