@@ -242,40 +242,17 @@ fn a_mutation_target_and_its_set_clause_classify_separately() {
 }
 
 #[test]
-fn a_graph_step_alternates_edge_and_node_and_ranks_edges_first() {
-    // First arrow: the edge. Second: the node it lands on.
+fn a_graph_step_alternates_an_edge_slot_and_the_node_it_lands_on() {
     assert_eq!(context_kind("RELATE $a->▏"), ContextKind::EdgeTable);
     assert_eq!(context_kind("SELECT ->▏ FROM person"), ContextKind::EdgeTable);
     assert_eq!(
         context_kind("SELECT ->works_at->▏ FROM person"),
-        ContextKind::TableName
+        ContextKind::GraphNode
     );
-
-    // In the edge slot the relation table outranks the plain tables.
-    let fixture = Fixture::new("RELATE $a->▏");
-    let tables = fixture.labels_of(CandidateKind::Table);
     assert_eq!(
-        tables.first().map(String::as_str),
-        Some("works_at"),
-        "the edge slot must rank `TYPE RELATION` tables first: {tables:?}"
+        context_kind("SELECT ->works_at->company->▏ FROM person"),
+        ContextKind::EdgeTable
     );
-    // …but a plain table is demoted, not hidden.
-    assert!(tables.contains(&"person".to_string()));
-}
-
-#[test]
-fn an_edge_slot_prefers_an_edge_actually_attached_to_the_row_table() {
-    let schema = format!(
-        "{SCHEMA}\nDEFINE TABLE owns SCHEMAFULL TYPE RELATION IN company OUT company;\n"
-    );
-    // The row table is `person`, so `works_at` (IN person) must beat `owns`
-    // (which touches neither end of a person).
-    let fixture = Fixture::with_schema(&schema, "SELECT * FROM person WHERE id->▏");
-    assert_eq!(fixture.context().kind, ContextKind::EdgeTable);
-    let tables = fixture.labels_of(CandidateKind::Table);
-    let attached = tables.iter().position(|label| label == "works_at");
-    let unattached = tables.iter().position(|label| label == "owns");
-    assert!(attached < unattached, "{tables:?}");
 }
 
 #[test]
@@ -319,6 +296,170 @@ fn a_member_position_whose_receiver_has_no_known_type_offers_nothing_rather_than
     let fixture = Fixture::new("SELECT unknown_thing.▏ FROM person");
     assert_eq!(fixture.context().kind, ContextKind::Member);
     assert!(fixture.complete().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Graph slots: what a step can *actually* traverse
+// ---------------------------------------------------------------------------
+
+/// The schema from the report that produced these bugs: five node tables and
+/// five edges, only two of which leave an `account`.
+const GRAPH: &str = r#"
+DEFINE TABLE account SCHEMAFULL;
+DEFINE FIELD owner ON account TYPE option<record<account>>;
+DEFINE TABLE email_address SCHEMAFULL;
+DEFINE TABLE organization SCHEMAFULL;
+DEFINE TABLE keyring SCHEMAFULL;
+DEFINE TABLE file SCHEMAFULL;
+DEFINE TABLE has_email SCHEMAFULL TYPE RELATION FROM account TO email_address;
+DEFINE FIELD verified ON has_email TYPE bool;
+DEFINE TABLE employee_of SCHEMAFULL TYPE RELATION FROM account TO organization;
+DEFINE TABLE keyring_wraps SCHEMAFULL TYPE RELATION FROM keyring TO account;
+DEFINE TABLE secure_entity SCHEMAFULL TYPE RELATION FROM file TO account;
+DEFINE TABLE has_subsidiary SCHEMAFULL TYPE RELATION FROM organization TO organization;
+"#;
+
+fn graph(query: &str) -> Fixture {
+    Fixture::with_schema(GRAPH, query)
+}
+
+/// Asserts the offered labels are exactly `expected`, in any order — the
+/// point of these cases is the *set*, not the ranking.
+fn assert_offers(fixture: &Fixture, expected: &[&str]) {
+    let mut labels = fixture.labels();
+    labels.sort();
+    let mut wanted: Vec<String> = expected.iter().map(ToString::to_string).collect();
+    wanted.sort();
+    assert_eq!(labels, wanted);
+}
+
+#[test]
+fn a_forward_edge_slot_offers_only_edges_that_leave_the_receiver() {
+    let fixture = graph("SELECT ->▏ FROM account");
+    // `account` is the IN of exactly these two.
+    assert_offers(&fixture, &["employee_of", "has_email"]);
+    // The edges that only *arrive* at an account, the one that never touches
+    // one, the plain tables, and the params are all invalid here.
+    for absent in [
+        "keyring_wraps",
+        "secure_entity",
+        "has_subsidiary",
+        "account",
+        "email_address",
+        "file",
+        "keyring",
+        "organization",
+        "$auth",
+        "$session",
+        "$access",
+    ] {
+        assert!(
+            !fixture.labels().contains(&absent.to_string()),
+            "`{absent}` is not traversable forward from an `account`"
+        );
+    }
+}
+
+#[test]
+fn a_backward_edge_slot_offers_only_edges_that_arrive_at_the_receiver() {
+    let fixture = graph("SELECT <-▏ FROM account");
+    assert_offers(&fixture, &["keyring_wraps", "secure_entity"]);
+    // The forward-only pair must not appear in the backward slot.
+    for absent in ["has_email", "employee_of", "has_subsidiary"] {
+        assert!(!fixture.labels().contains(&absent.to_string()), "{absent}");
+    }
+}
+
+#[test]
+fn a_node_slot_offers_only_the_traversed_edges_far_endpoint() {
+    let fixture = graph("SELECT ->has_email->▏ FROM account");
+    assert_offers(&fixture, &["email_address"]);
+
+    // Backwards, the far endpoint is the other end.
+    let backward = graph("SELECT <-keyring_wraps->▏ FROM account");
+    assert_offers(&backward, &["keyring"]);
+}
+
+#[test]
+fn a_second_hop_filters_by_the_table_the_first_hop_reached() {
+    // `has_email` runs account -> email_address, so standing on an
+    // `email_address` there is nothing to traverse forward.
+    let fixture = graph("SELECT ->has_email->email_address->▏ FROM account");
+    assert_eq!(fixture.context().kind, ContextKind::EdgeTable);
+    assert!(
+        fixture.complete().is_empty(),
+        "no edge leaves an `email_address`: {:?}",
+        fixture.labels()
+    );
+
+    // …and from an `organization` the subsidiary edge is the only one.
+    let onward = graph("SELECT ->employee_of->organization->▏ FROM account");
+    assert_offers(&onward, &["has_subsidiary"]);
+}
+
+#[test]
+fn a_typed_param_receiver_is_resolved_through_its_record_kind() {
+    // The reported case: `$value` holds a `record<email_address>`, so
+    // `has_email` — which runs account -> email_address — is not traversable
+    // forward from it.
+    let fixture = Fixture::with_schema(
+        GRAPH,
+        "DEFINE FIELD mail ON email_address TYPE record<email_address> VALUE $value->▏;",
+    );
+    assert_eq!(fixture.context().kind, ContextKind::EdgeTable);
+    assert!(
+        !fixture.labels().contains(&"has_email".to_string()),
+        "an email_address is the OUT of has_email, not its IN: {:?}",
+        fixture.labels()
+    );
+
+    // A `LET` binding resolves the same way, through `option`/`array` too.
+    let bound = Fixture::with_schema(
+        GRAPH,
+        "LET $mail = (SELECT * FROM ONLY email_address:x); SELECT * FROM account WHERE owner->▏",
+    );
+    assert_eq!(bound.context().kind, ContextKind::EdgeTable);
+    let optional_link = graph("SELECT * FROM account WHERE owner->▏");
+    // `owner` is `option<record<account>>`; the wrappers must not hide the
+    // account underneath.
+    assert_offers(&optional_link, &["employee_of", "has_email"]);
+}
+
+#[test]
+fn this_inside_a_define_body_resolves_to_the_table_the_define_is_on() {
+    let fixture = Fixture::with_schema(GRAPH, "DEFINE FIELD x ON account VALUE $this->▏;");
+    assert_eq!(fixture.context().kind, ContextKind::EdgeTable);
+    assert_offers(&fixture, &["employee_of", "has_email"]);
+
+    let event = Fixture::with_schema(
+        GRAPH,
+        "DEFINE EVENT e ON keyring WHEN $event = 'CREATE' THEN { LET $x = $this->▏; };",
+    );
+    assert_offers(&event, &["keyring_wraps"]);
+}
+
+#[test]
+fn a_record_id_literal_is_a_receiver_and_a_relate_target_is_filtered_by_it() {
+    let fixture = graph("RELATE account:alice->▏");
+    assert_eq!(fixture.context().kind, ContextKind::EdgeTable);
+    assert_offers(&fixture, &["employee_of", "has_email"]);
+}
+
+#[test]
+fn an_unresolvable_receiver_offers_nothing_rather_than_every_edge() {
+    // `$a` has no known kind, so which edges leave it is unknowable —
+    // and a wrong edge is worse than no suggestion.
+    let fixture = graph("RELATE $a->▏");
+    assert_eq!(fixture.context().kind, ContextKind::EdgeTable);
+    assert!(fixture.complete().is_empty(), "{:?}", fixture.labels());
+
+    // A chain through an unknown table is unresolvable from there on.
+    let unknown = graph("SELECT ->not_a_table->▏ FROM account");
+    assert!(unknown.complete().is_empty(), "{:?}", unknown.labels());
+
+    // So is a chain whose written edge does not connect the receiver.
+    let broken = graph("SELECT ->has_subsidiary->▏ FROM account");
+    assert!(broken.complete().is_empty(), "{:?}", broken.labels());
 }
 
 // ---------------------------------------------------------------------------

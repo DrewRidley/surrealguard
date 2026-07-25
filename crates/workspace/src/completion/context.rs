@@ -54,8 +54,14 @@ pub enum ContextKind {
     /// `DELETE`/`RELATE` target, or `DEFINE … ON`.
     TableName,
     /// The edge slot of a graph step (`$a->▏`, `->▏->company`). Only a
-    /// `TYPE RELATION` table belongs here, so edges rank above plain tables.
+    /// `TYPE RELATION` table whose near endpoint accepts the receiver can
+    /// stand here, and [`CompletionContext::allowed_tables`] names exactly
+    /// those — this is a filter, not a ranking.
     EdgeTable,
+    /// The node a hop lands on (`->works_at->▏`). Only the traversed edge's
+    /// far endpoints can stand here, again named by
+    /// [`CompletionContext::allowed_tables`].
+    GraphNode,
     /// A key inside a `CONTENT`/`MERGE` object literal.
     ObjectKey,
     /// A member after `.` on a receiver whose kind is known.
@@ -86,6 +92,11 @@ pub struct CompletionContext {
     /// The receiver's kind, for [`ContextKind::Member`]/
     /// [`ContextKind::Destructure`].
     pub receiver: Option<Kind>,
+    /// The exact table names the position admits, when it admits only some.
+    /// `None` means "any table"; `Some(_)` restricts the offer to those
+    /// names, and an *empty* `Some` means the position is a real table slot
+    /// whose receiver could not be resolved — nothing honest to say.
+    pub allowed_tables: Option<Vec<String>>,
     /// The text already typed at the position (without a leading `$`).
     pub prefix: String,
     /// The byte range a completion item replaces.
@@ -107,6 +118,7 @@ impl CompletionContext {
             tables: Vec::new(),
             expected: None,
             receiver: None,
+            allowed_tables: None,
             prefix: String::new(),
             replace: (offset, offset),
             exclude: BTreeSet::new(),
@@ -162,6 +174,7 @@ pub(crate) fn classify(
         tables: Vec::new(),
         expected: None,
         receiver: None,
+        allowed_tables: None,
         prefix,
         replace,
         exclude: BTreeSet::new(),
@@ -224,13 +237,14 @@ pub(crate) fn classify(
         return context;
     }
 
-    // --- 4. A graph step alternates edge, node, edge, node… ---
-    if let Some(arrows) = graph_chain_arrows(&tokens, source, cut) {
-        context.kind = if arrows % 2 == 1 {
+    // --- 4. A graph step: an edge slot or the node a hop lands on. ---
+    if let Some(slot) = env.graph_slot(cut, &context.tables) {
+        context.kind = if slot.edge {
             ContextKind::EdgeTable
         } else {
-            ContextKind::TableName
+            ContextKind::GraphNode
         };
+        context.allowed_tables = slot.allowed;
         return context;
     }
 
@@ -558,37 +572,82 @@ fn preceding_operator<'a>(tokens: &[Token], source: &'a str, cut: usize) -> Opti
     }
 }
 
-/// How many arrows are in the graph-step chain ending at the cursor, or
-/// `None` when the cursor is not in one.
+/// Which end of a relation a traversal arrow reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Dir {
+    /// `->`: enters the edge on its `in` side and leaves on `out`.
+    Out,
+    /// `<-` (and the `<~` reference form): the mirror.
+    In,
+    /// `<->`: either side, so neither end is determined.
+    Both,
+}
+
+fn arrow_dir(text: &str) -> Option<Dir> {
+    Some(match text {
+        "->" => Dir::Out,
+        "<-" | "<~" => Dir::In,
+        "<->" => Dir::Both,
+        _ => return None,
+    })
+}
+
+/// Where a traversal stands between steps.
 ///
-/// A traversal alternates edge and node — `$a->works_at->company` — so the
-/// arrow count's parity says which the cursor is at: odd is an edge slot,
-/// even is the node it lands on.
-fn graph_chain_arrows(tokens: &[Token], source: &str, cut: usize) -> Option<usize> {
-    let mut index = cut.checked_sub(1)?;
-    if !matches!(token_text(tokens, source, index), Some("->" | "<-")) {
-        return None;
+/// The three states are genuinely different answers, and collapsing them
+/// would produce exactly the wrong suggestions this module exists to
+/// prevent: `Any` means every table is legal here, `Unknown` means *we* do
+/// not know and must therefore say nothing.
+#[derive(Clone, Debug)]
+enum Standing {
+    /// The traversal stands on one of these tables.
+    Tables(Vec<String>),
+    /// The endpoint is declared unconstrained, so any table is legal.
+    Any,
+    /// The receiver could not be resolved.
+    Unknown,
+}
+
+/// A graph slot at the cursor: which half of a hop it is, and exactly what
+/// may be written there.
+struct GraphSlot {
+    /// `true` for an edge slot (`account->▏`), `false` for the node a hop
+    /// lands on (`account->works_at->▏`).
+    edge: bool,
+    /// The admissible table names, or `None` for "any table". An empty
+    /// `Some` is the honest answer to an unresolvable receiver.
+    allowed: Option<Vec<String>>,
+}
+
+/// The endpoint an arrow *enters* an edge through.
+fn near_side(relation: &crate::schema::RelationDef, dir: Dir) -> Vec<&String> {
+    match dir {
+        Dir::Out => relation.in_tables.iter().collect(),
+        Dir::In => relation.out_tables.iter().collect(),
+        Dir::Both => relation
+            .in_tables
+            .iter()
+            .chain(relation.out_tables.iter())
+            .collect(),
     }
-    let mut arrows = 0usize;
-    loop {
-        match token_text(tokens, source, index) {
-            Some("->" | "<-") => arrows += 1,
-            _ => return Some(arrows),
-        }
-        // Step over the edge/node name before this arrow, if there is one.
-        let Some(previous) = index.checked_sub(1) else {
-            return Some(arrows);
-        };
-        if !matches!(
-            tokens.get(previous).map(|token| token.kind),
-            Some(TokenKind::Ident | TokenKind::Param)
-        ) {
-            return Some(arrows);
-        }
-        let Some(before) = previous.checked_sub(1) else {
-            return Some(arrows);
-        };
-        index = before;
+}
+
+/// The endpoint an arrow *leaves* an edge through.
+fn far_side(relation: &crate::schema::RelationDef, dir: Dir) -> Standing {
+    let tables: Vec<String> = match dir {
+        Dir::Out => relation.out_tables.clone(),
+        Dir::In => relation.in_tables.clone(),
+        Dir::Both => relation
+            .in_tables
+            .iter()
+            .chain(relation.out_tables.iter())
+            .cloned()
+            .collect(),
+    };
+    if tables.is_empty() {
+        Standing::Any
+    } else {
+        Standing::Tables(tables)
     }
 }
 
@@ -920,6 +979,188 @@ impl Env<'_> {
         tables
     }
 
+    /// The graph slot at the cursor, or `None` when the cursor is not in a
+    /// graph step.
+    ///
+    /// The whole chain is walked, not just counted: an edge slot's answer is
+    /// the set of relations whose *near* endpoint accepts the table the
+    /// traversal stands on, and a node slot's answer is the traversed edge's
+    /// *far* endpoint. Both need the receiver, and the receiver is whatever
+    /// the chain has reached — the statement's row for a bare `->`, a param's
+    /// `record<…>`, a field's link target, a record-id literal, or the table
+    /// the previous hop landed on.
+    ///
+    /// The rules mirror [`crate::analyzer::data::graph`] exactly, with one
+    /// deliberate softening: an endpoint declared with no table list means
+    /// "any", where the checker reads it as "none".
+    fn graph_slot(&self, cut: usize, row_tables: &[String]) -> Option<GraphSlot> {
+        let arrow_index = cut.checked_sub(1)?;
+        let final_dir = arrow_dir(token_text(self.tokens, self.source, arrow_index)?)?;
+
+        // Walk left over `<root> -> name -> name ->▏`, collecting the hops.
+        let mut hops: Vec<(Dir, String)> = Vec::new();
+        let mut leftmost_arrow = arrow_index;
+        loop {
+            let Some(mut name_at) = leftmost_arrow.checked_sub(1) else {
+                break;
+            };
+            // A step may carry its own filter: `->likes[WHERE …]->▏`.
+            if token_text(self.tokens, self.source, name_at) == Some("]") {
+                let Some(open) = matching_open(self.tokens, self.source, name_at) else {
+                    break;
+                };
+                let Some(before) = open.checked_sub(1) else {
+                    break;
+                };
+                name_at = before;
+            }
+            let Some(token) = self.tokens.get(name_at) else {
+                break;
+            };
+            if token.kind != TokenKind::Ident {
+                break;
+            }
+            let Some(arrow_at) = name_at.checked_sub(1) else {
+                break;
+            };
+            let Some(dir) = token_text(self.tokens, self.source, arrow_at).and_then(arrow_dir)
+            else {
+                break;
+            };
+            hops.push((dir, token.text(self.source).to_string()));
+            leftmost_arrow = arrow_at;
+        }
+        hops.reverse();
+
+        // Which slot this is depends only on what the previous hop named: a
+        // relation puts the cursor on the node it lands on, anything else on
+        // a fresh edge.
+        let edge = !hops.last().is_some_and(|(_, name)| {
+            self.schema
+                .table(name)
+                .is_some_and(|table| table.relation.is_some())
+        });
+        let nothing = GraphSlot {
+            edge,
+            allowed: Some(Vec::new()),
+        };
+
+        let mut standing = self.graph_root(leftmost_arrow, row_tables);
+        for (dir, name) in &hops {
+            if matches!(standing, Standing::Unknown) {
+                return Some(nothing);
+            }
+            let Some(table) = self.schema.table(name) else {
+                return Some(nothing);
+            };
+            match &table.relation {
+                Some(relation) => {
+                    if !accepts(relation, *dir, &standing) {
+                        return Some(nothing);
+                    }
+                    standing = far_side(relation, *dir);
+                }
+                // A plain table is a landing, legal only on the far side of
+                // the edge just traversed.
+                None => {
+                    if !stands_on(&standing, name) {
+                        return Some(nothing);
+                    }
+                    standing = Standing::Tables(vec![name.clone()]);
+                }
+            }
+        }
+
+        if !edge {
+            // A node slot: the traversal already stands on the edge's far
+            // endpoint, and that endpoint is the whole answer.
+            return Some(GraphSlot {
+                edge,
+                allowed: match standing {
+                    Standing::Tables(tables) => Some(tables),
+                    Standing::Any => None,
+                    Standing::Unknown => Some(Vec::new()),
+                },
+            });
+        }
+        let allowed = match &standing {
+            Standing::Unknown => Vec::new(),
+            _ => self
+                .schema
+                .tables
+                .values()
+                .filter(|table| {
+                    table
+                        .relation
+                        .as_ref()
+                        .is_some_and(|relation| accepts(relation, final_dir, &standing))
+                })
+                .map(|table| table.name.clone())
+                .collect(),
+        };
+        Some(GraphSlot {
+            edge,
+            allowed: Some(allowed),
+        })
+    }
+
+    /// The tables a chain starts from, given the index of its first arrow.
+    fn graph_root(&self, first_arrow: usize, row_tables: &[String]) -> Standing {
+        let row = || {
+            if row_tables.is_empty() {
+                Standing::Unknown
+            } else {
+                Standing::Tables(row_tables.to_vec())
+            }
+        };
+        // `SELECT ->▏ FROM account`: nothing precedes the arrow, so the
+        // traversal starts at the statement's row.
+        let Some(root) = first_arrow.checked_sub(1) else {
+            return row();
+        };
+        let Some(token) = self.tokens.get(root) else {
+            return row();
+        };
+        let text = token.text(self.source);
+        match token.kind {
+            TokenKind::Param => {
+                let kind = self.params.get(text.trim_start_matches('$'));
+                kind.map_or(Standing::Unknown, |kind| tables_standing(kind))
+            }
+            TokenKind::Ident => {
+                // A keyword is not a receiver — `SELECT ->▏` starts at the row.
+                if Head::from_text(text).is_some() || Clause::from_text(text).is_some() {
+                    return row();
+                }
+                // `account:alice->▏`: a record-id literal names its table.
+                if token_text(self.tokens, self.source, root.wrapping_sub(1)) == Some(":")
+                    && root >= 2
+                {
+                    let table = token_text(self.tokens, self.source, root - 2);
+                    if let Some(table) = table.and_then(|name| self.schema.table(name)) {
+                        return Standing::Tables(vec![table.name.clone()]);
+                    }
+                    return Standing::Unknown;
+                }
+                // `employer->▏` / `address.link->▏`: a field's link target.
+                let kind = if token_text(self.tokens, self.source, root.wrapping_sub(1))
+                    == Some(".")
+                    && root >= 1
+                {
+                    self.receiver_kind(root - 1, row_tables)
+                        .and_then(|base| step_field(&base, text, self.schema))
+                } else {
+                    self.field_kind_on_tables(row_tables, text)
+                };
+                kind.map_or(Standing::Unknown, |kind| tables_standing(&kind))
+            }
+            // A separator or an opening delimiter means a fresh expression
+            // starts here, so the traversal starts at the row.
+            TokenKind::Punct if matches!(text, "," | "(" | "[" | "{" | "=" | ";") => row(),
+            _ => Standing::Unknown,
+        }
+    }
+
     /// The kind of the receiver whose `.` sits at `dot`.
     fn receiver_kind(&self, dot: usize, tables: &[String]) -> Option<Kind> {
         let segments = self.receiver_segments(dot)?;
@@ -1058,6 +1299,46 @@ impl Env<'_> {
             .iter()
             .find(|builtin| builtin.name == name)?;
         super::kind_text::parameter_kind(builtin.params, argument)
+    }
+}
+
+/// Whether a relation's near endpoint accepts what the traversal stands on.
+/// An endpoint declared with no table list constrains nothing, so it accepts
+/// everything rather than nothing.
+fn accepts(relation: &crate::schema::RelationDef, dir: Dir, standing: &Standing) -> bool {
+    let near = near_side(relation, dir);
+    if near.is_empty() {
+        return true;
+    }
+    match standing {
+        Standing::Any => true,
+        Standing::Unknown => false,
+        Standing::Tables(tables) => tables.iter().any(|table| near.iter().any(|end| *end == table)),
+    }
+}
+
+/// Whether the traversal could be standing on `table`.
+fn stands_on(standing: &Standing, table: &str) -> bool {
+    match standing {
+        Standing::Any => true,
+        Standing::Unknown => false,
+        Standing::Tables(tables) => tables.iter().any(|name| name == table),
+    }
+}
+
+/// A receiver kind read as a place a traversal can stand: the tables its
+/// `record<…>` points at, under any `option`/`array` wrapping.
+fn tables_standing(kind: &Kind) -> Standing {
+    match crate::kinds::record_link_shape(kind) {
+        // `record` with no target list is a record of *some* table.
+        Some((_, targets)) if targets.is_empty() => Standing::Any,
+        Some((_, targets)) => {
+            Standing::Tables(targets.iter().map(ToString::to_string).collect())
+        }
+        None => match tables_of_kind(kind).as_slice() {
+            [] => Standing::Unknown,
+            tables => Standing::Tables(tables.to_vec()),
+        },
     }
 }
 

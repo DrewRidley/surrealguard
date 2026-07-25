@@ -193,9 +193,16 @@ impl Families {
                 ..Families::default()
             },
             // Only a table (or a param holding one) can appear here.
-            ContextKind::TableName | ContextKind::EdgeTable => Families {
+            ContextKind::TableName => Families {
                 tables: 1.0,
                 params: 0.4,
+                ..Families::default()
+            },
+            // A graph slot takes a bare table name and nothing else: a param
+            // cannot name an edge, and the set of legal tables is already
+            // pinned by `allowed_tables`.
+            ContextKind::EdgeTable | ContextKind::GraphNode => Families {
+                tables: 1.0,
                 ..Families::default()
             },
             ContextKind::ObjectKey => Families {
@@ -363,8 +370,13 @@ fn member_candidate(
     )
 }
 
-/// Every table in the schema, with its relation spec as detail when it is an
-/// edge.
+/// Every table the position admits, with its relation spec as detail when it
+/// is an edge.
+///
+/// A graph slot admits only the tables its receiver can actually reach, and
+/// `allowed_tables` has already resolved that set — so this is a *filter*.
+/// Ranking a wrong edge below a right one still offers it, and an offered
+/// traversal that returns nothing at runtime is worse than no offer at all.
 fn table_candidates(
     schema: &SchemaIndex,
     context: &CompletionContext,
@@ -373,22 +385,11 @@ fn table_candidates(
     schema
         .tables
         .values()
+        .filter(|table| match &context.allowed_tables {
+            Some(allowed) => allowed.iter().any(|name| name == &table.name),
+            None => true,
+        })
         .map(|table| {
-            // A graph step traverses an edge, so in that slot a `TYPE
-            // RELATION` table is the answer and a plain table almost never is
-            // — and among edges, one actually attached to the row table is
-            // the answer. Demoted rather than hidden: the row table is only a
-            // proxy for the step's real receiver, so a wrong guess must not
-            // hide a legal edge.
-            let weight = if context.kind == ContextKind::EdgeTable {
-                match &table.relation {
-                    Some(relation) if attaches_to(relation, &context.tables) => weight,
-                    Some(_) => weight * 0.6,
-                    None => weight * 0.25,
-                }
-            } else {
-                weight
-            };
             let detail = match &table.relation {
                 Some(relation) => Some(format!(
                     "relation {} -> {}",
@@ -418,17 +419,6 @@ fn table_candidates(
             )
         })
         .collect()
-}
-
-/// Whether a relation edge has one of `tables` at either end. An edge with an
-/// unconstrained end attaches to everything, so it never loses this test.
-fn attaches_to(relation: &crate::schema::RelationDef, tables: &[String]) -> bool {
-    if tables.is_empty() || relation.in_tables.is_empty() || relation.out_tables.is_empty() {
-        return true;
-    }
-    tables.iter().any(|table| {
-        relation.in_tables.contains(table) || relation.out_tables.contains(table)
-    })
 }
 
 fn join_or(tables: &[String]) -> String {
@@ -781,6 +771,14 @@ fn in_scope_params(
             .or_insert((None, ParamOrigin::Defined));
     }
     for param in &output.inferred_params {
+        // A context param is bound by the engine, so nothing the host supplies
+        // can shadow it. Without this guard an in-progress `$this->` — which
+        // the analyzer cannot yet resolve and records as an untyped host param
+        // — would erase the `record<table>` the enclosing DEFINE gives it, and
+        // with it the receiver every graph step needs.
+        if matches!(seen.get(&param.name), Some((_, ParamOrigin::Context))) {
+            continue;
+        }
         seen.insert(
             param.name.clone(),
             (param.kind.clone(), ParamOrigin::Host),
