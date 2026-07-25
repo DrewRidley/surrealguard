@@ -1140,16 +1140,29 @@ fn project_expr(
             // `profile.{email, city}` (row object) / `team.{label}` (record
             // link) selects sub-fields; each must exist on the target (E1002).
             validate_row_destructure(ctx, table, &prefix, &selected);
-            if let Some(outputs) = destructure_kinds(ctx.schema(), table, &prefix, &selected) {
+            if let Some((wrappers, outputs)) =
+                destructure_kinds(ctx.schema(), table, &prefix, &selected)
+            {
+                // A destructure over a wrapped link projects one object per
+                // linked record, so the wrappers apply to the object as a whole.
+                let assemble = |outputs: Vec<(Vec<String>, Kind)>| {
+                    let object: BTreeMap<String, Kind> = outputs
+                        .into_iter()
+                        .map(|(segments, kind)| {
+                            (segments.last().cloned().unwrap_or_default(), kind)
+                        })
+                        .collect();
+                    crate::kinds::rewrap_kind(&wrappers, object_literal(object))
+                };
                 match &alias_name {
                     Some(alias) => {
-                        let object: BTreeMap<String, Kind> = outputs
-                            .into_iter()
-                            .map(|(segments, kind)| {
-                                (segments.last().cloned().unwrap_or_default(), kind)
-                            })
-                            .collect();
-                        fields.insert(alias.clone(), object_literal(object));
+                        fields.insert(alias.clone(), assemble(outputs));
+                    }
+                    // Unaliased: the object lands at the destructured path
+                    // (`members.{name}` -> `members`), carrying its wrappers.
+                    None if !wrappers.is_empty() => {
+                        let object = assemble(outputs);
+                        insert_kind_at_path(fields, &prefix, object);
                     }
                     None => {
                         for (segments, kind) in outputs {
@@ -1621,23 +1634,47 @@ fn row_destructure_parts(
     Some((prefix_segments, selected.clone()))
 }
 
+/// The selected sub-field kinds of a `.{…}` destructure, plus any wrappers that
+/// belong to the **whole projected object** rather than to its fields.
+///
+/// Destructuring a *wrapped* link (`members.{name}` where `members` is
+/// `array<record<user>>`) yields one object per linked record — SurrealDB
+/// returns `array<{ name: string }>`, not `{ name: array<string> }`. So the
+/// `option`/`array`/`set` layers are peeled off the link here, the fields are
+/// resolved against the link target unwrapped, and the layers are handed back
+/// for the caller to re-apply to the assembled object.
 fn destructure_kinds(
     schema: &SchemaIndex,
     table: &TableDef,
     prefix: &[String],
     selected: &[ast::Spanned<ast::Idiom>],
-) -> Option<Vec<(Vec<String>, Kind)>> {
+) -> Option<(Vec<crate::kinds::KindWrapper>, Vec<(Vec<String>, Kind)>)> {
+    // Only a wrapped link hoists; a bare `record<T>` link and a plain nested
+    // object both keep today's field-by-field resolution.
+    let wrapped_link =
+        record_link_targets_at(table, prefix).filter(|(wrappers, _)| !wrappers.is_empty());
+
     let mut outputs = Vec::new();
     for sub in selected {
         let sub_segments = plain_field_segments(&sub.node)?;
+        let kind = match &wrapped_link {
+            // Resolve against the link target itself, so the field carries no
+            // trace of the collection/option it was reached through.
+            Some((_, targets)) => resolve_across_link(schema, targets, &sub_segments),
+            // A field absent on the target still projects (as `Any`);
+            // `validate_row_destructure` reports it separately.
+            None => {
+                let mut segments = prefix.to_vec();
+                segments.extend(sub_segments.iter().cloned());
+                resolve_field_path(schema, table, &segments).unwrap_or(Kind::Any)
+            }
+        };
         let mut segments = prefix.to_vec();
         segments.extend(sub_segments);
-        // A field absent on the target still projects (as `Any`);
-        // `validate_row_destructure` reports it separately.
-        let kind = resolve_field_path(schema, table, &segments).unwrap_or(Kind::Any);
         outputs.push((segments, kind));
     }
-    Some(outputs)
+    let wrappers = wrapped_link.map(|(wrappers, _)| wrappers).unwrap_or_default();
+    Some((wrappers, outputs))
 }
 
 /// Validates each selected sub-field of a `.{…}` destructure on a graph target
@@ -3258,6 +3295,46 @@ mod tests {
             !codes(&diagnostics).contains(&1002),
             "valid paths through wrapped links must not emit 1002: {:?}",
             codes(&diagnostics)
+        );
+    }
+
+    #[test]
+    fn a_destructure_over_a_wrapped_link_hoists_the_wrapper_to_the_object() {
+        // `members.{name}` projects one object PER LINKED RECORD, so SurrealDB
+        // returns `array<{ name: string }>` — not `{ name: array<string> }`.
+        // The wrapper belongs to the object, not to each selected field.
+        let schema = schema_from(
+            "DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE FIELD name ON user TYPE string;\n\
+             DEFINE TABLE team SCHEMAFULL;\n\
+             DEFINE FIELD owner ON team TYPE record<user>;\n\
+             DEFINE FIELD lead ON team TYPE option<record<user>>;\n\
+             DEFINE FIELD members ON team TYPE array<record<user>>;",
+        );
+
+        let (kind, _) = analyze_diagnostics(
+            &schema,
+            "SELECT owner.{name} AS o, lead.{name} AS l, members.{name} AS m FROM team;",
+        );
+        let fields = object_fields(array_element(&kind));
+
+        let name_object = object_literal(
+            [("name".to_string(), Kind::String)]
+                .into_iter()
+                .collect::<BTreeMap<_, _>>(),
+        );
+        // Control: a bare link destructures to a plain object.
+        assert_eq!(fields["o"], name_object);
+        // The whole object is optional — the link may be NONE.
+        assert_eq!(
+            fields["l"],
+            Kind::Either(vec![Kind::None, name_object.clone()])
+        );
+        // The collection wraps the object, not the field.
+        assert_eq!(
+            fields["m"],
+            Kind::Array(Box::new(name_object), None),
+            "a destructure over `array<record<T>>` must be `array<object>`"
         );
     }
 
