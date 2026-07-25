@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
-use crate::analysis::{LetBindingAnalysis, ParamInference};
+use crate::analysis::{LetBindingAnalysis, NarrowingAnalysis, ParamInference};
 use crate::expression::{ExpressionFact, ExpressionValueClass};
 
 /// The bindings in scope for a statement: `LET` facts, param defaults, and
@@ -43,6 +43,13 @@ pub struct StatementEnv {
     /// editor-feature output: recorded as bodies are walked and drained up to
     /// the source's top-level env, never read by any diagnostic.
     let_bindings: Vec<LetBindingAnalysis>,
+    /// Every flow narrowing applied in this scope and its already-merged
+    /// children, with the region each covers. Pure editor-feature output, on
+    /// the same collect-and-drain protocol as
+    /// [`let_bindings`](Self::let_bindings): recorded where the refinement is
+    /// applied, drained up to the source's top-level env, never read by any
+    /// diagnostic (checking sees narrowings through the bindings themselves).
+    narrowings: Vec<NarrowingAnalysis>,
 }
 
 impl StatementEnv {
@@ -61,6 +68,7 @@ impl StatementEnv {
             // Child records are collected fresh and drained back on merge, so
             // the parent's already-recorded bindings are not re-emitted.
             let_bindings: Vec::new(),
+            narrowings: Vec::new(),
         }
     }
 
@@ -74,6 +82,29 @@ impl StatementEnv {
     /// children), in source order.
     pub fn let_bindings(&self) -> &[LetBindingAnalysis] {
         &self.let_bindings
+    }
+
+    /// Records that a guard narrowed `path` to `kind` over `span`. Read-only
+    /// w.r.t. diagnostics. Exact duplicates are dropped: an expression may be
+    /// re-inferred (const folding, closure re-inference at a call site), and
+    /// one refinement over one region is one record.
+    pub fn record_narrowing(&mut self, narrowing: NarrowingAnalysis) {
+        if self.narrowings.contains(&narrowing) {
+            return;
+        }
+        self.narrowings.push(narrowing);
+    }
+
+    /// Every flow narrowing recorded in this scope (and merged from children).
+    pub fn narrowings(&self) -> &[NarrowingAnalysis] {
+        &self.narrowings
+    }
+
+    /// The scope's editor-facing facts — its `LET`/`FOR` bindings and its
+    /// flow-narrowed regions. Both are collected by the same walk and consumed
+    /// together by the pipeline, and neither is read by any diagnostic.
+    pub fn editor_facts(&self) -> (Vec<LetBindingAnalysis>, Vec<NarrowingAnalysis>) {
+        (self.let_bindings.clone(), self.narrowings.clone())
     }
 
     /// Records that the idiom path `key` (a `param.field.field` string) is
@@ -210,10 +241,13 @@ impl StatementEnv {
 
     /// Folds a child scope's param uses back into this one, unifying kinds
     /// and domains and unioning the `required` flag and spans. Also drains
-    /// the child's recorded `LET`/`FOR` bindings up so the whole source's
-    /// bindings collect at the top-level env.
+    /// the child's recorded `LET`/`FOR` bindings and flow narrowings up so the
+    /// whole source's editor facts collect at the top-level env.
     pub fn merge_param_uses_from(&mut self, mut child: StatementEnv) {
         self.let_bindings.append(&mut child.let_bindings);
+        for narrowing in child.narrowings.drain(..) {
+            self.record_narrowing(narrowing);
+        }
         for param in child.params.into_values() {
             let entry = self
                 .params

@@ -353,21 +353,13 @@ fn completion_offers_the_row_table_fields_in_a_projection_slot() {
 // Hover
 // ---------------------------------------------------------------------------
 
-/// The narrowing-guard hover. `$org` is `option<…>` where it is bound and after
-/// the `IF $org = NONE THEN THROW` guard it is provably non-`NONE` — and the
-/// *analysis* knows that (the precision snapshot records the narrowed type).
-///
-/// ⚠️ KNOWN BUG — this test asserts TODAY'S behaviour, which is wrong.
-/// `hover_at` matches an offset against the spans of already-analyzed items and
-/// reads the binding's recorded kind; it never consults the flow-narrowed
-/// environment in force at that offset, so the guard's effect is invisible in
-/// the editor. Tracked as NEW-11 in
-/// `docs/plans/2026-07-25-analyzer-gap-backlog.md`.
-///
-/// When NEW-11 is fixed this test MUST fail, and the fix is to flip the
-/// post-guard assertion to expect the narrowed kind — not to relax it.
+/// The narrowing-guard hover (NEW-11). `$org` is `option<…>` where it is bound,
+/// and after the `IF $org = NONE THEN THROW` guard it is provably non-`NONE`.
+/// Hover must answer **per occurrence**: the declared kind at and before the
+/// guard, the narrowed kind after it — never a single kind for the whole file,
+/// which is what made the editor contradict the analyzer.
 #[test]
-fn hover_on_a_binding_is_the_same_before_and_after_a_narrowing_guard_known_bug() {
+fn hover_reports_the_declared_kind_at_a_guard_and_the_narrowed_kind_after_it() {
     let query = "\
 LET $org = (SELECT name, tier FROM ONLY organization LIMIT 1);
 IF $org = NONE THEN THROW 'missing' END;
@@ -385,7 +377,8 @@ RETURN $org.name;
         .hover_markdown(query, after(query, "$org", 3) - 1)
         .expect("hover after the guard");
 
-    // Correct today: the declared kind at and before the guard.
+    // The declared kind at and before the guard: the guard's own subject is
+    // still optional where it is tested, or the test would be pointless.
     assert!(
         at_binding.contains("option<"),
         "`FROM ONLY … LIMIT 1` yields an option; hover said: {at_binding}"
@@ -395,20 +388,52 @@ RETURN $org.name;
         "at the guard the binding is still optional; hover said: {at_guard}"
     );
 
-    // WRONG today, asserted so the harness documents reality rather than
-    // silently tolerating it. After a diverging `NONE` guard the binding is
-    // narrowed and hover should NOT say `option<`.
+    // Past the diverging guard the binding cannot be NONE, and hover says so.
     assert!(
-        after_guard.contains("option<"),
-        "NEW-11 regression check: hover after the guard used to report the \
-         declared `option<…>`. If this now reports the narrowed kind, NEW-11 \
-         has been FIXED — flip this assertion to `!contains(\"option<\")`. \
-         Hover said: {after_guard}"
+        !after_guard.contains("option<"),
+        "the guard removed NONE, so hover past it must not report an option; \
+         hover said: {after_guard}"
     );
-    assert_eq!(
+    // The narrowing takes away the option marker and nothing else.
+    assert!(
+        after_guard.contains("name") && after_guard.contains("tier"),
+        "narrowing must keep the row shape, hover said: {after_guard}"
+    );
+    assert_ne!(
         at_binding, after_guard,
-        "NEW-11: hover is position-insensitive today, so these must be equal. \
-         A difference means narrowing reached hover — update this test."
+        "the declared and narrowed kinds must differ — an equal pair means \
+         hover went back to reporting one kind per binding (NEW-11)"
+    );
+}
+
+/// The other half of "only beyond the reduction site": a guard whose body does
+/// not divert proves nothing past the `IF`, so the narrowing must stop at the
+/// body's end and the statements after it hover as declared again.
+#[test]
+fn hover_narrows_inside_a_guard_body_but_not_after_the_if() {
+    let query = "\
+LET $org = (SELECT name, tier FROM ONLY organization LIMIT 1);
+IF $org != NONE THEN UPDATE organization SET name = $org.name END;
+RETURN $org;
+";
+    let (mut lsp, _) = Lsp::with_schema(query);
+
+    let in_body = lsp
+        .hover_markdown(query, after(query, "$org", 3) - 1)
+        .expect("hover inside the THEN body");
+    let after_if = lsp
+        .hover_markdown(query, after(query, "$org", 4) - 1)
+        .expect("hover after the IF");
+
+    assert!(
+        !in_body.contains("option<"),
+        "inside the body the condition holds, so the binding is not optional; \
+         hover said: {in_body}"
+    );
+    assert!(
+        after_if.contains("option<"),
+        "the IF has no ELSE and does not divert, so nothing is proven after it; \
+         hover said: {after_if}"
     );
 }
 

@@ -1752,9 +1752,26 @@ fn contains_column_aggregate(expr: &ast::Expr) -> bool {
     }
 }
 
-/// Aggregate functions that reduce a numeric column to one scalar. These all
-/// take `array<number>` and return a scalar `number`, so a scalar projected
-/// column must be collected first.
+/// Functions SurrealDB evaluates as *aggregates*: the projection's per-row
+/// value is collected across the group and the function is handed the whole
+/// column, so a scalar projected column must be collected first.
+///
+/// The membership is the engine's, not a shape heuristic — verified on 3.0.5
+/// with a two-row group (`tier` × `name: string`, `qty: int`):
+///
+/// | projection | result | verdict |
+/// |---|---|---|
+/// | `math::sum(qty)` | `7` | reduced ⇒ aggregate |
+/// | `array::distinct(qty)` | `[2, 5]` | the collected column ⇒ aggregate |
+/// | `array::group(qty)` | `[2, 5]` | the collected column ⇒ aggregate |
+/// | `time::min(created)` | one datetime | reduced ⇒ aggregate |
+/// | `array::flatten(qty)` | `[null, null]` | per-row ⇒ **not** an aggregate |
+/// | `array::first(qty)` | `[null, null]` | per-row ⇒ **not** an aggregate |
+/// | `array::len(tags)` | `[2, 2]` | per-row ⇒ **not** an aggregate |
+/// | `array::sort(qty)` | `[null, null]` | per-row ⇒ **not** an aggregate |
+///
+/// (`count` is not listed: a bare `count()` takes no column, and `count(x)`
+/// needs no promotion — it accepts any argument.)
 fn is_column_aggregate(path: &str) -> bool {
     matches!(
         path,
@@ -1771,6 +1788,13 @@ fn is_column_aggregate(path: &str) -> bool {
             | "math::midhinge"
             | "math::trimean"
             | "math::interquartile"
+            // Collectors: the aggregator hands these the column itself.
+            // `array::distinct` dedupes it, `array::group` returns it as-is.
+            | "array::distinct"
+            | "array::group"
+            // Ordering aggregates over a datetime column.
+            | "time::min"
+            | "time::max"
     )
 }
 
@@ -3741,6 +3765,65 @@ mod tests {
             codes(&diagnostics)
         );
         assert_eq!(kind, Kind::Array(Box::new(Kind::Number), None));
+    }
+
+    #[test]
+    fn collector_aggregates_promote_their_column_like_the_math_reducers() {
+        // Engine-verified on 3.0.5: under a GROUP clause the aggregator hands
+        // `array::distinct`/`array::group` the *collected* column, so
+        // `array::distinct(name)` over a `string` column returns
+        // `["ann", "bob"]` — the `array` argument contract is satisfied by the
+        // collection, exactly as it is for `math::sum`. Before this the two
+        // disagreed: `array::distinct` raised 5002 while `array::group` was
+        // waved through with `any`.
+        let schema = schema_from(
+            "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD name ON person TYPE string;\n\
+             DEFINE FIELD tier ON person TYPE string;",
+        );
+
+        for call in ["array::distinct(name)", "array::group(name)"] {
+            let (kind, diagnostics) = analyze_diagnostics(
+                &schema,
+                &format!("SELECT tier, {call} AS names FROM person GROUP BY tier;"),
+            );
+            assert!(
+                !codes(&diagnostics).contains(&5002),
+                "`{call}` under GROUP BY receives the collected column: {:?}",
+                codes(&diagnostics)
+            );
+            let fields = object_fields(array_element(&kind));
+            // And the collected element kind is knowable — not `any`.
+            assert_eq!(
+                fields["names"],
+                Kind::Array(Box::new(Kind::String), None),
+                "`{call}` should collect `string`s"
+            );
+            assert_eq!(fields["tier"], Kind::String);
+        }
+    }
+
+    #[test]
+    fn a_non_aggregate_array_function_keeps_its_per_row_contract() {
+        // The promoted set is the engine's, not "every `array::` function":
+        // `array::len(name)` is evaluated per row (3.0.5 returns one result per
+        // row, not a reduction), so its `array` contract still applies to the
+        // per-row `string` — and still reports.
+        let schema = schema_from(
+            "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD name ON person TYPE string;\n\
+             DEFINE FIELD tier ON person TYPE string;",
+        );
+
+        let (_, diagnostics) = analyze_diagnostics(
+            &schema,
+            "SELECT tier, array::len(name) AS n FROM person GROUP BY tier;",
+        );
+        assert!(
+            codes(&diagnostics).contains(&5002),
+            "a per-row `array::len` over a string column still violates its contract: {:?}",
+            codes(&diagnostics)
+        );
     }
 
     #[test]

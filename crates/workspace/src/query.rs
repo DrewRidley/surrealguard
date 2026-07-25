@@ -9,7 +9,7 @@ use surrealguard_syntax::parse::parse_source;
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
-use crate::analysis::AnalysisOutput;
+use crate::analysis::{AnalysisOutput, NarrowingAnalysis};
 use crate::schema::SchemaIndex;
 
 /// A type hint for a `LET $x = <expr>` binding: where the bound `$x` token
@@ -145,12 +145,45 @@ pub struct HoverInfo {
     pub markdown: String,
 }
 
+/// The kind a binding (or `param.field.field` path) has **at `offset`**: the
+/// innermost flow narrowing whose region covers the cursor, or `None` when no
+/// guard is in force there and the declared kind stands.
+///
+/// Regions nest (a branch body inside a post-guard remainder), so the smallest
+/// covering region is the one that holds — the same "smallest covering symbol"
+/// rule hover uses everywhere else.
+fn narrowed_kind_at<'a>(
+    narrowings: &'a [NarrowingAnalysis],
+    source: &SourceId,
+    path: &str,
+    offset: u32,
+) -> Option<&'a Kind> {
+    narrowings
+        .iter()
+        .filter(|narrowing| narrowing.path == path && narrowing.span.source() == source)
+        .filter(|narrowing| {
+            let range = narrowing.span.range();
+            offset >= range.start() && offset <= range.end()
+        })
+        .min_by_key(|narrowing| {
+            let range = narrowing.span.range();
+            range.end().saturating_sub(range.start())
+        })
+        .map(|narrowing| &narrowing.kind)
+}
+
 /// Resolves a hover at byte `offset` in `source`: maps the cursor to the
 /// smallest covering symbol among the `LET` bindings, parameter uses, table
 /// declarations, and the context params (`$value`/`$event`/`$after`/...)
 /// bound by an enclosing DEFINE construct, and renders its inferred type.
 /// `None` when the cursor is over nothing typed. `text` is the source's full
 /// text, needed to locate the enclosing DEFINE construct for context params.
+///
+/// A hover answers **per occurrence**, not per binding: where a guard has
+/// flow-narrowed the symbol under the cursor, the narrowed kind is shown, and
+/// at or before that guard the declared kind is. The regions come from
+/// [`AnalysisOutput::narrowings`], recorded during analysis — hover reads the
+/// cache and never re-analyzes.
 pub fn hover_at(
     output: &AnalysisOutput,
     schema: &SchemaIndex,
@@ -207,16 +240,21 @@ pub fn hover_at(
         }
     }
 
-    // `$param` use sites.
+    // `$param` use sites. Each use is rendered on its own: a guard earlier in
+    // the source narrows the uses that follow it, not the ones before it.
     for param in &output.inferred_params {
-        let markdown = symbol_markdown(
-            Some(&format!("parameter `${}`", param.name)),
-            &format!("${}", param.name),
-            param.kind.as_ref(),
-            schema,
-        );
         for span in &param.spans {
-            consider(span, markdown.clone());
+            let here = narrowed_kind_at(&output.narrowings, source, &param.name, offset)
+                .or(param.kind.as_ref());
+            consider(
+                span,
+                symbol_markdown(
+                    Some(&format!("parameter `${}`", param.name)),
+                    &format!("${}", param.name),
+                    here,
+                    schema,
+                ),
+            );
         }
     }
 
@@ -257,6 +295,7 @@ pub fn hover_at(
             source,
             offset,
             let_kinds: &let_kinds,
+            narrowings: &output.narrowings,
             param_kinds: std::collections::HashMap::new(),
             out: Vec::new(),
         };
@@ -591,6 +630,10 @@ struct SchemaHovers<'a> {
     /// The inferred kind of each `LET`/`FOR` variable in scope, by name,
     /// for hovering `$var` uses and `$var[i].field` idioms.
     let_kinds: &'a std::collections::HashMap<String, Kind>,
+    /// Every guard-narrowed region analysis recorded, so a `$var` (or a
+    /// narrowed `$var.field` path) under the cursor resolves to the kind in
+    /// force *there* rather than the one at its binding site.
+    narrowings: &'a [NarrowingAnalysis],
     /// Declared `DEFINE FUNCTION` parameters in scope while walking a function
     /// body, by name → declared kind. Populated on entry to the body and
     /// restored on exit, so `$param` uses deep in the body hover their declared
@@ -604,13 +647,26 @@ impl SchemaHovers<'_> {
         self.offset >= span.start() && self.offset <= span.end()
     }
 
-    /// The kind of a `$var` in scope: a `LET`/`FOR` binding wins over a
+    /// The kind of a `$var` **at the cursor**: a guard narrowing in force here
+    /// wins over the binding's own kind, and a `LET`/`FOR` binding wins over a
     /// function parameter of the same name.
+    ///
+    /// The cursor is the right position to ask about because every hover this
+    /// walker emits is for a span covering it — so "the kind at `self.offset`"
+    /// is exactly "the kind at the occurrence being hovered".
     fn var_kind(&self, name: &str) -> Option<Kind> {
-        self.let_kinds
-            .get(name)
-            .or_else(|| self.param_kinds.get(name))
-            .cloned()
+        self.narrowed_kind(name).or_else(|| {
+            self.let_kinds
+                .get(name)
+                .or_else(|| self.param_kinds.get(name))
+                .cloned()
+        })
+    }
+
+    /// The flow-narrowed kind for `path` (a bare name, or a
+    /// `param.field.field` key) at the cursor, if a guard proved one there.
+    fn narrowed_kind(&self, path: &str) -> Option<Kind> {
+        narrowed_kind_at(self.narrowings, self.source, path, self.offset).cloned()
     }
 
     /// The bold caption for a `$var` hover: `local` for a `LET`/`FOR`
@@ -1015,6 +1071,11 @@ impl SchemaHovers<'_> {
         let mut current = Some(root_kind);
         let mut table: Option<String> = None;
         let mut segments: Vec<String> = Vec::new();
+        // The plain `param.field.field` prefix walked so far — the key a field
+        // guard (`IF $x.parent = NONE …`) narrows under. Anything that is not a
+        // plain field step (a subscript, a link crossing) ends the key, since
+        // only the exact written path narrows.
+        let mut value_path: Vec<String> = Vec::new();
         for part in idiom.parts.iter().skip(1) {
             match &part.node {
                 IdiomPart::Index(inner) => {
@@ -1022,11 +1083,13 @@ impl SchemaHovers<'_> {
                     current = current.as_ref().and_then(element_kind);
                     table = None;
                     segments.clear();
+                    value_path.clear();
                 }
                 IdiomPart::All | IdiomPart::Last => {
                     current = current.as_ref().and_then(element_kind);
                     table = None;
                     segments.clear();
+                    value_path.clear();
                 }
                 IdiomPart::Field(field) => {
                     // A value kind that is a single `record<>` link enters its
@@ -1053,7 +1116,12 @@ impl SchemaHovers<'_> {
                     let Some(kind) = current.clone() else {
                         return;
                     };
-                    let next = field_kind(&kind, field);
+                    value_path.push(field.to_string());
+                    // A guard on this exact path (`$x.parent != NONE`) refines
+                    // it downstream, exactly as one on the bare `$x` does.
+                    let next = self
+                        .narrowed_kind(&format!("{name}.{}", value_path.join(".")))
+                        .or_else(|| field_kind(&kind, field));
                     if self.covers(part.span) {
                         if let Some(next) = &next {
                             let span = SourceSpan::new(self.source.clone(), part.span);
@@ -1815,6 +1883,163 @@ mod tests {
 
         assert!(hover.markdown.contains("$age: int"));
         assert_eq!(hover.span.range().start(), 4);
+    }
+
+    /// A schema whose `ONLY` select yields an `option<{…}>` — the shape every
+    /// narrowing-hover test below guards on.
+    const NARROWING_SCHEMA: &str = "DEFINE TABLE unit SCHEMAFULL;\n\
+                                    DEFINE FIELD label ON unit TYPE string;\n\
+                                    DEFINE FIELD parent ON unit TYPE option<record<unit>>;\n";
+
+    /// The kind hover reports for the `n`th `$x` occurrence in `text`.
+    fn hover_kind_at_occurrence(text: &str, n: usize) -> String {
+        let (output, schema, source) = analyze(text);
+        let mut from = 0;
+        for _ in 0..n {
+            from = text[from..].find("$x").expect("occurrence exists") + from + 2;
+        }
+        let hover = hover_at(&output, &schema, &source, text, from as u32 - 1)
+            .unwrap_or_else(|| panic!("hover over occurrence {n}"));
+        hover.markdown
+    }
+
+    #[test]
+    fn hover_keeps_the_declared_kind_at_and_before_a_guard() {
+        // NEW-11: hover is per occurrence. At the binding and at the guard that
+        // tests it, the binding is still what it was declared/inferred to be —
+        // narrowing must not reach backwards.
+        let text = format!(
+            "{NARROWING_SCHEMA}\
+             LET $x = (SELECT label FROM ONLY unit LIMIT 1);\n\
+             IF $x = NONE THEN THROW 'missing' END;\n\
+             RETURN $x.label;\n"
+        );
+
+        assert!(
+            hover_kind_at_occurrence(&text, 1).contains("option<"),
+            "binding site: {}",
+            hover_kind_at_occurrence(&text, 1)
+        );
+        assert!(
+            hover_kind_at_occurrence(&text, 2).contains("option<"),
+            "at the guard: {}",
+            hover_kind_at_occurrence(&text, 2)
+        );
+    }
+
+    #[test]
+    fn hover_reports_the_narrowed_kind_after_a_diverging_guard() {
+        let text = format!(
+            "{NARROWING_SCHEMA}\
+             LET $x = (SELECT label FROM ONLY unit LIMIT 1);\n\
+             IF $x = NONE THEN THROW 'missing' END;\n\
+             RETURN $x.label;\n"
+        );
+
+        let after = hover_kind_at_occurrence(&text, 3);
+        assert!(
+            !after.contains("option<") && after.contains("label"),
+            "past the guard the binding cannot be NONE: {after}"
+        );
+    }
+
+    #[test]
+    fn hover_narrowing_stops_with_the_scope_that_established_it() {
+        // A guard inside a block narrows the rest of *that block*. The
+        // statements after the block see the binding again as it was, so a
+        // region that leaked would show up right here.
+        let text = format!(
+            "{NARROWING_SCHEMA}\
+             LET $x = (SELECT label FROM ONLY unit LIMIT 1);\n\
+             LET $inner = {{ IF $x = NONE THEN THROW 'missing' END; RETURN $x.label; }};\n\
+             RETURN $x;\n"
+        );
+
+        assert!(
+            !hover_kind_at_occurrence(&text, 3).contains("option<"),
+            "inside the block, past the guard: {}",
+            hover_kind_at_occurrence(&text, 3)
+        );
+        assert!(
+            hover_kind_at_occurrence(&text, 4).contains("option<"),
+            "after the block the guard proves nothing: {}",
+            hover_kind_at_occurrence(&text, 4)
+        );
+    }
+
+    #[test]
+    fn hover_narrows_a_guarded_field_path_only_past_its_guard() {
+        // The same rule one level down: `$x.parent` is refined by a guard on
+        // that exact path, and only after it.
+        let text = format!(
+            "{NARROWING_SCHEMA}\
+             LET $x = (SELECT label, parent FROM ONLY unit LIMIT 1);\n\
+             IF $x = NONE THEN THROW 'missing' END;\n\
+             IF $x.parent = NONE THEN THROW 'root' END;\n\
+             RETURN $x.parent;\n"
+        );
+        let (output, schema, source) = analyze(&text);
+        let at_guard = text.rfind("$x.parent = NONE").expect("guard present") + 4;
+        let past_guard = text.rfind("$x.parent").expect("use present") + 4;
+
+        let guard_hover = hover_at(&output, &schema, &source, &text, at_guard as u32)
+            .expect("hover on the guarded path");
+        let past_hover = hover_at(&output, &schema, &source, &text, past_guard as u32)
+            .expect("hover past the guard");
+        assert!(
+            guard_hover.markdown.contains("option<record<unit>>"),
+            "at its own guard the path is still optional: {}",
+            guard_hover.markdown
+        );
+        assert!(
+            past_hover.markdown.contains("parent: record<unit>"),
+            "past the guard the path is a bare link: {}",
+            past_hover.markdown
+        );
+    }
+
+    #[test]
+    fn analysis_records_one_narrowed_region_per_guard() {
+        // The data hover reads is part of `AnalysisOutput`, so inlay hints (and
+        // any other cache-only editor feature) can answer per occurrence from
+        // exactly the same facts — without re-running analysis.
+        let text = format!(
+            "{NARROWING_SCHEMA}\
+             LET $x = (SELECT label FROM ONLY unit LIMIT 1);\n\
+             IF $x = NONE THEN THROW 'missing' END;\n\
+             RETURN $x.label;\n"
+        );
+        let (output, _schema, _source) = analyze(&text);
+
+        // Two regions, one per side of the guard. Inside the THEN body the
+        // condition holds, so the binding is NONE there…
+        let body = text.find("THROW").expect("body present");
+        let in_body = output
+            .narrowings
+            .iter()
+            .find(|narrowing| narrowing.path == "x" && narrowing.span.range().start() as usize == body)
+            .expect("the THEN body is a narrowed region");
+        assert_eq!(in_body.kind, Kind::None);
+
+        // …and past the guard statement it is the complement, over a region
+        // that opens where the guard ends and runs to the end of the top-level
+        // statement sequence.
+        let guard_end = text.find("END").expect("guard present") + "END".len();
+        let last_statement = text.find("RETURN $x.label").expect("use present");
+        let past_guard = output
+            .narrowings
+            .iter()
+            .find(|narrowing| {
+                narrowing.path == "x"
+                    && (guard_end..=last_statement).contains(&(narrowing.span.range().start() as usize))
+            })
+            .expect("the statements past the guard are a narrowed region");
+        assert!(
+            !matches!(past_guard.kind, Kind::Either(_)),
+            "{:?}",
+            past_guard.kind
+        );
+        assert_eq!(past_guard.span.range().end() as usize, text.len());
     }
 
     #[test]

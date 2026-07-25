@@ -88,8 +88,11 @@ pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::If
                     &branch.condition.node,
                     ctx.env(),
                 );
+                // The refinement holds over the body and nothing else — the
+                // condition itself still reads the declared kind.
+                let region = block_span(&branch.body);
                 let flow = ctx.with_child_env(|ctx| {
-                    crate::analyzer::flow::narrow::apply_effects(ctx, &positive);
+                    crate::analyzer::flow::narrow::apply_effects_over(ctx, &positive, region);
                     analyze_block_flow(ctx, &branch.body)
                 });
                 returns.extend(flow.returns);
@@ -135,8 +138,9 @@ pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::If
                 ctx.env(),
             ));
         }
+        let region = block_span(else_branch);
         let flow = ctx.with_child_env(|ctx| {
-            crate::analyzer::flow::narrow::apply_effects(ctx, &negative);
+            crate::analyzer::flow::narrow::apply_effects_over(ctx, &negative, region);
             analyze_block_flow(ctx, else_branch)
         });
         returns.extend(flow.returns);

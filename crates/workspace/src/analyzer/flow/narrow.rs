@@ -19,6 +19,7 @@
 
 use surrealdb_types::{Kind, KindLiteral, Table};
 use surrealguard_syntax::ast;
+use surrealguard_syntax::span::ByteRange;
 
 use crate::analyzer::const_eval::{BranchReach, Reachability};
 use crate::analyzer::context::AnalysisContext;
@@ -653,6 +654,24 @@ fn string_literal(expr: &ast::Expr) -> Option<String> {
 /// only ever tightens a known kind — and never touches the base param or a
 /// sibling path.
 pub(crate) fn apply_effects(ctx: &mut AnalysisContext<'_>, effects: &[Effect]) {
+    apply_effects_over(ctx, effects, None);
+}
+
+/// [`apply_effects`], additionally recording the source region each refinement
+/// holds over.
+///
+/// The environment alone cannot answer an editor's question — it is a moving
+/// point-in-time value, and by the time hover runs, analysis is over. So the
+/// callers that *know* the region a refinement covers (a branch body, the
+/// statements after a diverging guard) pass it here, and it is recorded
+/// alongside the narrowed kind. Callers that don't — the `AND`/`OR`
+/// short-circuit inside a single expression — use [`apply_effects`] and record
+/// nothing, which leaves the editor showing the declared kind exactly as before.
+pub(crate) fn apply_effects_over(
+    ctx: &mut AnalysisContext<'_>,
+    effects: &[Effect],
+    region: Option<ByteRange>,
+) {
     for effect in effects {
         let Some(base) = ctx.env().let_fact(&effect.path.param).cloned() else {
             continue;
@@ -665,10 +684,13 @@ pub(crate) fn apply_effects(ctx: &mut AnalysisContext<'_>, effects: &[Effect]) {
                 continue;
             };
             let mut new_fact = base;
-            new_fact.kind = Some(narrowed);
+            new_fact.kind = Some(narrowed.clone());
             // Mark this as a flow narrowing (not a base binding) so dead-branch
             // folding may draw a verdict from the tightened kind.
             ctx.narrow_local(effect.path.param.clone(), new_fact);
+            if let Some(region) = region {
+                ctx.record_narrowing(effect.path.param.clone(), region, narrowed);
+            }
         } else {
             // Resolve the path's declared kind through the schema, then narrow
             // and record it under the exact path key.
@@ -682,6 +704,9 @@ pub(crate) fn apply_effects(ctx: &mut AnalysisContext<'_>, effects: &[Effect]) {
             let Some(narrowed) = narrow_kind(&current, &effect.narrowing) else {
                 continue;
             };
+            if let Some(region) = region {
+                ctx.record_narrowing(effect.path.key(), region, narrowed.clone());
+            }
             ctx.define_narrowed_path(effect.path.key(), narrowed);
         }
     }

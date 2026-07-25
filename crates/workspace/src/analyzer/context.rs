@@ -32,6 +32,10 @@ pub struct AnalysisContext<'a> {
     env: StatementEnv,
     row_table: Option<&'a TableDef>,
     loop_depth: u32,
+    /// The end offset of the statement sequence being analyzed — the point a
+    /// fall-through narrowing established here stops holding. `None` means the
+    /// source's top level, whose sequence ends with the source text.
+    scope_end: Option<u32>,
 }
 
 impl<'a> AnalysisContext<'a> {
@@ -52,6 +56,7 @@ impl<'a> AnalysisContext<'a> {
             env: StatementEnv::default(),
             row_table: None,
             loop_depth: 0,
+            scope_end: None,
         }
     }
 
@@ -75,6 +80,7 @@ impl<'a> AnalysisContext<'a> {
             env,
             row_table,
             loop_depth: 0,
+            scope_end: None,
         }
     }
 
@@ -191,6 +197,44 @@ impl<'a> AnalysisContext<'a> {
     /// go-to-def). Read-only w.r.t. diagnostics.
     pub fn record_let_binding(&mut self, binding: crate::analysis::LetBindingAnalysis) {
         self.env.record_let_binding(binding);
+    }
+
+    /// Records that a guard narrowed `path` to `kind` over `range`, for editor
+    /// features that must answer *per occurrence* (hover, inlay hints) rather
+    /// than per binding. Read-only w.r.t. diagnostics.
+    pub(crate) fn record_narrowing(
+        &mut self,
+        path: String,
+        range: surrealguard_syntax::span::ByteRange,
+        kind: surrealdb_types::Kind,
+    ) {
+        let span = SourceSpan::new(self.source.clone(), range);
+        self.env
+            .record_narrowing(crate::analysis::NarrowingAnalysis { path, span, kind });
+    }
+
+    /// The end offset of the statement sequence being analyzed: a fall-through
+    /// narrowing holds from the guard that established it to here. Defaults to
+    /// the end of the source (the top-level sequence).
+    pub(crate) fn scope_end(&self) -> u32 {
+        self.scope_end
+            .unwrap_or_else(|| u32::try_from(self.source_text.len()).unwrap_or(u32::MAX))
+    }
+
+    /// Runs `f` with the statement sequence ending at `end` — a block or
+    /// branch body, whose fall-through narrowings die with it.
+    pub(crate) fn with_scope_end<T>(
+        &mut self,
+        end: Option<u32>,
+        f: impl FnOnce(&mut AnalysisContext<'a>) -> T,
+    ) -> T {
+        let previous = self.scope_end;
+        if end.is_some() {
+            self.scope_end = end;
+        }
+        let result = f(self);
+        self.scope_end = previous;
+        result
     }
 
     /// Records (or clears) that `binding` holds `type::table($param)`, for
@@ -341,6 +385,7 @@ impl<'a> AnalysisContext<'a> {
             env: child_env,
             row_table: self.row_table,
             loop_depth: self.loop_depth,
+            scope_end: self.scope_end,
         };
         let result = f(&mut child);
         self.loop_depth = child.loop_depth;
