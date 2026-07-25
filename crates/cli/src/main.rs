@@ -225,19 +225,51 @@ fn run_check(start_dir: &Path) -> Result<CheckPassed, CheckFailed> {
         source_texts.insert(source_id.to_string(), text);
     }
 
+    // Embedded queries in host files (`surql` tagged templates in .ts/.svelte/…)
+    // are part of the workspace: they are the queries the client actually runs.
+    // `generate` has always analyzed them, so a `check` that ignored them would
+    // pass a workspace whose `generate` then fails with errors — CI green, build
+    // broken. Their findings are remapped to `host_file:line` below.
+    let mut embedded: std::collections::BTreeMap<String, (surrealguard_embed::EmbeddedQuery, String)> =
+        std::collections::BTreeMap::new();
+    for path in discover_host_sources(&root, &config) {
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let host_id = path.display().to_string();
+        let queries = surrealguard_embed::extract(&host_id, &text);
+        if queries.is_empty() {
+            continue;
+        }
+        for (index, query) in queries.into_iter().enumerate() {
+            let source_id = workspace
+                .add_virtual_source(format!("embedded://{host_id}#{index}"), query.text.clone());
+            embedded.insert(source_id.to_string(), (query, host_id.clone()));
+        }
+        source_texts.insert(host_id, text);
+    }
+
     let analysis = analyze_workspace(&workspace);
 
     // Findings carry their intrinsic class; presentation policy
     // (warnings-as-errors, per-code/family lint levels, suppression) applies
     // here, at the consumption edge — built once, shared with the LSP.
     let policy = config.policy();
-    let resolved: Vec<_> = analysis
+    let resolved: Vec<(Finding, Severity)> = analysis
         .diagnostics
         .iter()
         .filter_map(|finding| {
-            policy
-                .resolve_severity(finding.code(), finding.severity())
-                .map(|severity| (finding, severity))
+            let severity = policy.resolve_severity(finding.code(), finding.severity())?;
+            // A finding raised on an embedded query carries `embedded://host#n`
+            // coordinates, which mean nothing to the user. Rewrite it onto the
+            // host file so it reads as `app.ts:12:5`, exactly as `generate` does.
+            let finding = match embedded.get(&finding.span().source().to_string()) {
+                Some((query, host_id)) => {
+                    remap_finding_to_host(finding, query, finding.span().source(), host_id)
+                }
+                None => finding.clone(),
+            };
+            Some((finding, severity))
         })
         .collect();
 
@@ -295,13 +327,21 @@ fn run_check(start_dir: &Path) -> Result<CheckPassed, CheckFailed> {
             rendered,
         })
     } else {
-        Ok(CheckPassed { summary, rendered })
+        Ok(CheckPassed {
+            summary,
+            diagnostics,
+            rendered,
+        })
     }
 }
 
 #[derive(Debug)]
 struct CheckPassed {
     summary: CheckSummary,
+    /// The structured warning/hint findings that survived policy on a clean run.
+    /// A clean run is not a silent run: `--json` consumers need these, and the
+    /// summary already counts them, so omitting them contradicted the summary.
+    diagnostics: Vec<CheckDiagnostic>,
     /// Warning/hint blocks that survived policy on a clean run.
     rendered: Vec<String>,
 }
@@ -392,23 +432,7 @@ fn run_generate(root: &Path, out: Option<&Path>) -> Result<GenerateReport, Box<d
     }
 
     // Host files, honoring the same ignore patterns as .surql discovery.
-    let host_paths: Vec<PathBuf> = {
-        let mut paths: Vec<_> = WalkDir::new(root)
-            .into_iter()
-            .filter_entry(|entry| should_visit(entry, root, &config.sources.ignore))
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_type().is_file())
-            .map(DirEntry::into_path)
-            .filter(|path| {
-                matches!(
-                    path.extension().and_then(|e| e.to_str()),
-                    Some("ts" | "tsx" | "js" | "jsx" | "svelte" | "vue" | "astro")
-                )
-            })
-            .collect();
-        paths.sort();
-        paths
-    };
+    let host_paths = discover_host_sources(root, &config);
 
     // Retain each host file's text so findings render against real source.
     let mut host_texts: std::collections::BTreeMap<String, String> =
@@ -496,6 +520,29 @@ fn run_generate(root: &Path, out: Option<&Path>) -> Result<GenerateReport, Box<d
         path: out_path,
         warnings: rendered_warnings,
     })
+}
+
+/// Every host file (`.ts`/`.svelte`/…) under `root` that may carry embedded
+/// SurrealQL, honoring the same ignore patterns as `.surql` discovery. Shared by
+/// `check` and `generate` so the two commands can never disagree about which
+/// files carry queries — a `check` that skipped them would pass a workspace
+/// whose `generate` then fails.
+fn discover_host_sources(root: &Path, config: &WorkspaceConfig) -> Vec<PathBuf> {
+    let mut paths: Vec<_> = WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| should_visit(entry, root, &config.sources.ignore))
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .map(DirEntry::into_path)
+        .filter(|path| {
+            matches!(
+                path.extension().and_then(|e| e.to_str()),
+                Some("ts" | "tsx" | "js" | "jsx" | "svelte" | "vue" | "astro")
+            )
+        })
+        .collect();
+    paths.sort();
+    paths
 }
 
 fn render_check_json(
@@ -639,7 +686,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     if json {
                         println!(
                             "{}",
-                            render_check_json(&passed.summary, &[])
+                            render_check_json(&passed.summary, &passed.diagnostics)
                                 .expect("json serialization should not fail")
                         );
                     } else {
@@ -959,6 +1006,97 @@ mod tests {
             written.contains("params: { team: RecordId<\"team\"> }"),
             "the $team param must be typed from the schema record link:\n{written}"
         );
+    }
+
+    #[test]
+    fn check_reports_errors_in_embedded_host_queries_at_the_host_file() {
+        // `check` is the CI gate. It must see the queries the client actually
+        // runs — a host file's `surql` template — or CI passes green on a
+        // workspace whose `generate` then fails.
+        let root = temp_project_dir("check-embedded-error");
+        fs::create_dir_all(root.join("schema")).expect("schema dir");
+        fs::create_dir_all(root.join("src")).expect("src dir");
+        fs::write(
+            root.join("surrealguard.toml"),
+            "[sources]\nschema = [\"schema/**/*.surql\"]\n",
+        )
+        .expect("write config");
+        fs::write(root.join("schema/t.surql"), "DEFINE TABLE t SCHEMAFULL;")
+            .expect("write schema");
+        fs::write(
+            root.join("src/app.ts"),
+            "const q = surql`SELECT * FROM nonexistent_table;`;",
+        )
+        .expect("write host source");
+
+        let err = run_check(&root).expect_err("an embedded unknown table must fail the check");
+        assert!(
+            err.diagnostics.iter().any(|d| d.code.starts_with("E1001")),
+            "expected unknown-table E1001, got {:?}",
+            err.diagnostics.iter().map(|d| &d.code).collect::<Vec<_>>()
+        );
+        // The finding must be reported against the host file, not the internal
+        // `embedded://…` source the query was analyzed under.
+        assert!(
+            err.diagnostics
+                .iter()
+                .any(|d| d.source.contains("app.ts") && !d.source.starts_with("embedded://")),
+            "embedded findings must map to the host file: {:?}",
+            err.diagnostics.iter().map(|d| &d.source).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn check_passes_a_valid_embedded_host_query() {
+        // The mirror of the above: scanning host files must not invent findings
+        // on a query that is perfectly valid against the schema.
+        let root = temp_project_dir("check-embedded-clean");
+        fs::create_dir_all(root.join("schema")).expect("schema dir");
+        fs::create_dir_all(root.join("src")).expect("src dir");
+        fs::write(
+            root.join("surrealguard.toml"),
+            "[sources]\nschema = [\"schema/**/*.surql\"]\n",
+        )
+        .expect("write config");
+        fs::write(
+            root.join("schema/t.surql"),
+            "DEFINE TABLE t SCHEMAFULL;\nDEFINE FIELD price ON t TYPE int;",
+        )
+        .expect("write schema");
+        fs::write(
+            root.join("src/app.ts"),
+            "const q = surql`SELECT price FROM t;`;",
+        )
+        .expect("write host source");
+
+        let passed = run_check(&root).expect("a valid embedded query must pass");
+        assert_eq!(passed.summary.errors, 0);
+    }
+
+    #[test]
+    fn check_json_lists_surviving_warnings_on_a_clean_run() {
+        // A clean run is not a silent run. The summary counts warnings, so the
+        // `diagnostics` array must carry them too — otherwise `--json`
+        // contradicts itself and tooling sees an empty list.
+        let root = temp_project_dir("check-json-clean-warnings");
+        fs::write(root.join("surrealguard.toml"), "").expect("write config");
+        fs::write(
+            root.join("schema.surql"),
+            "DEFINE TABLE t DROP SCHEMAFULL;\nDEFINE FIELD x ON t TYPE int;\nSELECT * FROM t;",
+        )
+        .expect("write source");
+
+        let passed = run_check(&root).expect("warning-only source should pass");
+        assert_eq!(passed.summary.errors, 0);
+        assert_eq!(passed.summary.diagnostics, 1);
+        let json = render_check_json(&passed.summary, &passed.diagnostics).expect("json renders");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+        assert_eq!(
+            value["diagnostics"].as_array().map(Vec::len),
+            Some(1),
+            "a passing run must still list its warnings: {json}"
+        );
+        assert_eq!(value["diagnostics"][0]["severity"], "warning");
     }
 
     fn temp_project_dir(name: &str) -> std::path::PathBuf {
