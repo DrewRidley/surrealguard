@@ -644,7 +644,8 @@ fn method_return_kind(
         });
         return Some(match closure {
             Some(closure) => {
-                closure_return_kind(closure, &[receiver.clone()], ctx).unwrap_or(Kind::Any)
+                closure_return_kind(closure, std::slice::from_ref(receiver), ctx)
+                    .unwrap_or(Kind::Any)
             }
             // A non-closure argument violates `.chain`'s contract; that is not
             // "no such method", so the call still resolves and the value stays
@@ -942,7 +943,7 @@ fn object_fact(
 /// type-checks against a field whose object type constrains that property to
 /// a string-literal union (`'marble' | 'euclid' | ...`). Other kinds pass
 /// through unchanged.
-fn object_property_kind(value_fact: &ExpressionFact) -> Kind {
+pub(crate) fn object_property_kind(value_fact: &ExpressionFact) -> Kind {
     match (&value_fact.kind, &value_fact.value) {
         (Some(Kind::String), Some(surrealdb_types::Value::String(text))) => {
             Kind::Literal(KindLiteral::String(text.clone()))
@@ -1823,7 +1824,8 @@ mod tests {
                         continue;
                     }
                     assert!(
-                        method_result(receiver, method, &[receiver.clone()], &[], ctx).is_some(),
+                        method_result(receiver, method, std::slice::from_ref(receiver), &[], ctx)
+                            .is_some(),
                         "`{}` does not resolve as `.{method}()` on a `{family}` receiver",
                         builtin.name,
                     );
@@ -1849,7 +1851,7 @@ mod tests {
                 (Kind::Object, "reduce"),
             ] {
                 assert_eq!(
-                    method_result(&receiver, method, &[receiver.clone()], &[], ctx),
+                    method_result(&receiver, method, std::slice::from_ref(&receiver), &[], ctx),
                     None,
                     "`.{method}()` must not resolve on a `{receiver}`",
                 );

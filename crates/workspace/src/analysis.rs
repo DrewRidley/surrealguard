@@ -1650,6 +1650,64 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(codes(&output, 2001), 0, "{:?}", output.diagnostics);
     }
 
+    const ADDRESS_SCHEMA: &str = "DEFINE TABLE org SCHEMAFULL;\n\
+         DEFINE FIELD address ON org TYPE {\n\
+             line1: string,\n\
+             line2: option<string>,\n\
+             city: string,\n\
+             country: string\n\
+         };\n\
+         DEFINE FIELD nested ON org TYPE { inner: { code: int } };";
+
+    #[test]
+    fn a_param_inside_an_object_literal_is_constrained_by_the_declared_subfield() {
+        // `SET field = $param` constrained the param; the nested case did not,
+        // so the params stayed `any`, `{ line1: any }` failed assignability
+        // against `{ line1: string }`, and a valid write became an
+        // error-severity 2001 that aborts `generate`.
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source("schema".into(), ADDRESS_SCHEMA.into());
+        let query = workspace.add_virtual_source(
+            "query".into(),
+            "CREATE org SET address = { line1: $line1, line2: NONE, city: $city, country: 'US' },\n\
+                 nested = { inner: { code: $code } };"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 2001), 0, "{:?}", output.diagnostics);
+        let params: BTreeMap<String, Option<Kind>> = output.sources[&query]
+            .inferred_params
+            .iter()
+            .map(|param| (param.name.clone(), param.kind.clone()))
+            .collect();
+        assert_eq!(params["line1"], Some(Kind::String));
+        assert_eq!(params["city"], Some(Kind::String));
+        // Constraining recurses, so a param two levels down is typed too.
+        assert_eq!(params["code"], Some(Kind::Int));
+    }
+
+    #[test]
+    fn a_wrong_write_inside_an_object_literal_is_still_a_type_error() {
+        // The counterpart: standing the declared kind in for a param must not
+        // make the object comparison permissive. A missing required subfield,
+        // a wrong-kinded value, and an undeclared key all still fail.
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source("schema".into(), ADDRESS_SCHEMA.into());
+        workspace.add_virtual_source(
+            "query".into(),
+            "CREATE org SET address = { line1: $line1, city: $city };\n\
+             CREATE org SET address = { line1: 1, city: $city, country: $country };\n\
+             CREATE org SET address = { line1: $line1, city: $city, country: $country, bogus: 1 };"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 2001), 3, "{:?}", output.diagnostics);
+    }
+
     #[test]
     fn a_wrong_write_to_a_refined_field_is_still_a_type_error() {
         let mut workspace = Workspace::default();

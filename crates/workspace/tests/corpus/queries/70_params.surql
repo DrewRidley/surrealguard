@@ -7,12 +7,11 @@ SELECT * FROM organization WHERE tier = $tier LIMIT $page_size;
 
 SELECT name FROM ONLY organization WHERE id = $org_id LIMIT 1;
 
--- NOTE: the nested `address` object is written with literals on purpose. A
--- `$param` in an object-literal position is NOT constrained by the target
--- field's shape today (it stays `any`), which then trips the write check — see
--- the harness report's suspected-bug list.
+-- A `$param` in an object-literal position is constrained by the target field's
+-- declared subfield, so the nested params carry real kinds into the host
+-- contract (they used to stay `any` and trip the write check).
 CREATE organization SET name = $new_name, legal_name = $new_legal, owner = $owner_id,
-	address = { line1: '1 Main St', line2: NONE, city: 'Springfield', country: 'US' };
+	address = { line1: $line1, line2: NONE, city: $city, country: 'US' };
 
 LET $tier_default = $default_tier;
 

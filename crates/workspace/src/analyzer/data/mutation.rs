@@ -561,23 +561,41 @@ fn check_assignment_value(
             return;
         }
     }
-    let value_fact = infer_expression_fact(&assignment.value, ctx);
-    let Some(value_kind) = value_fact.kind else {
-        return;
+    // An object literal written into a declared object-typed field is read
+    // key-by-key, so an unbound `$param` in a *value* position is constrained
+    // by the declared subfield's kind — the nested analogue of the top-level
+    // `SET field = $param` constraint above. Without it those params stayed
+    // `any`, which is not assignable to a declared `string`, so a valid write
+    // raised a false 2001 and the host adapter got `any` for every nested
+    // param. Nothing else about the comparison changes: a missing required
+    // subfield, an undeclared key, and a wrong literal all still fail.
+    let value_kind = match &assignment.value.node {
+        ast::Expr::Object(entries) => constrained_object_literal_kind(ctx, entries, &field_kind),
+        _ => None,
     };
-    // Against a scalar-literal field (`'active' | 'inactive'`), a written
-    // constant must be compared as the literal it *is*: inference widens
-    // `'bogus'` to `string`, which the field's literal union has to accept
-    // (a `string` can't be shown to fall outside it), so the wrong value
-    // would slip through. Recovering the exact literal restores the equality
-    // check. Bounded to literal-constrained fields — everywhere else a
-    // literal is assignable exactly where its base is, so this changes nothing.
-    let value_kind = value_fact
-        .value
-        .as_ref()
-        .filter(|_| crate::kinds::constrains_scalar_literals(&field_kind))
-        .and_then(crate::kinds::scalar_value_literal_kind)
-        .unwrap_or(value_kind);
+    let value_kind = match value_kind {
+        Some(kind) => kind,
+        None => {
+            let value_fact = infer_expression_fact(&assignment.value, ctx);
+            let Some(value_kind) = value_fact.kind else {
+                return;
+            };
+            // Against a scalar-literal field (`'active' | 'inactive'`), a
+            // written constant must be compared as the literal it *is*:
+            // inference widens `'bogus'` to `string`, which the field's literal
+            // union has to accept (a `string` can't be shown to fall outside
+            // it), so the wrong value would slip through. Recovering the exact
+            // literal restores the equality check. Bounded to
+            // literal-constrained fields — everywhere else a literal is
+            // assignable exactly where its base is, so this changes nothing.
+            value_fact
+                .value
+                .as_ref()
+                .filter(|_| crate::kinds::constrains_scalar_literals(&field_kind))
+                .and_then(crate::kinds::scalar_value_literal_kind)
+                .unwrap_or(value_kind)
+        }
+    };
     if value_kind == Kind::Any || crate::kinds::kind_is_assignable_to(&value_kind, &field_kind) {
         return;
     }
@@ -607,6 +625,72 @@ fn check_assignment_value(
         finding = finding.with_related(def.name_span.clone(), format!("`{field}` is defined here"));
     }
     ctx.emit(finding);
+}
+
+/// The kind an object literal contributes to a write check against a declared
+/// object-typed field, constraining every unbound `$param` in a value position
+/// to the corresponding *declared subfield's* kind on the way through.
+///
+/// A param has no kind of its own — the write site is what gives it one. That
+/// already happened for `SET field = $param`; in a nested position it did not,
+/// so the param inferred as `any`, `{ line1: any }` failed assignability
+/// against `{ line1: string }`, and a valid write became an error. Standing the
+/// declared kind in for the param here is the same statement the constraint
+/// makes: the host must supply that kind.
+///
+/// Returns `None` when the declared kind is not a closed object literal (an
+/// open `object`, an array, a scalar), leaving the caller's ordinary inference
+/// path in charge.
+fn constrained_object_literal_kind(
+    ctx: &mut AnalysisContext<'_>,
+    entries: &[(ast::Spanned<String>, ast::Spanned<ast::Expr>)],
+    declared: &Kind,
+) -> Option<Kind> {
+    let declared_fields = declared_object_fields(declared)?;
+    let mut kinds: BTreeMap<String, Kind> = BTreeMap::new();
+    for (key, value) in entries {
+        let expected = declared_fields.get(&key.node).cloned();
+        let kind = match (&expected, &value.node) {
+            (Some(expected), ast::Expr::Param(param)) if ctx.env().let_fact(param).is_none() => {
+                let span =
+                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), value.span);
+                ctx.constrain_param(param, span, expected.clone(), None);
+                expected.clone()
+            }
+            // A nested object recurses, so a param two levels down is
+            // constrained just as one level down is.
+            (Some(expected), ast::Expr::Object(nested)) => {
+                constrained_object_literal_kind(ctx, nested, expected)
+                    .unwrap_or_else(|| inferred_property_kind(ctx, value))
+            }
+            _ => inferred_property_kind(ctx, value),
+        };
+        kinds.insert(key.node.clone(), kind);
+    }
+    Some(Kind::Literal(KindLiteral::Object(kinds)))
+}
+
+/// The property map of a declared closed-object kind, seen through an
+/// `option<...>` wrapper (which lowers to an `Either` with a `NONE` arm).
+fn declared_object_fields(declared: &Kind) -> Option<&BTreeMap<String, Kind>> {
+    match declared {
+        Kind::Literal(KindLiteral::Object(fields)) => Some(fields),
+        Kind::Either(variants) => {
+            let mut objects = variants.iter().filter_map(declared_object_fields);
+            let first = objects.next()?;
+            // Only an unambiguous target tells us what a nested param must be.
+            objects.next().is_none().then_some(first)
+        }
+        _ => None,
+    }
+}
+
+/// The kind an object-literal property contributes, inferred normally —
+/// the same rule [`object_fact`](crate::analyzer::expression::infer) applies,
+/// so a constant string keeps its literal kind for a literal-union subfield.
+fn inferred_property_kind(ctx: &mut AnalysisContext<'_>, value: &ast::Spanned<ast::Expr>) -> Kind {
+    let fact = infer_expression_fact(value, ctx);
+    crate::analyzer::expression::infer::object_property_kind(&fact)
 }
 
 /// `SET target = ...`: the target must be a declared field path (1004).

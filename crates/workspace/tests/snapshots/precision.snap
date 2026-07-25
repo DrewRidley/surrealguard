@@ -318,14 +318,16 @@ table webhook_event  [schemafull]
   stmt      8:1 select           : option<{ name: string }>
        modifier where      row_preserving=true
        modifier limit      row_preserving=true max=1
-  stmt     14:1 create           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
-  stmt     17:1 let              : (no response)
-  stmt     19:1 update           : array<{ headcount: int, id: record<organization_unit>, name: string, organization: record<organization>, parent: option<record<organization_unit>> }>
-  stmt     21:1 select           : array<{ id: record<employee_of>, in: record<account>, joined_at: datetime, out: record<organization>, role: record<organization_role>, status: 'invited' | 'active' | 'suspended', title: option<string>, unit: record<organization_unit> }>
+  stmt     13:1 create           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     16:1 let              : (no response)
+  stmt     18:1 update           : array<{ headcount: int, id: record<organization_unit>, name: string, organization: record<organization>, parent: option<record<organization_unit>> }>
+  stmt     20:1 select           : array<{ id: record<employee_of>, in: record<account>, joined_at: datetime, out: record<organization>, role: record<organization_role>, status: 'invited' | 'active' | 'suspended', title: option<string>, unit: record<organization_unit> }>
        modifier where      row_preserving=true
-  let      17:5 $tier_default    : string
+  let      16:5 $tier_default    : string
+  param $city                   : string  [required]
   param $default_tier           : string  [optional]
   param $headcount              : int  [required]
+  param $line1                  : string  [required]
   param $new_legal              : string  [required]
   param $new_name               : string  [required]
   param $org_id                 : record<organization>  [required]
@@ -335,8 +337,8 @@ table webhook_event  [schemafull]
   param $since                  : datetime  [required]
   param $tier                   : 'free' | 'pro' | 'enterprise'  [required]
   diag      6:8 I7015     Hint
-  diag     17:5 W7001     Warning
-  diag     21:8 I7015     Hint
+  diag     16:5 W7001     Warning
+  diag     20:8 I7015     Hint
 
 == source: queries/80_functions.surql ==
   stmt      4:1 select           : array<{ label: string }>

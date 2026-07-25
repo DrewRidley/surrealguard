@@ -215,37 +215,8 @@ fn build_global_catalog_from_lowered(sources: &[LoweredSource<'_>]) -> GlobalCat
         }
     }
 
-    // PRE-PASS 1d — `DEFINE PARAM` defaults. A `DEFINE PARAM $x VALUE …`
-    // installs the value database-side, so `$x` is neither unknown nor
-    // host-required in ANY source — not just in the ones that textually follow
-    // the definition. The per-source `StatementEnv` resets between sources, so
-    // recording the default only during the walk (which is still done, for
-    // within-source ordering contracts like 6002) left every cross-source
-    // reader with `unknown [required]` — a generated host adapter demanding a
-    // param the database already supplies. Inferred here against the full
-    // catalog so a `VALUE` reading a table or `fn::` helper resolves; in source
-    // order, so a later redefinition wins.
-    let mut global_param_defaults: BTreeMap<String, crate::expression::ExpressionFact> =
-        BTreeMap::new();
-    for (parsed, statements) in sources {
-        for stmt in statements {
-            let ast::Statement::Define(ast::DefineStmt::Param(def)) = &stmt.node else {
-                continue;
-            };
-            let Some(value) = &def.value else {
-                continue;
-            };
-            let mut scratch: Vec<Finding> = Vec::new();
-            let mut ctx = AnalysisContext::new(
-                &global_defined,
-                parsed.source_id().clone(),
-                parsed.text(),
-                &mut scratch,
-            );
-            let fact = crate::analyzer::expression::expr_fact(&mut ctx, value);
-            global_param_defaults.insert(def.name.node.clone(), fact);
-        }
-    }
+    // PRE-PASS 1d — `DEFINE PARAM` defaults (see `global_param_defaults`).
+    let global_param_defaults = global_param_defaults(sources, &global_defined);
 
     // PRE-PASS 2 — implicit schemaless tables. Writing to (CREATE/UPSERT/
     // INSERT/DELETE) or hanging DDL (`DEFINE FIELD/EVENT/INDEX ... ON`) on a
@@ -302,6 +273,71 @@ fn build_global_catalog_from_lowered(sources: &[LoweredSource<'_>]) -> GlobalCat
     }
 }
 
+/// PRE-PASS 1d — every `DEFINE PARAM`'s default fact, keyed by param name.
+///
+/// A `DEFINE PARAM $x VALUE …` installs the value database-side, so `$x` is
+/// neither unknown nor host-required in ANY source — not just in the ones that
+/// textually follow the definition. The per-source `StatementEnv` resets
+/// between sources, so recording the default only during the walk (which still
+/// happens, for the within-source ordering contract 6002) left every
+/// cross-source reader with `unknown [required]`: a generated host adapter
+/// demanding a param the database already supplies.
+///
+/// Inferred against the full catalog so a `VALUE` reading a table or a `fn::`
+/// helper resolves, and in source order, so a later redefinition wins.
+fn global_param_defaults(
+    sources: &[LoweredSource<'_>],
+    catalog: &SchemaIndex,
+) -> BTreeMap<String, crate::expression::ExpressionFact> {
+    let mut defaults = BTreeMap::new();
+    for (parsed, statements) in sources {
+        for stmt in statements {
+            let ast::Statement::Define(ast::DefineStmt::Param(def)) = &stmt.node else {
+                continue;
+            };
+            let Some(value) = &def.value else {
+                continue;
+            };
+            let mut scratch: Vec<Finding> = Vec::new();
+            let mut ctx = AnalysisContext::new(
+                catalog,
+                parsed.source_id().clone(),
+                parsed.text(),
+                &mut scratch,
+            );
+            let fact = crate::analyzer::expression::expr_fact(&mut ctx, value);
+            defaults.insert(def.name.node.clone(), fact);
+        }
+    }
+    defaults
+}
+
+/// Layers the globally-computed inferences (PRE-PASS 1b/1c) onto a source's
+/// working catalog: a caller in this source resolves a table-bearing UDF's
+/// return type, and reads an untyped field's value kind, without any per-source
+/// re-inference.
+fn apply_global_inferences(global: &GlobalCatalog, working: &mut SchemaIndex) {
+    for (name, kind) in &global.global_fn_returns {
+        if let Some(function) = working.functions.get_mut(name) {
+            if function.return_kind.is_none() {
+                function.inferred_return = Some(kind.clone());
+            }
+        }
+    }
+    for ((table, field_key), kind) in &global.global_field_kinds {
+        if let Some(field) = working
+            .tables
+            .get_mut(table)
+            .and_then(|t| t.fields.get_mut(field_key))
+        {
+            if field.kind.is_none() {
+                field.kind = Some(kind.clone());
+                field.partial.clear();
+            }
+        }
+    }
+}
+
 /// Runs the per-source walk for ONE source against a prebuilt [`GlobalCatalog`].
 ///
 /// `working` is the source's *cross-source* catalog on entry — every OTHER
@@ -334,30 +370,9 @@ fn analyze_source_against(
         }
     }
 
-    // Reuse the globally-computed function returns (PRE-PASS 1b): a caller in
-    // this source resolves a table-bearing UDF's return type without any
-    // per-source re-inference.
-    for (name, kind) in &global.global_fn_returns {
-        if let Some(function) = working.functions.get_mut(name) {
-            if function.return_kind.is_none() {
-                function.inferred_return = Some(kind.clone());
-            }
-        }
-    }
-
-    // Reuse the globally-inferred untyped-field value kinds (PRE-PASS 1c).
-    for ((table, field_key), kind) in &global.global_field_kinds {
-        if let Some(field) = working
-            .tables
-            .get_mut(table)
-            .and_then(|t| t.fields.get_mut(field_key))
-        {
-            if field.kind.is_none() {
-                field.kind = Some(kind.clone());
-                field.partial.clear();
-            }
-        }
-    }
+    // Reuse the globally-computed function returns and untyped-field value
+    // kinds (PRE-PASS 1b/1c).
+    apply_global_inferences(global, &mut working);
 
     let mut source_analysis = SourceAnalysis::default();
     let mut analyzer_env = StatementEnv::default();

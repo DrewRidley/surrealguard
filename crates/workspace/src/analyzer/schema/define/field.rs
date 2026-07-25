@@ -160,7 +160,7 @@ fn check_record_targets(
             )
             .with_help(format!("no `DEFINE TABLE {table}` exists in the workspace"));
             if let Some(suggestion) =
-                crate::suggest::closest(&table, ctx.known_table_names().into_iter())
+                crate::suggest::closest(&table, ctx.known_table_names())
             {
                 finding = finding.with_help(format!("did you mean `{suggestion}`?"));
             }
