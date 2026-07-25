@@ -487,6 +487,35 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn computed_back_reference_index_selects_the_element_record() {
+        // `COMPUTED <~T[0]` selects ONE back-reference record, not the whole
+        // `array<record<T>>` the bare `<~T` yields.
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE organization_billing SCHEMAFULL;\n\
+             DEFINE FIELD org ON organization_billing TYPE record<organization> REFERENCE;\n\
+             DEFINE TABLE organization SCHEMAFULL;\n\
+             DEFINE FIELD billing ON organization COMPUTED <~organization_billing[0];"
+                .into(),
+        );
+        let query =
+            workspace.add_virtual_source("query".into(), "SELECT billing FROM organization;".into());
+
+        let output = analyze_workspace(&workspace);
+        let rendered = crate::render_kind(
+            output.sources[&query]
+                .response_kind
+                .as_ref()
+                .expect("response kind"),
+        );
+        assert!(
+            rendered.contains("billing: record<organization_billing>"),
+            "expected the element record, got {rendered}"
+        );
+    }
+
+    #[test]
     fn if_expression_in_value_position_types_as_the_branch_union() {
         // An IF used as a value (`RETURN IF …`, which lowers to a subquery)
         // types as the union of its branch values — not `unknown`.

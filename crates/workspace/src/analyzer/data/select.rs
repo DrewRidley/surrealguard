@@ -819,18 +819,21 @@ pub(crate) fn reference_back_traversal_kind(
     idiom: &ast::Idiom,
     schema: &SchemaIndex,
 ) -> Option<Kind> {
-    let [only] = idiom.parts.as_slice() else {
-        return None;
+    // A back-reference is `<~T` (the graph step), optionally followed by a
+    // single `[index]` subscript that selects ONE element out of the array
+    // (`<~T[0]` → `record<T>`, not `array<record<T>>`). A `[WHERE …]` filter or
+    // any deeper path is not modeled (stays `Any`).
+    let (graph, indexed) = match idiom.parts.as_slice() {
+        [graph] => (graph, false),
+        [graph, subscript] if matches!(subscript.node, ast::IdiomPart::Index(_)) => (graph, true),
+        _ => return None,
     };
-    let ast::IdiomPart::Graph { dir, step } = &only.node else {
+    let ast::IdiomPart::Graph { dir, step } = &graph.node else {
         return None;
     };
     // A back-reference is an incoming reference step (`<~`) at a single named
     // target, with no inline selection.
-    if dir.node != ast::GraphDir::In
-        || !step.reference
-        || step.where_clause.is_some()
-    {
+    if dir.node != ast::GraphDir::In || !step.reference || step.where_clause.is_some() {
         return None;
     }
     let [target] = step.targets.as_slice() else {
@@ -842,8 +845,15 @@ pub(crate) fn reference_back_traversal_kind(
         .fields
         .values()
         .any(|field| field.reference && kind_targets_table(field.kind.as_ref(), self_table));
-    points_back
-        .then(|| Kind::Array(Box::new(Kind::Record(vec![target_name.into()])), None))
+    if !points_back {
+        return None;
+    }
+    let element = Kind::Record(vec![target_name.into()]);
+    Some(if indexed {
+        element
+    } else {
+        Kind::Array(Box::new(element), None)
+    })
 }
 
 /// Whether a field's declared kind is (or wraps, through `option`/union/array)
