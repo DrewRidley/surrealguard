@@ -1038,4 +1038,74 @@ mod tests {
         );
         assert!(!fires(query, "L7005"), "codes: {:?}", codes(query));
     }
+
+    // ---- Index-backed operators: full-text `@@` and KNN `<|K|>` (1027) ----
+
+    #[test]
+    fn full_text_match_without_search_index_fires() {
+        let query = concat!(
+            "DEFINE TABLE post SCHEMAFULL;\n",
+            "DEFINE FIELD body ON post TYPE string;\n",
+            "SELECT * FROM post WHERE body @@ 'hello';\n",
+        );
+        assert!(fires(query, "E1027"), "codes: {:?}", codes(query));
+    }
+
+    #[test]
+    fn full_text_match_with_search_index_does_not_fire() {
+        // The must-not-fire boundary: a SEARCH index covers `body`.
+        let query = concat!(
+            "DEFINE TABLE post SCHEMAFULL;\n",
+            "DEFINE FIELD body ON post TYPE string;\n",
+            "DEFINE ANALYZER simple TOKENIZERS blank;\n",
+            "DEFINE INDEX ft ON post FIELDS body SEARCH ANALYZER simple;\n",
+            "SELECT * FROM post WHERE body @@ 'hello';\n",
+        );
+        assert!(!fires(query, "E1027"), "codes: {:?}", codes(query));
+    }
+
+    #[test]
+    fn knn_vector_search_without_index_fires() {
+        let query = concat!(
+            "DEFINE TABLE doc SCHEMAFULL;\n",
+            "DEFINE FIELD embedding ON doc TYPE array<float>;\n",
+            "SELECT * FROM doc WHERE embedding <|3|> $q;\n",
+        );
+        assert!(fires(query, "E1027"), "codes: {:?}", codes(query));
+    }
+
+    #[test]
+    fn knn_vector_search_with_hnsw_index_does_not_fire() {
+        // The must-not-fire boundary: an HNSW vector index covers `embedding`.
+        let query = concat!(
+            "DEFINE TABLE doc SCHEMAFULL;\n",
+            "DEFINE FIELD embedding ON doc TYPE array<float>;\n",
+            "DEFINE INDEX hnsw_idx ON doc FIELDS embedding HNSW DIMENSION 3;\n",
+            "SELECT * FROM doc WHERE embedding <|3|> $q;\n",
+        );
+        assert!(!fires(query, "E1027"), "codes: {:?}", codes(query));
+    }
+
+    #[test]
+    fn knn_vector_search_with_mtree_index_does_not_fire() {
+        // MTREE also backs KNN — the same Vector index kind.
+        let query = concat!(
+            "DEFINE TABLE doc SCHEMAFULL;\n",
+            "DEFINE FIELD embedding ON doc TYPE array<float>;\n",
+            "DEFINE INDEX mtree_idx ON doc FIELDS embedding MTREE DIMENSION 3;\n",
+            "SELECT * FROM doc WHERE embedding <|3|> $q;\n",
+        );
+        assert!(!fires(query, "E1027"), "codes: {:?}", codes(query));
+    }
+
+    #[test]
+    fn index_backed_operator_on_dynamic_lhs_does_not_fire() {
+        // Prove-or-silent: a param LHS is not a resolvable field, so no finding.
+        let query = concat!(
+            "DEFINE TABLE post SCHEMAFULL;\n",
+            "DEFINE FIELD body ON post TYPE string;\n",
+            "SELECT * FROM post WHERE $needle @@ 'hello';\n",
+        );
+        assert!(!fires(query, "E1027"), "codes: {:?}", codes(query));
+    }
 }
