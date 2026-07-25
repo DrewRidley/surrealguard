@@ -772,6 +772,36 @@ impl Workspace {
         })
     }
 
+    /// The inputs completion needs for a `.surql` document: the document's
+    /// analysis output, the shared schema, and the **cached** parse tree.
+    ///
+    /// Completion fires on every keystroke, so this deliberately reuses the
+    /// parse the analysis cache already holds rather than re-parsing, and — as
+    /// with every other feature method — it reads the memoized analysis
+    /// instead of running one. A completion request at an unchanged document
+    /// state moves none of the analysis counters.
+    pub fn completion_analysis(&self, uri: &Url) -> Option<CompletionAnalysis> {
+        let target = self.documents.get(uri)?;
+        if !is_surrealql_uri(uri) {
+            return None;
+        }
+        let text = target.text.clone();
+        self.with_surql_cache(|cache| {
+            let target_source = cache.source_for(uri)?;
+            let output = cache.analysis.sources.get(target_source)?.clone();
+            let parsed = cache.parsed.get(target_source)?.clone();
+            // A parse that predates the current text would place candidates at
+            // stale offsets; the cache key covers every document's text, so
+            // this only guards against a future refactor breaking that.
+            (parsed.text() == text).then(|| CompletionAnalysis {
+                output,
+                schema: cache.analysis.schema.clone(),
+                parsed,
+                text,
+            })
+        })
+    }
+
     /// Scan workspace folders for `.surql` and `.surrealql` files and load them.
     pub fn scan_folders(&mut self) {
         for root in &self.roots.clone() {
@@ -887,6 +917,18 @@ pub struct FeatureAnalysis {
     pub sources: HashMap<String, (Url, String)>,
 }
 
+/// Everything a completion request reads, all of it served from the cache.
+pub struct CompletionAnalysis {
+    /// The target document's analysis output.
+    pub output: AnalysisOutput,
+    /// The schema shared across all `.surql` documents.
+    pub schema: SchemaIndex,
+    /// The target document's cached parse tree.
+    pub parsed: Arc<ParsedSource>,
+    /// The target document's full text, for position/offset conversion.
+    pub text: String,
+}
+
 /// Diagnostics-only result from the shared workspace analysis facade.
 pub struct DiagnosticAnalysisResult {
     /// Findings for the target document, spanned into its own file.
@@ -962,6 +1004,55 @@ mod tests {
             1,
             "unchanged document state is analyzed at most once"
         );
+    }
+
+    #[test]
+    fn completion_reads_the_cache_and_never_analyzes() {
+        let (workspace, _schema, query) = workspace_with_schema_and_query();
+
+        // Warm the cache the way an editor session would: one edit, one
+        // diagnostics publish.
+        let _ = workspace.diagnostic_analysis(&query).expect("diagnostics");
+        let counters = (
+            workspace.analyze_run_count(),
+            workspace.incremental_run_count(),
+            workspace.reanalyzed_source_count(),
+        );
+
+        // A burst of completion requests — one per keystroke position —
+        // must move none of the analysis counters.
+        let text = "SELECT name FROM person;";
+        for offset in 0..=text.len() as u32 {
+            let analysis = workspace
+                .completion_analysis(&query)
+                .expect("completion inputs are served from the cache");
+            let _ = surrealguard_workspace::complete_at(
+                &analysis.output,
+                &analysis.schema,
+                &analysis.parsed,
+                offset,
+            );
+        }
+
+        assert_eq!(
+            (
+                workspace.analyze_run_count(),
+                workspace.incremental_run_count(),
+                workspace.reanalyzed_source_count(),
+            ),
+            counters,
+            "completion must be a pure read of the memoized analysis"
+        );
+    }
+
+    #[test]
+    fn completion_reuses_the_cached_parse_rather_than_re_parsing() {
+        let (workspace, _schema, query) = workspace_with_schema_and_query();
+        let first = workspace.completion_analysis(&query).expect("inputs");
+        let second = workspace.completion_analysis(&query).expect("inputs");
+        // The same `Arc`, so no request re-parses the document.
+        assert!(Arc::ptr_eq(&first.parsed, &second.parsed));
+        assert_eq!(first.parsed.text(), "SELECT name FROM person;");
     }
 
     #[test]

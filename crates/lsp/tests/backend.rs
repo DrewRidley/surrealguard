@@ -331,3 +331,132 @@ async fn embedded_surql_in_svelte_publishes_findings_at_host_spans() {
     assert_eq!(&line[start..end], "persn");
     assert!(error.message.contains("did you mean `person`?") || error.message.contains("help:"));
 }
+
+/// Opens a schema document plus a query document and returns the server, so
+/// the completion tests share one setup.
+async fn server_with_schema(query_uri: &Url, query: &str) -> Server {
+    let mut server = Server::started().await;
+    let schema_uri = Url::parse("file:///workspace/a_schema.surql").expect("valid url");
+    server
+        .call(
+            "textDocument/didOpen",
+            None,
+            did_open(
+                &schema_uri,
+                "DEFINE TABLE person SCHEMAFULL;\n\
+                 DEFINE FIELD name ON person TYPE string;\n\
+                 DEFINE FIELD status ON person TYPE string;\n\
+                 DEFINE FIELD age ON person TYPE int;\n\
+                 DEFINE TABLE company SCHEMAFULL;\n",
+            ),
+        )
+        .await;
+    let _ = server.next_publish().await;
+    server
+        .call("textDocument/didOpen", None, did_open(query_uri, query))
+        .await;
+    let _ = server.next_publish().await;
+    server
+}
+
+#[tokio::test]
+async fn the_server_advertises_completion_with_surrealql_trigger_characters() {
+    let (service, socket) = LspService::new(Backend::new);
+    let mut server = Server {
+        service,
+        socket: Box::pin(socket),
+        buffered: Vec::new(),
+    };
+    let result: InitializeResult = serde_json::from_value(
+        server
+            .request("initialize", 1, json!({"capabilities": {}}))
+            .await,
+    )
+    .expect("initialize result decodes");
+
+    let completion = result
+        .capabilities
+        .completion_provider
+        .expect("the server must advertise completion");
+    let triggers = completion.trigger_characters.expect("trigger characters");
+    // `$` opens a param, `.` a member, `:` completes a `::` function path.
+    for expected in ["$", ".", ":"] {
+        assert!(triggers.contains(&expected.to_string()), "missing {expected}");
+    }
+    assert_eq!(completion.resolve_provider, Some(false));
+}
+
+#[tokio::test]
+async fn completion_returns_ranked_items_with_types_and_explicit_edit_ranges() {
+    let query_uri = Url::parse("file:///workspace/b_query.surql").expect("valid url");
+    let query = "SELECT sta FROM person;\n";
+    let mut server = server_with_schema(&query_uri, query).await;
+
+    let items: Vec<CompletionItem> = serde_json::from_value(
+        server
+            .request(
+                "textDocument/completion",
+                7,
+                json!({
+                    "textDocument": {"uri": query_uri},
+                    // Right after the typed `sta`.
+                    "position": {"line": 0, "character": 10},
+                }),
+            )
+            .await,
+    )
+    .expect("completion returns an item array");
+
+    let first = items.first().expect("at least one item");
+    assert_eq!(first.label, "status");
+    assert_eq!(first.kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(first.detail.as_deref(), Some("string"));
+    assert_eq!(first.sort_text.as_deref(), Some("0000"));
+
+    // The edit replaces the whole `sta` token, so accepting leaves no tail.
+    let Some(CompletionTextEdit::Edit(edit)) = &first.text_edit else {
+        panic!("items must carry an explicit edit");
+    };
+    assert_eq!(edit.range.start, Position::new(0, 7));
+    assert_eq!(edit.range.end, Position::new(0, 10));
+    assert_eq!(edit.new_text, "status");
+
+    // The client must be able to keep the server's order.
+    let sort_texts: Vec<&str> = items
+        .iter()
+        .map(|item| item.sort_text.as_deref().expect("sort_text set"))
+        .collect();
+    let mut sorted = sort_texts.clone();
+    sorted.sort_unstable();
+    assert_eq!(sort_texts, sorted);
+}
+
+#[tokio::test]
+async fn completion_on_an_unparseable_statement_still_offers_the_tables() {
+    let query_uri = Url::parse("file:///workspace/b_query.surql").expect("valid url");
+    // Mid-keystroke: nothing after FROM.
+    let query = "SELECT name FROM \n";
+    let mut server = server_with_schema(&query_uri, query).await;
+
+    let items: Vec<CompletionItem> = serde_json::from_value(
+        server
+            .request(
+                "textDocument/completion",
+                8,
+                json!({
+                    "textDocument": {"uri": query_uri},
+                    "position": {"line": 0, "character": 17},
+                }),
+            )
+            .await,
+    )
+    .expect("completion returns an item array");
+
+    let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
+    assert!(labels.contains(&"person"), "{labels:?}");
+    assert!(labels.contains(&"company"), "{labels:?}");
+    assert!(items
+        .iter()
+        .filter(|item| item.label == "person")
+        .all(|item| item.kind == Some(CompletionItemKind::CLASS)));
+}

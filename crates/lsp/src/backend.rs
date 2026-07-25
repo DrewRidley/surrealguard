@@ -9,8 +9,8 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-use crate::diagnostics;
 use crate::workspace::Workspace;
+use crate::{completion, diagnostics};
 
 /// The language server: holds the LSP client handle, the tracked workspace,
 /// and the severity policy resolved from `surrealguard.toml`. Implements
@@ -139,6 +139,21 @@ impl LanguageServer for Backend {
                 inlay_hint_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                completion_provider: Some(CompletionOptions {
+                    // `$` opens a parameter, `.` a member, `:` closes the
+                    // `::` of a function path, and the rest are the clause
+                    // boundaries where a fresh name starts. Identifier
+                    // characters need no trigger: clients re-request as the
+                    // word grows.
+                    trigger_characters: Some(
+                        ["$", ".", ":", " ", ",", "(", "{", ">"]
+                            .map(str::to_string)
+                            .to_vec(),
+                    ),
+                    // Items are complete as sent; nothing is resolved lazily.
+                    resolve_provider: Some(false),
+                    ..CompletionOptions::default()
+                }),
                 ..ServerCapabilities::default()
             },
         })
@@ -230,6 +245,31 @@ impl LanguageServer for Backend {
             }),
             range: Some(range),
         }))
+    }
+
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let analysis = {
+            let ws = self.workspace.read().await;
+            ws.completion_analysis(&uri)
+        };
+        let Some(analysis) = analysis else {
+            return Ok(None);
+        };
+
+        let offset = crate::text::position_to_offset(&analysis.text, position) as u32;
+        let items: Vec<CompletionItem> = surrealguard_workspace::complete_at(
+            &analysis.output,
+            &analysis.schema,
+            &analysis.parsed,
+            offset,
+        )
+        .into_iter()
+        .map(|candidate| completion::candidate_to_item(&analysis.text, candidate))
+        .collect();
+
+        Ok(Some(CompletionResponse::Array(items)))
     }
 
     async fn goto_definition(
