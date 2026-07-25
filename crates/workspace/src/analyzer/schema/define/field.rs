@@ -226,6 +226,21 @@ fn field_is_duplicate(table: &crate::schema::TableDef, path: &ast::Idiom, field_
         && table.fields.contains_key(field_key)
 }
 
+/// Infers the kind of a field's `VALUE`/`COMPUTED`/`DEFAULT` clause expression
+/// with `$value`/`$input` bound exactly as they are inside a field clause body
+/// (`$value` unknown here — the field has no declared `TYPE`). Used by schema
+/// extraction to type an untyped field from the value it stores; the walk's own
+/// [`analyze_define_field`] still owns the clause's real diagnostics, so this
+/// only reads the inferred kind.
+pub(crate) fn infer_field_clause_kind(
+    ctx: &mut AnalysisContext<'_>,
+    expr: &ast::Spanned<ast::Expr>,
+) -> Option<Kind> {
+    with_value_bound(ctx, None, |ctx| {
+        crate::analyzer::expression::infer::infer_expression_fact(expr, ctx).kind
+    })
+}
+
 /// Runs `f` with `$value` (and `$input`) bound: `$value` carries the
 /// declared type inside `ASSERT`/`VALUE`/`DEFAULT` bodies.
 fn with_value_bound<T>(

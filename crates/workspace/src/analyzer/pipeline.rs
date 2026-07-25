@@ -115,6 +115,53 @@ pub(crate) fn analyze_sources_with(
         }
     }
 
+    // PRE-PASS 1c — global untyped-field value kinds. `field_def_from_ast`
+    // (above, via `apply_additive_define`) built each untyped field's kind
+    // against an empty catalog, so a `VALUE`/`COMPUTED` reading a *table* or
+    // `fn::` helper degraded to `None`. An untyped field's stored-value kind is
+    // GLOBAL — independent of which source is being analyzed — so compute it
+    // ONCE against the full catalog and reuse it in every source's working
+    // catalog below. This is O(fields) inference, not O(sources × fields).
+    // Results are applied back to `global_defined` so a field whose value reads
+    // an earlier-inferred field resolves through it.
+    let mut global_field_kinds: BTreeMap<(String, String), Kind> = BTreeMap::new();
+    for (parsed, statements) in &sources {
+        for stmt in statements {
+            let ast::Statement::Define(ast::DefineStmt::Field(def)) = &stmt.node else {
+                continue;
+            };
+            if def.ty.is_some() {
+                continue;
+            }
+            let table = def.table.node.clone();
+            let field_key = crate::schema::idiom_field_path(&def.path.node).join(".");
+            match global_defined
+                .tables
+                .get(&table)
+                .and_then(|t| t.fields.get(&field_key))
+            {
+                Some(field) if field.kind.is_none() => {}
+                _ => continue,
+            }
+            if let Some(kind) = crate::schema::infer_field_value_kind(
+                def,
+                parsed.source_id(),
+                parsed.text(),
+                Some(&global_defined),
+            ) {
+                if let Some(field) = global_defined
+                    .tables
+                    .get_mut(&table)
+                    .and_then(|t| t.fields.get_mut(&field_key))
+                {
+                    field.kind = Some(kind.clone());
+                    field.partial.clear();
+                }
+                global_field_kinds.insert((table, field_key), kind);
+            }
+        }
+    }
+
     // PRE-PASS 2 — implicit schemaless tables. Writing to (CREATE/UPSERT/
     // INSERT/DELETE) or hanging DDL (`DEFINE FIELD/EVENT/INDEX ... ON`) on a
     // never-`DEFINE`d table is valid SurrealQL: the table is created on
@@ -187,6 +234,23 @@ pub(crate) fn analyze_sources_with(
             if let Some(function) = working.functions.get_mut(name) {
                 if function.return_kind.is_none() {
                     function.inferred_return = Some(kind.clone());
+                }
+            }
+        }
+
+        // Reuse the globally-inferred untyped-field value kinds (PRE-PASS 1c):
+        // a source that SELECTs a table whose VALUE/COMPUTED field was defined in
+        // another source resolves that field's type without re-inference. Cheap
+        // map application — the expensive value analysis ran once, above.
+        for ((table, field_key), kind) in &global_field_kinds {
+            if let Some(field) = working
+                .tables
+                .get_mut(table)
+                .and_then(|t| t.fields.get_mut(field_key))
+            {
+                if field.kind.is_none() {
+                    field.kind = Some(kind.clone());
+                    field.partial.clear();
                 }
             }
         }

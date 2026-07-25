@@ -506,7 +506,19 @@ pub(crate) fn apply_schema_statement_effects(
                 schema.insert_table(table_def_from_ast(def, source), def.overwrite);
             }
             ast::DefineStmt::Field(def) => {
-                schema.insert_field(field_def_from_ast(def, source, text), def.overwrite);
+                let mut field = field_def_from_ast(def, source, text);
+                // The accumulated catalog is now visible: an untyped field whose
+                // VALUE/COMPUTED reads tables or `fn::` helpers resolves against
+                // it (the standalone build above only sees pure scalars). Only
+                // upgrade to a proven kind — never overwrite an already-resolved
+                // kind or downgrade to `Any`.
+                if field.kind.is_none() {
+                    if let Some(kind) = infer_field_value_kind(def, source, text, Some(&*schema)) {
+                        field.kind = Some(kind);
+                        field.partial.clear();
+                    }
+                }
+                schema.insert_field(field, def.overwrite);
             }
             ast::DefineStmt::Index(def) => {
                 let index = index_def_from_ast(def, source);
@@ -631,7 +643,16 @@ pub(crate) fn field_def_from_ast(
             let parsed = kind_from_type_expr(&ty.node, text);
             (parsed.kind, parsed.partial, Some(span(source, ty.span)))
         }
-        None => (None, vec![PartialReason::Unresolved], None),
+        // No explicit `TYPE`: fall back to the kind of the value the field
+        // stores (its `VALUE`/`COMPUTED`, or a `DEFAULT`). Against no catalog,
+        // this resolves pure-scalar value expressions (`string::uppercase('x')`,
+        // `time::now()`); a value reading tables/fields degrades to `None` here
+        // and is upgraded by the schema-aware pass in `pipeline`. When a kind is
+        // proven, the field is no longer partial; otherwise it stays unresolved.
+        None => match infer_field_value_kind(def, source, text, None) {
+            Some(kind) => (Some(kind), Vec::new(), None),
+            None => (None, vec![PartialReason::Unresolved], None),
+        },
     };
     FieldDef {
         has_default: def.default.is_some() || def.value.is_some(),
@@ -811,6 +832,47 @@ pub(crate) fn infer_untyped_return(
         &mut scratch,
     );
     match crate::analyzer::schema::define::function::infer_function_body_kind(&mut ctx, def) {
+        Some(Kind::Any) | None => None,
+        Some(kind) => Some(kind),
+    }
+}
+
+/// Infers an untyped `DEFINE FIELD`'s kind from the value it stores, for
+/// [`FieldDef::kind`] when the definition omits an explicit `TYPE`. Priority:
+/// `VALUE`/`COMPUTED` (they define the stored value) over `DEFAULT` (only a
+/// creation-time fallback). Returns `None` when a `TYPE` is declared (declared
+/// wins — never inferred over), no value/default expression exists, or the
+/// expression resolves to `Kind::Any` (no false precision — the field stays
+/// untyped).
+///
+/// `schema` scopes the inference exactly like [`infer_untyped_return`]: `None`
+/// uses an empty catalog (pure-scalar value expressions still resolve; anything
+/// reading tables, fields, or `fn::` helpers degrades to `Any`), while
+/// `Some(schema)` lets a value expression that reads the catalog resolve. The
+/// expression is analyzed here only to read its type — a scratch diagnostics
+/// sink is discarded, so this never emits (the walk's `DEFINE FIELD` analyzer
+/// owns the clause's real diagnostics).
+pub(crate) fn infer_field_value_kind(
+    def: &ast::DefineField,
+    source: &SourceId,
+    text: &str,
+    schema: Option<&SchemaIndex>,
+) -> Option<Kind> {
+    if def.ty.is_some() {
+        return None;
+    }
+    // VALUE/COMPUTED define the stored value; DEFAULT is only a fallback.
+    let expr = def.value.as_ref().or(def.default.as_ref())?;
+    let empty = SchemaIndex::default();
+    let schema = schema.unwrap_or(&empty);
+    let mut scratch: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+    let mut ctx = crate::analyzer::context::AnalysisContext::new(
+        schema,
+        source.clone(),
+        text,
+        &mut scratch,
+    );
+    match crate::analyzer::schema::define::field::infer_field_clause_kind(&mut ctx, expr) {
         Some(Kind::Any) | None => None,
         Some(kind) => Some(kind),
     }
@@ -1246,6 +1308,137 @@ mod tests {
                 Kind::Record(vec![Table::from("account"), Table::from("team")]),
             ]))
         );
+    }
+
+    #[test]
+    fn untyped_field_infers_scalar_value_expression_kind() {
+        // A `VALUE` with no `TYPE`: the field is typed by the value it stores.
+        // A pure-scalar value resolves against an empty catalog at hoist time.
+        let parsed = parse_source(
+            SourceId::new("schema:value-scalar"),
+            "DEFINE TABLE organization;\n\
+             DEFINE FIELD label ON organization VALUE string::uppercase('x');",
+        )
+        .expect("schema parses");
+
+        let extraction = extract_schema(&[parsed]);
+        assert_eq!(extraction.diagnostics, Vec::new());
+
+        let label = extraction
+            .schema
+            .field("organization", &FieldPath::parse("label"))
+            .expect("label field exists");
+        assert_eq!(label.kind, Some(Kind::String));
+        assert!(label.partial.is_empty(), "an inferred value kind is not partial");
+    }
+
+    #[test]
+    fn untyped_field_infers_default_only_expression_kind() {
+        // No `VALUE`, only a `DEFAULT`: the fallback value still types the field.
+        let parsed = parse_source(
+            SourceId::new("schema:default-only"),
+            "DEFINE TABLE organization;\n\
+             DEFINE FIELD stamp ON organization DEFAULT time::now();",
+        )
+        .expect("schema parses");
+
+        let extraction = extract_schema(&[parsed]);
+        assert_eq!(extraction.diagnostics, Vec::new());
+
+        let stamp = extraction
+            .schema
+            .field("organization", &FieldPath::parse("stamp"))
+            .expect("stamp field exists");
+        assert_eq!(stamp.kind, Some(Kind::Datetime));
+    }
+
+    #[test]
+    fn untyped_field_value_reading_a_table_resolves_through_the_schema_aware_pass() {
+        // The `VALUE` reads a field off another table's record: unresolvable
+        // against an empty catalog (the hoist path leaves it `None`), resolved
+        // once the schema-aware pass infers it against the full catalog.
+        let parsed = parse_source(
+            SourceId::new("schema:value-table"),
+            "DEFINE TABLE user;\n\
+             DEFINE FIELD email ON user TYPE string;\n\
+             DEFINE TABLE organization;\n\
+             DEFINE FIELD owner_email ON organization VALUE user:main.email;",
+        )
+        .expect("schema parses");
+
+        let extraction = extract_schema(&[parsed]);
+        assert_eq!(extraction.diagnostics, Vec::new());
+
+        let owner_email = extraction
+            .schema
+            .field("organization", &FieldPath::parse("owner_email"))
+            .expect("owner_email field exists");
+        assert_eq!(owner_email.kind, Some(Kind::String));
+    }
+
+    #[test]
+    fn explicit_type_wins_over_the_value_expression_kind() {
+        // A declared `TYPE` is authoritative: even a value that would infer a
+        // sharper kind never overrides it.
+        let parsed = parse_source(
+            SourceId::new("schema:type-wins"),
+            "DEFINE TABLE organization;\n\
+             DEFINE FIELD label ON organization TYPE any VALUE string::uppercase('x');",
+        )
+        .expect("schema parses");
+
+        let extraction = extract_schema(&[parsed]);
+        assert_eq!(extraction.diagnostics, Vec::new());
+
+        let label = extraction
+            .schema
+            .field("organization", &FieldPath::parse("label"))
+            .expect("label field exists");
+        // The declared `any` stands — not the `string` the VALUE would infer.
+        assert_eq!(label.kind, Some(Kind::Any));
+    }
+
+    #[test]
+    fn genuinely_untyped_field_value_stays_untyped() {
+        // The value is an opaque host-supplied param, so it infers to `Any`:
+        // no false precision — the field kind stays absent.
+        let parsed = parse_source(
+            SourceId::new("schema:value-any"),
+            "DEFINE TABLE organization;\n\
+             DEFINE FIELD anything ON organization VALUE $input;",
+        )
+        .expect("schema parses");
+
+        let extraction = extract_schema(&[parsed]);
+        assert_eq!(extraction.diagnostics, Vec::new());
+
+        let anything = extraction
+            .schema
+            .field("organization", &FieldPath::parse("anything"))
+            .expect("anything field exists");
+        assert_eq!(anything.kind, None);
+    }
+
+    #[test]
+    fn computed_reference_back_traversal_is_deferred_and_stays_untyped() {
+        // FOLLOW-UP: a `COMPUTED <~team` back-traversal should infer
+        // `array<record<team>>`, but the lowerer does not yet surface the
+        // `COMPUTED` clause (and no proven back-traversal exists), so the field
+        // stays untyped rather than inventing a type we cannot prove.
+        let parsed = parse_source(
+            SourceId::new("schema:computed-ref"),
+            "DEFINE TABLE organization;\n\
+             DEFINE TABLE team;\n\
+             DEFINE FIELD teams ON organization COMPUTED <~team;",
+        )
+        .expect("schema parses");
+
+        let extraction = extract_schema(&[parsed]);
+        let teams = extraction
+            .schema
+            .field("organization", &FieldPath::parse("teams"))
+            .expect("teams field exists");
+        assert_eq!(teams.kind, None);
     }
 
     #[test]
