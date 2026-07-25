@@ -1662,17 +1662,16 @@ fn expr_table_name(expr: &ast::Expr) -> Option<&str> {
 }
 
 /// The element kind of an array/set (`array<T>` → `T`), unwrapping an
-/// `option<array<T>>` to the same. Anything else has no element kind, so a
-/// subscript into it resolves to nothing (low-FP).
+/// `option<array<T>>` to the same and unioning across every collection arm of
+/// a mixed union (`array<int> | array<string>` → `int | string`). Anything
+/// else has no element kind, so a subscript into it resolves to nothing
+/// (low-FP).
+///
+/// Shared with the analyzer so hover and inference agree on the answer; taking
+/// only the first arm (the previous behaviour here) reported a confidently
+/// *wrong* element type rather than a loose one.
 fn element_kind(kind: &Kind) -> Option<Kind> {
-    match kind {
-        Kind::Array(inner, _) | Kind::Set(inner, _) => Some((**inner).clone()),
-        Kind::Either(variants) => variants
-            .iter()
-            .filter(|variant| !matches!(variant, Kind::None | Kind::Null))
-            .find_map(element_kind),
-        _ => None,
-    }
+    crate::analyzer::expression::infer::collection_element_kind(kind)
 }
 
 /// The kind of `field` within a literal-object value kind (`{ role: string }`
@@ -1917,6 +1916,39 @@ mod tests {
             hover_at(&output, &schema, &source, text, offset).expect("hover over projected field");
 
         assert!(hover.markdown.contains("age: int"), "got: {}", hover.markdown);
+    }
+
+    #[test]
+    fn subscript_element_kind_unions_every_collection_arm() {
+        // NEW-5: `array<int> | array<string>` subscripts to `int | string`.
+        // Taking only the first arm reported a confidently *wrong* `int`.
+        let mixed = Kind::Either(vec![
+            Kind::Array(Box::new(Kind::Int), None),
+            Kind::Array(Box::new(Kind::String), None),
+        ]);
+        assert_eq!(
+            element_kind(&mixed),
+            Some(Kind::Either(vec![Kind::Int, Kind::String]))
+        );
+
+        // `option<array<T>>` still unwraps to the bare element (the `NONE` arm
+        // contributes no element kind).
+        let optional = Kind::Either(vec![Kind::None, Kind::Array(Box::new(Kind::Int), None)]);
+        assert_eq!(element_kind(&optional), Some(Kind::Int));
+
+        // A set arm participates in the union just like an array arm.
+        let array_or_set = Kind::Either(vec![
+            Kind::Array(Box::new(Kind::Int), None),
+            Kind::Set(Box::new(Kind::String), None),
+        ]);
+        assert_eq!(
+            element_kind(&array_or_set),
+            Some(Kind::Either(vec![Kind::Int, Kind::String]))
+        );
+
+        // No collection arm at all: still no element kind (stay silent).
+        assert_eq!(element_kind(&Kind::Either(vec![Kind::None, Kind::Int])), None);
+        assert_eq!(element_kind(&Kind::String), None);
     }
 
     #[test]
