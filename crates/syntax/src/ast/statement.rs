@@ -328,6 +328,14 @@ pub struct DefineField {
     pub default: Option<Spanned<Expr>>,
     /// `VALUE <expr>` — the field is computed; writes are overwritten.
     pub value: Option<Spanned<Expr>>,
+    /// `COMPUTED <expr>` — the field is derived from an expression and never
+    /// stored (SurrealDB 3.0). Like `VALUE`, its type is the expression's; a
+    /// common form is a record-reference back-traversal (`COMPUTED <~team`).
+    pub computed: Option<Spanned<Expr>>,
+    /// `REFERENCE` — the field's `record<...>` link participates in reference
+    /// traversal (`<~`), so a back-reference on the target table can resolve
+    /// through it.
+    pub reference: bool,
     /// `ASSERT <expr>` — must hold for every write (`$value` in scope).
     pub assert: Option<Spanned<Expr>>,
     /// `READONLY` — writable only at creation.

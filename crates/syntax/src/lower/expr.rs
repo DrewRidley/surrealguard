@@ -528,12 +528,19 @@ impl Lowerer<'_> {
         let mut step = GraphStep {
             targets: Vec::new(),
             where_clause: None,
+            reference: false,
         };
 
         for child in named_children(node) {
             match child.kind() {
                 "LookupRight" => dir = Some(self.spanned(child, GraphDir::Out)),
-                "LookupLeft" => dir = Some(self.spanned(child, GraphDir::In)),
+                // `<-` is a graph-edge step; `<~` is a record-reference step.
+                // Both alias to `LookupLeft` in the grammar, so the `~` in the
+                // operator text is what distinguishes a reference traversal.
+                "LookupLeft" => {
+                    step.reference = self.node_text(child).contains('~');
+                    dir = Some(self.spanned(child, GraphDir::In));
+                }
                 "LookupBoth" => dir = Some(self.spanned(child, GraphDir::Both)),
                 "Ident" => step
                     .targets

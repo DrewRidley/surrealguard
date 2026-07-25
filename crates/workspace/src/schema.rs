@@ -179,8 +179,11 @@ pub struct FieldDef {
     /// `READONLY` — writable only at creation.
     pub readonly: bool,
     /// `VALUE <expr>` — computed on write; hand-written values are
-    /// overwritten.
+    /// overwritten. Also set for a `COMPUTED <expr>` (3.0) derived field.
     pub computed: bool,
+    /// `REFERENCE` — the field's `record<...>` link is a reference, so a
+    /// `<~` back-traversal on the target table can resolve through it.
+    pub reference: bool,
     /// The field's dotted path split into segments.
     pub path: Vec<String>,
     /// The owning table's name.
@@ -655,9 +658,12 @@ pub(crate) fn field_def_from_ast(
         },
     };
     FieldDef {
-        has_default: def.default.is_some() || def.value.is_some(),
+        // A `COMPUTED` field is derived, so — like `VALUE` — it is never a
+        // required input and is overwritten by its own expression.
+        has_default: def.default.is_some() || def.value.is_some() || def.computed.is_some(),
         readonly: def.readonly,
-        computed: def.value.is_some(),
+        computed: def.value.is_some() || def.computed.is_some(),
+        reference: def.reference,
         path: idiom_field_path(&def.path.node),
         table: def.table.node.clone(),
         kind,
@@ -861,8 +867,32 @@ pub(crate) fn infer_field_value_kind(
     if def.ty.is_some() {
         return None;
     }
-    // VALUE/COMPUTED define the stored value; DEFAULT is only a fallback.
-    let expr = def.value.as_ref().or(def.default.as_ref())?;
+    // VALUE / COMPUTED define the stored/derived value; DEFAULT is only a
+    // creation-time fallback.
+    let expr = def
+        .value
+        .as_ref()
+        .or(def.computed.as_ref())
+        .or(def.default.as_ref())?;
+
+    // A record-reference back-traversal (`COMPUTED <~team`) resolves to
+    // `array<record<team>>`, but only when the schema proves the back-reference
+    // (the target table carries a `record<Self>` REFERENCE field). This needs
+    // the owning table and the accumulated catalog, so it is attempted only in
+    // the schema-aware pass; otherwise it degrades to the scalar inference below
+    // and stays untyped rather than inventing a type.
+    if let Some(schema) = schema {
+        if let ast::Expr::Idiom(idiom) = &expr.node {
+            if let Some(kind) = crate::analyzer::data::select::reference_back_traversal_kind(
+                &def.table.node,
+                idiom,
+                schema,
+            ) {
+                return Some(kind);
+            }
+        }
+    }
+
     let empty = SchemaIndex::default();
     let schema = schema.unwrap_or(&empty);
     let mut scratch: Vec<surrealguard_diagnostics::Finding> = Vec::new();
@@ -1420,11 +1450,10 @@ mod tests {
     }
 
     #[test]
-    fn computed_reference_back_traversal_is_deferred_and_stays_untyped() {
-        // FOLLOW-UP: a `COMPUTED <~team` back-traversal should infer
-        // `array<record<team>>`, but the lowerer does not yet surface the
-        // `COMPUTED` clause (and no proven back-traversal exists), so the field
-        // stays untyped rather than inventing a type we cannot prove.
+    fn computed_reference_back_traversal_without_backlink_stays_untyped() {
+        // The `COMPUTED` clause is now surfaced, but `team` carries no
+        // `record<organization> REFERENCE` field, so the back-reference is not
+        // provable: the field stays untyped rather than inventing a type.
         let parsed = parse_source(
             SourceId::new("schema:computed-ref"),
             "DEFINE TABLE organization;\n\
@@ -1439,6 +1468,53 @@ mod tests {
             .field("organization", &FieldPath::parse("teams"))
             .expect("teams field exists");
         assert_eq!(teams.kind, None);
+    }
+
+    #[test]
+    fn computed_reference_back_traversal_types_from_provable_backlink() {
+        // `team.org` is a `record<organization> REFERENCE`, so `<~team` on
+        // organization resolves to `array<record<team>>`.
+        let parsed = parse_source(
+            SourceId::new("schema:computed-ref-ok"),
+            "DEFINE TABLE team;\n\
+             DEFINE FIELD org ON team TYPE record<organization> REFERENCE;\n\
+             DEFINE TABLE organization;\n\
+             DEFINE FIELD teams ON organization COMPUTED <~team;",
+        )
+        .expect("schema parses");
+
+        let extraction = extract_schema(&[parsed]);
+        let teams = extraction
+            .schema
+            .field("organization", &FieldPath::parse("teams"))
+            .expect("teams field exists");
+        assert_eq!(
+            teams.kind,
+            Some(Kind::Array(
+                Box::new(Kind::Record(vec![surrealdb_types::Table::from("team")])),
+                None
+            ))
+        );
+        assert!(teams.computed, "a COMPUTED field is computed");
+    }
+
+    #[test]
+    fn computed_scalar_expression_types_like_value() {
+        // A plain scalar `COMPUTED` expression infers its scalar kind.
+        let parsed = parse_source(
+            SourceId::new("schema:computed-scalar"),
+            "DEFINE TABLE person;\n\
+             DEFINE FIELD name ON person TYPE string;\n\
+             DEFINE FIELD shout ON person COMPUTED string::uppercase(name);",
+        )
+        .expect("schema parses");
+
+        let extraction = extract_schema(&[parsed]);
+        let shout = extraction
+            .schema
+            .field("person", &FieldPath::parse("shout"))
+            .expect("shout field exists");
+        assert_eq!(shout.kind, Some(Kind::String));
     }
 
     #[test]

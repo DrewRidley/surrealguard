@@ -799,6 +799,60 @@ fn relation_accepts_source(
     }
 }
 
+/// `COMPUTED <~T` on table `self_table`: the array of `T` records whose own
+/// `REFERENCE` field links back to `self_table`. Resolves to
+/// `array<record<T>>` ONLY when the back-reference is provable — a single
+/// leading `<~T` reference step (no filter, no trailing parts) where `T` is a
+/// defined table carrying a `record<self_table>` `REFERENCE` field. Every
+/// other shape yields `None`: the field stays untyped rather than inventing a
+/// type we cannot prove from the schema.
+pub(crate) fn reference_back_traversal_kind(
+    self_table: &str,
+    idiom: &ast::Idiom,
+    schema: &SchemaIndex,
+) -> Option<Kind> {
+    let [only] = idiom.parts.as_slice() else {
+        return None;
+    };
+    let ast::IdiomPart::Graph { dir, step } = &only.node else {
+        return None;
+    };
+    // A back-reference is an incoming reference step (`<~`) at a single named
+    // target, with no inline selection.
+    if dir.node != ast::GraphDir::In
+        || !step.reference
+        || step.where_clause.is_some()
+    {
+        return None;
+    }
+    let [target] = step.targets.as_slice() else {
+        return None;
+    };
+    let target_name = target.node.as_str();
+    let target_table = schema.tables.get(target_name)?;
+    let points_back = target_table
+        .fields
+        .values()
+        .any(|field| field.reference && kind_targets_table(field.kind.as_ref(), self_table));
+    points_back
+        .then(|| Kind::Array(Box::new(Kind::Record(vec![target_name.into()])), None))
+}
+
+/// Whether a field's declared kind is (or wraps, through `option`/union/array)
+/// a `record<...>` that names `table`.
+fn kind_targets_table(kind: Option<&Kind>, table: &str) -> bool {
+    match kind {
+        Some(Kind::Record(tables)) => tables.iter().any(|t| t.to_string() == table),
+        Some(Kind::Either(variants)) => {
+            variants.iter().any(|v| kind_targets_table(Some(v), table))
+        }
+        Some(Kind::Array(element, _) | Kind::Set(element, _)) => {
+            kind_targets_table(Some(element), table)
+        }
+        _ => false,
+    }
+}
+
 fn is_graph_projection(projection: &ast::Projection) -> bool {
     let ast::Projection::Expr { expr, .. } = projection else {
         return false;

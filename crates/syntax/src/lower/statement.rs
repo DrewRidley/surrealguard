@@ -1177,6 +1177,8 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
         overwrite: false,
         default: None,
         value: None,
+        computed: None,
+        reference: false,
         assert: None,
         readonly: false,
         permissions: Vec::new(),
@@ -1201,6 +1203,7 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
             }
             "DefaultClause" => def.default = clause_expr(child, text),
             "ValueClause" => def.value = clause_expr(child, text),
+            "ComputedClause" => def.computed = clause_expr(child, text),
             "AssertClause" => def.assert = clause_expr(child, text),
             "ReadonlyClause" => def.readonly = true,
             "TypeClause" => {
@@ -1223,7 +1226,8 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
             "PermissionsBasicClause" | "PermissionsForClause" => {
                 lower_permission_predicates(child, text, &mut def.permissions);
             }
-            "CommentClause" | "ReferenceClause" => {}
+            "ReferenceClause" => def.reference = true,
+            "CommentClause" => {}
             _ if child.is_error() || child.is_missing() => {}
             _ => {}
         }
@@ -1904,6 +1908,53 @@ mod tests {
             &variants[0].node,
             crate::ast::TypeExpr::Literal(Literal::String(s)) if s == "a"
         ));
+    }
+
+    #[test]
+    fn lowers_define_field_computed_reference_back_traversal() {
+        // The `COMPUTED` clause is surfaced as an idiom expression, and a `<~`
+        // step is marked as a reference traversal (distinct from a `<-` edge).
+        let parsed = parse("DEFINE FIELD teams ON organization COMPUTED <~team;");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Field(def)) => Some(def),
+            _ => None,
+        });
+        assert!(stmt.value.is_none(), "COMPUTED is not VALUE");
+        let computed = stmt.computed.expect("computed clause surfaced");
+        let crate::ast::Expr::Idiom(idiom) = &computed.node else {
+            panic!("expected idiom, got {:?}", computed.node);
+        };
+        let IdiomPart::Graph { dir, step } = &idiom.parts[0].node else {
+            panic!("expected graph part, got {:?}", idiom.parts[0].node);
+        };
+        assert_eq!(dir.node, crate::ast::GraphDir::In);
+        assert!(step.reference, "`<~` is a reference traversal");
+        assert_eq!(step.targets[0].node, "team");
+    }
+
+    #[test]
+    fn lowers_define_field_reference_flag() {
+        let parsed = parse("DEFINE FIELD org ON team TYPE record<organization> REFERENCE;");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Field(def)) => Some(def),
+            _ => None,
+        });
+        assert!(stmt.reference, "REFERENCE clause sets the flag");
+
+        // A plain `<-` edge step is NOT a reference traversal.
+        let parsed = parse("DEFINE FIELD likes ON person COMPUTED <-likes;");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Field(def)) => Some(def),
+            _ => None,
+        });
+        let computed = stmt.computed.expect("computed clause surfaced");
+        let crate::ast::Expr::Idiom(idiom) = &computed.node else {
+            panic!("expected idiom");
+        };
+        let IdiomPart::Graph { step, .. } = &idiom.parts[0].node else {
+            panic!("expected graph part");
+        };
+        assert!(!step.reference, "`<-` is an edge traversal, not a reference");
     }
 
     #[test]
