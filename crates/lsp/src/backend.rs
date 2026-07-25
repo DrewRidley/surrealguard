@@ -255,6 +255,14 @@ impl LanguageServer for Backend {
             ws.completion_analysis(&uri)
         };
         let Some(analysis) = analysis else {
+            // The document isn't tracked, so there is nothing to complete
+            // against. Logged because it is otherwise indistinguishable, in the
+            // editor, from "the server returned no candidates".
+            eprintln!(
+                "[surrealguard] completion {}:{} → no analysis for this document",
+                position.line + 1,
+                position.character
+            );
             return Ok(None);
         };
 
@@ -268,6 +276,26 @@ impl LanguageServer for Backend {
         .into_iter()
         .map(|candidate| completion::candidate_to_item(&analysis.text, candidate))
         .collect();
+
+        // One line per request, so "nothing happened" in the editor can be told
+        // apart from "the request never arrived". Shows the text around the
+        // cursor, since a stale document is the usual cause of a surprising
+        // candidate set.
+        let around: String = analysis
+            .text
+            .get(offset.saturating_sub(12) as usize..(offset as usize + 4).min(analysis.text.len()))
+            .unwrap_or("")
+            .replace('\n', "⏎");
+        eprintln!(
+            "[surrealguard] completion {}:{} (offset {offset}) near {around:?} → {} item(s){}",
+            position.line + 1,
+            position.character,
+            items.len(),
+            items
+                .first()
+                .map(|i| format!(": {}…", i.label))
+                .unwrap_or_default()
+        );
 
         Ok(Some(CompletionResponse::Array(items)))
     }
