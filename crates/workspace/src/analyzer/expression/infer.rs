@@ -530,7 +530,7 @@ fn step_idiom_kind(idiom: &ast::Idiom, ctx: &mut AnalysisContext<'_>) -> Option<
 
 /// The kind of `value.field`, stepping through closed objects and record
 /// links (via the schema).
-fn field_of_kind(value: &Kind, field: &str, schema: &SchemaIndex) -> Option<Kind> {
+pub(crate) fn field_of_kind(value: &Kind, field: &str, schema: &SchemaIndex) -> Option<Kind> {
     match value {
         Kind::Literal(KindLiteral::Object(fields)) => fields.get(field).cloned(),
         Kind::Record(targets) => {

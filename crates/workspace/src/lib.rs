@@ -4,6 +4,7 @@
 
 pub mod analysis;
 pub mod analyzer;
+pub mod completion;
 pub mod config;
 pub mod context_params;
 pub mod expression;
@@ -19,6 +20,10 @@ pub use analysis::{
     analyze_one_source, analyze_query, analyze_source, analyze_workspace, build_global_catalog,
     AnalysisOutput, GlobalCatalog, LetBindingAnalysis, ParamInference, SelectModifierAnalysis,
     StatementAnalysis, Workspace, WorkspaceAnalysis,
+};
+pub use completion::{
+    complete_at, completion_context_at, CandidateKind, CompletionCandidate, CompletionContext,
+    ContextKind,
 };
 pub use expression::{ExpressionFact, ExpressionValueClass, PartialReason};
 pub use query::{

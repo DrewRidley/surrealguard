@@ -1,0 +1,605 @@
+//! Engine tests.
+//!
+//! Every case drives the real pipeline — analyze a schema plus a query, then
+//! complete at a cursor — so a test failure means the feature is broken, not
+//! that a fixture drifted. The cursor is written as `▏` in the query text and
+//! stripped before parsing.
+
+use std::collections::BTreeSet;
+
+use super::*;
+use crate::analysis::{analyze_workspace, Workspace};
+use surrealguard_syntax::parse::parse_source;
+
+/// A small but realistic schema: a schemafull table with scalar, optional,
+/// link, and array-of-link fields; a second table to link to; a relation edge;
+/// and a `fn::` function.
+const SCHEMA: &str = r#"
+DEFINE TABLE person SCHEMAFULL;
+DEFINE FIELD name ON person TYPE string;
+DEFINE FIELD nickname ON person TYPE option<string>;
+DEFINE FIELD status ON person TYPE string;
+DEFINE FIELD age ON person TYPE int;
+DEFINE FIELD employer ON person TYPE record<company>;
+DEFINE FIELD tags ON person TYPE array<string>;
+DEFINE FIELD address ON person TYPE object;
+DEFINE FIELD address.city ON person TYPE string;
+
+DEFINE TABLE company SCHEMAFULL;
+DEFINE FIELD title ON company TYPE string;
+DEFINE FIELD headcount ON company TYPE int;
+
+DEFINE TABLE works_at SCHEMAFULL TYPE RELATION IN person OUT company;
+DEFINE FIELD since ON works_at TYPE datetime;
+
+DEFINE FUNCTION fn::shout($text: string) -> string { RETURN string::uppercase($text); };
+DEFINE PARAM $tenant VALUE 'acme';
+"#;
+
+/// Analyzes `SCHEMA` plus `query` and completes where `▏` sits.
+struct Fixture {
+    output: AnalysisOutput,
+    schema: SchemaIndex,
+    parsed: ParsedSource,
+    offset: u32,
+}
+
+impl Fixture {
+    fn new(query: &str) -> Self {
+        Self::with_schema(SCHEMA, query)
+    }
+
+    fn with_schema(schema_text: &str, query: &str) -> Self {
+        let offset = query
+            .find('▏')
+            .expect("query fixtures must place the cursor with `▏`") as u32;
+        let query = query.replace('▏', "");
+
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source("schema".into(), schema_text.to_string());
+        let query_id = workspace.add_virtual_source("query".into(), query.clone());
+        let analysis = analyze_workspace(&workspace);
+
+        let parsed = parse_source(query_id.clone(), query).expect("query parses");
+        Self {
+            output: analysis
+                .sources
+                .get(&query_id)
+                .cloned()
+                .expect("query source is analyzed"),
+            schema: analysis.schema,
+            parsed,
+            offset,
+        }
+    }
+
+    fn context(&self) -> CompletionContext {
+        completion_context_at(&self.output, &self.schema, &self.parsed, self.offset)
+    }
+
+    fn complete(&self) -> Vec<CompletionCandidate> {
+        complete_at(&self.output, &self.schema, &self.parsed, self.offset)
+    }
+
+    fn labels(&self) -> Vec<String> {
+        self.complete()
+            .into_iter()
+            .map(|candidate| candidate.label)
+            .collect()
+    }
+
+    /// Labels of one candidate class, in ranked order.
+    fn labels_of(&self, kind: CandidateKind) -> Vec<String> {
+        self.complete()
+            .into_iter()
+            .filter(|candidate| candidate.kind == kind)
+            .map(|candidate| candidate.label)
+            .collect()
+    }
+
+    fn rank_of(&self, label: &str) -> Option<usize> {
+        self.complete()
+            .iter()
+            .position(|candidate| candidate.label == label)
+    }
+}
+
+fn context_kind(query: &str) -> ContextKind {
+    Fixture::new(query).context().kind
+}
+
+// ---------------------------------------------------------------------------
+// Context detection, including the inputs that do not parse
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_projection_position_is_a_field_position_even_before_the_from_is_typed() {
+    assert_eq!(context_kind("SELECT ▏"), ContextKind::FieldName);
+    assert_eq!(context_kind("SELECT name, ▏ FROM person"), ContextKind::FieldName);
+}
+
+#[test]
+fn an_empty_projection_before_an_existing_from_still_sees_its_table() {
+    // tree-sitter collapses `SELECT  FROM person` into a single top-level
+    // ERROR node holding one Keyword — every structural fact is gone. The
+    // token scan still finds SELECT, FROM, and the table.
+    let fixture = Fixture::new("SELECT ▏ FROM person");
+    assert!(fixture.parsed.has_error(), "fixture must exercise broken input");
+    assert_eq!(fixture.context().kind, ContextKind::FieldName);
+    assert_eq!(fixture.context().tables, vec!["person".to_string()]);
+    let labels = fixture.labels_of(CandidateKind::Field);
+    for expected in ["name", "status", "age", "employer", "tags", "id"] {
+        assert!(labels.contains(&expected.to_string()), "missing {expected} in {labels:?}");
+    }
+}
+
+#[test]
+fn a_dangling_from_is_a_table_position() {
+    let fixture = Fixture::new("SELECT name FROM ▏");
+    assert_eq!(fixture.context().kind, ContextKind::TableName);
+    let tables = fixture.labels_of(CandidateKind::Table);
+    assert!(tables.contains(&"person".to_string()));
+    assert!(tables.contains(&"company".to_string()));
+    assert!(tables.contains(&"works_at".to_string()));
+}
+
+#[test]
+fn a_lone_dollar_after_a_comparison_is_a_param_position() {
+    let fixture = Fixture::new("SELECT * FROM person WHERE status = $▏");
+    assert!(fixture.parsed.has_error(), "fixture must exercise broken input");
+    let context = fixture.context();
+    assert_eq!(context.kind, ContextKind::ParamName);
+    assert_eq!(context.expected, Some(Kind::String));
+}
+
+#[test]
+fn a_where_clause_head_is_a_field_position_and_its_right_hand_side_is_a_value() {
+    assert_eq!(
+        context_kind("SELECT * FROM person WHERE ▏"),
+        ContextKind::FieldName
+    );
+    assert_eq!(
+        context_kind("SELECT * FROM person WHERE status = ▏"),
+        ContextKind::Value
+    );
+    // A second conjunct is a field position again.
+    assert_eq!(
+        context_kind("SELECT * FROM person WHERE age > 3 AND ▏"),
+        ContextKind::FieldName
+    );
+}
+
+#[test]
+fn a_dot_is_a_member_position_resolved_through_the_receivers_kind() {
+    let fixture = Fixture::new("SELECT employer.▏ FROM person");
+    let context = fixture.context();
+    assert_eq!(context.kind, ContextKind::Member);
+    assert_eq!(
+        context.receiver,
+        Some(Kind::Record(vec![surrealdb_types::Table::from("company")]))
+    );
+    let members = fixture.labels_of(CandidateKind::Field);
+    assert!(members.contains(&"title".to_string()));
+    assert!(members.contains(&"headcount".to_string()));
+    // The link target's fields, not the row table's.
+    assert!(!members.contains(&"nickname".to_string()));
+}
+
+#[test]
+fn a_destructure_offers_the_receivers_members_and_omits_the_ones_already_written() {
+    let fixture = Fixture::new("SELECT employer.{ title, ▏ } FROM person");
+    let context = fixture.context();
+    assert_eq!(context.kind, ContextKind::Destructure);
+    assert!(context.exclude.contains("title"));
+    let members = fixture.labels_of(CandidateKind::Field);
+    assert!(members.contains(&"headcount".to_string()));
+    assert!(!members.contains(&"title".to_string()));
+}
+
+#[test]
+fn a_partial_function_path_completes_within_its_family() {
+    let fixture = Fixture::new("SELECT string::u▏ FROM person");
+    assert_eq!(fixture.context().kind, ContextKind::FunctionPath);
+    let functions = fixture.labels_of(CandidateKind::Function);
+    assert!(functions.contains(&"string::uppercase".to_string()));
+    assert!(!functions.contains(&"math::abs".to_string()));
+}
+
+#[test]
+fn workspace_functions_are_offered_and_outrank_a_same_named_builtin_family() {
+    let fixture = Fixture::new("SELECT fn::▏ FROM person");
+    let functions = fixture.labels_of(CandidateKind::Function);
+    assert_eq!(functions, vec!["fn::shout".to_string()]);
+}
+
+#[test]
+fn a_content_object_offers_writable_keys_only() {
+    let fixture = Fixture::new("CREATE person CONTENT { name: 'a', ▏ }");
+    let context = fixture.context();
+    assert_eq!(context.kind, ContextKind::ObjectKey);
+    assert!(context.exclude.contains("name"));
+    let keys = fixture.labels_of(CandidateKind::ObjectKey);
+    assert!(keys.contains(&"status".to_string()));
+    assert!(keys.contains(&"employer".to_string()));
+    // Already written, and the never-writable implicit `id`.
+    assert!(!keys.contains(&"name".to_string()));
+    assert!(!keys.contains(&"id".to_string()));
+}
+
+#[test]
+fn an_object_value_position_takes_its_expectation_from_the_key() {
+    let context = Fixture::new("CREATE person CONTENT { age: ▏ }").context();
+    assert_eq!(context.kind, ContextKind::Value);
+    assert_eq!(context.expected, Some(Kind::Int));
+}
+
+#[test]
+fn a_mutation_target_and_its_set_clause_classify_separately() {
+    assert_eq!(context_kind("CREATE ▏"), ContextKind::TableName);
+    assert_eq!(context_kind("UPDATE person SET ▏"), ContextKind::FieldName);
+    assert_eq!(context_kind("DELETE ▏"), ContextKind::TableName);
+    assert_eq!(context_kind("INSERT INTO ▏"), ContextKind::TableName);
+}
+
+#[test]
+fn a_graph_step_names_a_table() {
+    assert_eq!(context_kind("RELATE $a->▏"), ContextKind::TableName);
+    assert_eq!(
+        context_kind("SELECT ->▏ FROM person"),
+        ContextKind::TableName
+    );
+}
+
+#[test]
+fn a_define_on_clause_is_a_table_position_and_its_fields_clause_a_field_position() {
+    assert_eq!(context_kind("DEFINE FIELD x ON ▏"), ContextKind::TableName);
+    let fixture = Fixture::new("DEFINE INDEX i ON person FIELDS ▏");
+    assert_eq!(fixture.context().kind, ContextKind::FieldName);
+    assert!(fixture
+        .labels_of(CandidateKind::Field)
+        .contains(&"name".to_string()));
+}
+
+#[test]
+fn a_let_value_is_a_value_position() {
+    assert_eq!(context_kind("LET $x = ▏"), ContextKind::Value);
+}
+
+#[test]
+fn a_subquery_inside_a_call_classifies_on_its_own_terms() {
+    assert_eq!(
+        context_kind("SELECT array::len((SELECT name FROM ▏)) FROM person"),
+        ContextKind::TableName
+    );
+}
+
+#[test]
+fn a_position_inside_a_string_or_comment_offers_nothing() {
+    let fixture = Fixture::new("SELECT * FROM person WHERE name = 'fr▏om'");
+    assert!(!fixture.context().enabled);
+    assert!(fixture.complete().is_empty());
+
+    let fixture = Fixture::new("-- pick a ta▏ble\nSELECT * FROM person");
+    assert!(fixture.complete().is_empty());
+}
+
+#[test]
+fn a_member_position_whose_receiver_has_no_known_type_offers_nothing_rather_than_guessing() {
+    // `unknown_thing` is not a field or a table, so its members are unknown.
+    // Offering the row table's fields (or tables, or params) here would be
+    // confidently wrong.
+    let fixture = Fixture::new("SELECT unknown_thing.▏ FROM person");
+    assert_eq!(fixture.context().kind, ContextKind::Member);
+    assert!(fixture.complete().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Ranking
+// ---------------------------------------------------------------------------
+
+#[test]
+fn type_compatibility_outranks_a_closer_spelling() {
+    // Both params start with `st`; only one is a `string` like `status`.
+    let fixture = Fixture::with_schema(
+        SCHEMA,
+        "LET $stamp = 12; LET $st_value = 'open'; SELECT * FROM person WHERE status = $▏",
+    );
+    let context = fixture.context();
+    assert_eq!(context.expected, Some(Kind::String));
+    let params = fixture.labels_of(CandidateKind::Param);
+    let string_param = params
+        .iter()
+        .position(|label| label == "$st_value")
+        .expect("the string param is offered");
+    let int_param = params
+        .iter()
+        .position(|label| label == "$stamp")
+        .expect("the int param is offered");
+    assert!(
+        string_param < int_param,
+        "the type-compatible param must rank first, got {params:?}"
+    );
+}
+
+#[test]
+fn a_typed_prefix_still_leads_when_both_candidates_fit_the_type() {
+    let fixture = Fixture::new("SELECT * FROM person WHERE sta▏");
+    let fields = fixture.labels_of(CandidateKind::Field);
+    assert_eq!(fields.first().map(String::as_str), Some("status"));
+}
+
+#[test]
+fn an_exact_prefix_beats_a_scattered_subsequence() {
+    assert!(match_score("na", "name").unwrap() > match_score("na", "nickname").unwrap());
+    // A hit at a word boundary beats the same characters scattered.
+    assert!(match_score("len", "string::len").unwrap() > match_score("len", "silent").unwrap());
+    assert_eq!(match_score("zzz", "name"), None);
+    // A case-exact prefix edges out a case-insensitive one.
+    assert!(match_score("na", "name").unwrap() > match_score("Na", "name").unwrap());
+}
+
+#[test]
+fn an_unknown_type_scores_neutrally_rather_than_as_a_mismatch() {
+    let compatible = type_score(Some(&Kind::String), Some(&Kind::String));
+    let unknown = type_score(None, Some(&Kind::String));
+    let mismatch = type_score(Some(&Kind::Int), Some(&Kind::String));
+    assert!(compatible > unknown, "a known fit beats an unknown type");
+    assert!(unknown > mismatch, "an unknown type beats a proven mismatch");
+    // No expectation at all is neutral for everyone.
+    assert_eq!(type_score(Some(&Kind::Int), None), type_score(None, None));
+}
+
+#[test]
+fn the_ranked_order_is_pinned_for_the_client_by_sort_text() {
+    let fixture = Fixture::new("SELECT ▏ FROM person");
+    let candidates = fixture.complete();
+    assert!(candidates.len() > 1);
+    let sort_texts: Vec<&str> = candidates
+        .iter()
+        .map(|candidate| candidate.sort_text.as_str())
+        .collect();
+    let mut sorted = sort_texts.clone();
+    sorted.sort_unstable();
+    assert_eq!(sort_texts, sorted, "sort_text must follow the ranked order");
+    assert_eq!(sort_texts[0], "0000");
+}
+
+#[test]
+fn a_schema_field_outranks_a_builtin_that_matches_the_same_prefix() {
+    let fixture = Fixture::new("SELECT ta▏ FROM person");
+    let field = fixture.rank_of("tags").expect("the row table's field is offered");
+    let builtin = fixture
+        .rank_of("type::table")
+        .expect("a built-in matching `ta` is offered too");
+    assert!(
+        field < builtin,
+        "the row table's field must beat a built-in: {:?}",
+        fixture.labels()
+    );
+}
+
+#[test]
+fn every_item_replaces_the_whole_token_being_typed() {
+    let fixture = Fixture::new("SELECT nam▏e FROM person");
+    let candidate = fixture
+        .complete()
+        .into_iter()
+        .find(|candidate| candidate.label == "name")
+        .expect("`name` is offered");
+    // The range covers `name`, not just the typed `nam`, so accepting the
+    // item does not leave a stray `e`.
+    assert_eq!(candidate.replace, (7, 11));
+}
+
+// ---------------------------------------------------------------------------
+// Params
+// ---------------------------------------------------------------------------
+
+#[test]
+fn params_in_scope_include_bindings_host_params_and_define_param() {
+    let fixture = Fixture::new("LET $local = 1; SELECT * FROM person WHERE age = $▏");
+    let params = fixture.labels_of(CandidateKind::Param);
+    assert!(params.contains(&"$local".to_string()), "{params:?}");
+    assert!(params.contains(&"$tenant".to_string()), "{params:?}");
+}
+
+#[test]
+fn a_binding_is_not_offered_before_it_is_written_or_after_its_block_closed() {
+    let after = Fixture::new("LET $early = 1; SELECT $▏");
+    assert!(after
+        .labels_of(CandidateKind::Param)
+        .contains(&"$early".to_string()));
+
+    let before = Fixture::new("SELECT $▏; LET $late = 1;");
+    assert!(!before
+        .labels_of(CandidateKind::Param)
+        .contains(&"$late".to_string()));
+
+    let closed = Fixture::new("DEFINE FUNCTION fn::f() { LET $inner = 1; RETURN 1; }; SELECT $▏");
+    assert!(
+        !closed
+            .labels_of(CandidateKind::Param)
+            .contains(&"$inner".to_string()),
+        "a binding in a closed block is out of scope"
+    );
+}
+
+#[test]
+fn context_params_of_the_enclosing_define_are_offered_with_their_kinds() {
+    let fixture = Fixture::with_schema(
+        SCHEMA,
+        "DEFINE EVENT e ON person WHEN $event = 'CREATE' THEN { CREATE company SET title = $▏ };",
+    );
+    let candidates = fixture.complete();
+    let after = candidates
+        .iter()
+        .find(|candidate| candidate.label == "$after")
+        .expect("`$after` is bound by the enclosing DEFINE EVENT");
+    assert_eq!(after.detail.as_deref(), Some("record<person>"));
+}
+
+// ---------------------------------------------------------------------------
+// Members through wrappers and links
+// ---------------------------------------------------------------------------
+
+#[test]
+fn members_resolve_through_option_and_array_wrappers_and_across_links() {
+    let schema = r#"
+DEFINE TABLE team SCHEMAFULL;
+DEFINE FIELD lead ON team TYPE option<record<person>>;
+DEFINE FIELD members ON team TYPE array<record<person>>;
+DEFINE TABLE person SCHEMAFULL;
+DEFINE FIELD name ON person TYPE string;
+DEFINE FIELD age ON person TYPE int;
+"#;
+    for query in [
+        "SELECT lead.▏ FROM team",
+        "SELECT members.▏ FROM team",
+    ] {
+        let fixture = Fixture::with_schema(schema, query);
+        let members = fixture.labels_of(CandidateKind::Field);
+        assert!(members.contains(&"name".to_string()), "{query}: {members:?}");
+        assert!(members.contains(&"age".to_string()), "{query}: {members:?}");
+    }
+}
+
+#[test]
+fn a_relation_edge_offers_its_implicit_in_and_out() {
+    let fixture = Fixture::new("SELECT ▏ FROM works_at");
+    let fields = fixture.labels_of(CandidateKind::Field);
+    for expected in ["in", "out", "id", "since"] {
+        assert!(fields.contains(&expected.to_string()), "missing {expected}: {fields:?}");
+    }
+}
+
+#[test]
+fn a_typed_receiver_offers_the_methods_its_kind_family_dispatches() {
+    let fixture = Fixture::new("SELECT tags.▏ FROM person");
+    let methods = fixture.labels_of(CandidateKind::Method);
+    assert!(methods.contains(&"len".to_string()), "{methods:?}");
+    assert!(methods.contains(&"distinct".to_string()), "{methods:?}");
+    // Dispatch is by kind family: a string method is not on an array.
+    assert!(!methods.contains(&"uppercase".to_string()));
+}
+
+// ---------------------------------------------------------------------------
+// Expectations from call signatures
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_call_argument_takes_its_expectation_from_the_signature() {
+    let workspace_call = Fixture::new("SELECT fn::shout(▏) FROM person");
+    assert_eq!(workspace_call.context().expected, Some(Kind::String));
+
+    let builtin_call = Fixture::new("SELECT string::len(▏) FROM person");
+    assert_eq!(builtin_call.context().expected, Some(Kind::String));
+
+    // …and it ranks the fitting field first.
+    let fields = builtin_call.labels_of(CandidateKind::Field);
+    let name = fields.iter().position(|label| label == "name");
+    let age = fields.iter().position(|label| label == "age");
+    assert!(name < age, "the string field must outrank the int one: {fields:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Robustness
+// ---------------------------------------------------------------------------
+
+#[test]
+fn completing_anywhere_in_pathological_input_never_panics_and_never_invents_a_name() {
+    let sources = [
+        "",
+        "S",
+        "SELECT",
+        "SELECT * FROM",
+        "SELECT .{ FROM",
+        "CREATE person CONTENT {",
+        "LET $x = (((",
+        "$",
+        "..",
+        "SELECT $$$ FROM ]]]",
+        "DEFINE FIELD ON ON ON",
+        "SELECT ⟨wéird⟩.  FROM person",
+        "/* unterminated",
+        "'unterminated",
+        "SELECT a->b->c-> FROM person",
+    ];
+    let known: BTreeSet<String> = {
+        let fixture = Fixture::new("▏");
+        fixture
+            .schema
+            .tables
+            .keys()
+            .cloned()
+            .chain(fixture.schema.functions.keys().cloned())
+            .collect()
+    };
+
+    for source in sources {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source("schema".into(), SCHEMA.to_string());
+        let query_id = workspace.add_virtual_source("query".into(), source.to_string());
+        let analysis = analyze_workspace(&workspace);
+        let output = analysis.sources.get(&query_id).cloned().unwrap_or_default();
+        let parsed = parse_source(query_id, source).expect("parses");
+        for offset in 0..=source.len() as u32 {
+            if !source.is_char_boundary(offset as usize) {
+                continue;
+            }
+            for candidate in complete_at(&output, &analysis.schema, &parsed, offset) {
+                // A table candidate must be a table that exists.
+                if candidate.kind == CandidateKind::Table {
+                    assert!(
+                        known.contains(&candidate.label),
+                        "invented table `{}` at {offset} in {source:?}",
+                        candidate.label
+                    );
+                }
+                assert!(!candidate.label.is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn builtins_cover_every_dispatch_arm_the_analyzer_resolves() {
+    // The catalog is generated from these sources; this re-derives the arm set
+    // so a built-in added to the analyzer without being added to the catalog
+    // fails here rather than silently going missing from completion.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/analyzer/function");
+    let known: BTreeSet<String> = builtins::BUILTINS
+        .iter()
+        .map(|builtin| builtin.name.replace("::", "_"))
+        .collect();
+
+    let mut checked = 0usize;
+    for entry in std::fs::read_dir(&root).expect("the function analyzer tree exists") {
+        let path = entry.expect("readable entry").path().join("mod.rs");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for line in text.lines() {
+            let Some(rest) = line.trim().strip_prefix('"') else {
+                continue;
+            };
+            let Some((name, tail)) = rest.split_once('"') else {
+                continue;
+            };
+            if !(tail.trim_start().starts_with("=>") || tail.trim_start().starts_with('|')) {
+                continue;
+            }
+            if !name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == ':')
+            {
+                continue;
+            }
+            checked += 1;
+            assert!(
+                known.contains(&name.replace("::", "_")),
+                "`{name}` is dispatched by the analyzer but missing from the completion catalog"
+            );
+        }
+    }
+    assert!(checked > 400, "expected the whole builtin surface, saw {checked}");
+}

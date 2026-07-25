@@ -56,14 +56,30 @@ pub fn context_param_map(
     offset: u32,
 ) -> Option<BTreeMap<String, Kind>> {
     let parsed = parse_source(source.clone(), text).ok()?;
-    let statements = surrealguard_syntax::lower::lower_statements(&parsed);
+    context_param_map_in(schema, &parsed, offset)
+}
 
-    // The enclosing construct is the smallest statement whose span covers
-    // the cursor — DEFINEs never nest here, but this keeps the choice
-    // unambiguous regardless.
+/// [`context_param_map`] against a source that is already parsed.
+///
+/// Completion runs on every keystroke and holds the cached [`ParsedSource`]
+/// already, so re-parsing per request would be pure waste.
+pub(crate) fn context_param_map_in(
+    schema: &SchemaIndex,
+    parsed: &surrealguard_syntax::parse::ParsedSource,
+    offset: u32,
+) -> Option<BTreeMap<String, Kind>> {
+    let text = parsed.text();
+    let statements = surrealguard_syntax::lower::lower_statements(parsed);
+
+    // The enclosing construct is the smallest *DEFINE* whose span covers the
+    // cursor. Restricting to DEFINEs matters on incomplete text: a body whose
+    // statements do not fully parse can lower to the DEFINE *and* a bare
+    // `Block` for its own body, and the block — being smaller — would win and
+    // report no context params at all, exactly where an editor is asking.
     let enclosing = statements
         .iter()
         .filter(|statement| covers(statement.span, offset))
+        .filter(|statement| matches!(statement.node, Statement::Define(_)))
         .min_by_key(|statement| statement.span.len())?;
 
     let Statement::Define(define) = &enclosing.node else {
@@ -92,6 +108,38 @@ pub fn context_param_map(
                 None
             }
         }
+        _ => None,
+    }
+}
+
+/// The context params a DEFINE construct binds, identified by keyword rather
+/// than by a lowered statement.
+///
+/// [`context_param_map`] resolves the construct by lowering, which is exact
+/// but fails on a body that is still being typed: a DEFINE whose body does not
+/// lower becomes a `Partial` statement and no longer answers as a DEFINE at
+/// all. Completion recovers the construct lexically instead and asks here, so
+/// `$after` is still offered inside a half-written `DEFINE EVENT` body.
+///
+/// `keyword` is the word after `DEFINE` (`FIELD`, `EVENT`, `TABLE`, `ACCESS`);
+/// `name` is the field path for a `DEFINE FIELD`; `table` is the `ON` target.
+pub(crate) fn context_param_map_for(
+    schema: &SchemaIndex,
+    keyword: &str,
+    name: &str,
+    table: Option<&str>,
+) -> Option<BTreeMap<String, Kind>> {
+    match keyword.to_ascii_uppercase().as_str() {
+        "FIELD" => {
+            let table = table?;
+            let value_kind = schema
+                .field(table, &crate::schema::FieldPath::parse(name))
+                .and_then(|field| field.kind.clone())
+                .unwrap_or(Kind::Any);
+            Some(field_map(table, value_kind))
+        }
+        "EVENT" => Some(event_map(table?)),
+        "TABLE" | "ACCESS" | "SCOPE" => Some(session_map()),
         _ => None,
     }
 }
