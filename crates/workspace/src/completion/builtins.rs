@@ -481,3 +481,29 @@ pub(crate) static BUILTINS: &[Builtin] = &[
     Builtin { name: "vector::similarity::spearman", params: "array, array", returns: "number" },
     Builtin { name: "vector::subtract", params: "array, array", returns: "array" },
 ];
+
+/// Whether `path` names a built-in the analyzer resolves.
+///
+/// This is the *existence* oracle, deliberately separate from what a call
+/// evaluates to. Several built-ins return an honest `Kind::Any` — `record::id`
+/// (a record id is genuinely one of many shapes), `array::at` on an
+/// `array<any>` — so "the analyzer produced `any`" cannot stand in for "no such
+/// function": doing that turned `$r.id()` into a false `E5001 has no method`.
+///
+/// Names are canonicalized by replacing `::` with `_`, which folds the two
+/// spellings of the `type::is::x` family (the catalog writes `type::is::record`,
+/// lowering normalizes calls to `type::is_record`) onto one key — the same
+/// canonicalization `builtins_cover_every_dispatch_arm_the_analyzer_resolves`
+/// uses to prove this list matches the dispatch tables exactly.
+pub(crate) fn is_builtin(path: &str) -> bool {
+    static NAMES: std::sync::OnceLock<std::collections::BTreeSet<String>> =
+        std::sync::OnceLock::new();
+    NAMES
+        .get_or_init(|| {
+            BUILTINS
+                .iter()
+                .map(|builtin| builtin.name.replace("::", "_"))
+                .collect()
+        })
+        .contains(&path.replace("::", "_"))
+}

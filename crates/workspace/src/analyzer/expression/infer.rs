@@ -413,7 +413,7 @@ fn step_part_kind(
                         .map(|arg| infer_expression_fact(arg, ctx).kind.unwrap_or(Kind::Any)),
                 )
                 .collect();
-            method_return_kind(current, &name.node, &arg_kinds, ctx)
+            method_return_kind(current, &name.node, &arg_kinds, args, ctx)
         }
         ast::IdiomPart::Destructure(selected) => {
             let mut fields = std::collections::BTreeMap::new();
@@ -440,9 +440,10 @@ pub fn method_result(
     receiver: &Kind,
     method: &str,
     args: &[Kind],
+    arg_exprs: &[ast::Spanned<ast::Expr>],
     ctx: &mut AnalysisContext<'_>,
 ) -> Option<Kind> {
-    method_return_kind(receiver, method, args, ctx)
+    method_return_kind(receiver, method, args, arg_exprs, ctx)
 }
 
 /// The `param.field.field` key of a simple idiom path (`$param` followed by
@@ -517,7 +518,7 @@ fn step_idiom_kind(idiom: &ast::Idiom, ctx: &mut AnalysisContext<'_>) -> Option<
                             .map(|arg| infer_expression_fact(arg, ctx).kind.unwrap_or(Kind::Any)),
                     )
                     .collect();
-                method_return_kind(&current, &name.node, &arg_kinds, ctx)?
+                method_return_kind(&current, &name.node, &arg_kinds, args, ctx)?
             }
             ast::IdiomPart::Destructure(selected) => {
                 let mut fields = std::collections::BTreeMap::new();
@@ -567,10 +568,16 @@ pub(crate) fn field_of_kind(value: &Kind, field: &str, schema: &SchemaIndex) -> 
 /// `array.len()` is `array::len(array)`, `name.len()` is `string::len(name)`.
 /// Receivers whose family has no such method fall through to the generic
 /// methods every value answers (see [`generic_method_path`]).
+///
+/// `arg_exprs` are the method's *argument expressions*, which the kind-only
+/// `args` cannot stand in for: a closure argument's contribution is its body,
+/// so `array::map`/`fold`/`reduce` (and `.chain`) read it directly. Passing
+/// them is what lets `$rows.map(|$o| $o.name)` resolve at all.
 fn method_return_kind(
     receiver: &Kind,
     method: &str,
     args: &[Kind],
+    arg_exprs: &[ast::Spanned<ast::Expr>],
     ctx: &mut AnalysisContext<'_>,
 ) -> Option<Kind> {
     let base = crate::kinds::literal_base_kind(receiver).unwrap_or_else(|| receiver.clone());
@@ -585,7 +592,13 @@ fn method_return_kind(
             if let Some(first) = variant_args.first_mut() {
                 *first = variant.clone();
             }
-            results.push(method_return_kind(variant, method, &variant_args, ctx)?);
+            results.push(method_return_kind(
+                variant,
+                method,
+                &variant_args,
+                arg_exprs,
+                ctx,
+            )?);
         }
         return Some(Kind::either(results));
     }
@@ -604,7 +617,9 @@ fn method_return_kind(
         _ => None,
     };
     if let Some(family) = family {
-        if let Some(kind) = builtin_method_kind(&format!("{family}::{method}"), args, ctx) {
+        if let Some(kind) =
+            builtin_method_kind(&format!("{family}::{method}"), args, arg_exprs, ctx)
+        {
             return Some(kind);
         }
     }
@@ -613,19 +628,60 @@ fn method_return_kind(
     // and `.includes()` dispatch, while the rest of `array`'s surface —
     // `.sort()`, `.push()`, `.distinct()`, … — does not).
     if matches!(base, Kind::Set(_, _)) && matches!(method, "every" | "includes") {
-        if let Some(kind) = builtin_method_kind(&format!("array::{method}"), args, ctx) {
+        if let Some(kind) = builtin_method_kind(&format!("array::{method}"), args, arg_exprs, ctx) {
             return Some(kind);
         }
     }
-    builtin_method_kind(generic_method_path(method)?.as_str(), args, ctx)
+    // `.chain(|$v| …)` answers on every receiver but has no function-family
+    // twin — there is no `value::chain` builtin for the signature table to
+    // describe. Its contract is exactly "pipe the receiver into the closure",
+    // so the return kind is the closure's, derived from the body with the
+    // parameter bound to the receiver.
+    if method == "chain" {
+        let closure = arg_exprs.first().and_then(|arg| match &arg.node {
+            ast::Expr::Closure(closure) => Some(closure),
+            _ => None,
+        });
+        return Some(match closure {
+            Some(closure) => {
+                closure_return_kind(closure, &[receiver.clone()], ctx).unwrap_or(Kind::Any)
+            }
+            // A non-closure argument violates `.chain`'s contract; that is not
+            // "no such method", so the call still resolves and the value stays
+            // unknown rather than being invented.
+            None => Kind::Any,
+        });
+    }
+    builtin_method_kind(
+        generic_method_path(method)?.as_str(),
+        args,
+        arg_exprs,
+        ctx,
+    )
 }
 
-/// The kind a builtin resolves to when called as a method, or `None` when
-/// no such builtin exists (the synthetic call reports nothing itself).
-fn builtin_method_kind(path: &str, args: &[Kind], ctx: &mut AnalysisContext<'_>) -> Option<Kind> {
-    let call = crate::analyzer::function::synthetic_call(path);
-    let kind = crate::analyzer::function::analyze_builtin_function(ctx, &call, args);
-    (kind != Kind::Any).then_some(kind)
+/// The kind a builtin resolves to when called as a method, or `None` when no
+/// builtin of that name exists.
+///
+/// Resolution and inference are separate questions. Several built-ins return an
+/// honest `Kind::Any` — `record::id` (a record id is genuinely one of many
+/// shapes), `array::at` over an `array<any>` — so treating `any` as "no such
+/// method" made `$r.id()` a false `E5001`. Existence is asked of the builtin
+/// catalog, which is proven to match the dispatch tables arm-for-arm; the
+/// resolved kind is whatever the analyzer produced, `any` included.
+fn builtin_method_kind(
+    path: &str,
+    args: &[Kind],
+    arg_exprs: &[ast::Spanned<ast::Expr>],
+    ctx: &mut AnalysisContext<'_>,
+) -> Option<Kind> {
+    if !crate::completion::builtins::is_builtin(path) {
+        return None;
+    }
+    let call = crate::analyzer::function::synthetic_method_call(path, arg_exprs);
+    Some(crate::analyzer::function::analyze_builtin_function(
+        ctx, &call, args,
+    ))
 }
 
 /// Methods SurrealDB answers on *every* receiver, whatever its kind —
@@ -635,9 +691,8 @@ fn builtin_method_kind(path: &str, args: &[Kind], ctx: &mut AnalysisContext<'_>)
 /// falls back to `array::repeat` for receivers whose own family has no
 /// `repeat` (`(5).repeat(2)` is `[5, 5]`).
 ///
-/// Deliberately absent: `.chain(|$v| …)`, which returns whatever its closure
-/// returns — SurrealDB has no `value::chain` builtin for the signature table
-/// to describe, so it stays unresolved rather than being typed by guess.
+/// `.chain(|$v| …)` is the one generic method with no builtin behind it; it is
+/// resolved directly in [`method_return_kind`] from its closure's body.
 fn generic_method_path(method: &str) -> Option<String> {
     Some(match method {
         "to_string" => "type::string".to_string(),
@@ -1674,6 +1729,132 @@ mod tests {
         let parsed = parse("SELECT tags.sort() FROM person;");
         let fact = infer_first_with_schema(&parsed, "Path", &schema, Some(table), &env);
         assert_eq!(fact.kind, None);
+    }
+
+    #[test]
+    fn closure_taking_methods_resolve_and_derive_their_return_kind() {
+        // Method sugar and the function form are the same call: `.map()` must
+        // agree with `array::map()`. Dispatch used to build a synthetic call
+        // with NO argument expressions, so `closure_arg` found nothing, every
+        // closure-taking builtin fell back to `Kind::Any`, and `any` was then
+        // read as "no such method" — an error-severity 5001 on valid input.
+        let schema = person_schema();
+        let table = schema.tables.get("person").unwrap();
+        let env = StatementEnv::default();
+
+        let cases = [
+            // The closure body decides the element kind.
+            (
+                "SELECT [1, 2].map(|$v| $v > 0) FROM person;",
+                Kind::Array(Box::new(Kind::Bool), Some(2)),
+            ),
+            // Fold/reduce take the closure's return kind directly.
+            (
+                "SELECT [1, 2].fold('', |$acc, $v| $acc) FROM person;",
+                Kind::String,
+            ),
+            (
+                "SELECT ['a'].reduce(|$acc, $v| $acc) FROM person;",
+                Kind::String,
+            ),
+            // Filter keeps the element kind; the closure is a predicate.
+            (
+                "SELECT [1, 2].filter(|$v| $v > 0) FROM person;",
+                Kind::Array(Box::new(Kind::Int), None),
+            ),
+            // `.chain()` has no builtin behind it; its kind is the closure's.
+            ("SELECT [1, 2].chain(|$v| 'x') FROM person;", Kind::String),
+            ("SELECT name.chain(|$v| 1) FROM person;", Kind::Int),
+        ];
+        for (query, expected) in cases {
+            let parsed = parse(query);
+            let fact = infer_first_with_schema(&parsed, "Path", &schema, Some(table), &env);
+            assert_eq!(fact.kind, Some(expected), "query: {query}");
+        }
+    }
+
+    #[test]
+    fn a_method_whose_builtin_returns_any_still_resolves() {
+        // `record::id` returns an honest `Kind::Any` (a record id is genuinely
+        // one of many shapes). Conflating that with "no such method" made
+        // `$r.id()` a false 5001. Resolution asks the builtin catalog; the
+        // kind stays `any` rather than being invented.
+        let schema = schema_with_links();
+        let table = schema.tables.get("person").unwrap();
+        let env = StatementEnv::default();
+
+        let parsed = parse("SELECT best_friend.id() FROM person;");
+        let fact = infer_first_with_schema(&parsed, "Path", &schema, Some(table), &env);
+        assert_eq!(fact.kind, Some(Kind::Any));
+    }
+
+    #[test]
+    fn every_builtin_in_a_receivers_family_resolves_as_a_method() {
+        // The sweep contract: method sugar is `family::name(receiver, ...)`,
+        // so EVERY name the analyzer dispatches in a receiver's family must
+        // resolve as a method on it. This is derived from the builtin catalog
+        // (itself proven arm-for-arm against the dispatch tables), so a
+        // builtin added later is covered without editing this test.
+        let families: &[(&str, Kind)] = &[
+            ("array", Kind::Array(Box::new(Kind::Int), Some(2))),
+            ("set", Kind::Set(Box::new(Kind::Int), Some(2))),
+            ("string", Kind::String),
+            ("object", Kind::Object),
+            ("duration", Kind::Duration),
+            ("time", Kind::Datetime),
+            ("bytes", Kind::Bytes),
+            ("record", Kind::Record(Vec::new())),
+            ("math", Kind::Int),
+        ];
+        let mut checked = 0usize;
+        crate::analyzer::test_support::with_ctx(|ctx| {
+            for (family, receiver) in families {
+                for builtin in crate::completion::builtins::BUILTINS
+                    .iter()
+                    .filter(|builtin| builtin.family() == *family)
+                {
+                    let method = builtin
+                        .name
+                        .strip_prefix(&format!("{family}::"))
+                        .expect("family prefix");
+                    // The nested `array::sort::asc` spelling is a path, not a
+                    // method name; SurrealQL has no `.sort::asc()` sugar.
+                    if method.contains("::") {
+                        continue;
+                    }
+                    assert!(
+                        method_result(receiver, method, &[receiver.clone()], &[], ctx).is_some(),
+                        "`{}` does not resolve as `.{method}()` on a `{family}` receiver",
+                        builtin.name,
+                    );
+                    checked += 1;
+                }
+            }
+        });
+        assert!(
+            checked > 200,
+            "expected the whole method surface, swept {checked}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_method_name_still_fails_to_resolve() {
+        // The counterpart to the sweep: existence is asked of the catalog, so
+        // a name in no family and in no generic set stays unresolved (5001).
+        crate::analyzer::test_support::with_ctx(|ctx| {
+            for (receiver, method) in [
+                (Kind::Array(Box::new(Kind::Int), None), "frobnicate"),
+                (Kind::String, "map"),
+                (Kind::Int, "filter"),
+                (Kind::Object, "reduce"),
+            ] {
+                assert_eq!(
+                    method_result(&receiver, method, &[receiver.clone()], &[], ctx),
+                    None,
+                    "`.{method}()` must not resolve on a `{receiver}`",
+                );
+            }
+        });
     }
 
     fn schema_with_links() -> SchemaIndex {

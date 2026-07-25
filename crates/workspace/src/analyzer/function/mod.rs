@@ -171,8 +171,39 @@ pub(crate) fn json_value_kind() -> Kind {
     ])
 }
 
-/// A call value carrying only a path — for dispatch by name (method-call
-/// sugar like `value.len()`), where no argument expressions exist.
+/// A call value carrying a path *and* the method's argument expressions — for
+/// dispatch by name from method-call sugar (`$rows.map(|$o| $o.name)`).
+///
+/// The receiver is argument 0 of the family function (`x.len()` is
+/// `string::len(x)`), but it is a *prefix of the idiom*, not an argument node,
+/// so a `Partial` placeholder holds position 0 and the real arguments line up
+/// with the indices the analyzers read. That alignment is the whole point:
+/// without it `closure_arg(call, 1)` found nothing and every closure-taking
+/// built-in fell back to `Kind::Any`.
+///
+/// The placeholder infers to no kind and no value, so a const-value read of
+/// argument 0 yields `None` — exactly what it yielded when synthetic calls
+/// carried no arguments at all. The path span stays empty, so the call is still
+/// [`is_synthetic`] and the signature table stays inference-only on it.
+pub(crate) fn synthetic_method_call(
+    path: &str,
+    args: &[ast::Spanned<ast::Expr>],
+) -> ast::Call {
+    let empty = surrealguard_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered");
+    let receiver = ast::Spanned::new(
+        ast::Expr::Partial(ast::PartialNode {
+            span: empty,
+            cst_kind: "MethodReceiver".to_string(),
+        }),
+        empty,
+    );
+    let mut call = synthetic_call(path);
+    call.args = std::iter::once(receiver).chain(args.iter().cloned()).collect();
+    call
+}
+
+/// A call value carrying only a path — for dispatch by name, where no argument
+/// expressions exist.
 pub(crate) fn synthetic_call(path: &str) -> ast::Call {
     ast::Call {
         path: ast::Spanned::new(

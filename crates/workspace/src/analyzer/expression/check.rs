@@ -323,7 +323,7 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
                     )
                     .collect();
                 if crate::analyzer::expression::infer::method_result(
-                    &receiver, &name.node, &arg_kinds, ctx,
+                    &receiver, &name.node, &arg_kinds, args, ctx,
                 )
                 .is_none()
                 {
@@ -1008,6 +1008,48 @@ mod tests {
 
         let method = "RETURN { LET $a = [[1,2],[3]]; RETURN $a[0].bogusmethod(); };";
         assert!(fires(method, "E5001"), "codes: {:?}", codes(method));
+    }
+
+    #[test]
+    fn closure_taking_methods_do_not_fire_5001() {
+        // Error-severity 5001 on valid SurrealQL: `$rows.map(|$o| …)` was
+        // rejected while the identical `array::map($rows, |$o| …)` checked
+        // clean. Method sugar and the function form are one call.
+        let query = concat!(
+            "DEFINE TABLE t SCHEMAFULL;\n",
+            "DEFINE FIELD name ON t TYPE string;\n",
+            "LET $rows = SELECT name FROM t;\n",
+            "RETURN $rows.map(|$o| $o.name);\n",
+            "RETURN $rows.filter(|$o| $o.name != '');\n",
+            "RETURN [1, 2].fold(0, |$acc, $v| $acc + $v);\n",
+            "RETURN [1, 2].reduce(|$acc, $v| $acc + $v);\n",
+            "RETURN [1, 2].chain(|$v| $v);\n",
+        );
+        assert!(!fires(query, "E5001"), "codes: {:?}", codes(query));
+    }
+
+    #[test]
+    fn a_builtin_returning_any_does_not_fire_5001() {
+        // `record::id` returns an honest `any`; that is not "no such method".
+        let query = concat!(
+            "DEFINE TABLE t SCHEMAFULL;\n",
+            "DEFINE FIELD owner ON t TYPE record<t>;\n",
+            "SELECT owner.id() FROM t;\n",
+        );
+        assert!(!fires(query, "E5001"), "codes: {:?}", codes(query));
+    }
+
+    #[test]
+    fn an_unknown_method_still_fires_5001() {
+        // The counterpart: resolving by catalog existence must not accept
+        // every name. Neither the family nor the generic set has these.
+        for query in [
+            "RETURN [1, 2].frobnicate();",
+            "RETURN 'abc'.map(|$v| $v);",
+            "RETURN (5).filter(|$v| $v);",
+        ] {
+            assert!(fires(query, "E5001"), "codes for {query:?}: {:?}", codes(query));
+        }
     }
 
     // ---- C1: comparison to NULL/NONE a kind cannot be (7005) ----
