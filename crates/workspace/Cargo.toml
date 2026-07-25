@@ -6,15 +6,15 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-readme.workspace = true
+readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
 description = "SurrealGuard workspace, config, and source registry layer"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-surrealguard-diagnostics = { path = "../diagnostics", version = "0.1.0" }
-surrealguard-syntax = { path = "../syntax", version = "0.1.0" }
+surrealguard-diagnostics = { path = "../diagnostics", version = "0.3.0" }
+surrealguard-syntax = { path = "../syntax", version = "0.3.0" }
 surrealdb-types.workspace = true
 toml = "0.8"
 

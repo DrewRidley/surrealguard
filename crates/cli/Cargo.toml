@@ -6,7 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-readme.workspace = true
+readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
 description = "Static analyzer and type-inference engine for SurrealQL — the surrealguard CLI"
@@ -29,11 +29,11 @@ bin-dir = "{ bin }{ binary-ext }"
 pkg-fmt = "zip"
 
 [dependencies]
-surrealguard-codegen = { path = "../codegen", version = "0.1.0" }
-surrealguard-diagnostics = { path = "../diagnostics", version = "0.1.0" }
-surrealguard-embed = { path = "../embed", version = "0.1.0" }
-surrealguard-syntax = { path = "../syntax", version = "0.1.0" }
-surrealguard-workspace = { path = "../workspace", version = "0.1.0" }
+surrealguard-codegen = { path = "../codegen", version = "0.3.0" }
+surrealguard-diagnostics = { path = "../diagnostics", version = "0.3.0" }
+surrealguard-embed = { path = "../embed", version = "0.3.0" }
+surrealguard-syntax = { path = "../syntax", version = "0.3.0" }
+surrealguard-workspace = { path = "../workspace", version = "0.3.0" }
 clap = { version = "4", features = ["derive"]}
 walkdir = "2.5.0"
 glob = "0.3"

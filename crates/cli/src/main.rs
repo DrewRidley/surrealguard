@@ -1,7 +1,31 @@
-//! The `surrealguard` CLI: analyzes a workspace of `.surql` sources and
-//! reports findings as text or JSON, resolving severity through the
-//! workspace's policy configuration (exit code reflects post-policy
-//! errors).
+//! The `surrealguard` command-line interface.
+//!
+//! `surrealguard` analyzes a workspace of `.surql` sources — and the SurrealQL
+//! embedded in host-language files — reporting findings as rustc-style text or
+//! machine-readable JSON. Effective severity is resolved through the
+//! workspace's policy configuration, and the process exit code reflects the
+//! post-policy error count, so `surrealguard check` drops straight into CI.
+//!
+//! # Subcommands
+//!
+//! - `surrealguard init` — write a starter `surrealguard.toml` to the current
+//!   directory.
+//! - `surrealguard check [--json]` — discover sources via the config globs,
+//!   split them into the schema set (DEFINE/REMOVE catalog) and the query set,
+//!   run the analyzer, and print findings. Exits non-zero when any survive as
+//!   errors.
+//! - `surrealguard generate [--out PATH]` — emit the typed TypeScript client
+//!   and literal-keyed query registry (defaults to
+//!   `surrealguard.generated.ts` at the workspace root).
+//!
+//! # `surrealguard.toml`
+//!
+//! The config file — discovered by walking up from the working directory —
+//! declares the source globs (`[sources]` `schema` / `queries` / `ignore`),
+//! analysis toggles (`[analysis]` `strict`, `surrealdb_version`), diagnostic
+//! policy (`[diagnostics]` `warnings_as_errors`, `require_suppression_reasons`),
+//! and per-code lint levels (`[lints]`). `surrealguard init` writes a fully
+//! commented example.
 
 mod render;
 

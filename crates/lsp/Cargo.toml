@@ -6,7 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-readme.workspace = true
+readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
 description = "Language Server Protocol implementation for SurrealQL powered by SurrealGuard"
@@ -16,10 +16,10 @@ name = "surrealguard-lsp"
 path = "src/main.rs"
 
 [dependencies]
-surrealguard-diagnostics = { path = "../diagnostics", version = "0.1.0" }
-surrealguard-embed = { path = "../embed", version = "0.1.0" }
-surrealguard-syntax = { path = "../syntax", version = "0.1.0" }
-surrealguard-workspace = { path = "../workspace", version = "0.1.0" }
+surrealguard-diagnostics = { path = "../diagnostics", version = "0.3.0" }
+surrealguard-embed = { path = "../embed", version = "0.3.0" }
+surrealguard-syntax = { path = "../syntax", version = "0.3.0" }
+surrealguard-workspace = { path = "../workspace", version = "0.3.0" }
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync"] }
 walkdir = "2"

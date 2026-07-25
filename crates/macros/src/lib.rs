@@ -18,7 +18,18 @@
 //!
 //! Both macros resolve the project schema at compile time (via the internal
 //! `schema` module), so queries are typed and checked against real tables and
-//! fields.
+//! fields. Any error-severity finding is turned into a `compile_error!`
+//! spanned at the string literal, carrying each finding's code and message:
+//!
+//! ```text
+//! error: SurrealGuard rejected this query:
+//!   [E1002] unknown field `ssn` on table `user`
+//! ```
+//!
+//! These macros are re-exported by, and intended to be used through, the
+//! [`surrealguard-rs`](https://crates.io/crates/surrealguard-rs) runtime crate,
+//! which also provides the `Query<T>` and `RecordLink<T>` types `query!` refers
+//! to.
 
 mod generate;
 mod schema;

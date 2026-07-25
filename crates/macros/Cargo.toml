@@ -6,7 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-readme.workspace = true
+readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
 description = "Compile-time checked SurrealQL for Rust — the surql! macro"
@@ -19,8 +19,8 @@ proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
 surrealdb-types.workspace = true
-surrealguard-workspace = { path = "../workspace", version = "0.1.0" }
-surrealguard-diagnostics = { path = "../diagnostics", version = "0.1.0" }
+surrealguard-workspace = { path = "../workspace", version = "0.3.0" }
+surrealguard-diagnostics = { path = "../diagnostics", version = "0.3.0" }
 
 [lints]
 workspace = true

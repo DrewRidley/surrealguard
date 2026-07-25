@@ -15,7 +15,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Drew Ridley"]
 readme = "README.md"
@@ -46,5 +46,5 @@ tree-sitter = "0.26"
 # because `tree-sitter-surrealql` is taken on crates.io). The `package` rename
 # keeps `tree-sitter-surrealql.workspace = true` importable as
 # `tree_sitter_surrealql`. The `version` lets dependent crates publish.
-tree-sitter-surrealql = { path = "crates/tree-sitter-surrealql", version = "0.1.0", package = "surrealguard-tree-sitter-surrealql" }
+tree-sitter-surrealql = { path = "crates/tree-sitter-surrealql", version = "0.3.0", package = "surrealguard-tree-sitter-surrealql" }
 surrealdb-types = "3.1.3"

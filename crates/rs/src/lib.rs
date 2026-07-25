@@ -1,18 +1,88 @@
-//! Runtime for compile-time-checked SurrealQL.
+//! Compile-time-checked, typed SurrealQL for Rust.
 //!
-//! Re-exports the [`query!`] and [`surql!`] macros and provides the types the
-//! generated code refers to. A crate using the macros only needs
-//! `surrealguard-rs` in scope — everything the expansion references
-//! (`serde`, `chrono`, `uuid`, [`Query`], [`RecordLink`]) is reachable through
-//! this crate.
+//! `surrealguard-rs` runs the [SurrealGuard](https://github.com/DrewRidley/surrealguard)
+//! analyzer against your schema *during compilation*. A wrong table, unknown
+//! field, bad function arity, or kind mismatch becomes a `cargo check` error,
+//! and the result type is generated from the inferred response — no build
+//! script, no language server, no runtime schema fetch. It is the Rust
+//! counterpart to the `@surrealguard/*` TypeScript toolchain.
 //!
-//! ```ignore
+//! # The macros
+//!
+//! This crate re-exports both proc-macros from
+//! [`surrealguard-macros`](https://crates.io/crates/surrealguard-macros) and
+//! provides the runtime types their output refers to, so depending on
+//! `surrealguard-rs` alone is enough — everything an expansion needs (`serde`,
+//! `chrono`, `uuid`, [`Query`], [`RecordLink`]) is reachable through it.
+//!
+//! - [`query!`] checks a query **and** returns a typed [`Query<T>`](Query),
+//!   where `T` is the inferred result rendered as a *nameless* struct. You get
+//!   nested field access without ever writing a type — the same ergonomics as
+//!   sqlx's anonymous `query!` record.
+//! - [`surql!`] checks a query and expands to its validated text as a
+//!   `&'static str` — the lighter form when you only want validation.
+//!
+//! ```rust,ignore
 //! use surrealguard_rs::query;
 //!
-//! let q = query!("SELECT name, age FROM user");
-//! // `q` carries the checked text and its inferred, nameless result type.
-//! // Executing it against a live database is the next layer; for now the
-//! // result type can be deserialized from any JSON encoding of the rows.
+//! let users = query!("SELECT name, age FROM user");
+//! //  users: Query<Vec<{ name: String, age: i64 }>>   ← inferred, nameless
+//!
+//! let bad = query!("SELECT name, ssn FROM user");
+//! //  error: SurrealGuard rejected this query:
+//! //    [E1002] unknown field `ssn` on table `user`
+//! ```
+//!
+//! # Schema awareness
+//!
+//! The macros resolve your schema at compile time from, in order:
+//!
+//! 1. the `SURREALGUARD_SCHEMA` environment variable — a `.surql` file or a
+//!    directory, relative to `CARGO_MANIFEST_DIR` unless absolute;
+//! 2. otherwise a convention path under the crate root, tried in turn:
+//!    `schema/`, then `migrations/`, then `schema.surql`.
+//!
+//! A directory contributes every `.surql`/`.surrealql` file **sorted by name**,
+//! so zero-padded migrations (`0001_*.surql`, `0002_*.surql`, …) apply in
+//! order. Each schema file is tracked with `include_bytes!`, so editing it
+//! forces a rebuild of the crate that calls the macro. With no schema
+//! configured, queries are still checked for everything that does not depend on
+//! one (syntax, function arity, operators, …).
+//!
+//! # `Kind` → Rust mapping
+//!
+//! The generated result type derives [`serde::Deserialize`]. SurrealDB's
+//! `Kind` maps to Rust as:
+//!
+//! | SurrealQL kind      | Rust type                       |
+//! |---------------------|---------------------------------|
+//! | `bool`              | `bool`                          |
+//! | `int`               | `i64`                           |
+//! | `float` / `decimal` | `f64`                           |
+//! | `string`            | `String`                        |
+//! | `datetime`          | `chrono::DateTime<Utc>`         |
+//! | `uuid`              | `uuid::Uuid`                    |
+//! | `option<T>`         | `Option<T>`                     |
+//! | `array<T>`          | `Vec<T>`                        |
+//! | closed `object`     | a nested, nameless struct       |
+//! | `record<t>`         | [`RecordLink<T>`](RecordLink)   |
+//! | `any` / open object | `serde_json::Value`             |
+//!
+//! # Execution
+//!
+//! This crate is the *type-and-check* layer; running the query is deliberately
+//! a separate concern. A [`Query<T>`](Query) carries the validated text and its
+//! inferred `T`, and [`Query::from_json`] decodes any JSON encoding of the rows
+//! into `T`. Executing a [`Query<T>`](Query) against a live database — via the
+//! official `surrealdb` Rust SDK — is the next layer up.
+//!
+//! ```rust,ignore
+//! use surrealguard_rs::query;
+//!
+//! let q = query!("SELECT id FROM user");
+//! // `q.text` is the validated SurrealQL; `q.from_json(..)` decodes rows into
+//! // the inferred result type once you have a response in hand.
+//! let rows = q.from_json(&response_json)?;
 //! ```
 
 use std::marker::PhantomData;
