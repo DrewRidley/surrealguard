@@ -52,6 +52,12 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
     is frozen with a `# expected: <reason>` note in the baseline. Regenerate with
     `UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test any_ratchet`
     (regenerating preserves the `# expected:` notes).
+  - `crates/lsp/tests/stdio.rs` — spawns the **real** `surrealguard-lsp` binary
+    and asserts on hover, inlay hints, completion and diagnostics at specific
+    cursor positions. `crates/lsp/tests/backend.rs` drives the service in-process
+    and so cannot catch a surface that is wrong only over the wire. Requests must
+    be sequenced (`initialize` → its response → `initialized` → `didOpen` →
+    request) or tower-lsp answers "Server not initialized".
 - **Grammar:** the parser is `tree-sitter-surrealql`, a path dependency at the
   sibling `../tree-sitter-surrealql`. CI checks it out alongside this repo.
 - **Design principle — contract-first diagnostics:** every construct has a
