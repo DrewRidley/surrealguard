@@ -980,6 +980,26 @@ Fix: same migration as NEW-4 — union across arms instead of `find_map`.
 
 ---
 
+### NEW-6 — A wildcard under `GROUP BY` fabricates every non-grouped field
+**Severity: high (wrong, not loose). Effort: small–medium.** Found while verifying TG-1,
+independently confirmed.
+
+`SELECT * … GROUP BY k` types the row from **every declared field**, but a grouped row only
+carries the group keys plus whatever accumulators the projection asks for. The non-grouped
+fields do not exist at runtime, so the emitted type is confidently **wrong** — worse than
+`unknown`, because consumers dereference fields that will be undefined.
+
+Repro (`emp` has `dept`, `salary`, `nickname`):
+```surql
+SELECT * FROM emp GROUP BY dept;
+```
+Observed: `Array<{ dept: string; nickname: string; salary: number }>`
+Expected: `Array<{ dept: string }>` (group keys only; a wildcard adds no accumulators).
+
+Note this is *pre-existing*, not caused by TG-1 — TG-1 correctly excluded grouped rows from
+the implicit `id` for exactly this reason (a grouped row is synthesized, not materialized) and
+deliberately did not stack a new claim on top of the existing one.
+
 ## Status — FP wave complete (2026-07-25)
 
 Fixed and merged: **TI-1** (`??` NONE-strip), **TI-4** (literal-union writes, plus the exact-literal
