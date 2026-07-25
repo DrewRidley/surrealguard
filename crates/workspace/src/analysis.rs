@@ -44,6 +44,12 @@ pub struct AnalysisOutput {
     /// body). Editor features (inlay hints, hover, go-to-def) read this to
     /// show and locate a binding's inferred type wherever it lives.
     pub let_bindings: Vec<LetBindingAnalysis>,
+    /// Every region of the source over which a guard flow-narrowed a binding,
+    /// in analysis order. Editor features read this to answer
+    /// *per-occurrence* questions ("what is `$x` **here**?") from the cached
+    /// analysis, without re-running it.
+    #[serde(default)]
+    pub narrowings: Vec<NarrowingAnalysis>,
     /// The source's response kind — present only when exactly one
     /// statement responds.
     pub response_kind: Option<Kind>,
@@ -89,6 +95,31 @@ pub struct LetBindingAnalysis {
     pub name_span: SourceSpan,
     /// The inferred kind of the bound value; `None` when undeterminable.
     pub kind: Option<Kind>,
+}
+
+/// A flow narrowing as consumers see it: the region of the source over which
+/// a guard's refinement is in force, the binding (or `param.field.field` path)
+/// it refines, and the kind it refines to.
+///
+/// This is what makes an editor answer *per occurrence* rather than per
+/// binding: a `LET`/param records one kind at its binding site, but a guard
+/// splits the rest of the scope into a before (declared) and an after
+/// (narrowed). The region starts where the refinement takes effect — past a
+/// diverging guard statement, or at the start of the branch body the guard
+/// admits — and ends with the enclosing statement sequence, so a narrowing
+/// never leaks past the scope that established it.
+///
+/// Pure editor-feature output: nothing in checking reads it (the analyzer
+/// applies narrowings through the environment, not through this record).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NarrowingAnalysis {
+    /// The refined binding: a bare name (`x` for `$x`), or the exact
+    /// `param.field.field` path a field guard refined (`x.parent`).
+    pub path: String,
+    /// The region of the source the refinement covers.
+    pub span: SourceSpan,
+    /// The kind the binding (or path) has inside that region.
+    pub kind: Kind,
 }
 
 /// A SELECT clause modifier fact: which clause, where, whether it
@@ -222,6 +253,7 @@ pub fn analyze_source(workspace: &Workspace, source: SourceId) -> AnalysisOutput
                 output.statements = analysis.statements;
                 output.inferred_params = analysis.params;
                 output.let_bindings = analysis.let_bindings;
+                output.narrowings = analysis.narrowings;
             }
             output
         }
@@ -293,6 +325,7 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
             source_output.statements = analysis.statements;
             source_output.inferred_params = analysis.params;
             source_output.let_bindings = analysis.let_bindings;
+            source_output.narrowings = analysis.narrowings;
         }
     }
     for diagnostic in &pipeline_output.diagnostics {
@@ -357,6 +390,7 @@ pub fn analyze_one_source(
     output.statements = one.analysis.statements;
     output.inferred_params = one.analysis.params;
     output.let_bindings = one.analysis.let_bindings;
+    output.narrowings = one.analysis.narrowings;
     output
 }
 
@@ -1056,6 +1090,7 @@ pub fn reanalyze_sources<P: std::borrow::Borrow<ParsedSource>>(
         output.statements = one.analysis.statements;
         output.inferred_params = one.analysis.params;
         output.let_bindings = one.analysis.let_bindings;
+        output.narrowings = one.analysis.narrowings;
         outputs.insert(parsed.source_id().clone(), output);
     }
     outputs

@@ -25,7 +25,8 @@ use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analysis::{
-    LetBindingAnalysis, ParamInference, SelectModifierAnalysis, StatementAnalysis,
+    LetBindingAnalysis, NarrowingAnalysis, ParamInference, SelectModifierAnalysis,
+    StatementAnalysis,
 };
 use crate::analyzer::context::AnalysisContext;
 use crate::schema::{SchemaIndex, TableDef};
@@ -45,6 +46,8 @@ pub(crate) struct SourceAnalysis {
     pub params: Vec<ParamInference>,
     /// Every `LET`/`FOR` binding in the source, at every nesting depth.
     pub let_bindings: Vec<LetBindingAnalysis>,
+    /// Every flow narrowing in the source, with the region it covers.
+    pub narrowings: Vec<NarrowingAnalysis>,
 }
 
 /// The order-independent, cross-source outputs of the pipeline's pre-passes —
@@ -347,7 +350,7 @@ fn analyze_source_against(
             // narrows `$x` for every statement after it, exactly as it does
             // inside a block. Without this the source's statement sequence was
             // the one statement-sequence level that dropped the narrowing.
-            crate::analyzer::flow::block::apply_fall_through_narrowing(&mut ctx, &lowered.node);
+            crate::analyzer::flow::block::apply_fall_through_narrowing(&mut ctx, lowered);
             analyzer_env = ctx.into_env();
             kind
         };
@@ -438,8 +441,9 @@ fn analyze_source_against(
     // Recording already skipped LET-bound uses, so everything left is
     // host-supplied — including forward uses that a later LET shadows.
     source_analysis.params = analyzer_env.params();
-    // Every LET/FOR binding recorded during the walk (all nesting depths).
-    source_analysis.let_bindings = analyzer_env.let_bindings().to_vec();
+    // Every LET/FOR binding recorded during the walk (all nesting depths), and
+    // every guard-narrowed region, so an editor can answer per occurrence.
+    (source_analysis.let_bindings, source_analysis.narrowings) = analyzer_env.editor_facts();
     source_analysis
 }
 

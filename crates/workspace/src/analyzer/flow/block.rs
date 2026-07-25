@@ -22,6 +22,7 @@
 
 use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
+use surrealguard_syntax::span::ByteRange;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::statement::analyze_lowered_statement;
@@ -87,6 +88,13 @@ pub(crate) fn analyze_block(ctx: &mut AnalysisContext<'_>, block: &ast::Block) -
 /// diverges. This is the single analysis pass — every statement's own
 /// analyzer runs exactly once here.
 pub(crate) fn analyze_block_flow(ctx: &mut AnalysisContext<'_>, block: &ast::Block) -> Flow {
+    // A fall-through narrowing established inside this block dies with the
+    // block, so the statement sequence's end bounds the region it covers.
+    let block_end = block.statements.last().map(|statement| statement.span.end());
+    ctx.with_scope_end(block_end, |ctx| block_flow(ctx, block))
+}
+
+fn block_flow(ctx: &mut AnalysisContext<'_>, block: &ast::Block) -> Flow {
     let mut returns: Vec<Kind> = Vec::new();
     let mut value = Kind::None;
     let mut terminated = false;
@@ -111,7 +119,7 @@ pub(crate) fn analyze_block_flow(ctx: &mut AnalysisContext<'_>, block: &ast::Blo
         value = stmt_flow.value;
         // A guard that exits on its condition (`IF g THEN RETURN … END`) leaves
         // the negation of `g` holding for the statements that follow it.
-        apply_fall_through_narrowing(ctx, &statement.node);
+        apply_fall_through_narrowing(ctx, statement);
         // A block terminates on unambiguous divergence only: syntactic
         // (RETURN/THROW/BREAK/CONTINUE, or an else-covered IF whose every arm
         // diverges) OR constant (a compile-time-true guard with no reachable
@@ -174,11 +182,12 @@ fn statement_flow(ctx: &mut AnalysisContext<'_>, statement: &ast::Spanned<ast::S
 /// guard lives.
 pub(crate) fn apply_fall_through_narrowing(
     ctx: &mut AnalysisContext<'_>,
-    stmt: &ast::Statement,
+    statement: &ast::Spanned<ast::Statement>,
 ) {
-    let ast::Statement::IfElse(if_else) = stmt else {
+    let ast::Statement::IfElse(if_else) = &statement.node else {
         return;
     };
+    let guard_span = statement.span;
     if if_else.else_branch.is_some() || if_else.branches.is_empty() {
         return;
     }
@@ -192,7 +201,11 @@ pub(crate) fn apply_fall_through_narrowing(
             ctx.env(),
         ));
     }
-    crate::analyzer::flow::narrow::apply_effects(ctx, &effects);
+    // The refinement holds from just past the guard to the end of the
+    // statement sequence the guard sits in — the guard itself, and everything
+    // before it, still reads the declared kind.
+    let region = ByteRange::new(guard_span.end(), ctx.scope_end().max(guard_span.end())).ok();
+    crate::analyzer::flow::narrow::apply_effects_over(ctx, &effects, region);
 }
 
 /// Whether control flow provably cannot continue past this statement:
