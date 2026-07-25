@@ -3264,7 +3264,8 @@ mod tests {
              DEFINE FIELD address.city ON person TYPE string;",
         );
 
-        let diagnostics = diagnostics_for(&schema, "SELECT address AS a FROM person GROUP BY a.city;");
+        let diagnostics =
+            diagnostics_for(&schema, "SELECT address AS a FROM person GROUP BY a.city;");
         assert!(
             !codes(&diagnostics).contains(&1002),
             "a path under a projected alias must not report an unknown field: {:?}",
@@ -3349,7 +3350,8 @@ mod tests {
         // array: `math::max(tags)` takes the column itself.
         let schema = aggregate_schema();
 
-        let (_, diagnostics) = analyze_diagnostics(&schema, "SELECT math::max(tags) AS m FROM post GROUP ALL;");
+        let (_, diagnostics) =
+            analyze_diagnostics(&schema, "SELECT math::max(tags) AS m FROM post GROUP ALL;");
         assert!(
             !codes(&diagnostics).contains(&5002),
             "an array column must not report an argument violation: {:?}",
