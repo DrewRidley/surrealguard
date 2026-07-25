@@ -527,6 +527,7 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
 fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
     check_clause_values(stmt, ctx);
     check_count_without_group(stmt, ctx);
+    check_group_key_projection(stmt, ctx);
 
     let has_wildcard = stmt
         .projections
@@ -656,6 +657,70 @@ fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContex
                     format!("`{key}` is projected twice; the later one wins"),
                 )
                 .with_help("rename one projection with `AS <alias>`"),
+            );
+        }
+    }
+}
+
+/// 4013: a `GROUP BY` key that is not among the projected columns cannot
+/// appear in the result rows — the grouping label is silently dropped, so the
+/// rows can't be told apart. SurrealDB runs the query (it does not reject
+/// this), which is why it is a warning rather than an error. Conservative to
+/// zero false positives: suppressed when a wildcard `*` or an unparseable
+/// projection is present (the key may be covered), for `SELECT VALUE` (a
+/// single value projection carries no named keys), and for `GROUP ALL`. A key
+/// counts as projected when its dotted path equals — or is a prefix of — a
+/// projected field path or alias (projecting `address` covers a
+/// `GROUP BY address.city`).
+fn check_group_key_projection(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
+    let Some(group) = &stmt.group else {
+        return;
+    };
+    if group.all || group.keys.is_empty() || stmt.value {
+        return;
+    }
+    if stmt.projections.iter().any(|projection| {
+        matches!(
+            projection,
+            ast::Projection::Wildcard(_) | ast::Projection::Partial(_)
+        )
+    }) {
+        return;
+    }
+    let projected: std::collections::BTreeSet<String> = stmt
+        .projections
+        .iter()
+        .filter_map(|projection| match projection {
+            ast::Projection::Expr {
+                alias: Some(alias),
+                ..
+            } => Some(alias.node.clone()),
+            ast::Projection::Expr { expr, alias: None } => match &expr.node {
+                ast::Expr::Idiom(idiom) => plain_field_segments(idiom).map(|s| s.join(".")),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    for key in &group.keys {
+        let Some(segments) = plain_field_segments(&key.node) else {
+            continue;
+        };
+        let name = segments.join(".");
+        let covered = projected.iter().any(|projected_name| {
+            projected_name == &name || name.starts_with(&format!("{projected_name}."))
+        });
+        if !covered {
+            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), key.span);
+            ctx.emit(
+                surrealguard_diagnostics::catalog::finding(
+                    span,
+                    4013,
+                    format!("GROUP BY `{name}` is not projected, so it can't appear in the result rows"),
+                )
+                .with_help(format!(
+                    "add `{name}` to the projection so each group is labelled by its key"
+                )),
             );
         }
     }

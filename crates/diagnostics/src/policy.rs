@@ -108,7 +108,9 @@ mod tests {
     #[test]
     fn lint_policy_resolves_allow_warn_and_deny() {
         let mut config = PolicyConfig::default();
-        let code = FindingCode::lint(7001);
+        // 7004 (control flow decided by a constant) is a Warn-by-default lint;
+        // 7001 is intentionally Allow-by-default (opt-in), so it is unfit here.
+        let code = FindingCode::lint(7004);
 
         assert_eq!(config.resolve_lint_level(code), LintLevel::Warn);
         assert_eq!(

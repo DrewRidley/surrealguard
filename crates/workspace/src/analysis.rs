@@ -650,6 +650,104 @@ INSERT INTO person { name: 'Ada' };
             .count()
     }
 
+    // ---- 4013: GROUP BY field not in projections ----
+
+    #[test]
+    fn group_by_key_not_projected_fires_4013_once() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE sale;\nDEFINE FIELD region ON sale TYPE string;\nDEFINE FIELD amount ON sale TYPE int;".into(),
+        );
+        // `region` is grouped but never projected, so the grouped rows carry no
+        // region label — a footgun SurrealDB runs silently.
+        workspace.add_virtual_source(
+            "query".into(),
+            "SELECT math::sum(amount) AS total FROM sale GROUP BY region;".into(),
+        );
+        let output = analyze_workspace(&workspace);
+        assert_eq!(codes(&output, 4013), 1, "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn group_by_key_projected_stays_silent_for_4013() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE sale;\nDEFINE FIELD region ON sale TYPE string;\nDEFINE FIELD amount ON sale TYPE int;".into(),
+        );
+        // `region` is projected (bare) and `year` is projected as an alias that
+        // the GROUP BY names — both forms cover the grouping key.
+        workspace.add_virtual_source(
+            "query".into(),
+            "SELECT region, math::sum(amount) AS total FROM sale GROUP BY region;".into(),
+        );
+        let output = analyze_workspace(&workspace);
+        assert_eq!(codes(&output, 4013), 0, "{:?}", output.diagnostics);
+    }
+
+    // ---- 6002: LET shadows a DEFINE PARAM with a different kind ----
+
+    #[test]
+    fn let_shadows_define_param_with_incompatible_kind_fires_6002_once() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE PARAM $min_age VALUE 18;\nLET $min_age = 'old';\nRETURN $min_age;".into(),
+        );
+        let output = analyze_workspace(&workspace);
+        assert_eq!(codes(&output, 6002), 1, "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn let_shadows_define_param_with_compatible_kind_stays_silent_for_6002() {
+        let mut workspace = Workspace::default();
+        // Same int kind — a benign rebind, no clash.
+        workspace.add_virtual_source(
+            "query".into(),
+            "DEFINE PARAM $min_age VALUE 18;\nLET $min_age = 21;\nRETURN $min_age;".into(),
+        );
+        let output = analyze_workspace(&workspace);
+        assert_eq!(codes(&output, 6002), 0, "{:?}", output.diagnostics);
+    }
+
+    // ---- 7001: unused LET binding (opt-in; default allow) ----
+
+    #[test]
+    fn unused_let_fires_7001_once() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "LET $unused = 1;\nRETURN 5;".into(),
+        );
+        let output = analyze_workspace(&workspace);
+        assert_eq!(codes(&output, 7001), 1, "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn used_let_stays_silent_for_7001() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "query".into(),
+            "LET $used = 1;\nRETURN $used;".into(),
+        );
+        let output = analyze_workspace(&workspace);
+        assert_eq!(codes(&output, 7001), 0, "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn let_used_only_in_nested_block_stays_silent_for_7001() {
+        let mut workspace = Workspace::default();
+        // The reference lives in a nested block that follows the LET — the
+        // textual scan of the later sibling must find it.
+        workspace.add_virtual_source(
+            "query".into(),
+            "LET $used = 1;\nIF true { RETURN $used; };".into(),
+        );
+        let output = analyze_workspace(&workspace);
+        assert_eq!(codes(&output, 7001), 0, "{:?}", output.diagnostics);
+    }
+
     #[test]
     fn field_element_type_definition_is_not_a_duplicate_of_the_base_field() {
         let mut workspace = Workspace::default();

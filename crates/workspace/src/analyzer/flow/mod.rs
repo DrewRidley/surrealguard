@@ -10,3 +10,4 @@ pub mod let_stmt;
 pub mod narrow;
 pub mod return_stmt;
 pub mod throw;
+pub mod unused_let;

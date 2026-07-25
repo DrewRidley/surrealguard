@@ -367,6 +367,16 @@ pub(crate) fn analyze_sources_with(
             }
         }
 
+        // Unused LET bindings (7001): a `LET $x` never read in the rest of its
+        // scope. Opt-in (catalog default `allow`), so it is filtered from the
+        // default oracle by policy resolution; emitted here as a raw finding.
+        crate::analyzer::flow::unused_let::check_unused_lets(
+            statements,
+            parsed.source_id(),
+            parsed.text(),
+            &mut output.diagnostics,
+        );
+
         // Recording already skipped LET-bound uses, so everything left is
         // host-supplied — including forward uses that a later LET shadows.
         source_analysis.params = analyzer_env.params();

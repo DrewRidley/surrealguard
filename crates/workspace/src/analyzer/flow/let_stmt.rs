@@ -46,6 +46,42 @@ pub(crate) fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) ->
     }
 
     let fact = crate::analyzer::expression::expr_fact(ctx, &stmt.value);
+    // 6002: this LET rebinds a `DEFINE PARAM` to an incompatible kind. A
+    // DEFINE PARAM's kind is its `VALUE` expression's inferred kind, recorded
+    // on the env in source order — so this fires only when the param was
+    // defined *before* this LET, both kinds are known, and neither fits the
+    // other (a provable clash such as `DEFINE PARAM $min_age VALUE 18` then
+    // `LET $min_age = 'x'`). Compatible rebinds (`int` over `number`) and any
+    // `any`/unknown side never fire.
+    if let Some(param_kind) = ctx
+        .env()
+        .param_default_fact(&stmt.name.node)
+        .and_then(|default| default.kind.clone())
+    {
+        if let Some(let_kind) = &fact.kind {
+            if shadows_with_different_kind(let_kind, &param_kind) {
+                let span = surrealguard_syntax::span::SourceSpan::new(
+                    ctx.source().clone(),
+                    stmt.name.span,
+                );
+                ctx.emit(
+                    surrealguard_diagnostics::catalog::finding(
+                        span,
+                        6002,
+                        format!(
+                            "`${}` shadows a DEFINE PARAM of `{}` with an incompatible `{}`",
+                            stmt.name.node,
+                            crate::render_kind(&param_kind),
+                            crate::render_kind(let_kind),
+                        ),
+                    )
+                    .with_help(
+                        "a LET rebinds the param for the rest of this scope; give it a compatible value or rename it",
+                    ),
+                );
+            }
+        }
+    }
     // Record the binding (name span + inferred kind) for editor features,
     // at whatever nesting depth this LET sits. Drained to the source's
     // top-level env; changes no diagnostics.
@@ -64,6 +100,18 @@ pub(crate) fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) ->
         crate::analyzer::flow::narrow::type_table_arg(&stmt.value.node),
     );
     Kind::None
+}
+
+/// Whether a `LET` value's kind is a *provably incompatible* rebinding of a
+/// `DEFINE PARAM`'s kind (6002). Only fires when both kinds are known
+/// (neither is `any`) and neither is assignable to the other, so a benign
+/// narrowing/widening (`int` over `number`) is never flagged.
+fn shadows_with_different_kind(let_kind: &Kind, param_kind: &Kind) -> bool {
+    if matches!(let_kind, Kind::Any) || matches!(param_kind, Kind::Any) {
+        return false;
+    }
+    !crate::kinds::kind_is_assignable_to(let_kind, param_kind)
+        && !crate::kinds::kind_is_assignable_to(param_kind, let_kind)
 }
 
 #[cfg(test)]

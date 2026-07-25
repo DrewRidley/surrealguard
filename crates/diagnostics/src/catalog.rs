@@ -111,7 +111,7 @@ const ENTRIES: &[(u16, &str, Severity, LintLevel)] = &[
     (6005, "context param used outside its context", Severity::Error, Deny),
     (6006, "host-declared type contradicts query constraint", Severity::Error, Deny),
     (6007, "assignment to a protected parameter", Severity::Error, Deny),
-    (7001, "unused LET binding", Severity::Warning, Warn),
+    (7001, "unused LET binding", Severity::Warning, Allow),
     (7002, "LET shadowing", Severity::Hint, Allow),
     (7003, "mixed-kind array literal", Severity::Hint, Allow),
     (7004, "control flow is decided by a constant", Severity::Warning, Warn),
