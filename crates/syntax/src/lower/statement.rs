@@ -1284,12 +1284,13 @@ fn lower_define_index(node: Node<'_>, text: &str) -> DefineIndex {
 }
 
 /// The backing structure named inside an `IndexClause`: `SEARCH ANALYZER`
-/// is full-text, `MTREE`/`HNSW` are vector, `UNIQUE` is a constraint, and a
-/// clause with none of these is a plain index.
+/// and its 3.0 spelling `FULLTEXT ANALYZER` are full-text, `MTREE`/`HNSW`
+/// are vector, `UNIQUE` is a constraint, and a clause with none of these is
+/// a plain index.
 fn index_kind_from_clause(clause: Node<'_>) -> IndexKind {
     for child in named_children(clause) {
         match child.kind() {
-            "SearchAnalyzerClause" => return IndexKind::Search,
+            "SearchAnalyzerClause" | "FulltextClause" => return IndexKind::Search,
             "MtreeClause" | "HnswClause" => return IndexKind::Vector,
             "UniqueClause" => return IndexKind::Unique,
             _ => {}
@@ -2038,6 +2039,11 @@ mod tests {
             ),
             (
                 "DEFINE INDEX i ON person FIELDS body SEARCH ANALYZER ascii;",
+                IndexKind::Search,
+            ),
+            // 3.0 renamed the clause; both spell the same backing structure.
+            (
+                "DEFINE INDEX i ON person FIELDS body FULLTEXT ANALYZER ascii;",
                 IndexKind::Search,
             ),
             (

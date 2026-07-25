@@ -65,6 +65,8 @@ pub enum CandidateKind {
     Namespace,
     /// A key in a `CONTENT`/`MERGE` object literal.
     ObjectKey,
+    /// A `DEFINE INDEX` name, offered after `WITH INDEX`.
+    Index,
 }
 
 /// One ranked completion item.
@@ -161,6 +163,9 @@ pub fn complete_at(
     if families.aliases > 0.0 {
         candidates.extend(alias_candidates(&context, families.aliases));
     }
+    if families.indexes > 0.0 {
+        candidates.extend(index_candidates(schema, &context, families.indexes));
+    }
 
     rank(candidates, &context)
 }
@@ -182,6 +187,7 @@ struct Families {
     functions: f32,
     namespaces: f32,
     aliases: f32,
+    indexes: f32,
 }
 
 impl Families {
@@ -214,6 +220,10 @@ impl Families {
             ContextKind::GroupKey => Families {
                 fields: 1.0,
                 aliases: 1.0,
+                ..Families::default()
+            },
+            ContextKind::IndexName => Families {
+                indexes: 1.0,
                 ..Families::default()
             },
             ContextKind::ObjectKey => Families {
@@ -459,6 +469,73 @@ fn alias_candidates(context: &CompletionContext, weight: f32) -> Vec<Draft> {
         .collect()
 }
 
+/// The indexes defined on the queried tables. Only these can follow
+/// `WITH INDEX`: an index on another table is not a candidate at all.
+fn index_candidates(
+    schema: &SchemaIndex,
+    context: &CompletionContext,
+    weight: f32,
+) -> Vec<Draft> {
+    let mut out = Vec::new();
+    for table in &context.tables {
+        let Some(definition) = schema.table(table) else {
+            continue;
+        };
+        for index in definition.indexes.values() {
+            if context.exclude.contains(&index.name) {
+                continue;
+            }
+            out.push(Draft::new(
+                CompletionCandidate {
+                    label: index.name.clone(),
+                    insert_text: index.name.clone(),
+                    kind: CandidateKind::Index,
+                    detail: Some(format!(
+                        "{} index on {}",
+                        index_kind_text(index.kind),
+                        index.field_paths().join(", ")
+                    )),
+                    documentation: Some(format!("index of `{table}`")),
+                    candidate_kind: None,
+                    score: 0.0,
+                    sort_text: String::new(),
+                    replace: (0, 0),
+                },
+                weight,
+            ));
+        }
+    }
+    out
+}
+
+fn index_kind_text(kind: crate::schema::IndexKind) -> &'static str {
+    match kind {
+        crate::schema::IndexKind::Normal => "plain",
+        crate::schema::IndexKind::Unique => "unique",
+        crate::schema::IndexKind::Search => "full-text",
+        crate::schema::IndexKind::Vector => "vector",
+    }
+}
+
+/// Built-ins that read a match reference produced by an index-backed
+/// operator, so they mean nothing without a full-text index on the row table
+/// — the same requirement `E1027` enforces on `@@`.
+const FULLTEXT_ONLY: &[&str] = &["search::score", "search::highlight", "search::offsets"];
+
+/// Whether any of `tables` carries a full-text index. An unknown row table
+/// answers `true`: an unprovable requirement must not hide a valid call.
+fn has_fulltext_index(schema: &SchemaIndex, tables: &[String]) -> bool {
+    tables.is_empty()
+        || tables.iter().any(|name| {
+            schema.table(name).is_some_and(|table| {
+                table
+                    .indexes
+                    .values()
+                    .any(|index| index.kind == crate::schema::IndexKind::Search)
+            })
+        })
+}
+
 fn join_or(tables: &[String]) -> String {
     if tables.is_empty() {
         "any".to_string()
@@ -500,7 +577,10 @@ fn function_candidates(
         .collect();
 
     if !context.prefix.is_empty() {
-        out.extend(builtins::BUILTINS.iter().map(|builtin| {
+        let fulltext = has_fulltext_index(schema, &context.tables);
+        out.extend(builtins::BUILTINS.iter().filter(|builtin| {
+            fulltext || !FULLTEXT_ONLY.contains(&builtin.name)
+        }).map(|builtin| {
             Draft::new(
                 CompletionCandidate {
                     label: builtin.name.to_string(),
@@ -927,7 +1007,8 @@ fn is_schema_local(candidate: &CompletionCandidate) -> bool {
         CandidateKind::Field
         | CandidateKind::Table
         | CandidateKind::Param
-        | CandidateKind::ObjectKey => true,
+        | CandidateKind::ObjectKey
+        | CandidateKind::Index => true,
     }
 }
 

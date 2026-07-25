@@ -57,6 +57,7 @@ fn item_kind(kind: CandidateKind) -> CompletionItemKind {
         CandidateKind::Method => CompletionItemKind::METHOD,
         CandidateKind::Namespace => CompletionItemKind::MODULE,
         CandidateKind::ObjectKey => CompletionItemKind::PROPERTY,
+        CandidateKind::Index => CompletionItemKind::REFERENCE,
     }
 }
 
@@ -107,6 +108,7 @@ mod tests {
             CandidateKind::Method,
             CandidateKind::Namespace,
             CandidateKind::ObjectKey,
+            CandidateKind::Index,
         ];
         let mapped: Vec<CompletionItemKind> = classes.into_iter().map(item_kind).collect();
         let unique: std::collections::BTreeSet<i32> = mapped

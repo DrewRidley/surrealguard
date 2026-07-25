@@ -66,6 +66,9 @@ pub enum ContextKind {
     /// here — a projected alias or a row field path — never an arbitrary
     /// expression, which is what `W4013`/`E4025` already say.
     GroupKey,
+    /// An index name after `WITH INDEX`. Only an index defined on the
+    /// queried table belongs here.
+    IndexName,
     /// A key inside a `CONTENT`/`MERGE` object literal.
     ObjectKey,
     /// A member after `.` on a receiver whose kind is known.
@@ -332,6 +335,7 @@ fn clause_position(tokens: &[Token], source: &str, frame: &Frame, cut: usize) ->
         ) => ContextKind::TableName,
         // Restricted name positions.
         (_, Some(Clause::Group)) => ContextKind::GroupKey,
+        (_, Some(Clause::WithIndex)) => ContextKind::IndexName,
         // Field positions.
         (_, Some(Clause::Field)) => ContextKind::FieldName,
         (Some(Head::Select), Some(Clause::Head)) => ContextKind::FieldName,
@@ -575,17 +579,27 @@ fn statement_shape(
 ///
 /// `BY` is transparent: it belongs to whichever of `GROUP`/`ORDER` opened the
 /// clause, and collapsing it into either would make the other one's position
-/// unreadable.
+/// unreadable. `WITH INDEX` is recognized as a pair, because a bare `INDEX`
+/// also appears in `DEFINE INDEX`, where it is not a name position.
 fn last_clause(tokens: &[Token], source: &str, head_index: usize, cut: usize) -> Option<Clause> {
     let mut clause = None;
+    let mut previous: Option<&str> = None;
     for (_, token, depth) in scan(tokens, source, head_index, cut) {
         if token.kind == TokenKind::Ident && depth == 0 {
-            match Clause::from_text(token.text(source)) {
-                // `BY` continues the clause it belongs to.
-                Some(Clause::By) => {}
-                Some(found) => clause = Some(found),
-                None => {}
+            let text = token.text(source);
+            if text.eq_ignore_ascii_case("INDEX")
+                && previous.is_some_and(|word| word.eq_ignore_ascii_case("WITH"))
+            {
+                clause = Some(Clause::WithIndex);
+            } else {
+                match Clause::from_text(text) {
+                    // `BY` continues the clause it belongs to.
+                    Some(Clause::By) => {}
+                    Some(found) => clause = Some(found),
+                    None => {}
+                }
             }
+            previous = Some(text);
         }
     }
     clause
@@ -966,6 +980,8 @@ enum Clause {
     /// `BY` — belongs to the `GROUP`/`ORDER` before it, and means nothing on
     /// its own.
     By,
+    /// `WITH INDEX` — an index-name position.
+    WithIndex,
     /// A clause whose operands are field names.
     Field,
     /// A clause whose operand is an arbitrary value.

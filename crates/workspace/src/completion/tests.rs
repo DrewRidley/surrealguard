@@ -547,6 +547,71 @@ fn order_by_stays_a_plain_field_position() {
 }
 
 // ---------------------------------------------------------------------------
+// Indexes
+// ---------------------------------------------------------------------------
+
+#[test]
+fn with_index_offers_the_queried_tables_indexes_and_nothing_else() {
+    let fixture = Fixture::with_schema(GROUPED, "SELECT * FROM sale WITH INDEX ▏ WHERE region = 'a'");
+    assert_eq!(fixture.context().kind, ContextKind::IndexName);
+    assert_offers(&fixture, &["sale_region", "sale_amount"]);
+    let labels = fixture.labels();
+    // Another table's index, the tables themselves, and the params are all
+    // invalid here.
+    for absent in ["other_only", "sale", "other", "$auth", "region"] {
+        assert!(!labels.contains(&absent.to_string()), "{absent} in {labels:?}");
+    }
+    let index = fixture
+        .complete()
+        .into_iter()
+        .find(|candidate| candidate.label == "sale_amount")
+        .expect("the index is offered");
+    assert_eq!(index.kind, CandidateKind::Index);
+    assert_eq!(index.detail.as_deref(), Some("unique index on amount"));
+}
+
+#[test]
+fn defining_an_index_is_still_a_name_position_not_an_index_reference() {
+    // `DEFINE INDEX` also puts `INDEX` in the token stream; only the `WITH`
+    // pair is a reference to an existing index.
+    assert_ne!(
+        Fixture::with_schema(GROUPED, "DEFINE INDEX ▏").context().kind,
+        ContextKind::IndexName
+    );
+    assert_eq!(
+        Fixture::with_schema(GROUPED, "DEFINE INDEX i ON sale FIELDS ▏").context().kind,
+        ContextKind::FieldName
+    );
+}
+
+#[test]
+fn the_index_backed_search_builtins_are_offered_only_where_an_index_backs_them() {
+    let indexed = r#"
+DEFINE ANALYZER english TOKENIZERS class;
+DEFINE TABLE article SCHEMAFULL;
+DEFINE FIELD body ON article TYPE string;
+DEFINE INDEX article_body ON article FIELDS body SEARCH ANALYZER english BM25 HIGHLIGHTS;
+DEFINE TABLE note SCHEMAFULL;
+DEFINE FIELD body ON note TYPE string;
+"#;
+    let with_index = Fixture::with_schema(indexed, "SELECT search::▏ FROM article");
+    let labels = with_index.labels();
+    assert!(labels.contains(&"search::score".to_string()), "{labels:?}");
+    assert!(labels.contains(&"search::highlight".to_string()), "{labels:?}");
+
+    let without = Fixture::with_schema(indexed, "SELECT search::▏ FROM note");
+    let labels = without.labels();
+    for absent in ["search::score", "search::highlight", "search::offsets"] {
+        assert!(
+            !labels.contains(&absent.to_string()),
+            "`{absent}` needs a full-text index on `note`, and there is none: {labels:?}"
+        );
+    }
+    // The rest of the family works without one.
+    assert!(labels.contains(&"search::analyze".to_string()), "{labels:?}");
+}
+
+// ---------------------------------------------------------------------------
 // Ranking
 // ---------------------------------------------------------------------------
 
