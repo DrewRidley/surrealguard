@@ -960,9 +960,9 @@ fn walk_type(ty: &ast::TypeExpr, refs: &mut SourceReferenceSet) {
 /// soundly, so an edit touching it must fall back to a full re-analysis:
 ///   * `REMOVE` / `ALTER` — order-sensitive, and additive-only catalog diffing
 ///     cannot see a cross-source removal.
-///   * `DEFINE PARAM` — a parameter's *value* (hence a reader's inferred kind)
-///     is not captured by [`GlobalCatalog`], so a value change is invisible to
-///     [`changed_symbols`].
+///   * `DEFINE PARAM` — the catalog now carries each param's default fact, but
+///     [`SymbolKey`] has no param variant, so a value change is still invisible
+///     to [`changed_symbols`] and every reader must be re-walked.
 ///   * `DEFINE ANALYZER` — analyzer pipelines feed `SEARCH` indexes and are not
 ///     tracked as reference-set symbols.
 /// The LSP gates dirty schema documents on this before taking the symbol path.
@@ -4014,6 +4014,55 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(params[0].name, "age");
         assert_eq!(params[0].kind, Some(Kind::Int));
         assert!(!params[0].required);
+    }
+
+    #[test]
+    fn define_param_defaults_reach_readers_in_other_sources() {
+        // A `DEFINE PARAM` installs the value database-side, so it covers every
+        // source — not just the ones textually after it. The per-source env
+        // resets between sources, which used to leave a cross-source reader
+        // recording `unknown [required]`: a host adapter demanding a param the
+        // database already supplies.
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE PARAM $default_tier VALUE 'free';".into(),
+        );
+        let query = workspace.add_virtual_source(
+            "query".into(),
+            "LET $tier_default = $default_tier;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let params = &output.sources[&query].inferred_params;
+
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "default_tier");
+        assert_eq!(params[0].kind, Some(Kind::String));
+        assert!(!params[0].required, "a DEFINE PARAM default covers it");
+    }
+
+    #[test]
+    fn a_param_with_no_define_param_stays_required() {
+        // The counterpart: only a real `DEFINE PARAM` clears `required`. An
+        // unrelated definition must not make every param optional.
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE PARAM $default_tier VALUE 'free';".into(),
+        );
+        let query = workspace.add_virtual_source(
+            "query".into(),
+            "LET $bound = $some_other_param;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let params = &output.sources[&query].inferred_params;
+
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "some_other_param");
+        assert_eq!(params[0].kind, None);
+        assert!(params[0].required);
     }
 
     #[test]

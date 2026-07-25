@@ -252,10 +252,24 @@ fn param_fact(name: &str, span: SourceSpan, env: &StatementEnv) -> ExpressionFac
         return fact;
     }
 
+    // A `DEFINE PARAM $x VALUE …` gives the database-side value its kind, and
+    // that kind is the contract a host override must also satisfy — so a read
+    // of `$x` is not unresolved, it is that kind.
+    if let Some(kind) = ctx_param_default_kind(env, name) {
+        let mut fact = ExpressionFact::new(span, ExpressionValueClass::Variable).with_kind(kind);
+        fact.dependencies.params.push(name.to_string());
+        return fact;
+    }
+
     let mut fact = ExpressionFact::new(span, ExpressionValueClass::Variable)
         .with_partial(PartialReason::Unresolved);
     fact.dependencies.params.push(name.to_string());
     fact
+}
+
+/// The declared kind of a `DEFINE PARAM` default, when one covers `name`.
+fn ctx_param_default_kind(env: &StatementEnv, name: &str) -> Option<Kind> {
+    env.param_default_fact(name)?.kind.clone()
 }
 
 // ---------------------------------------------------------------------------

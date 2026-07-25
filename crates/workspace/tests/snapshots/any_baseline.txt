@@ -12,11 +12,9 @@
 #
 # Regenerating PRESERVES the `# expected:` notes on sites that still exist.
 #
-# total: 8 any/unknown leaves across 8 site(s)
+# total: 6 any/unknown leaves across 6 site(s)
 
 1  queries/50_aggregates.surql/stmt/select@12:1
-1  queries/70_params.surql/let/$tier_default@17:5
-1  queries/70_params.surql/param/$default_tier
 1  queries/90_opaque.surql/let/$payload@6:5  # expected: binds `webhook_event.payload`, which is declared `any`
 1  queries/90_opaque.surql/stmt/return@10:1  # expected: returns the `any`-declared payload
 1  queries/90_opaque.surql/stmt/select@4:1  # expected: projects `webhook_event.payload`, which is declared `any`

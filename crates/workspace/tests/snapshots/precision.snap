@@ -323,8 +323,8 @@ table webhook_event  [schemafull]
   stmt     19:1 update           : array<{ headcount: int, id: record<organization_unit>, name: string, organization: record<organization>, parent: option<record<organization_unit>> }>
   stmt     21:1 select           : array<{ id: record<employee_of>, in: record<account>, joined_at: datetime, out: record<organization>, role: record<organization_role>, status: 'invited' | 'active' | 'suspended', title: option<string>, unit: record<organization_unit> }>
        modifier where      row_preserving=true
-  let      17:5 $tier_default    : unknown
-  param $default_tier           : unknown  [required]
+  let      17:5 $tier_default    : string
+  param $default_tier           : string  [optional]
   param $headcount              : int  [required]
   param $new_legal              : string  [required]
   param $new_name               : string  [required]

@@ -68,6 +68,11 @@ pub struct GlobalCatalog {
     pub(crate) global_fn_returns: BTreeMap<String, Kind>,
     /// PRE-PASS 1c: each untyped field's globally-inferred stored-value kind.
     pub(crate) global_field_kinds: BTreeMap<(String, String), Kind>,
+    /// PRE-PASS 1d: each `DEFINE PARAM`'s default fact, keyed by param name
+    /// (no `$`). A `DEFINE PARAM` is a database-side default: the value is
+    /// supplied by the *database*, in every source, so it is a global fact
+    /// exactly like a function's return kind.
+    pub(crate) global_param_defaults: BTreeMap<String, crate::expression::ExpressionFact>,
     /// PRE-PASS 2: the implicit schemaless tables created on demand.
     pub(crate) implicit_tables: Vec<TableDef>,
     /// Whether each `fn::` body branches (guards 5009).
@@ -210,6 +215,38 @@ fn build_global_catalog_from_lowered(sources: &[LoweredSource<'_>]) -> GlobalCat
         }
     }
 
+    // PRE-PASS 1d — `DEFINE PARAM` defaults. A `DEFINE PARAM $x VALUE …`
+    // installs the value database-side, so `$x` is neither unknown nor
+    // host-required in ANY source — not just in the ones that textually follow
+    // the definition. The per-source `StatementEnv` resets between sources, so
+    // recording the default only during the walk (which is still done, for
+    // within-source ordering contracts like 6002) left every cross-source
+    // reader with `unknown [required]` — a generated host adapter demanding a
+    // param the database already supplies. Inferred here against the full
+    // catalog so a `VALUE` reading a table or `fn::` helper resolves; in source
+    // order, so a later redefinition wins.
+    let mut global_param_defaults: BTreeMap<String, crate::expression::ExpressionFact> =
+        BTreeMap::new();
+    for (parsed, statements) in sources {
+        for stmt in statements {
+            let ast::Statement::Define(ast::DefineStmt::Param(def)) = &stmt.node else {
+                continue;
+            };
+            let Some(value) = &def.value else {
+                continue;
+            };
+            let mut scratch: Vec<Finding> = Vec::new();
+            let mut ctx = AnalysisContext::new(
+                &global_defined,
+                parsed.source_id().clone(),
+                parsed.text(),
+                &mut scratch,
+            );
+            let fact = crate::analyzer::expression::expr_fact(&mut ctx, value);
+            global_param_defaults.insert(def.name.node.clone(), fact);
+        }
+    }
+
     // PRE-PASS 2 — implicit schemaless tables. Writing to (CREATE/UPSERT/
     // INSERT/DELETE) or hanging DDL (`DEFINE FIELD/EVENT/INDEX ... ON`) on a
     // never-`DEFINE`d table is valid SurrealQL: the table is created on
@@ -259,6 +296,7 @@ fn build_global_catalog_from_lowered(sources: &[LoweredSource<'_>]) -> GlobalCat
         global_defined,
         global_fn_returns,
         global_field_kinds,
+        global_param_defaults,
         implicit_tables,
         fn_guarded,
     }
@@ -328,6 +366,13 @@ fn analyze_source_against(
     // top-level `$auth` is never reported as a host param and guards can
     // narrow it.
     analyzer_env.seed_session_params(parsed.source_id());
+    // Seed the workspace's `DEFINE PARAM` defaults (PRE-PASS 1d) so a reader
+    // in ANY source carries the declared kind and is not host-required. The
+    // per-statement walk re-records the definition it passes over, which keeps
+    // the within-source ordering contract (6002) reading the same facts.
+    for (name, fact) in &global.global_param_defaults {
+        analyzer_env.define_param_default(name.clone(), fact.clone());
+    }
     // Transaction pairing (4007): BEGIN opens exactly one transaction
     // that COMMIT/CANCEL closes.
     let mut open_transaction: Option<ByteRange> = None;
