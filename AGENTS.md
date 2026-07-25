@@ -35,6 +35,17 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
   comment. Format with `cargo fmt --all`.
 - **TypeScript packages** (`packages/`, pnpm workspace): `pnpm -r run build`,
   `pnpm -r run typecheck`, `pnpm -r --if-present run test`.
+- **Quality harness — lost precision.** The unit suite proves nothing is newly
+  *wrong*; it cannot see a type quietly degrading to `unknown`, a narrowing
+  dying, or a completion disappearing. Three harnesses cover that, all driven by
+  the committed corpus at `crates/workspace/tests/corpus/` (self-contained on
+  purpose — the realistic corpus lives outside this repo and is hand-edited, so
+  it can never back a committed snapshot):
+  - `crates/workspace/tests/precision_snapshot.rs` — a golden file of **every**
+    inferred type the corpus produces. Regenerate with
+    `UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test precision_snapshot`.
+    The snapshot records *current* behaviour, not correct behaviour: read every
+    diff before accepting it.
 - **Grammar:** the parser is `tree-sitter-surrealql`, a path dependency at the
   sibling `../tree-sitter-surrealql`. CI checks it out alongside this repo.
 - **Design principle — contract-first diagnostics:** every construct has a

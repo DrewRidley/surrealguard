@@ -1,0 +1,371 @@
+# SurrealGuard precision snapshot — every inferred type the corpus produces.
+#
+# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test precision_snapshot
+#
+# This file records CURRENT behaviour, not correct behaviour. A diff means a
+# type changed: read it, decide whether the change is an improvement, and only
+# then accept it. Silent acceptance defeats the whole harness.
+
+== schema: tables ==
+table account  [schemafull]
+  field active                       : bool  [default]
+  field created_at                   : datetime  [default]
+  field email                        : string
+  field person                       : option<record<person>>
+  field settings                     : { locale: option<string>, notify: bool, timezone: string }  [default]
+  field updated_at                   : datetime  [computed, default]
+  field username                     : string
+table assigned_to  [schemafull, relation organization_unit -> organization_role]
+  field weight                       : int  [default]
+table employee_of  [schemafull, relation account -> organization]
+  field joined_at                    : datetime  [default]
+  field role                         : record<organization_role>
+  field status                       : 'invited' | 'active' | 'suspended'  [default]
+  field title                        : option<string>
+  field unit                         : record<organization_unit>
+table organization  [schemafull]
+  field address                      : { city: string, country: string, line1: string, line2: option<string> }
+  field contacts                     : array<{ email: string, label: string, primary: bool }>  [default]
+  field created_at                   : datetime  [default]
+  field employees                    : unknown  [computed, default]
+  field legal_name                   : string
+  field logo                         : option<string>
+  field name                         : string
+  field owner                        : record<account>
+  field parent                       : option<record<organization>>  [reference]
+  field sectors                      : array<record<sector>>  [default]
+  field subsidiaries                 : array<record<organization>>  [computed, default]
+  field tier                         : 'free' | 'pro' | 'enterprise'  [default]
+table organization_permission  [schemafull]
+  field name                         : string
+table organization_role  [schemafull]
+  field name                         : string
+  field organization                 : record<organization>
+  field permissions                  : array<record<organization_permission>>  [default]
+table organization_settings  [schemafull]
+  field organization                 : record<organization>
+  field security                     : { byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }
+  field updated_at                   : datetime  [computed, default]
+table organization_unit  [schemafull]
+  field headcount                    : int  [default]
+  field name                         : string
+  field organization                 : record<organization>
+  field parent                       : option<record<organization_unit>>
+table person  [schemafull]
+  field created_at                   : datetime  [default]
+  field date_of_birth                : option<datetime>
+  field first_name                   : string
+  field full_name                    : string  [computed, default]
+  field last_name                    : string
+  field middle_name                  : option<string>
+table sector  [schemafull]
+  field name                         : string
+table webhook_event  [schemafull]
+  field headers                      : object
+  field payload                      : any
+  field provider                     : 'stripe' | 'github'
+  field received_at                  : datetime  [default]
+
+== schema: functions ==
+  fn::org::display_name($org: record<organization>) -> string  [declared]
+  fn::org::headcount($org: record<organization>) -> int  [inferred]
+  fn::org::is_pro($org: record<organization>) -> bool  [inferred]
+  fn::org::label($org: record<organization>) -> string  [inferred]
+  fn::org::owner($org: record<organization>) -> record<account>  [inferred]
+  fn::person::initials($first: string, $last: string) -> string  [inferred]
+
+== schema: params ==
+  $default_tier
+
+== schema: analyzers ==
+  simple  tokenizers=[blank, class] filters=[lowercase, ascii]
+
+== source: schema/01_account.surql ==
+  stmt      9:1 define_table     : (no response)
+  stmt     11:1 define_field     : (no response)
+  stmt     13:1 define_field     : (no response)
+  stmt     15:1 define_field     : (no response)
+  stmt     17:1 define_field     : (no response)
+  stmt     19:1 define_field     : (no response)
+  stmt     21:1 define_field     : (no response)
+  stmt     23:1 define_table     : (no response)
+  stmt     25:1 define_field     : (no response)
+  stmt     27:1 define_field     : (no response)
+  stmt     29:1 define_field     : (no response)
+  stmt     31:1 define_field     : (no response)
+  stmt     33:1 define_field     : (no response)
+  stmt     39:1 define_field     : (no response)
+  stmt     41:1 define_field     : (no response)
+
+== source: schema/02_organization.surql ==
+  stmt      5:1 define_table     : (no response)
+  stmt      7:1 define_field     : (no response)
+  stmt      9:1 define_table     : (no response)
+  stmt     11:1 define_field     : (no response)
+  stmt     13:1 define_field     : (no response)
+  stmt     15:1 define_field     : (no response)
+  stmt     17:1 define_field     : (no response)
+  stmt     19:1 define_field     : (no response)
+  stmt     21:1 define_field     : (no response)
+  stmt     23:1 define_field     : (no response)
+  stmt     25:1 define_field     : (no response)
+  stmt     27:1 define_field     : (no response)
+  stmt     33:1 define_field     : (no response)
+  stmt     40:1 define_field     : (no response)
+  stmt     42:1 define_field     : (no response)
+  stmt     44:1 define_field     : (no response)
+  stmt     46:1 define_table     : (no response)
+  stmt     48:1 define_field     : (no response)
+  stmt     50:1 define_field     : (no response)
+  stmt     52:1 define_field     : (no response)
+  stmt     54:1 define_field     : (no response)
+  stmt     56:1 define_table     : (no response)
+  stmt     58:1 define_field     : (no response)
+  stmt     60:1 define_field     : (no response)
+  stmt     69:1 define_field     : (no response)
+
+== source: schema/03_relations.surql ==
+  stmt      5:1 define_table     : (no response)
+  stmt      7:1 define_field     : (no response)
+  stmt      9:1 define_table     : (no response)
+  stmt     11:1 define_field     : (no response)
+  stmt     13:1 define_field     : (no response)
+  stmt     15:1 define_field     : (no response)
+  stmt     17:1 define_table     : (no response)
+  stmt     19:1 define_field     : (no response)
+  stmt     21:1 define_field     : (no response)
+  stmt     23:1 define_field     : (no response)
+  stmt     25:1 define_field     : (no response)
+  stmt     27:1 define_field     : (no response)
+  stmt     32:1 define_table     : (no response)
+  stmt     34:1 define_field     : (no response)
+
+== source: schema/04_functions.surql ==
+  stmt      5:1 define_param     : (no response)
+  stmt      7:1 define_analyzer  : (no response)
+  stmt     10:1 define_function  : (no response)
+  stmt     15:1 define_function  : (no response)
+  stmt     19:1 define_function  : (no response)
+  stmt     23:1 define_function  : (no response)
+  stmt     29:1 define_function  : (no response)
+  stmt     34:1 define_function  : (no response)
+  let      24:6 $a               : string
+  let      25:6 $b               : string
+
+== source: schema/05_opaque.surql ==
+  stmt      6:1 define_table     : (no response)
+  stmt      8:1 define_field     : (no response)
+  stmt     10:1 define_field     : (no response)
+  stmt     13:1 define_field     : (no response)
+  stmt     16:1 define_field     : (no response)
+
+== source: queries/10_select.surql ==
+  stmt      4:1 select           : array<{ created_at: datetime, name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt      6:1 select           : array<{ legal: string, org_name: string }>
+  stmt      8:1 select           : array<{ address: { city: string, line2: option<string> } }>
+  stmt     10:1 select           : array<{ address: { city: string, country: string } }>
+  stmt     12:1 select           : array<{ contacts: { email: array<string> } }>
+  stmt     14:1 select           : array<{ contacts: { label: array<string> } }>
+  stmt     16:1 select           : array<{ owner: { settings: { timezone: string }, username: string } }>
+  stmt     18:1 select           : array<{ person: { first_name: option<string>, last_name: option<string> } }>
+  stmt     20:1 select           : array<{ id: record<organization_settings>, organization: record<organization>, security: { byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }, updated_at: datetime }>
+  stmt     22:1 select           : array<string>
+  stmt     24:1 select           : option<{ name: string }>
+       modifier where      row_preserving=true
+       modifier limit      row_preserving=true max=1
+  stmt     26:1 select           : array<{ id: record<organization>, name: string }, 10>
+       modifier order      row_preserving=true
+       modifier limit      row_preserving=true max=10
+       modifier start      row_preserving=true
+  diag     4:36 I7014     Hint
+  diag     6:51 I7014     Hint
+  diag     8:41 I7014     Hint
+  diag    10:39 I7014     Hint
+  diag    12:31 I7014     Hint
+  diag    14:50 I7014     Hint
+  diag    16:53 I7014     Hint
+  diag    18:49 I7014     Hint
+  diag     20:8 I7015     Hint
+  diag    20:15 I7014     Hint
+  diag    22:24 I7014     Hint
+
+== source: queries/20_graph.surql ==
+  stmt      4:1 select           : array<{ orgs: array<record<organization>> }>
+  stmt      6:1 select           : array<{ titles: array<option<string>> }>
+  stmt      8:1 select           : array<{ members: array<record<account>> }>
+  stmt     10:1 select           : array<{ org_names: array<string> }>
+  stmt     12:1 select           : array<{ active_orgs: array<record<organization>> }>
+  stmt     14:1 select           : array<{ roles: array<record<organization_role>> }>
+  stmt     16:1 select           : array<{ employees: array<record<employee_of>> }>
+  stmt     18:1 let              : (no response)
+  stmt     20:1 let              : (no response)
+  let      18:5 $member          : option<array<record<organization>>>
+  let      20:5 $edge_titles     : array<array<option<string>>>
+  diag     4:49 I7014     Hint
+  diag     6:43 I7014     Hint
+  diag     8:47 I7014     Hint
+  diag    10:59 I7014     Hint
+  diag    12:81 I7014     Hint
+  diag    14:55 I7014     Hint
+  diag    16:23 I7014     Hint
+  diag     18:5 W7001     Warning
+  diag     20:5 W7001     Warning
+  diag    20:59 I7014     Hint
+
+== source: queries/30_narrowing.surql ==
+  stmt      5:1 let              : (no response)
+  stmt      7:1 if_else          : none
+  stmt      9:1 let              : (no response)
+  stmt     11:1 let              : (no response)
+  stmt     13:1 let              : (no response)
+  stmt     15:1 let              : (no response)
+  stmt     17:1 let              : (no response)
+  stmt     19:1 let              : (no response)
+  stmt     21:1 let              : (no response)
+  stmt     23:1 return           : { after_guard: string, unit_name: string, with_default: string }
+  let       5:5 $org             : option<{ name: string, parent: option<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  let       9:5 $after_guard     : string
+  let      11:5 $maybe           : option<string>
+  let      13:5 $with_default    : string
+  let      15:5 $unit            : option<{ headcount: int, name: string, parent: option<record<organization_unit>> }>
+  let      17:5 $unit_name       : string
+  let      19:5 $link            : option<record<person>>
+  let      21:5 $person_id       : option<record<person>>
+  diag     21:5 W7001     Warning
+
+== source: queries/40_bindings.surql ==
+  source response       : { arr: array<int, 3>, block: number, count: int, destructured: array<{ place: { city: string, country: string } }>, first: { name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }, names: array<string>, obj: { alpha: int, beta: 'two', gamma: array<bool, 2> }, tiers: array<'free' | 'pro' | 'enterprise'> }
+  stmt      5:1 let              : (no response)
+  stmt      7:1 let              : (no response)
+  stmt      9:1 let              : (no response)
+  stmt     11:1 let              : (no response)
+  stmt     13:1 let              : (no response)
+  stmt     15:1 for              : (no response)
+  stmt     21:1 let              : (no response)
+  stmt     27:1 let              : (no response)
+  stmt     29:1 let              : (no response)
+  stmt     31:1 let              : (no response)
+  stmt     33:1 return           : { arr: array<int, 3>, block: number, count: int, destructured: array<{ place: { city: string, country: string } }>, first: { name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }, names: array<string>, obj: { alpha: int, beta: 'two', gamma: array<bool, 2> }, tiers: array<'free' | 'pro' | 'enterprise'> }
+  let       5:5 $orgs            : array<{ name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }>
+  let       7:5 $count           : int
+  let       9:5 $names           : array<string>
+  let      11:5 $first           : { name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }
+  let      13:5 $tiers           : array<'free' | 'pro' | 'enterprise'>
+  let      15:5 $org             : { name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }
+  let      16:6 $label           : string
+  let      17:6 $inner           : array<string, 1>
+  let      22:6 $nested          : array<int>
+  let      23:6 $total           : number
+  let      21:5 $block           : number
+  let      27:5 $destructured    : array<{ place: { city: string, country: string } }>
+  let      29:5 $obj             : { alpha: int, beta: 'two', gamma: array<bool, 2> }
+  let      31:5 $arr             : array<int, 3>
+  diag     5:44 I7014     Hint
+  diag    13:38 I7014     Hint
+  diag     17:6 W7001     Warning
+  diag    17:63 W7005     Warning
+  diag    22:45 I7014     Hint
+  diag    27:69 I7014     Hint
+
+== source: queries/50_aggregates.surql ==
+  stmt      4:1 select           : array<{ count: int }>
+       modifier group      row_preserving=false
+  stmt      6:1 select           : array<{ tier: 'free' | 'pro' | 'enterprise', total: int }>
+       modifier group      row_preserving=false
+  stmt      8:1 select           : array<{ heads: number, organization: record<organization> }>
+       modifier group      row_preserving=false
+  stmt     10:1 select           : array<{ avg_heads: number }>
+       modifier group      row_preserving=false
+  stmt     12:1 select           : array<{ names: any, tier: 'free' | 'pro' | 'enterprise' }>
+       modifier group      row_preserving=false
+  stmt     14:1 select           : array<{ n: int, status: 'invited' | 'active' | 'suspended' }>
+       modifier group      row_preserving=false
+  stmt     16:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: { email: string, label: string, primary: bool }, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+       modifier split      row_preserving=false
+  stmt     18:1 select           : array<{ name: string, year: int }>
+       modifier group      row_preserving=false
+  diag     4:21 I7014     Hint
+  diag     6:36 I7014     Hint
+  diag     8:57 I7014     Hint
+  diag    10:48 I7014     Hint
+  diag    12:47 I7014     Hint
+  diag    14:34 I7014     Hint
+  diag     16:8 I7015     Hint
+  diag    16:15 I7014     Hint
+  diag    18:50 I7014     Hint
+
+== source: queries/60_mutations.surql ==
+  stmt      4:1 create           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt      7:1 create           : { headcount: int, id: record<organization_unit>, name: string, organization: record<organization>, parent: option<record<organization_unit>> }
+  stmt      9:1 create           : array<{ id: record<organization_role>, name: string, organization: record<organization>, permissions: array<record<organization_permission>> }>
+  stmt     11:1 update           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     13:1 update           : { address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }
+  stmt     15:1 upsert           : array<{ id: record<organization_settings>, organization: record<organization>, security: { byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }, updated_at: datetime }>
+  stmt     17:1 delete           : array<{ headcount: int, id: record<organization_unit>, name: string, organization: record<organization>, parent: option<record<organization_unit>> }>
+  stmt     19:1 delete           : array<{ id: record<organization_role>, name: string, organization: record<organization>, permissions: array<record<organization_permission>> }>
+  stmt     21:1 relate           : array<{ id: record<employee_of>, in: record<account>, joined_at: datetime, out: record<organization>, role: record<organization_role>, status: 'invited' | 'active' | 'suspended', title: option<string>, unit: record<organization_unit> }>
+  stmt     23:1 insert           : array<{ id: record<sector>, name: string }>
+  stmt     25:1 insert           : array<{ id: record<sector>, name: string }>
+  stmt     27:1 update           : array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  diag     27:8 W7009     Warning
+
+== source: queries/70_params.surql ==
+  stmt      4:1 select           : array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+       modifier where      row_preserving=true
+  stmt      6:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+       modifier where      row_preserving=true
+       modifier limit      row_preserving=true
+  stmt      8:1 select           : option<{ name: string }>
+       modifier where      row_preserving=true
+       modifier limit      row_preserving=true max=1
+  stmt     14:1 create           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     17:1 let              : (no response)
+  stmt     19:1 update           : array<{ headcount: int, id: record<organization_unit>, name: string, organization: record<organization>, parent: option<record<organization_unit>> }>
+  stmt     21:1 select           : array<{ id: record<employee_of>, in: record<account>, joined_at: datetime, out: record<organization>, role: record<organization_role>, status: 'invited' | 'active' | 'suspended', title: option<string>, unit: record<organization_unit> }>
+       modifier where      row_preserving=true
+  let      17:5 $tier_default    : unknown
+  param $default_tier           : unknown  [required]
+  param $headcount              : int  [required]
+  param $new_legal              : string  [required]
+  param $new_name               : string  [required]
+  param $org_id                 : record<organization>  [required]
+  param $org_name               : string  [required]
+  param $owner_id               : record<account>  [required]
+  param $page_size              : int  [required]  domain=Range { min: Some(0), max: None }
+  param $since                  : datetime  [required]
+  param $tier                   : 'free' | 'pro' | 'enterprise'  [required]
+  diag      6:8 I7015     Hint
+  diag     17:5 W7001     Warning
+  diag     21:8 I7015     Hint
+
+== source: queries/80_functions.surql ==
+  stmt      4:1 select           : array<{ label: string }>
+  stmt      6:1 let              : (no response)
+  stmt      8:1 let              : (no response)
+  stmt     10:1 let              : (no response)
+  stmt     12:1 let              : (no response)
+  stmt     14:1 let              : (no response)
+  stmt     16:1 let              : (no response)
+  stmt     18:1 let              : (no response)
+  stmt     20:1 let              : (no response)
+  stmt     22:1 let              : (no response)
+  stmt     24:1 return           : { heads: int, initials: string, joined: string, label: string, owner: record<account>, parsed: int, pro: bool, upper: string, when: datetime }
+  let       6:5 $owner           : record<account>
+  let       8:5 $heads           : int
+  let      10:5 $initials        : string
+  let      12:5 $pro             : bool
+  let      14:5 $label           : string
+  let      16:5 $upper           : string
+  let      18:5 $joined          : string
+  let      20:5 $when            : datetime
+  let      22:5 $parsed          : int
+  diag     4:48 I7014     Hint
+
+== source: queries/90_opaque.surql ==
+  stmt      4:1 select           : array<{ payload: any, provider: 'stripe' | 'github' }>
+  stmt      6:1 let              : (no response)
+  stmt      8:1 let              : (no response)
+  stmt     10:1 return           : { headers: option<object>, payload: option<any> }
+  let       6:5 $payload         : option<any>
+  let       8:5 $headers         : option<object>
+  diag     4:31 I7014     Hint
