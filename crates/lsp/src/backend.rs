@@ -288,11 +288,42 @@ impl LanguageServer for Backend {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri.clone();
+        // Snapshot the analysis counters so we can report which path this edit
+        // took (full rebuild vs symbol-incremental vs pure cache hit) and how
+        // long it cost — printed to stderr, which Zed surfaces in the language
+        // server logs. Diagnostic only; safe to remove/gate before release.
+        let (full_before, incr_before, reanalyzed_before) = {
+            let ws = self.workspace.read().await;
+            (
+                ws.analyze_run_count(),
+                ws.incremental_run_count(),
+                ws.reanalyzed_source_count(),
+            )
+        };
         if let Some(change) = params.content_changes.into_iter().last() {
             let mut ws = self.workspace.write().await;
             ws.upsert(uri.clone(), change.text);
         }
+        let started = std::time::Instant::now();
         self.publish_diagnostics(&uri).await;
+        let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let (full_after, incr_after, reanalyzed_after) = {
+            let ws = self.workspace.read().await;
+            (
+                ws.analyze_run_count(),
+                ws.incremental_run_count(),
+                ws.reanalyzed_source_count(),
+            )
+        };
+        let path = if full_after > full_before {
+            "FULL rebuild"
+        } else if incr_after > incr_before {
+            "incremental"
+        } else {
+            "cache hit"
+        };
+        let sources = reanalyzed_after.saturating_sub(reanalyzed_before);
+        eprintln!("[surrealguard] edit → {path} in {elapsed_ms:.1}ms ({sources} source(s) re-analyzed)");
     }
 
     async fn did_save(&self, _params: DidSaveTextDocumentParams) {
