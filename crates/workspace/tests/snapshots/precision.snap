@@ -276,13 +276,15 @@ table webhook_event  [schemafull]
        modifier group      row_preserving=false
   stmt     10:1 select           : array<{ avg_heads: number }>
        modifier group      row_preserving=false
-  stmt     12:1 select           : array<{ names: any, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     12:1 select           : array<{ names: array<string>, tier: 'free' | 'pro' | 'enterprise' }>
        modifier group      row_preserving=false
   stmt     14:1 select           : array<{ n: int, status: 'invited' | 'active' | 'suspended' }>
        modifier group      row_preserving=false
   stmt     16:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: { email: string, label: string, primary: bool }, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
        modifier split      row_preserving=false
   stmt     18:1 select           : array<{ name: string, year: int }>
+       modifier group      row_preserving=false
+  stmt     22:1 select           : array<{ names: array<string>, tier: 'free' | 'pro' | 'enterprise' }>
        modifier group      row_preserving=false
   diag     4:21 I7014     Hint
   diag     6:36 I7014     Hint
@@ -293,6 +295,7 @@ table webhook_event  [schemafull]
   diag     16:8 I7015     Hint
   diag    16:15 I7014     Hint
   diag    18:50 I7014     Hint
+  diag    22:50 I7014     Hint
 
 == source: queries/60_mutations.surql ==
   stmt      4:1 create           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>

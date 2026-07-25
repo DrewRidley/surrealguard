@@ -16,3 +16,7 @@ SELECT status, count() AS n FROM employee_of GROUP BY status;
 SELECT * FROM organization SPLIT contacts;
 
 SELECT name, time::year(created_at) AS year FROM organization GROUP BY year;
+
+-- The other collector aggregate: like `array::group`, it is handed the whole
+-- collected column, so a `string` column yields `array<string>` (and no 5002).
+SELECT tier, array::distinct(name) AS names FROM organization GROUP BY tier;
