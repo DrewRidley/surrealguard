@@ -87,12 +87,16 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     // the engine: 3.0.5 live, 2.x via `dbs::group::GroupsCollector`, which
     // iterates `fields.other()` and never sees `Field::All`. The rejection
     // itself is reported as 4025 at the `*`.
+    //
+    // The wildcard *seeds* the row; it does not replace the projection walk.
+    // Sibling projections are layered on top of it — `SELECT *, ->has_account
+    // AS acc FROM person` is every declared field plus `acc` (3.0.5 live).
     let row_kind = if has_wildcard && stmt.group.is_none() {
-        object_kind_for_all_fields(table)
+        projected_object_kind(stmt, &table_name, table, ctx, all_fields_map(table), true)
     } else if let Some(value_kind) = value_projection_kind(stmt, &table_name, table, ctx) {
         value_kind
     } else {
-        projected_object_kind(stmt, &table_name, table, ctx)
+        projected_object_kind(stmt, &table_name, table, ctx, BTreeMap::new(), false)
     };
     // WHERE-narrowing (design §3.1): tighten each projected field the WHERE
     // clause provably constrains. Runs before OMIT/FETCH/SPLIT, which operate
@@ -1264,14 +1268,16 @@ fn value_projection_kind(
     }
 }
 
+/// The projected row: every sibling projection layered onto `fields`, which
+/// a wildcard pre-seeds with the whole declared row (and is otherwise empty).
 fn projected_object_kind(
     stmt: &ast::SelectStmt,
     row_table_name: &str,
     table: &TableDef,
     ctx: &mut AnalysisContext<'_>,
+    mut fields: BTreeMap<String, Kind>,
+    has_wildcard: bool,
 ) -> Kind {
-    let mut fields = BTreeMap::new();
-
     for projection in &stmt.projections {
         match projection {
             ast::Projection::Wildcard(_) => {}
@@ -1292,12 +1298,66 @@ fn projected_object_kind(
                     table,
                     ctx,
                     &mut fields,
+                    has_wildcard,
                 );
+                if has_wildcard {
+                    if let Some(source) = renamed_away_field(&expr.node, alias.as_ref()) {
+                        fields.remove(&source);
+                    }
+                }
             }
         }
     }
 
     object_literal(fields)
+}
+
+/// The row key a projection *renames away* when a wildcard also supplies the
+/// row: `SELECT *, name AS n FROM person` is `{ id, age, n }` — the `name`
+/// key is gone, replaced by `n` (3.0.5 live).
+///
+/// This is a rename, not an addition, and it is deliberately narrow: it fires
+/// only for a bare single-segment row field renamed to a different bare
+/// single-segment key. SurrealDB's projection planner turns exactly that
+/// shape into `Projection::Rename { from, to }`, and `SelectProject` then
+/// does `output.remove(from)` when the projection list also holds
+/// `Projection::All` ("If we had All, remove the original name to avoid
+/// having both `from` and `to` in output"). Everything else stays additive,
+/// verified against 3.0.5:
+///   - a nested source keeps its parent whole (`*, address.city AS c` →
+///     `address` still carries `city` *and* `zip`, plus `c`);
+///   - a dotted alias keeps the source (`*, name AS a.b` → both `name` and
+///     `a.b`);
+///   - a computed source keeps its operands (`*, string::len(name) AS l` →
+///     `name` and `l`);
+///   - a graph traversal has no row key to remove (`*, ->has_account AS acc`
+///     → every field plus `acc`).
+///
+/// The removal is unconditional on the source *existing*: `SELECT *, nope AS
+/// x` simply adds `x`, because removing an absent key is a no-op.
+fn renamed_away_field(expr: &ast::Expr, alias: Option<&ast::Spanned<String>>) -> Option<String> {
+    let alias = alias?;
+    // A dotted alias builds a nested output path, which the planner routes to
+    // the general `Project` operator — the one that never removes the source.
+    if alias.node.contains('.') {
+        return None;
+    }
+    let ast::Expr::Idiom(idiom) = expr else {
+        return None;
+    };
+    let segments = plain_field_segments(idiom)?;
+    let [source] = segments.as_slice() else {
+        return None;
+    };
+    (*source != alias.node).then(|| source.clone())
+}
+
+/// The declared row as a field map — what `*` contributes.
+fn all_fields_map(table: &TableDef) -> BTreeMap<String, Kind> {
+    match object_kind_for_all_fields(table) {
+        Kind::Literal(KindLiteral::Object(fields)) => fields,
+        _ => BTreeMap::new(),
+    }
 }
 
 fn project_expr(
@@ -1308,6 +1368,7 @@ fn project_expr(
     table: &TableDef,
     ctx: &mut AnalysisContext<'_>,
     fields: &mut BTreeMap<String, Kind>,
+    has_wildcard: bool,
 ) {
     let alias_name = alias.map(|a| a.node.clone());
 
@@ -1366,6 +1427,13 @@ fn project_expr(
                         .collect();
                     crate::kinds::rewrap_kind(&wrappers, object_literal(object))
                 };
+                // Unaliased under a wildcard the destructure *narrows* the
+                // seeded field: `SELECT *, address.{city}` yields `address:
+                // { city }` — the unselected `zip` is gone (3.0.5 live).
+                // Aliased it is purely additive, and the source stays whole.
+                if has_wildcard && alias_name.is_none() {
+                    remove_kind_at_path(fields, &prefix);
+                }
                 match &alias_name {
                     Some(alias) => {
                         fields.insert(alias.clone(), assemble(outputs));
@@ -2842,6 +2910,268 @@ mod tests {
         assert_eq!(fields["out"], record_of("post"));
         assert_eq!(fields["since"], Kind::Datetime);
         assert_eq!(fields.len(), 4);
+    }
+
+    // ---------------------------------------------------------------------
+    // TG-2: a wildcard SEEDS the row — it never swallows its siblings.
+    //
+    // Every expectation below was read off a live SurrealDB 3.0.5 server; the
+    // JSON it returned is quoted on each test.
+    // ---------------------------------------------------------------------
+
+    const WILDCARD_SIBLING_SCHEMA: &str = "DEFINE TABLE person SCHEMAFULL;\n\
+         DEFINE FIELD name ON person TYPE string;\n\
+         DEFINE FIELD age ON person TYPE int;\n\
+         DEFINE FIELD address ON person TYPE object;\n\
+         DEFINE FIELD address.city ON person TYPE string;\n\
+         DEFINE FIELD address.zip ON person TYPE string;\n\
+         DEFINE TABLE account SCHEMAFULL;\n\
+         DEFINE FIELD label ON account TYPE string;\n\
+         DEFINE TABLE has_account SCHEMAFULL TYPE RELATION FROM person TO account;\n\
+         DEFINE FIELD since ON has_account TYPE datetime;";
+
+    /// `SELECT *, ->has_account AS acc FROM person`
+    /// → `{"acc": [...], "address": {...}, "age": 30, "id": ..., "name": "A"}`
+    #[test]
+    fn a_graph_sibling_beside_a_wildcard_is_added_to_the_full_row() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT *, ->has_account AS acc FROM person;");
+
+        assert_eq!(
+            fields["acc"],
+            Kind::Array(Box::new(record_of("has_account")), None)
+        );
+        // The wildcard's own fields all survive alongside it.
+        assert_eq!(fields["name"], Kind::String);
+        assert_eq!(fields["age"], Kind::Int);
+        assert_eq!(fields["id"], record_of("person"));
+        assert!(fields.contains_key("address"));
+        assert_eq!(fields.len(), 5);
+    }
+
+    /// The no-wildcard control: the sibling alone types the row.
+    /// `SELECT ->has_account AS acc FROM person` → `{"acc": [...]}`
+    #[test]
+    fn a_graph_projection_without_a_wildcard_is_the_whole_row() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT ->has_account AS acc FROM person;");
+
+        assert_eq!(
+            fields["acc"],
+            Kind::Array(Box::new(record_of("has_account")), None)
+        );
+        assert_eq!(fields.len(), 1);
+    }
+
+    /// A bare field renamed to a bare alias REPLACES the field it renames.
+    /// `SELECT *, name AS n FROM person`
+    /// → `{"address": {...}, "age": 30, "id": ..., "n": "A"}` — no `name`.
+    #[test]
+    fn a_renamed_field_beside_a_wildcard_replaces_the_original() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT *, name AS n FROM person;");
+
+        assert_eq!(fields["n"], Kind::String);
+        assert!(!fields.contains_key("name"), "the renamed field is gone");
+        assert_eq!(fields["age"], Kind::Int);
+        assert_eq!(fields["id"], record_of("person"));
+        assert_eq!(fields.len(), 4);
+    }
+
+    /// The no-wildcard control for the same rename.
+    /// `SELECT name AS n FROM person` → `{"n": "A"}`
+    #[test]
+    fn a_renamed_field_without_a_wildcard_is_the_whole_row() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT name AS n FROM person;");
+
+        assert_eq!(fields["n"], Kind::String);
+        assert_eq!(fields.len(), 1);
+    }
+
+    /// Position is irrelevant — the engine applies `*` first whatever the order.
+    /// `SELECT name AS n, * FROM person`
+    /// → `{"address": {...}, "age": 30, "id": ..., "n": "A"}`
+    #[test]
+    fn a_rename_before_the_wildcard_replaces_just_the_same() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT name AS n, * FROM person;");
+
+        assert_eq!(fields["n"], Kind::String);
+        assert!(!fields.contains_key("name"));
+        assert_eq!(fields.len(), 4);
+    }
+
+    /// An UNALIASED sibling re-projects the field under its own name: a no-op.
+    /// `SELECT *, name FROM person`
+    /// → `{"address": {...}, "age": 30, "id": ..., "name": "A"}`
+    #[test]
+    fn an_unaliased_sibling_beside_a_wildcard_changes_nothing() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT *, name FROM person;");
+
+        assert_eq!(fields["name"], Kind::String);
+        assert_eq!(fields, row_fields(&schema, "SELECT * FROM person;"));
+    }
+
+    /// An alias may collide with another field — the rename still removes its
+    /// source and the alias overwrites the collided key.
+    /// `SELECT *, age AS name FROM person` → `{"id": ..., "name": 30}`
+    /// (with `address` present; `age` gone, `name` now an int).
+    #[test]
+    fn a_rename_onto_another_field_removes_its_source_and_overwrites() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT *, age AS name FROM person;");
+
+        assert_eq!(fields["name"], Kind::Int, "the alias wins the key");
+        assert!(!fields.contains_key("age"), "the rename's source is gone");
+        assert_eq!(fields.len(), 3);
+    }
+
+    /// A COMPUTED sibling is additive — it is not a rename, so its operands stay.
+    /// `SELECT *, string::len(name) AS l FROM person`
+    /// → `{"address": {...}, "age": 30, "id": ..., "l": 1, "name": "A"}`
+    #[test]
+    fn a_computed_sibling_beside_a_wildcard_keeps_its_operands() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT *, string::len(name) AS l FROM person;");
+
+        assert_eq!(fields["l"], Kind::Int);
+        assert_eq!(fields["name"], Kind::String, "the operand is untouched");
+        assert_eq!(fields.len(), 5);
+    }
+
+    /// A NESTED source is not a rename either — the parent object stays whole.
+    /// `SELECT *, address.city AS c FROM person`
+    /// → `{"address": {"city": "X", "zip": "1"}, ..., "c": "X"}`
+    #[test]
+    fn a_nested_sibling_beside_a_wildcard_keeps_its_parent_whole() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT *, address.city AS c FROM person;");
+
+        assert_eq!(fields["c"], Kind::String);
+        let address = object_fields(&fields["address"]);
+        assert_eq!(address["city"], Kind::String);
+        assert_eq!(address["zip"], Kind::String, "the sibling key survives");
+        assert_eq!(fields.len(), 5);
+    }
+
+    /// A rename to the SAME name is not a rename at all — the key stays put.
+    /// `SELECT *, name AS name FROM person`
+    /// → `{"address": {...}, "age": 30, "id": ..., "name": "A"}`
+    #[test]
+    fn a_self_rename_beside_a_wildcard_is_a_no_op() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        assert_eq!(
+            row_fields(&schema, "SELECT *, name AS name FROM person;"),
+            row_fields(&schema, "SELECT * FROM person;")
+        );
+    }
+
+    /// An unaliased DESTRUCTURE narrows the field it destructures.
+    /// `SELECT *, address.{ city } FROM person`
+    /// → `{"address": {"city": "X"}, "age": 30, "id": ..., "name": "A"}`
+    #[test]
+    fn an_unaliased_destructure_beside_a_wildcard_narrows_the_field() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT *, address.{ city } FROM person;");
+
+        let address = object_fields(&fields["address"]);
+        assert_eq!(address["city"], Kind::String);
+        assert_eq!(address.len(), 1, "the unselected `zip` is gone");
+        assert_eq!(fields.len(), 4);
+    }
+
+    /// An ALIASED destructure is additive and leaves the source whole.
+    /// `SELECT *, address.{ city } AS d FROM person`
+    /// → `{"address": {"city": "X", "zip": "1"}, ..., "d": {"city": "X"}}`
+    #[test]
+    fn an_aliased_destructure_beside_a_wildcard_keeps_the_source_whole() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT *, address.{ city } AS d FROM person;");
+
+        assert_eq!(object_fields(&fields["d"]).len(), 1);
+        assert_eq!(object_fields(&fields["address"]).len(), 2);
+        assert_eq!(fields.len(), 5);
+    }
+
+    /// `SELECT *, * FROM person` is just `SELECT * FROM person`.
+    #[test]
+    fn a_repeated_wildcard_adds_nothing() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        assert_eq!(
+            row_fields(&schema, "SELECT *, * FROM person;"),
+            row_fields(&schema, "SELECT * FROM person;")
+        );
+    }
+
+    /// Several renames in one projection list each remove their own source.
+    /// `SELECT *, name AS n, age AS m FROM person`
+    /// → `{"address": {...}, "id": ..., "m": 30, "n": "A"}`
+    #[test]
+    fn every_rename_beside_a_wildcard_removes_its_own_source() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT *, name AS n, age AS m FROM person;");
+
+        assert_eq!(fields["n"], Kind::String);
+        assert_eq!(fields["m"], Kind::Int);
+        assert!(!fields.contains_key("name"));
+        assert!(!fields.contains_key("age"));
+        assert_eq!(fields.len(), 4);
+    }
+
+    /// A relation's implicit `in`/`out` are ordinary row keys: renaming them
+    /// removes them like any other.
+    /// `SELECT *, in AS a, out AS b FROM has_account`
+    /// → `{"a": "person:p", "b": "account:a", "id": ...}`
+    #[test]
+    fn renaming_in_and_out_beside_a_wildcard_removes_them() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT *, in AS a, out AS b FROM has_account;");
+
+        assert_eq!(fields["a"], record_of("person"));
+        assert_eq!(fields["b"], record_of("account"));
+        assert_eq!(fields["id"], record_of("has_account"));
+        assert_eq!(fields["since"], Kind::Datetime);
+        assert!(!fields.contains_key("in"));
+        assert!(!fields.contains_key("out"));
+        assert_eq!(fields.len(), 4);
+    }
+
+    /// OMIT runs after the wildcard and its siblings, over the RESULT keys.
+    /// `SELECT *, name AS n OMIT id FROM person`
+    /// → `{"address": {...}, "age": 30, "n": "A"}`
+    /// `SELECT *, name AS n OMIT n FROM person`
+    /// → `{"address": {...}, "age": 30, "id": ...}`
+    #[test]
+    fn omit_applies_to_the_keys_the_wildcard_and_its_siblings_produced() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT *, name AS n OMIT id FROM person;");
+        assert_eq!(fields["n"], Kind::String);
+        assert!(!fields.contains_key("id"));
+        assert_eq!(fields.len(), 3);
+
+        // Omitting the alias leaves neither the alias nor its renamed source.
+        let fields = row_fields(&schema, "SELECT *, name AS n OMIT n FROM person;");
+        assert!(!fields.contains_key("n"));
+        assert!(!fields.contains_key("name"));
+        assert_eq!(fields.len(), 3);
     }
 
     #[test]

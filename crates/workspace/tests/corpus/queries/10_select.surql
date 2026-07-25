@@ -19,6 +19,20 @@ SELECT person.first_name, person.last_name FROM account;
 
 SELECT * FROM organization_settings;
 
+-- A wildcard SEEDS the row; sibling projections are layered on top of it, and
+-- a bare field renamed to a bare alias replaces the field it renames.
+SELECT *, name AS org_name FROM organization;
+
+SELECT *, ->employee_of AS memberships FROM account;
+
+SELECT *, string::len(name) AS name_length FROM organization;
+
+SELECT *, address.city AS city FROM organization;
+
+SELECT *, address.{ city } FROM organization;
+
+SELECT *, owner AS org_owner, tier AS plan FROM organization;
+
 SELECT VALUE name FROM organization;
 
 SELECT name FROM ONLY organization WHERE tier = 'pro' LIMIT 1;

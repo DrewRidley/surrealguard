@@ -25,3 +25,7 @@ INSERT INTO sector { name: 'Retail' };
 INSERT INTO sector [{ name: 'Tech' }, { name: 'Energy' }];
 
 UPDATE organization SET name = 'Renamed' RETURN name, tier;
+
+-- A RETURN wildcard seeds the row and its siblings are ADDED to it: unlike a
+-- SELECT's wildcard, a RETURN never renames a field away.
+UPDATE organization SET name = 'Renamed' RETURN *, tier AS plan;

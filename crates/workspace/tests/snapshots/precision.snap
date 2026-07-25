@@ -169,11 +169,17 @@ table webhook_event  [schemafull]
   stmt     16:1 select           : array<{ owner: { settings: { timezone: string }, username: string } }>
   stmt     18:1 select           : array<{ person: { first_name: option<string>, last_name: option<string> } }>
   stmt     20:1 select           : array<{ id: record<organization_settings>, organization: record<organization>, security: { byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }, updated_at: datetime }>
-  stmt     22:1 select           : array<string>
-  stmt     24:1 select           : option<{ name: string }>
+  stmt     24:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, org_name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     26:1 select           : array<{ active: bool, created_at: datetime, email: string, id: record<account>, memberships: array<record<employee_of>>, person: option<record<person>>, settings: { locale: option<string>, notify: bool, timezone: string }, updated_at: datetime, username: string }>
+  stmt     28:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, name_length: int, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     30:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, city: string, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     32:1 select           : array<{ address: { city: string }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     34:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, org_owner: record<account>, parent: option<record<organization>>, plan: 'free' | 'pro' | 'enterprise', sectors: array<record<sector>>, subsidiaries: array<record<organization>> }>
+  stmt     36:1 select           : array<string>
+  stmt     38:1 select           : option<{ name: string }>
        modifier where      row_preserving=true
        modifier limit      row_preserving=true max=1
-  stmt     26:1 select           : array<{ id: record<organization>, name: string }, 10>
+  stmt     40:1 select           : array<{ id: record<organization>, name: string }, 10>
        modifier order      row_preserving=true
        modifier limit      row_preserving=true max=10
        modifier start      row_preserving=true
@@ -187,7 +193,13 @@ table webhook_event  [schemafull]
   diag    18:49 I7014     Hint
   diag     20:8 I7015     Hint
   diag    20:15 I7014     Hint
-  diag    22:24 I7014     Hint
+  diag    24:33 I7014     Hint
+  diag    26:45 I7014     Hint
+  diag    28:49 I7014     Hint
+  diag    30:37 I7014     Hint
+  diag    32:33 I7014     Hint
+  diag    34:49 I7014     Hint
+  diag    36:24 I7014     Hint
 
 == source: queries/20_graph.surql ==
   stmt      4:1 select           : array<{ orgs: array<record<organization>> }>
@@ -310,7 +322,9 @@ table webhook_event  [schemafull]
   stmt     23:1 insert           : array<{ id: record<sector>, name: string }>
   stmt     25:1 insert           : array<{ id: record<sector>, name: string }>
   stmt     27:1 update           : array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     31:1 update           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, plan: 'free' | 'pro' | 'enterprise', sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
   diag     27:8 W7009     Warning
+  diag     31:8 W7009     Warning
 
 == source: queries/70_params.surql ==
   stmt      4:1 select           : array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>

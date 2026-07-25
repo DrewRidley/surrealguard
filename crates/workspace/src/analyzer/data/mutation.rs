@@ -831,14 +831,24 @@ fn fields_row_kind(
     table: &TableDef,
     ctx: &mut AnalysisContext<'_>,
 ) -> Kind {
-    if projections
+    // A wildcard seeds the row with every declared field; sibling projections
+    // are layered on top of it rather than discarded. Unlike a SELECT's
+    // wildcard this is *purely additive* — `UPDATE person:p RETURN *, name AS
+    // n` keeps `name` alongside `n` (3.0.5 live). A mutation's RETURN is
+    // computed by `Fields::compute`, which only ever `set`s the alias; the
+    // rename-removal lives in the SELECT planner's `SelectProject` operator,
+    // which a RETURN clause never reaches.
+    let mut fields = if projections
         .iter()
         .any(|projection| matches!(projection, ast::Projection::Wildcard(_)))
     {
-        return crate::analyzer::data::select::object_kind_for_all_fields(table);
-    }
-
-    let mut fields = BTreeMap::new();
+        match crate::analyzer::data::select::object_kind_for_all_fields(table) {
+            Kind::Literal(KindLiteral::Object(fields)) => fields,
+            _ => BTreeMap::new(),
+        }
+    } else {
+        BTreeMap::new()
+    };
     for projection in projections {
         match projection {
             ast::Projection::Wildcard(_) => {}
@@ -1117,6 +1127,49 @@ mod tests {
             assert_eq!(fields["name"], Kind::String, "{query}");
             assert_eq!(fields.len(), 3, "{query}: {fields:?}");
         }
+    }
+
+    // --- TG-2: `RETURN *` seeds the row; siblings are layered onto it ------
+
+    /// `UPDATE person:p SET age = 30 RETURN *, name AS n`
+    /// → `{"address": {...}, "age": 30, "id": ..., "n": "A", "name": "A"}`
+    ///
+    /// Note the difference from a SELECT: a mutation's RETURN is *purely
+    /// additive*, so `name` stays alongside `n`. A RETURN clause is computed
+    /// by `Fields::compute`, which only ever `set`s the alias; the
+    /// rename-removal lives in the SELECT planner. Both read off 3.0.5 live.
+    #[test]
+    fn a_return_wildcard_keeps_its_siblings_and_never_renames_away() {
+        let fields = row_fields(
+            PERSON_SCHEMA,
+            "UPDATE person SET age = 1 RETURN *, name AS n;",
+            "UpdateStatement",
+        );
+
+        assert_eq!(fields["n"], Kind::String);
+        assert_eq!(
+            fields["name"],
+            Kind::String,
+            "a RETURN wildcard never renames a field away"
+        );
+        assert_eq!(fields["age"], Kind::Int);
+        assert_eq!(fields["id"], record_of("person"));
+        assert_eq!(fields.len(), 4);
+    }
+
+    /// `UPDATE person:p SET age = 30 RETURN *, string::len(name) AS l`
+    /// → the full row plus `l`.
+    #[test]
+    fn a_computed_return_sibling_is_added_to_the_wildcard_row() {
+        let fields = row_fields(
+            PERSON_SCHEMA,
+            "UPDATE person SET age = 1 RETURN *, string::len(name) AS l;",
+            "UpdateStatement",
+        );
+
+        assert_eq!(fields["l"], Kind::Int);
+        assert_eq!(fields["name"], Kind::String);
+        assert_eq!(fields.len(), 4);
     }
 
     #[test]
