@@ -463,6 +463,55 @@ fn an_unresolvable_receiver_offers_nothing_rather_than_every_edge() {
 }
 
 // ---------------------------------------------------------------------------
+// GROUP BY
+// ---------------------------------------------------------------------------
+
+const GROUPED: &str = r#"
+DEFINE TABLE sale SCHEMAFULL;
+DEFINE FIELD region ON sale TYPE string;
+DEFINE FIELD amount ON sale TYPE int;
+DEFINE INDEX sale_region ON sale FIELDS region;
+DEFINE INDEX sale_amount ON sale FIELDS amount UNIQUE;
+DEFINE TABLE other SCHEMAFULL;
+DEFINE INDEX other_only ON other FIELDS id;
+"#;
+
+#[test]
+fn a_group_key_offers_the_projections_aliases_and_the_rows_fields_only() {
+    let fixture = Fixture::with_schema(
+        GROUPED,
+        "SELECT region, math::sum(amount) AS total FROM sale GROUP BY ▏",
+    );
+    assert_eq!(fixture.context().kind, ContextKind::GroupKey);
+    let labels = fixture.labels();
+    for expected in ["region", "amount", "id", "total"] {
+        assert!(labels.contains(&expected.to_string()), "missing {expected}: {labels:?}");
+    }
+    // Nothing that cannot label a group.
+    for absent in ["math::sum", "math::", "$auth", "$session", "sale", "other"] {
+        assert!(!labels.contains(&absent.to_string()), "{absent} in {labels:?}");
+    }
+}
+
+#[test]
+fn a_second_group_key_does_not_re_offer_the_first() {
+    let fixture = Fixture::with_schema(GROUPED, "SELECT region, amount FROM sale GROUP BY region, ▏");
+    let labels = fixture.labels();
+    assert!(labels.contains(&"amount".to_string()), "{labels:?}");
+    assert!(!labels.contains(&"region".to_string()), "{labels:?}");
+}
+
+#[test]
+fn order_by_stays_a_plain_field_position() {
+    // `BY` belongs to whichever clause opened it; ORDER must not be dragged
+    // into the group-key rules.
+    assert_eq!(
+        Fixture::with_schema(GROUPED, "SELECT * FROM sale ORDER BY ▏").context().kind,
+        ContextKind::FieldName
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Ranking
 // ---------------------------------------------------------------------------
 

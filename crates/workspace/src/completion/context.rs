@@ -62,6 +62,10 @@ pub enum ContextKind {
     /// far endpoints can stand here, again named by
     /// [`CompletionContext::allowed_tables`].
     GraphNode,
+    /// A `GROUP BY` key. Only something that can *label* a group belongs
+    /// here — a projected alias or a row field path — never an arbitrary
+    /// expression, which is what `W4013`/`E4025` already say.
+    GroupKey,
     /// A key inside a `CONTENT`/`MERGE` object literal.
     ObjectKey,
     /// A member after `.` on a receiver whose kind is known.
@@ -97,6 +101,9 @@ pub struct CompletionContext {
     /// names, and an *empty* `Some` means the position is a real table slot
     /// whose receiver could not be resolved — nothing honest to say.
     pub allowed_tables: Option<Vec<String>>,
+    /// The aliases the enclosing statement's projection binds (`… AS total`).
+    /// A `GROUP BY` may name one of these as well as a row field.
+    pub aliases: Vec<String>,
     /// The text already typed at the position (without a leading `$`).
     pub prefix: String,
     /// The byte range a completion item replaces.
@@ -119,6 +126,7 @@ impl CompletionContext {
             expected: None,
             receiver: None,
             allowed_tables: None,
+            aliases: Vec::new(),
             prefix: String::new(),
             replace: (offset, offset),
             exclude: BTreeSet::new(),
@@ -175,6 +183,7 @@ pub(crate) fn classify(
         expected: None,
         receiver: None,
         allowed_tables: None,
+        aliases: Vec::new(),
         prefix,
         replace,
         exclude: BTreeSet::new(),
@@ -183,18 +192,16 @@ pub(crate) fn classify(
 
     // Row tables: the innermost enclosing statement that names a target wins,
     // so a call argument inside a SELECT still sees the SELECT's table.
-    context.tables = frames
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(level, frame)| {
-            let nested = frames.len() - 1 - level;
-            let (head, head_index, end) = statement_shape(&tokens, source, frame, cut, nested);
-            head.and_then(|head| {
-                let tables = env.target_tables(head, head_index, end);
-                (!tables.is_empty()).then_some(tables)
-            })
-        })
+    let statement = frames.iter().enumerate().rev().find_map(|(level, frame)| {
+        let nested = frames.len() - 1 - level;
+        let (head, head_index, end) = statement_shape(&tokens, source, frame, cut, nested);
+        let head = head?;
+        let tables = env.target_tables(head, head_index, end);
+        (!tables.is_empty()).then_some((head_index, end, tables))
+    });
+    context.tables = statement
+        .as_ref()
+        .map(|(_, _, tables)| tables.clone())
         .unwrap_or_default();
 
     // --- 1. Member access and destructure: the most specific positions. ---
@@ -269,6 +276,12 @@ pub(crate) fn classify(
     // --- 6. Clause-driven classification. ---
     let frame = frames.last().copied().unwrap_or_default();
     context.kind = clause_position(&tokens, source, &frame, cut);
+    if context.kind == ContextKind::GroupKey {
+        if let Some((head_index, end, _)) = &statement {
+            context.aliases = projection_aliases(&tokens, source, *head_index, *end);
+        }
+        context.exclude = group_keys_written(&tokens, source, cut);
+    }
     if matches!(context.kind, ContextKind::Value | ContextKind::Unknown) {
         context.expected = env.operand_expectation(cut, &context.tables);
     }
@@ -303,6 +316,8 @@ fn clause_position(tokens: &[Token], source: &str, frame: &Frame, cut: usize) ->
             ),
             Some(Clause::Head),
         ) => ContextKind::TableName,
+        // Restricted name positions.
+        (_, Some(Clause::Group)) => ContextKind::GroupKey,
         // Field positions.
         (_, Some(Clause::Field)) => ContextKind::FieldName,
         (Some(Head::Select), Some(Clause::Head)) => ContextKind::FieldName,
@@ -543,12 +558,19 @@ fn statement_shape(
 
 /// The last clause keyword at depth 0 between the statement head and the
 /// cursor.
+///
+/// `BY` is transparent: it belongs to whichever of `GROUP`/`ORDER` opened the
+/// clause, and collapsing it into either would make the other one's position
+/// unreadable.
 fn last_clause(tokens: &[Token], source: &str, head_index: usize, cut: usize) -> Option<Clause> {
     let mut clause = None;
     for (_, token, depth) in scan(tokens, source, head_index, cut) {
         if token.kind == TokenKind::Ident && depth == 0 {
-            if let Some(found) = Clause::from_text(token.text(source)) {
-                clause = Some(found);
+            match Clause::from_text(token.text(source)) {
+                // `BY` continues the clause it belongs to.
+                Some(Clause::By) => {}
+                Some(found) => clause = Some(found),
+                None => {}
             }
         }
     }
@@ -649,6 +671,45 @@ fn far_side(relation: &crate::schema::RelationDef, dir: Dir) -> Standing {
     } else {
         Standing::Tables(tables)
     }
+}
+
+/// The aliases a projection binds: the depth-0 identifier after each `AS`.
+fn projection_aliases(tokens: &[Token], source: &str, head_index: usize, end: usize) -> Vec<String> {
+    let mut aliases = Vec::new();
+    for (index, token, depth) in scan(tokens, source, head_index, end) {
+        if token.kind == TokenKind::Ident
+            && depth == 0
+            && token.text(source).eq_ignore_ascii_case("AS")
+        {
+            if let Some(alias) = tokens.get(index + 1) {
+                if alias.kind == TokenKind::Ident {
+                    aliases.push(alias.text(source).to_string());
+                }
+            }
+        }
+    }
+    aliases
+}
+
+/// The group keys already written before the cursor, so a second `GROUP BY`
+/// entry does not re-offer the first.
+fn group_keys_written(tokens: &[Token], source: &str, cut: usize) -> BTreeSet<String> {
+    let mut start = None;
+    for (index, token, depth) in scan(tokens, source, 0, cut) {
+        if token.kind == TokenKind::Ident
+            && depth == 0
+            && token.text(source).eq_ignore_ascii_case("GROUP")
+        {
+            start = Some(index + 1);
+        }
+    }
+    let Some(start) = start else {
+        return BTreeSet::new();
+    };
+    depth_zero_idents(tokens, source, start, cut)
+        .into_iter()
+        .filter(|name| !name.eq_ignore_ascii_case("BY"))
+        .collect()
 }
 
 /// The index of the punctuation token `symbol` immediately before the cursor.
@@ -854,6 +915,11 @@ enum Clause {
     On,
     /// `ONLY` — still a table position.
     Only,
+    /// `GROUP` — a group key position.
+    Group,
+    /// `BY` — belongs to the `GROUP`/`ORDER` before it, and means nothing on
+    /// its own.
+    By,
     /// A clause whose operands are field names.
     Field,
     /// A clause whose operand is an arbitrary value.
@@ -870,8 +936,10 @@ impl Clause {
             "INTO" => Self::Into,
             "ON" => Self::On,
             "ONLY" => Self::Only,
-            "VALUE" | "OMIT" | "WHERE" | "SPLIT" | "GROUP" | "ORDER" | "BY" | "FETCH" | "SET"
-            | "UNSET" | "FIELDS" | "COLUMNS" | "WHEN" | "ASSERT" => Self::Field,
+            "GROUP" => Self::Group,
+            "BY" => Self::By,
+            "VALUE" | "OMIT" | "WHERE" | "SPLIT" | "ORDER" | "FETCH" | "SET" | "UNSET"
+            | "FIELDS" | "COLUMNS" | "WHEN" | "ASSERT" => Self::Field,
             "LIMIT" | "START" | "TIMEOUT" | "CONTENT" | "MERGE" | "PATCH" | "REPLACE"
             | "DEFAULT" | "THEN" | "ELSE" | "IN" => Self::Value,
             _ => return None,

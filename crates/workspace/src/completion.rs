@@ -158,6 +158,9 @@ pub fn complete_at(
     if families.namespaces > 0.0 {
         candidates.extend(namespace_candidates(families.namespaces));
     }
+    if families.aliases > 0.0 {
+        candidates.extend(alias_candidates(&context, families.aliases));
+    }
 
     rank(candidates, &context)
 }
@@ -178,6 +181,7 @@ struct Families {
     params: f32,
     functions: f32,
     namespaces: f32,
+    aliases: f32,
 }
 
 impl Families {
@@ -203,6 +207,13 @@ impl Families {
             // pinned by `allowed_tables`.
             ContextKind::EdgeTable | ContextKind::GraphNode => Families {
                 tables: 1.0,
+                ..Families::default()
+            },
+            // A group key labels a group, so only a projected alias or a row
+            // field can stand here.
+            ContextKind::GroupKey => Families {
+                fields: 1.0,
+                aliases: 1.0,
                 ..Families::default()
             },
             ContextKind::ObjectKey => Families {
@@ -411,6 +422,33 @@ fn table_candidates(
                     candidate_kind: Some(Kind::Record(vec![surrealdb_types::Table::from(
                         table.name.as_str(),
                     )])),
+                    score: 0.0,
+                    sort_text: String::new(),
+                    replace: (0, 0),
+                },
+                weight,
+            )
+        })
+        .collect()
+}
+
+/// The aliases the enclosing projection binds. A `GROUP BY` can name one of
+/// these, and `W4013` says a key that is *not* projected is a mistake — so
+/// they lead the group-key offer.
+fn alias_candidates(context: &CompletionContext, weight: f32) -> Vec<Draft> {
+    context
+        .aliases
+        .iter()
+        .filter(|alias| !context.exclude.contains(*alias))
+        .map(|alias| {
+            Draft::new(
+                CompletionCandidate {
+                    label: alias.clone(),
+                    insert_text: alias.clone(),
+                    kind: CandidateKind::Field,
+                    detail: None,
+                    documentation: Some("projection alias".to_string()),
+                    candidate_kind: None,
                     score: 0.0,
                     sort_text: String::new(),
                     replace: (0, 0),
