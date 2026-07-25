@@ -899,3 +899,35 @@ A schema-defined param is **indistinguishable from an unknown host param**, so e
 5. **Registry / long tail**: SX-4(b), SX-5, DX-10, DX-11, SX-7, GR-2 (after the GR-1 product decision), DX-12.
 
 ⚠️ **Two corpus hygiene items first.** `check --json` on `/Users/drewridley/Documents/Projects/workshop/database` currently reports **37 errors / 40 diagnostics**, rooted in an S0001 at `schema/organization/employee_of.surql:1` — the file's first line literally reads `is DEFINE TABLE OVERWRITE employee_of SCHEMAFULL` (stray leading `is `). The oracle appears to have been corrupted outside the analyzer. **Restore the zero-finding baseline before mining it further**, and separately decide whether the corpus's `surrealdb_version = "2"` pin (contradicted by its own 3.x-only function spellings) should become `"3"`.
+---
+
+## Addendum — gaps found while implementing the FP wave (2026-07-25)
+
+### NEW-1 — Array-form `INSERT` payloads are dropped by the lowerer, so they are entirely unchecked
+**Severity: high. Effort: small–medium.** Found by the DX-3 lane, independently verified.
+
+`INSERT INTO t [{ … }, { … }]` lowers to `InsertData::Values([])` — the lowerer discards
+array payloads, so the `Expr::Array` arm in `check_insert_payload` is unreachable dead code.
+Consequence: **no** payload checking at all for the array form — not required fields, not
+unknown field names, not value kinds.
+
+Repro (schema: `person` SCHEMAFULL with required `name: string`, `age: int`):
+```surql
+INSERT INTO person { name: 'a' };                      -- E2034 `age` must be set   (correct)
+INSERT INTO person [{ name: 'a' }];                    -- SILENT (should be E2034)
+INSERT INTO person [{ bogus_field: 1, another: 2 }];   -- SILENT (should flag both)
+```
+Observed: exactly one diagnostic across all three statements.
+
+Fix requires `crates/syntax/src/lower/statement.rs` (preserve the array payload in the lowered
+AST), then the existing `check_insert_payload` array arm becomes live. Note the backlog's
+DX-3 premise that "insert.rs already destructures that same array" is **wrong** — the
+destructuring exists but can never run.
+
+### NEW-2 — `SELECT -x FROM t` (prefix negation in a projection) is a syntax error
+**Severity: low. Effort: small (grammar).** `!x` parses in projection position but `-x` raises
+S0001. Grammar gap in the projection expression rule.
+
+### NEW-3 — `cargo fmt --check` is dirty at baseline
+~200 pre-existing formatting diffs across all crates. Worth a single formatting commit so
+future changes can be fmt-gated in CI.
