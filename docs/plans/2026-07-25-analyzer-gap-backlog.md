@@ -1023,6 +1023,41 @@ The contract-correct response is a dedicated error-severity code for "wildcard u
 just a better inferred type. That needs a new entry in `crates/diagnostics/src/catalog.rs` plus the
 catalog markdown, so the NEW-6 lane (scoped to `analyzer/data/`) deliberately left it.
 
+### NEW-9 — Unaliased projection keys for calls/methods don't match the engine
+**Severity: high (wrong key — consumers index `undefined`). Effort: small.**
+Verified against a live SurrealDB 3.0.5.
+
+`unaliased_computed_key` (`analyzer/data/select.rs`) special-cases bare `count()` and otherwise
+uses the **raw source text** of the expression. The engine names these projections differently:
+
+| expression | SurrealDB key | ours | ok |
+|---|---|---|---|
+| `string::len(name)` | `string::len` | `string::len(name)` | wrong |
+| `time::now()` | `time::now` | `time::now()` | wrong |
+| `fn::abc(age)` | `fn::abc` | `fn::abc(age)` | wrong |
+| `name.len()` | `name` | `name.len()` | wrong |
+| `count()` | `count` | `count` | ok |
+| `age + 1` | `age + 1` | `age + 1` | ok |
+| `math::abs(age) + 1` | `math::abs(age) + 1` | same | ok |
+| `age > 20` | `age > 20` | same | ok |
+
+**Rule the engine follows:** if the top-level expression *is* a function call, the key is the bare
+function name (no parens, no arguments). If it is an idiom ending in a method call, the key is the
+idiom with the method dropped (`name.len()` -> `name`). Otherwise the key is the source text.
+Note the rule is about the *top-level* node: `math::abs(age) + 1` is a binary expression, so it
+keeps its source text even though it contains a call.
+
+This is a *wrong key*, not a loose type — generated TS declares `"fn::abc(age)"` while the runtime
+returns `fn::abc`, so every consumer of an unaliased call projection reads `undefined`.
+
+### NEW-10 — `name.len()` (method on a string field) infers `unknown`
+**Severity: medium. Effort: small.** Found alongside NEW-9.
+
+`SELECT name.len() FROM person` types as `unknown`; the engine returns an int (verified: `1` for
+`name = 'A'`). The `string::len` *function* resolves correctly, so this is the method-dispatch path
+(`method_return_kind`) failing to map `.len()` on a `string` receiver. Worth auditing the whole
+method-dispatch table against the builtin registry, since one missing entry implies others.
+
 ## Status — FP wave complete (2026-07-25)
 
 Fixed and merged: **TI-1** (`??` NONE-strip), **TI-4** (literal-union writes, plus the exact-literal
