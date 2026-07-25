@@ -100,6 +100,7 @@ const ENTRIES: &[(u16, &str, Severity, LintLevel)] = &[
     ),
     (4024, "an IF branch is unreachable — its guard provably folds to a constant", Severity::Warning, Warn),
     (4025, "a wildcard projection cannot be aggregated by a GROUP clause", Severity::Error, Deny),
+    (4026, "a filtered ONLY has no provable single-row target", Severity::Warning, Warn),
     (5001, "a call resolves to a function that exists", Severity::Error, Deny),
     (5002, "a call matches the function's signature", Severity::Error, Deny),
     (5005, "a const argument satisfies the function's value contract", Severity::Error, Deny),

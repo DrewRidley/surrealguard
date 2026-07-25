@@ -173,6 +173,7 @@ contract violation.
 | 4023 | count() without GROUP BY yields 1 per row, not a total | add GROUP ALL for a total | W | ✅ |
 | 4024 | an IF branch is unreachable — its guard provably folds to a constant | `IF false { ... }`, the ELSE after `IF true { ... }` | W | ✅ constant-folded guard |
 | 4025 | a wildcard projection cannot be aggregated by a GROUP clause | `SELECT * FROM t GROUP BY k`, `SELECT * FROM t GROUP ALL`, `SELECT *, count() FROM t GROUP BY k` — 3.0.5 rejects all of them outright (`Incorrect selector for aggregate selection, expression \`*\` … cannot be aggregated in a group`); 2.x silently drops the `*`, so the query never returns what its author asked for under either engine | E | ✅ verified on a live 3.0.5 |
+| 4026 | a filtered ONLY has no provable single-row target | `SELECT * FROM ONLY t WHERE status = 'open'` — errors (`Expected a single result output when using the ONLY keyword`) the moment two rows match, but succeeds while one does; W, not E, because the filter may well be single-row for reasons the schema does not state. Silent when at most one row is provable: a record-id target, `WHERE id = …`, an equality covering every field of a `UNIQUE` index, or `LIMIT 1`. Sibling of 4003, which owns the *unfiltered* table-wide case | W | ✅ verified on a live 3.0.5 |
 
 Folded by the contract audit (2026-07-09): 4008, 4015 → 4007. Deleted:
 4014 — no statable contract (RETURN is legal at top level and in blocks).

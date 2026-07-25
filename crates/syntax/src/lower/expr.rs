@@ -171,6 +171,7 @@ impl Lowerer<'_> {
             (Some(table), Some(id)) => Expr::RecordId {
                 table: self.spanned(table, self.node_text(table).to_string()),
                 id: node_range(id),
+                range: id.kind() == "RecordIdRange",
             },
             _ => Expr::Partial(partial(node)),
         }

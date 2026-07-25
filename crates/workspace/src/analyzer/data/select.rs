@@ -46,6 +46,7 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     }
 
     check_where_clause(stmt, table, ctx);
+    check_only_filter_cardinality(stmt, from, table, ctx);
 
     // Row-context clauses reference fields by name; each position has its
     // own code so hosts can configure them independently.
@@ -544,6 +545,154 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
                 ));
             }
         }
+    }
+}
+
+/// 4026 — a **filtered** `FROM ONLY` whose target is not provably single-row.
+///
+/// Verified on a live 3.0.5: `SELECT * FROM ONLY t WHERE <2 matches>` fails
+/// with `Expected a single result output when using the ONLY keyword`, while
+/// the same query succeeds unchanged when the filter happens to match one row
+/// (and yields NONE when it matches none). The failure is therefore a property
+/// of the *data*, not of the query — hence a warning, not an error: a filter
+/// can be single-row for reasons the schema does not state (a convention, an
+/// application invariant), and rejecting those outright would fail working
+/// programs. What the finding reports is an *unproven* guarantee.
+///
+/// It stays silent wherever at most one row is provable — each case verified
+/// against 3.0.5:
+///
+/// * a record-id target (`FROM ONLY account:x WHERE …`) — one row by
+///   construction; a record-id *range* (`account:a..z`) is not,
+/// * `WHERE id = …` — `id` is the primary key,
+/// * an equality covering **every** field of a `UNIQUE` index (a partial
+///   cover does not: `UNIQUE (org, usr)` with only `org = 'o1'` still errors),
+/// * an explicit `LIMIT 1` (`LIMIT 2` still errors).
+///
+/// Only the `AND` conjunction contributes: `WHERE email = 'a' OR email = 'b'`
+/// on a `UNIQUE email` errors on two matches, so a disjunction proves nothing.
+///
+/// The *unfiltered* table-wide case belongs to 4003, which fires there instead.
+fn check_only_filter_cardinality(
+    stmt: &ast::SelectStmt,
+    from: &ast::Spanned<ast::Expr>,
+    table: &TableDef,
+    ctx: &mut AnalysisContext<'_>,
+) {
+    if !stmt.only {
+        return;
+    }
+    // 4003 owns the unfiltered target; this code is the filtered sibling.
+    let Some(cond) = &stmt.where_clause else {
+        return;
+    };
+    if only_filter_is_single_row(stmt, from, table, &cond.node) {
+        return;
+    }
+    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), cond.span);
+    ctx.emit(
+        surrealguard_diagnostics::catalog::finding(
+            span,
+            4026,
+            "this filter isn't provably single-row, so `ONLY` fails at runtime \
+             as soon as two rows match"
+                .to_string(),
+        )
+        .with_help(
+            "add `LIMIT 1`, filter on `id` or on every field of a UNIQUE index, \
+             or drop `ONLY` and take the first row",
+        ),
+    );
+}
+
+/// Whether a filtered `FROM ONLY` provably yields at most one row. See
+/// [`check_only_filter_cardinality`] for the case-by-case justification.
+fn only_filter_is_single_row(
+    stmt: &ast::SelectStmt,
+    from: &ast::Spanned<ast::Expr>,
+    table: &TableDef,
+    cond: &ast::Expr,
+) -> bool {
+    if literal_limit(stmt).is_some_and(|limit| limit <= 1) {
+        return true;
+    }
+    if matches!(&from.node, ast::Expr::RecordId { range: false, .. }) {
+        return true;
+    }
+    let mut pinned = Vec::new();
+    collect_equality_pinned_fields(cond, &mut pinned);
+    if pinned.iter().any(|path| path == "id") {
+        return true;
+    }
+    table.indexes.values().any(|index| {
+        index.kind == crate::schema::IndexKind::Unique && {
+            let covered = index.field_paths();
+            !covered.is_empty() && covered.iter().all(|path| pinned.contains(path))
+        }
+    })
+}
+
+/// The dotted row-field paths a `WHERE` clause pins with an equality that
+/// holds for *every* surviving row: the `AND` conjunction of `field = <expr>`
+/// leaves, in either operand order. The compared value's shape does not
+/// matter — a `UNIQUE` index bounds the match count whatever it is compared
+/// against — so a param or an idiom on the other side counts just as a
+/// literal does. `OR` contributes nothing.
+fn collect_equality_pinned_fields(cond: &ast::Expr, out: &mut Vec<String>) {
+    let ast::Expr::Binary { lhs, op, rhs } = cond else {
+        return;
+    };
+    match &op.node {
+        ast::BinaryOp::And => {
+            collect_equality_pinned_fields(&lhs.node, out);
+            collect_equality_pinned_fields(&rhs.node, out);
+        }
+        ast::BinaryOp::Eq => {
+            for (field, other) in [(&lhs.node, &rhs.node), (&rhs.node, &lhs.node)] {
+                let ast::Expr::Idiom(idiom) = field else {
+                    continue;
+                };
+                let Some(segments) = plain_field_segments(idiom) else {
+                    continue;
+                };
+                // Field-vs-field (`email = name`) pins nothing: the compared
+                // value varies per row, so a UNIQUE index on `email` bounds
+                // nothing. Only a row-independent right-hand side pins.
+                if is_row_independent(other) {
+                    out.push(segments.join("."));
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether an expression's value is the same for every row of the scanned
+/// table — it reads no bare row field. Only then does `field = <expr>` pin
+/// `field` to a single value across the whole scan (so that a `UNIQUE` index
+/// or the `id` key bounds the match count). Conservative in the direction of
+/// *suppressing* 4026: an unrecognized shape is treated as row-dependent.
+fn is_row_independent(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Literal(_) | ast::Expr::Param(_) | ast::Expr::RecordId { .. } => true,
+        ast::Expr::Cast { expr, .. } | ast::Expr::Prefix { expr, .. } => {
+            is_row_independent(&expr.node)
+        }
+        ast::Expr::Array(items) => items.iter().all(|item| is_row_independent(&item.node)),
+        ast::Expr::Object(entries) => entries
+            .iter()
+            .all(|(_, value)| is_row_independent(&value.node)),
+        ast::Expr::Call(call) => call.args.iter().all(|arg| is_row_independent(&arg.node)),
+        ast::Expr::Binary { lhs, rhs, .. } => {
+            is_row_independent(&lhs.node) && is_row_independent(&rhs.node)
+        }
+        // `$param.path` roots in a value, not in the row; a bare `field.path`
+        // roots in the row.
+        ast::Expr::Idiom(idiom) => match idiom.parts.first().map(|part| &part.node) {
+            Some(ast::IdiomPart::Start(start)) => is_row_independent(&start.node),
+            _ => false,
+        },
+        _ => false,
     }
 }
 
@@ -2474,9 +2623,13 @@ mod tests {
     }
 
     fn fires_4003(schema: &SchemaIndex, query: &str) -> bool {
+        fires(schema, query, 4003)
+    }
+
+    fn fires(schema: &SchemaIndex, query: &str, code: u16) -> bool {
         diagnostics_for(schema, query)
             .iter()
-            .any(|finding| finding.code().number() == 4003)
+            .any(|finding| finding.code().number() == code)
     }
 
     #[test]
@@ -2487,13 +2640,110 @@ mod tests {
 
         // Unfiltered `FROM ONLY <table>` has no cardinality guarantee: 4003.
         assert!(fires_4003(&schema, "SELECT * FROM ONLY person;"));
-        // A WHERE clause enforces single-row cardinality at runtime: no 4003.
+        // A WHERE clause makes it the *filtered* case, which 4026 owns.
         assert!(!fires_4003(
             &schema,
             "SELECT * FROM ONLY person WHERE name = 'A';"
         ));
         // LIMIT 1 still exempts it.
         assert!(!fires_4003(&schema, "SELECT * FROM ONLY person LIMIT 1;"));
+    }
+
+    /// A schema whose `person` table carries a single-field UNIQUE index, a
+    /// composite UNIQUE index and a plain (non-unique) index.
+    fn indexed_person_schema() -> SchemaIndex {
+        schema_from(
+            "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD name ON person TYPE string;\n\
+             DEFINE FIELD email ON person TYPE string;\n\
+             DEFINE FIELD org ON person TYPE string;\n\
+             DEFINE FIELD usr ON person TYPE string;\n\
+             DEFINE INDEX email_idx ON person FIELDS email UNIQUE;\n\
+             DEFINE INDEX org_usr ON person FIELDS org, usr UNIQUE;\n\
+             DEFINE INDEX name_idx ON person FIELDS name;",
+        )
+    }
+
+    #[test]
+    fn a_filtered_only_without_a_single_row_proof_is_flagged() {
+        let schema = indexed_person_schema();
+        // A plain (non-unique) field filter: two matching rows make the engine
+        // fail with `Expected a single result output when using the ONLY
+        // keyword` — verified on 3.0.5.
+        assert!(fires(
+            &schema,
+            "SELECT * FROM ONLY person WHERE name = 'A';",
+            4026
+        ));
+        // A non-unique index is no proof either.
+        assert!(fires(
+            &schema,
+            "SELECT * FROM ONLY person WHERE name != 'A';",
+            4026
+        ));
+        // Only part of a composite UNIQUE index: verified to still error.
+        assert!(fires(
+            &schema,
+            "SELECT * FROM ONLY person WHERE org = 'o1';",
+            4026
+        ));
+        // A disjunction of unique equalities: verified to still error.
+        assert!(fires(
+            &schema,
+            "SELECT * FROM ONLY person WHERE email = 'a' OR email = 'b';",
+            4026
+        ));
+        // `LIMIT 2` does not bound it to one: verified to still error.
+        assert!(fires(
+            &schema,
+            "SELECT * FROM ONLY person WHERE name = 'A' LIMIT 2;",
+            4026
+        ));
+        // Field-vs-field equality pins nothing — the compared value varies
+        // per row, so the UNIQUE index on `email` bounds nothing.
+        assert!(fires(
+            &schema,
+            "SELECT * FROM ONLY person WHERE email = name;",
+            4026
+        ));
+        // A record-id RANGE target is many records, not one.
+        assert!(fires(
+            &schema,
+            "SELECT * FROM ONLY person:a..z WHERE name = 'A';",
+            4026
+        ));
+    }
+
+    #[test]
+    fn every_provable_single_row_only_filter_stays_silent() {
+        let schema = indexed_person_schema();
+        for query in [
+            // A record-id target is one row by construction.
+            "SELECT * FROM ONLY person:one WHERE name = 'A';",
+            // `id` is the primary key.
+            "SELECT * FROM ONLY person WHERE id = person:one;",
+            "SELECT * FROM ONLY person WHERE id = $wanted;",
+            // A single-field UNIQUE index, fully covered by an equality.
+            "SELECT * FROM ONLY person WHERE email = 'a@x.com';",
+            "SELECT * FROM ONLY person WHERE email = $email AND name = 'A';",
+            // A composite UNIQUE index, every field covered.
+            "SELECT * FROM ONLY person WHERE org = 'o1' AND usr = 'u1';",
+            // An explicit LIMIT 1.
+            "SELECT * FROM ONLY person WHERE name = 'A' LIMIT 1;",
+        ] {
+            assert!(!fires(&schema, query, 4026), "4026 should be silent for `{query}`");
+        }
+    }
+
+    #[test]
+    fn a_non_only_filtered_select_is_never_flagged() {
+        // 4026 is about `ONLY` alone; a normal SELECT returns an array.
+        let schema = indexed_person_schema();
+        assert!(!fires(
+            &schema,
+            "SELECT * FROM person WHERE name = 'A';",
+            4026
+        ));
     }
 
     fn object_fields(kind: &Kind) -> &BTreeMap<String, Kind> {

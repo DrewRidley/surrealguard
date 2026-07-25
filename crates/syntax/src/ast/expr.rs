@@ -30,6 +30,10 @@ pub enum Expr {
         table: Spanned<String>,
         /// The id portion, kept as an opaque span.
         id: crate::span::ByteRange,
+        /// Whether the id portion is a *range* (`person:a..z`) rather than a
+        /// single id. A range denotes many records, so it carries none of the
+        /// single-row guarantee a plain record id does.
+        range: bool,
     },
     /// A binary operation: `a + b`, `a AND b`.
     Binary {

@@ -1547,10 +1547,31 @@ mod tests {
         assert!(matches!(stmt.projections[2], Projection::Wildcard(_)));
 
         assert_eq!(stmt.from.len(), 1);
-        let Expr::RecordId { table, .. } = &stmt.from[0].node else {
+        let Expr::RecordId { table, range, .. } = &stmt.from[0].node else {
             panic!("expected record id source, got {:?}", stmt.from[0].node);
         };
         assert_eq!(table.node, "person");
+        assert!(!range, "a plain record id is not a range");
+    }
+
+    #[test]
+    fn lowers_a_record_id_range_with_the_range_flag_set() {
+        // `person:a..z` denotes many records, so it carries none of a plain
+        // record id's single-row guarantee; the flag is what lets analysis
+        // tell them apart (the id itself stays an opaque span).
+        for query in [
+            "SELECT * FROM person:a..z;",
+            "SELECT * FROM person:a..;",
+            "SELECT * FROM person:..z;",
+        ] {
+            let parsed = parse(query);
+            let stmt = lower_select_stmt(&parsed);
+            let Expr::RecordId { table, range, .. } = &stmt.from[0].node else {
+                panic!("expected record id source for `{query}`, got {:?}", stmt.from[0].node);
+            };
+            assert_eq!(table.node, "person");
+            assert!(range, "`{query}` is a record-id range");
+        }
     }
 
     #[test]
