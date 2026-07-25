@@ -5,7 +5,6 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub mod rand;
 pub mod bool;
 pub mod duration;
 pub mod r#enum;
@@ -16,6 +15,11 @@ pub mod int;
 pub mod string;
 pub mod time;
 pub mod ulid;
+// The bare `rand()` builtin has no path segment after its family, so the
+// file mirroring it is `rand/rand.rs` — the naming rule every other leaf
+// follows, not an accidentally nested module.
+#[allow(clippy::module_inception)]
+pub mod rand;
 pub mod uuid;
 pub mod uuid_v4;
 pub mod uuid_v7;
