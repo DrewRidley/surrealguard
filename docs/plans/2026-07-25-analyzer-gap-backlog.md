@@ -1078,6 +1078,22 @@ offset*. Correct behaviour: the declared kind at and before the guard, the narro
 Note the same limitation likely affects inlay hints for later occurrences, and it is the reason a
 user reading types in the editor sees something different from what the analyzer actually believes.
 
+## Found by the quality harness on its first run (2026-07-25)
+
+Recorded as current behaviour in `precision.snap` / `any_baseline.txt` (the harness is
+additive-only), so each is a committed, failing-on-change record rather than a silent bug.
+
+| # | Bug | Severity |
+|---|---|---|
+| H-1 | **`record<T>` forward references report E1001** — `DEFINE FIELD b ON a TYPE record<bb>` before `DEFINE TABLE bb` errors; reversing the order is clean. The help says "no `DEFINE TABLE bb` exists **in the workspace**", but the check consults the incrementally-built schema, so the message contradicts the check. | high (FP on valid schemas) |
+| H-2 | **`COMPUTED <~edge` is `unknown` in the schema index when the edge is declared later**, and the schema disagrees with the query path (`organization.employees` is `unknown` in `SchemaIndex` but `array<record<employee_of>>` when projected). Same ordering cause as H-1; unavoidable for a true cycle. | medium |
+| H-3 | **`DEFINE PARAM` is ignored by param inference** — `$default_tier` records as `unknown [required]` despite `DEFINE PARAM $default_tier VALUE 'free'`. Two defects: kind not derived from `VALUE`, and `required` not cleared (its own doc says "true unless a `DEFINE PARAM` default covers it"). Makes a host adapter demand a param the database already supplies. | high |
+| H-4 | **`.map()` method dispatch missing** — `$rows.map(\|$o\| $o.name)` raises E5001 while `array::map(...)` type-checks. Error-severity FP that aborts `generate`. Extends NEW-10: the dispatch audit missed closure-taking methods. | high |
+| H-5 | **A `$param` in an object-literal position is not constrained by the target field**, then trips the write check: `CREATE t SET address = { line1: $line1, ... }` → false E2001. Top-level `SET field = $param` constrains correctly; the nested case does not. | high (FP) |
+| H-6 | **Inconsistent aggregate promotion** — `array::distinct(name)` under `GROUP BY` raises E5002 while `array::group(name)` in the identical position is accepted. One of the two is wrong. | medium |
+| H-7 | **`array::group` returns `any`** where `array<string>` is knowable. | low |
+| H-8 | **`contacts[*].email` types as `array<{ contacts: { email: array<string> } }>`** — an object wrapper under `contacts` rather than `contacts: array<string>`. Needs engine verification before fixing. | medium (unverified) |
+
 ## Status — FP wave complete (2026-07-25)
 
 Fixed and merged: **TI-1** (`??` NONE-strip), **TI-4** (literal-union writes, plus the exact-literal
