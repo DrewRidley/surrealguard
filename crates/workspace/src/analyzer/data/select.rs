@@ -2026,6 +2026,20 @@ pub(crate) fn kind_for_path(table: &TableDef, segments: &[String]) -> Option<Kin
         Some(kind) if crate::kinds::record_link_shape(&kind).is_some() => {
             Some(if rest.is_empty() { kind } else { Kind::Any })
         }
+        // A *refined* parent carries its subfields inside its own declared kind
+        // — a literal object, possibly under `option`/`array` wrappers — rather
+        // than as sibling fields, so the prefix scan above never sees them.
+        // Walk into the kind to resolve the remainder, which keeps
+        // `cfg.theme` a `string` when `cfg` is `option<object>` refined by a
+        // `DEFINE FIELD cfg.theme`. `subkind_at` returns `None` whenever the
+        // step isn't provable, so an unresolvable path still reports nothing.
+        Some(kind) if !rest.is_empty() => {
+            let steps: Vec<crate::schema::FieldStep> = rest
+                .iter()
+                .map(|name| crate::schema::FieldStep::Field(name.clone()))
+                .collect();
+            crate::kinds::subkind_at(&kind, &steps)
+        }
         _ => None,
     }
 }
@@ -3348,6 +3362,38 @@ mod tests {
             "valid paths through wrapped links must not emit 1002: {:?}",
             codes(&diagnostics)
         );
+    }
+
+    #[test]
+    fn a_path_into_a_refined_parent_resolves_through_its_declared_kind() {
+        // A descendant DEFINE FIELD refines the parent's kind in place rather
+        // than becoming a sibling field, so the prefix scan never sees it.
+        // Projecting into the parent must still resolve — and must carry the
+        // parent's optionality, since an absent `cfg` makes `cfg.theme` absent.
+        let schema = schema_from(
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD cfg ON t TYPE option<object>;\n\
+             DEFINE FIELD cfg.theme ON t TYPE string;",
+        );
+
+        let (kind, diagnostics) = analyze_diagnostics(&schema, "SELECT cfg.theme AS th FROM t;");
+        let fields = object_fields(array_element(&kind));
+        assert_eq!(
+            fields["th"],
+            Kind::Either(vec![Kind::None, Kind::String]),
+            "a path into a refined parent must resolve, keeping the parent's optionality"
+        );
+        assert!(
+            !codes(&diagnostics).contains(&1002),
+            "a declared subfield is not a missing field: {:?}",
+            codes(&diagnostics)
+        );
+
+        // Negative: an undeclared subfield stays unresolved rather than being
+        // invented from the refined object.
+        let (kind, _) = analyze_diagnostics(&schema, "SELECT cfg.nope AS n FROM t;");
+        let fields = object_fields(array_element(&kind));
+        assert_eq!(fields["n"], Kind::Any);
     }
 
     #[test]
