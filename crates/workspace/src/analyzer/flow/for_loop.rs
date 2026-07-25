@@ -26,10 +26,14 @@ pub(crate) fn analyze_for_loop(ctx: &mut AnalysisContext<'_>, stmt: &ast::ForStm
 /// loop/element env), no pass-through value (`NONE`), and never diverging.
 pub(crate) fn analyze_for_loop_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::ForStmt) -> Flow {
     let iterable = crate::analyzer::expression::expr_fact(ctx, &stmt.iterable);
-    let element_kind = match &iterable.kind {
-        Some(Kind::Array(element, _) | Kind::Set(element, _)) => Some((**element).clone()),
-        _ => None,
-    };
+    // The loop binding's kind, distributed over a union: an
+    // `option<array<T>>` is `Either([None, Array(T)])` and a flat
+    // `Array | Set` match sees only the `Either`, leaving the binding
+    // untyped — so nothing in the body gets checked against it.
+    let element_kind = iterable
+        .kind
+        .as_ref()
+        .and_then(crate::analyzer::expression::infer::collection_element_kind);
 
     // FOR's contract: the iterable is a collection (or a range, once those
     // are modeled). Definitely-scalar kinds are 2022.
@@ -145,5 +149,44 @@ mod tests {
 
         assert_eq!(kind, Kind::None);
         assert!(ctx.env().let_fact("item").is_none());
+    }
+
+    /// NEW-4: an `option<array<T>>` is `Either([None, Array(T)])`. A flat
+    /// `Array | Set` match left the loop binding untyped, so nothing in the
+    /// body was checked against it.
+    #[test]
+    fn a_union_wrapped_iterable_still_types_the_loop_binding() {
+        use crate::analysis::{analyze_workspace, Workspace};
+
+        let schema_text = "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD tags ON t TYPE option<array<string>>;\n\
+             DEFINE FIELD plain ON t TYPE array<string>;\n\
+             DEFINE FIELD label ON t TYPE option<string>;";
+
+        let bogus_method = |query: &str| {
+            let mut workspace = Workspace::default();
+            workspace.add_virtual_source("schema".into(), schema_text.into());
+            let source = workspace.add_virtual_source("query".into(), query.into());
+            let output = analyze_workspace(&workspace);
+            output.sources[&source]
+                .diagnostics
+                .iter()
+                .any(|finding| finding.code().number() == 5001)
+        };
+
+        // Control: a plain `array<string>` types the binding as `string`, so a
+        // bogus method on it is 5001.
+        assert!(bogus_method(
+            "FOR $x IN (SELECT VALUE plain FROM ONLY t LIMIT 1) { RETURN $x.not_a_real_method(); };"
+        ));
+        // The regression: the `option<array<string>>` form must type it too.
+        assert!(bogus_method(
+            "FOR $x IN (SELECT VALUE tags FROM ONLY t LIMIT 1) { RETURN $x.not_a_real_method(); };"
+        ));
+        // Negative: no arm of the iterable is a collection, so no element kind
+        // is invented and the body stays unchecked rather than guessed at.
+        assert!(!bogus_method(
+            "FOR $x IN (SELECT VALUE label FROM ONLY t LIMIT 1) { RETURN $x.not_a_real_method(); };"
+        ));
     }
 }
