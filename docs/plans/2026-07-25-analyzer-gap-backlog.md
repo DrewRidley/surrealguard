@@ -1090,9 +1090,17 @@ additive-only), so each is a committed, failing-on-change record rather than a s
 | H-3 | **`DEFINE PARAM` is ignored by param inference** — `$default_tier` records as `unknown [required]` despite `DEFINE PARAM $default_tier VALUE 'free'`. Two defects: kind not derived from `VALUE`, and `required` not cleared (its own doc says "true unless a `DEFINE PARAM` default covers it"). Makes a host adapter demand a param the database already supplies. | high |
 | H-4 | **`.map()` method dispatch missing** — `$rows.map(\|$o\| $o.name)` raises E5001 while `array::map(...)` type-checks. Error-severity FP that aborts `generate`. Extends NEW-10: the dispatch audit missed closure-taking methods. | high |
 | H-5 | **A `$param` in an object-literal position is not constrained by the target field**, then trips the write check: `CREATE t SET address = { line1: $line1, ... }` → false E2001. Top-level `SET field = $param` constrains correctly; the nested case does not. | high (FP) |
-| H-6 | **Inconsistent aggregate promotion** — `array::distinct(name)` under `GROUP BY` raises E5002 while `array::group(name)` in the identical position is accepted. One of the two is wrong. | medium |
-| H-7 | **`array::group` returns `any`** where `array<string>` is knowable. | low |
-| H-8 | **`contacts[*].email` types as `array<{ contacts: { email: array<string> } }>`** — an object wrapper under `contacts` rather than `contacts: array<string>`. Needs engine verification before fixing. | medium (unverified) |
+| H-6 | ~~**Inconsistent aggregate promotion**~~ — **FIXED.** The E5002 was the wrong one: 3.0.5 hands `array::distinct`/`array::group` the *collected* column, like `math::sum`. Both (plus `time::min`/`time::max`) joined the promoted set. | medium |
+| H-7 | ~~**`array::group` returns `any`**~~ — **FIXED** by H-6: with the column promoted, the existing analyzer derives `array<string>`. | low |
+| H-8 | ~~**`contacts[*].email` shape**~~ — **NOT A BUG, verified.** 3.0.5 returns `{"contacts": {"email": ["e1","e2"]}}`; `contacts[WHERE …].label` likewise. Our `array<{ contacts: { email: array<string> } }>` is the engine's own shape. No change. | closed |
+| NEW-11 | ~~**Hover ignores flow narrowing**~~ — **FIXED.** `AnalysisOutput.narrowings` records (path, region, narrowed kind) during the walk; hover resolves by the innermost region covering the cursor. Same data serves inlay hints; cache-only, no re-analysis. | medium |
+
+**Open, found while verifying H-6:** aggregate promotion is **not gated on a `GROUP` clause**, but the
+engine's is. `SELECT VALUE math::sum(size_bytes) FROM file WHERE …` (no `GROUP`) errors on 3.0.5
+(`Expected array<number> but found 2`) and we accept it — a missed error, not a false positive.
+Gating is a one-line change but **raises the workshop oracle by 2**: `schema/suite/drive/@functions.surql`
+lines 111 and 114 are exactly that shape, and pass today only because they match zero rows. Needs a
+product call (fix the corpus, or accept +2) before the gate lands.
 
 ## Status — FP wave complete (2026-07-25)
 
