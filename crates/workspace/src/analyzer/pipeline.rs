@@ -81,6 +81,40 @@ pub(crate) fn analyze_sources_with(
         }
     }
 
+    // PRE-PASS 1b — global function return types. `apply_additive_define`
+    // (above) built each function's body against an empty catalog, so a body
+    // reading a *table* degraded to `Any`. A function's inferred return is
+    // GLOBAL — independent of which source is being analyzed — so compute it
+    // ONCE against the full catalog and reuse it in every source's working
+    // catalog below. This is O(functions) inference, not O(sources × functions)
+    // (an earlier per-source re-inference made large workspaces crawl). Results
+    // are applied back to `global_defined` in source order so a function that
+    // calls an earlier-defined untyped helper resolves through it.
+    let mut global_fn_returns: BTreeMap<String, surrealdb_types::Kind> = BTreeMap::new();
+    for (parsed, statements) in &sources {
+        for stmt in statements {
+            let ast::Statement::Define(ast::DefineStmt::Function(def)) = &stmt.node else {
+                continue;
+            };
+            match global_defined.function(&def.name.node) {
+                Some(function)
+                    if function.return_kind.is_none() && function.inferred_return.is_none() => {}
+                _ => continue,
+            }
+            if let Some(kind) = crate::schema::infer_untyped_return(
+                def,
+                parsed.source_id(),
+                parsed.text(),
+                Some(&global_defined),
+            ) {
+                if let Some(function) = global_defined.functions.get_mut(&def.name.node) {
+                    function.inferred_return = Some(kind.clone());
+                }
+                global_fn_returns.insert(def.name.node.clone(), kind);
+            }
+        }
+    }
+
     // PRE-PASS 2 — implicit schemaless tables. Writing to (CREATE/UPSERT/
     // INSERT/DELETE) or hanging DDL (`DEFINE FIELD/EVENT/INDEX ... ON`) on a
     // never-`DEFINE`d table is valid SurrealQL: the table is created on
@@ -145,40 +179,15 @@ pub(crate) fn analyze_sources_with(
             }
         }
 
-        // Cross-source function returns: `apply_additive_define` (and the hoist
-        // above) imported functions with their bodies inferred against an empty
-        // catalog, so a body reading a *table* degraded to `Any`. Now that
-        // `working` holds every other source's tables, re-infer each still-
-        // untyped function's return against it so a caller in this source
-        // resolves the real type instead of `Any`. Compute-then-apply because
-        // `infer_untyped_return` borrows `working` immutably; only functions
-        // with neither a declared nor an already-inferred return are touched,
-        // and a body that stays `Any` is left as-is (no false precision).
-        let mut reinferred: Vec<(String, surrealdb_types::Kind)> = Vec::new();
-        for (other, other_statements) in &sources {
-            for stmt in other_statements {
-                let ast::Statement::Define(ast::DefineStmt::Function(def)) = &stmt.node else {
-                    continue;
-                };
-                match working.function(&def.name.node) {
-                    Some(function)
-                        if function.return_kind.is_none()
-                            && function.inferred_return.is_none() => {}
-                    _ => continue,
+        // Reuse the globally-computed function returns (PRE-PASS 1b): a caller in
+        // this source resolves a table-bearing UDF's return type without any
+        // per-source re-inference. Cheap map application — the expensive body
+        // analysis ran once, above.
+        for (name, kind) in &global_fn_returns {
+            if let Some(function) = working.functions.get_mut(name) {
+                if function.return_kind.is_none() {
+                    function.inferred_return = Some(kind.clone());
                 }
-                if let Some(kind) = crate::schema::infer_untyped_return(
-                    def,
-                    other.source_id(),
-                    other.text(),
-                    Some(&working),
-                ) {
-                    reinferred.push((def.name.node.clone(), kind));
-                }
-            }
-        }
-        for (name, kind) in reinferred {
-            if let Some(function) = working.functions.get_mut(&name) {
-                function.inferred_return = Some(kind);
             }
         }
 
