@@ -462,6 +462,41 @@ fn an_unresolvable_receiver_offers_nothing_rather_than_every_edge() {
     assert!(broken.complete().is_empty(), "{:?}", broken.labels());
 }
 
+#[test]
+fn a_step_filter_does_not_break_the_chain_that_follows_it() {
+    let fixture = graph("SELECT ->has_email[WHERE verified = true]->▏ FROM account");
+    assert_eq!(fixture.context().kind, ContextKind::GraphNode);
+    assert_offers(&fixture, &["email_address"]);
+}
+
+// ---------------------------------------------------------------------------
+// A graph step's own filter runs on the step's table
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_graph_step_filter_completes_the_edges_fields_not_the_outer_rows() {
+    for query in [
+        "SELECT ->has_email[WHERE ▏]->email_address FROM account",
+        "SELECT ->has_email[? ▏]->email_address FROM account",
+        "SELECT ->(has_email WHERE ▏)->email_address FROM account",
+    ] {
+        let fixture = graph(query);
+        assert_eq!(fixture.context().tables, vec!["has_email".to_string()], "{query}");
+        let fields = fixture.labels_of(CandidateKind::Field);
+        for expected in ["verified", "in", "out", "id"] {
+            assert!(fields.contains(&expected.to_string()), "{query}: {fields:?}");
+        }
+        // The outer row's own fields belong to `account`, not to the edge.
+        assert!(!fields.contains(&"owner".to_string()), "{query}: {fields:?}");
+    }
+}
+
+#[test]
+fn a_graph_step_filters_right_hand_side_is_typed_by_the_edges_field() {
+    let fixture = graph("SELECT ->has_email[WHERE verified = ▏]->email_address FROM account");
+    assert_eq!(fixture.context().expected, Some(Kind::Bool));
+}
+
 // ---------------------------------------------------------------------------
 // GROUP BY
 // ---------------------------------------------------------------------------

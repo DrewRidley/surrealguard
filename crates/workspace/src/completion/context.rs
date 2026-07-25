@@ -204,6 +204,15 @@ pub(crate) fn classify(
         .map(|(_, _, tables)| tables.clone())
         .unwrap_or_default();
 
+    // A graph step's own filter — `->likes[WHERE ▏]`, `->likes[? ▏]`,
+    // `->(likes WHERE ▏)` — runs with the *step's* table as its row, not the
+    // statement's. Rebasing here is what makes every clause rule below read
+    // the edge's fields instead of the outer row's.
+    let graph_filter = graph_filter_table(&tokens, source, frames.last(), schema);
+    if let Some(table) = &graph_filter {
+        context.tables = vec![table.clone()];
+    }
+
     // --- 1. Member access and destructure: the most specific positions. ---
     if let Some(dot) = preceding_punct(&tokens, source, cut, ".") {
         if let Some(kind) = env.receiver_kind(dot, &context.tables) {
@@ -276,6 +285,11 @@ pub(crate) fn classify(
     // --- 6. Clause-driven classification. ---
     let frame = frames.last().copied().unwrap_or_default();
     context.kind = clause_position(&tokens, source, &frame, cut);
+    // A step filter has no clause keyword in the `[? ▏]` form, but the
+    // position is still one of the step table's fields.
+    if graph_filter.is_some() && context.kind == ContextKind::Unknown {
+        context.kind = ContextKind::FieldName;
+    }
     if context.kind == ContextKind::GroupKey {
         if let Some((head_index, end, _)) = &statement {
             context.aliases = projection_aliases(&tokens, source, *head_index, *end);
@@ -671,6 +685,38 @@ fn far_side(relation: &crate::schema::RelationDef, dir: Dir) -> Standing {
     } else {
         Standing::Tables(tables)
     }
+}
+
+/// The table a graph step's own filter runs against — `->likes[WHERE ▏]`,
+/// `->likes[? ▏]`, and the inline `->(likes WHERE ▏)` form all filter the
+/// step's table, which SurrealDB confirms: filtering `->has_email` on a
+/// field of the *node* table matches nothing.
+fn graph_filter_table(
+    tokens: &[Token],
+    source: &str,
+    frame: Option<&Frame>,
+    schema: &SchemaIndex,
+) -> Option<String> {
+    let frame = frame?;
+    let open = frame.open?;
+    let name = match frame.delimiter {
+        // `->likes[…]`: the step name sits just before the bracket.
+        b'[' => {
+            let name_at = open.checked_sub(1)?;
+            let arrow_at = name_at.checked_sub(1)?;
+            arrow_dir(token_text(tokens, source, arrow_at)?)?;
+            let token = tokens.get(name_at)?;
+            (token.kind == TokenKind::Ident).then(|| token.text(source))?
+        }
+        // `->(likes WHERE …)`: the step name is the first token inside.
+        b'(' => {
+            arrow_dir(token_text(tokens, source, open.checked_sub(1)?)?)?;
+            let token = tokens.get(open + 1)?;
+            (token.kind == TokenKind::Ident).then(|| token.text(source))?
+        }
+        _ => return None,
+    };
+    schema.table(name).map(|table| table.name.clone())
 }
 
 /// The aliases a projection binds: the depth-0 identifier after each `AS`.
