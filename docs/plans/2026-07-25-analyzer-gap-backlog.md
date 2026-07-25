@@ -931,3 +931,50 @@ S0001. Grammar gap in the projection expression rule.
 ### NEW-3 — `cargo fmt --check` is dirty at baseline
 ~200 pre-existing formatting diffs across all crates. Worth a single formatting commit so
 future changes can be fmt-gated in CI.
+
+### NEW-4 — `FOR` over an `option<array<T>>`/`Either` iterable leaves the loop variable untyped
+**Severity: medium. Effort: small.** Surfaced by the TI-5 lane, verified independently.
+
+`analyzer/flow/for_loop.rs` computes the element kind with a *flat* match:
+```rust
+Some(Kind::Array(element, _) | Kind::Set(element, _)) => Some((**element).clone()),
+_ => None,
+```
+An `option<array<string>>` is `Either([None, Array(String)])`, matches neither arm, and the
+loop variable falls back to untyped — so nothing inside the body is checked against it.
+
+Repro (schema: `tags` is `option<array<string>>`):
+```surql
+LET $c = ['a','b'];                       FOR $t IN $c { RETURN $t.not_a_real_method(); };  -- E5001 (correct)
+FOR $t IN (SELECT VALUE tags FROM ONLY t LIMIT 1) { RETURN $t.not_a_real_method(); };       -- SILENT
+```
+Observed: the plain-array control errors; the `option<array>` form produces nothing.
+
+Fix: migrate this site onto the `collection_element_kind` helper added in `expression/infer.rs`
+by the TI-5 fix, which already unions the element kind across every collection arm.
+
+### NEW-5 — Subscript element kind on a mixed union takes only the first arm
+**Severity: low–medium. Effort: small.** Source-verified (`crates/workspace/src/query.rs`).
+
+`element_kind` resolves an `Either` with `.find_map(element_kind)` — first arm that has an
+element kind wins, so `array<int> | array<string>` subscripts to `int` and silently drops
+`string`. This is the LSP-facing path (hover/subscript), so it reports a confidently *wrong*
+type rather than a loose one.
+
+Fix: same migration as NEW-4 — union across arms instead of `find_map`.
+
+---
+
+## Status — FP wave complete (2026-07-25)
+
+Fixed and merged: **TI-1** (`??` NONE-strip), **TI-4** (literal-union writes, plus the exact-literal
+check restored at the write site), **TI-5** (`Either` over index/method), **SX-4** (~60 builtins),
+**DX-1** (GROUP/ORDER alias), **DX-2** (aggregate promotion), **DX-3** (opaque `CONTENT` payload),
+and two CLI integrity bugs (`check` now scans host files; `--json` keeps warnings on a clean run).
+
+Measured on the audit's own repros: valid input went **12 error-severity false positives → 0**,
+while every genuinely-invalid case still reports. Oracle unchanged at 40; 779 tests.
+
+Still open and highest-value: **TG-1** (implicit `id`/`in`/`out`), **TI-2** (`option`/`array`
+record-link traversal), **SX-1** (descendant field defs clobbering the parent kind) — the
+"row shape" cluster, which rewrites type expectations broadly and should be done serially.
