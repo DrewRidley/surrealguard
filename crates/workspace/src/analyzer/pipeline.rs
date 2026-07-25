@@ -169,7 +169,14 @@ fn build_global_catalog_from_lowered(sources: &[LoweredSource<'_>]) -> GlobalCat
                 .get(&table)
                 .and_then(|t| t.fields.get(&field_key))
             {
-                Some(field) if field.kind.is_none() => {}
+                // Re-infer when the field has no kind yet, OR when PRE-PASS 1's
+                // empty-catalog inference left an unresolved `Any` in it. A
+                // `COMPUTED`/`VALUE` reading `$this.<sibling>` (or a table, or a
+                // `fn::` helper) degrades to `Any` without the catalog, but the
+                // `ELSE`/fall-through arm can still yield a concrete kind — so the
+                // field lands as `Any | T`, non-`None`, and would otherwise be
+                // skipped here. The full catalog is now built, so resolve it.
+                Some(field) if field.kind.as_ref().map_or(true, crate::schema::kind_contains_any) => {}
                 _ => continue,
             }
             if let Some(kind) = crate::schema::infer_field_value_kind(

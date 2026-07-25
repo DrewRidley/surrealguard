@@ -511,11 +511,14 @@ pub(crate) fn apply_schema_statement_effects(
             ast::DefineStmt::Field(def) => {
                 let mut field = field_def_from_ast(def, source, text);
                 // The accumulated catalog is now visible: an untyped field whose
-                // VALUE/COMPUTED reads tables or `fn::` helpers resolves against
-                // it (the standalone build above only sees pure scalars). Only
-                // upgrade to a proven kind — never overwrite an already-resolved
-                // kind or downgrade to `Any`.
-                if field.kind.is_none() {
+                // VALUE/COMPUTED reads tables, sibling `$this.<field>`s, or `fn::`
+                // helpers resolves against it (the standalone build above only sees
+                // pure scalars, so such a clause degrades to `Any` — or, when only
+                // one arm needs the catalog, to `Any | T`). Re-infer whenever the
+                // standalone kind is absent OR still carries an unresolved `Any`.
+                // `infer_field_value_kind` returns `None` for a pure-`Any` result,
+                // so this only ever upgrades to a proven kind — never downgrades.
+                if field.kind.as_ref().map_or(true, kind_contains_any) {
                     if let Some(kind) = infer_field_value_kind(def, source, text, Some(&*schema)) {
                         field.kind = Some(kind);
                         field.partial.clear();
@@ -912,6 +915,20 @@ pub(crate) fn infer_field_value_kind(
     match inferred {
         Some(Kind::Any) | None => None,
         Some(kind) => Some(kind),
+    }
+}
+
+/// Whether a kind still carries an unresolved `Any` anywhere in its structure.
+/// This is the signal that an empty-catalog inference of a value-typed field
+/// could not fully resolve its expression (a `$this.<field>` read, a table, or a
+/// `fn::` helper), so a schema-aware pass should re-infer it once the full
+/// catalog exists. Shared by PRE-PASS 1c and the per-source schema walk.
+pub(crate) fn kind_contains_any(kind: &Kind) -> bool {
+    match kind {
+        Kind::Any => true,
+        Kind::Array(inner, _) | Kind::Set(inner, _) => kind_contains_any(inner),
+        Kind::Either(variants) => variants.iter().any(kind_contains_any),
+        _ => false,
     }
 }
 
