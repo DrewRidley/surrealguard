@@ -83,9 +83,12 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
 
     if stmt.only {
         // NOTE: `FROM ONLY` is really `option<row>` (NONE when nothing matches).
-        // Modeling that is deferred: it cascades into AND-guard narrowing that
-        // must reach function-call arguments (`IF $x != NONE AND f($x)`), which
-        // is follow-up work. Kept as a bare row for now to hold the oracle clean.
+        // Deferred: the AND-operand occurrence typing now covers `IF $x != NONE
+        // AND f($x)`, but a fall-through guard (`IF $x = NONE THEN CONTINUE`)
+        // narrowing an `option` result still doesn't reach a *function arg
+        // inside a later SELECT's WHERE clause* — modeling ONLY as option
+        // surfaces one such false E5002. Kept as a bare row until that
+        // narrowing-coverage (fall-through → SELECT-WHERE call args) lands.
         row_kind
     } else {
         Kind::Array(Box::new(row_kind), literal_limit(stmt))
