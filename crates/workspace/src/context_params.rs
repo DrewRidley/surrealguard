@@ -159,17 +159,65 @@ fn session_map() -> BTreeMap<String, Kind> {
 }
 
 /// Session/access params available in every schema-time context: `$auth` is
-/// the authenticated record, `$token`/`$session` are objects, and
-/// `$access`/`$scope` name the access method.
+/// the authenticated record, `$session` is the connection's session object
+/// with a fixed set of known keys, `$token` is the decoded JWT claims (an
+/// open object), and `$access`/`$scope` name the access method.
 fn insert_session_params(map: &mut BTreeMap<String, Kind>) {
     // `$auth` is a record; the concrete table depends on the access method,
     // which is unmodeled, so it stays a bare `record`.
     map.insert("auth".to_string(), Kind::Record(Vec::new()));
+    // `$token` is the decoded JWT claims and carries *arbitrary* custom claims
+    // alongside the standard registered ones, so it must stay an open object —
+    // a closed shape would flag a valid custom-claim access. See `session_kind`.
     map.insert("token".to_string(), Kind::Object);
-    map.insert("session".to_string(), Kind::Object);
+    map.insert("session".to_string(), session_kind());
     map.insert("access".to_string(), Kind::String);
     // `$scope` is the pre-2.0 spelling of `$access`; still accepted.
     map.insert("scope".to_string(), Kind::String);
+}
+
+/// The `$session` object's kind: a closed literal object over the fixed keys
+/// SurrealDB populates on the connection session.
+///
+/// Key names and kinds are taken from the authoritative surface — the
+/// `session::*` builtins, each of which is literally `$session.pick(KEY)`
+/// (`surrealdb-core/src/fnc/session.rs`), and the object SurrealDB assembles in
+/// `surrealdb-core/src/dbs/session.rs::values()`:
+///
+/// | builtin            | key  | kind    |
+/// |--------------------|------|---------|
+/// | `session::ac()`    | `ac` | string  |
+/// | `session::db()`    | `db` | string  |
+/// | `session::id()`    | `id` | string  |
+/// | `session::ip()`    | `ip` | string  |
+/// | `session::ns()`    | `ns` | string  |
+/// | `session::origin()`| `or` | string  |
+/// | `session::rd()`    | `rd` | record  |
+/// | `session::token()` | `tk` | object  |
+///
+/// `rd` is the authenticated record (same value as `$auth`), so it mirrors
+/// `$auth`'s bare open `record`. `tk` is the token/claims value and therefore
+/// stays an open `object` for the same reason `$token` does.
+///
+/// Modeled as a *closed* `Literal(Object(..))` only because unknown-field access
+/// on such a kind is lenient — the field-stepper returns `None` and the caller
+/// degrades to unresolved without emitting a finding — so an access to a key not
+/// listed here (or a deeper path) stays silent. Known keys type precisely;
+/// nothing false-flags. This is purely additive typing.
+fn session_kind() -> Kind {
+    let mut fields = BTreeMap::new();
+    fields.insert("ac".to_string(), Kind::String);
+    fields.insert("db".to_string(), Kind::String);
+    fields.insert("id".to_string(), Kind::String);
+    fields.insert("ip".to_string(), Kind::String);
+    fields.insert("ns".to_string(), Kind::String);
+    // `or` is the origin key (`session::origin()` picks `OR`).
+    fields.insert("or".to_string(), Kind::String);
+    // `rd` is the authenticated record, mirroring `$auth`.
+    fields.insert("rd".to_string(), Kind::Record(Vec::new()));
+    // `tk` is the token/claims value — an open object, like `$token`.
+    fields.insert("tk".to_string(), Kind::Object);
+    Kind::Literal(KindLiteral::Object(fields))
 }
 
 /// Whether the byte range covers `offset` (inclusive of both endpoints, so a
@@ -216,4 +264,128 @@ pub fn param_token_at(text: &str, offset: u32) -> Option<(String, ByteRange)> {
 
 fn is_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::{analyze_query, Workspace};
+
+    fn codes(query: &str) -> Vec<String> {
+        let mut workspace = Workspace::default();
+        analyze_query(&mut workspace, query)
+            .diagnostics
+            .iter()
+            .map(|finding| finding.code().to_string())
+            .collect()
+    }
+
+    /// The known fields of the `$session` object kind, or `None` if it is not
+    /// modeled as a closed literal object.
+    fn session_fields() -> BTreeMap<String, Kind> {
+        let mut map = BTreeMap::new();
+        insert_session_params(&mut map);
+        match map.get("session") {
+            Some(Kind::Literal(KindLiteral::Object(fields))) => fields.clone(),
+            other => panic!("`$session` is not a closed literal object: {other:?}"),
+        }
+    }
+
+    // ---- Field composition (STEP 1) ----
+
+    #[test]
+    fn session_rd_types_as_the_auth_record() {
+        // `$session.rd` is the authenticated record — mirrors `$auth`.
+        assert_eq!(session_fields().get("rd"), Some(&Kind::Record(Vec::new())));
+    }
+
+    #[test]
+    fn session_ip_types_as_string() {
+        assert_eq!(session_fields().get("ip"), Some(&Kind::String));
+    }
+
+    #[test]
+    fn session_string_keys_all_present() {
+        let fields = session_fields();
+        for key in ["ac", "db", "id", "ip", "ns", "or"] {
+            assert_eq!(
+                fields.get(key),
+                Some(&Kind::String),
+                "key `{key}` should be string"
+            );
+        }
+    }
+
+    #[test]
+    fn session_token_key_stays_open_object() {
+        // `$session.tk` is the token/claims value — never a closed shape.
+        assert_eq!(session_fields().get("tk"), Some(&Kind::Object));
+    }
+
+    #[test]
+    fn session_has_no_unconfirmed_keys() {
+        // Exactly the eight evidence-backed keys; nothing speculative.
+        let keys: Vec<String> = session_fields().keys().cloned().collect();
+        assert_eq!(keys, ["ac", "db", "id", "ip", "ns", "or", "rd", "tk"]);
+    }
+
+    #[test]
+    fn auth_stays_bare_record_and_token_stays_open_object() {
+        let mut map = BTreeMap::new();
+        insert_session_params(&mut map);
+        assert_eq!(map.get("auth"), Some(&Kind::Record(Vec::new())));
+        // `$token` (top-level) is arbitrary JWT claims — must stay open.
+        assert_eq!(map.get("token"), Some(&Kind::Object));
+        assert_eq!(map.get("access"), Some(&Kind::String));
+        assert_eq!(map.get("scope"), Some(&Kind::String));
+    }
+
+    // ---- STEP 2 leniency gate: the regression guard ----
+
+    /// Accessing an UNKNOWN field on a closed `Literal(Object(..))` param must
+    /// not emit any finding. This is the property that makes modeling `$session`
+    /// as a closed object safe.
+    #[test]
+    fn gate_unknown_field_on_closed_object_is_lenient() {
+        // `LET $p = { a: 'x' }` types `$p` as Literal(Object({a: string})).
+        let unknown = "LET $p = { a: 'x' }; RETURN $p.zzz;";
+        assert!(
+            codes(unknown).is_empty(),
+            "unknown field access fired: {:?}",
+            codes(unknown)
+        );
+    }
+
+    // ---- Soundness: no valid session/token access starts erroring ----
+
+    #[test]
+    fn unknown_session_field_access_emits_no_finding() {
+        // An unknown `$session` key in a PERMISSIONS predicate stays silent.
+        let query = concat!(
+            "DEFINE TABLE post SCHEMAFULL ",
+            "PERMISSIONS FOR select WHERE $session.zzz = 'x';\n",
+        );
+        let fired = codes(query);
+        assert!(fired.is_empty(), "unexpected findings: {fired:?}");
+    }
+
+    #[test]
+    fn known_session_field_access_emits_no_finding() {
+        let query = concat!(
+            "DEFINE TABLE post SCHEMAFULL ",
+            "PERMISSIONS FOR select WHERE $session.rd = $auth;\n",
+        );
+        let fired = codes(query);
+        assert!(fired.is_empty(), "unexpected findings: {fired:?}");
+    }
+
+    #[test]
+    fn token_custom_claim_access_emits_no_finding() {
+        let query = concat!(
+            "DEFINE TABLE post SCHEMAFULL ",
+            "PERMISSIONS FOR select WHERE $token.some_custom_claim = 'x';\n",
+        );
+        let fired = codes(query);
+        assert!(fired.is_empty(), "unexpected findings: {fired:?}");
+    }
 }
