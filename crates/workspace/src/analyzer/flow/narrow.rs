@@ -48,6 +48,10 @@ pub(crate) enum Narrowing {
     Table(String),
     /// The param's record excludes a table.
     NotTable(String),
+    /// The value is a member of a collection, so it has that collection's
+    /// element kind (occurrence typing over `x IN <collection>`). The value is
+    /// tightened to this kind on the positive branch only.
+    Is(Kind),
 }
 
 /// The target of a narrowing: a bare param (`$x`) or a param plus a short
@@ -359,6 +363,7 @@ fn effects(cond: &ast::Expr, positive: bool, env: &StatementEnv) -> Vec<Effect> 
                 }
             }
             op => leaf_effect(&lhs.node, op, &rhs.node, positive, env)
+                .or_else(|| in_effect(&lhs.node, op, &rhs.node, positive, env))
                 .into_iter()
                 .collect(),
         },
@@ -438,6 +443,62 @@ fn leaf_effect(
         }
     }
     None
+}
+
+/// The refinement a `subject IN <collection>` membership guard proves:
+/// `subject` is a member of the collection, so on the **positive branch** it
+/// has the collection's element kind (occurrence typing). The negative branch
+/// narrows nothing — "not in" tells you nothing about the value's kind, so it
+/// is positive-only like [`is_record_effect`].
+///
+/// `subject` is a bare param (`$x`) or a simple field path (`$a.b`), reusing
+/// [`guard_path_of`]. The collection's element kind must be determinable and
+/// concrete — an undeterminable collection or an `Any` element (a bare
+/// `array`/`set`) yields no effect, so narrowing never rests on uncertainty.
+fn in_effect(
+    lhs: &ast::Expr,
+    op: &ast::BinaryOp,
+    rhs: &ast::Expr,
+    positive: bool,
+    env: &StatementEnv,
+) -> Option<Effect> {
+    if !positive {
+        return None;
+    }
+    // `IN` (any case) is the only membership operator that narrows the element:
+    // `CONTAINS` puts the collection on the left, and `INSIDE` is an alias whose
+    // element-narrowing is not needed here.
+    let ast::BinaryOp::Other(name) = op else {
+        return None;
+    };
+    if !name.eq_ignore_ascii_case("IN") {
+        return None;
+    }
+    let path = guard_path_of(lhs)?;
+    let element = collection_element_kind(rhs, env)?;
+    // Never narrow on an undeterminable element.
+    if matches!(element, Kind::Any) {
+        return None;
+    }
+    Some(Effect {
+        path,
+        narrowing: Narrowing::Is(element),
+    })
+}
+
+/// The element kind of a collection expression, resolved through `env`: a bound
+/// param that holds an `array<E>`/`set<E>`. Only env-resolvable collections
+/// narrow here — this recognizer runs without a schema, so a field-path
+/// collection (which would need schema stepping) is deliberately left alone.
+fn collection_element_kind(expr: &ast::Expr, env: &StatementEnv) -> Option<Kind> {
+    let kind = match expr {
+        ast::Expr::Param(name) => env.let_fact(name)?.kind.clone()?,
+        _ => return None,
+    };
+    match kind {
+        Kind::Array(element, _) | Kind::Set(element, _) => Some(*element),
+        _ => None,
+    }
 }
 
 impl Narrowing {
@@ -646,6 +707,13 @@ pub(crate) fn narrow_kind(kind: &Kind, narrowing: &Narrowing) -> Option<Kind> {
         Narrowing::Eq(literal) => eq_narrow(kind, literal),
         Narrowing::Table(table) => narrow_record_to(kind, table),
         Narrowing::NotTable(table) => narrow_record_without(kind, table),
+        // Occurrence typing over `x IN <collection>`: on the positive branch the
+        // value is a member, so it takes the collection's element kind. Tighten
+        // only when this actually changes the kind (and the element is a real
+        // kind, not `Any` — guarded against upstream in `in_effect`).
+        Narrowing::Is(target) => {
+            (*target != Kind::Any && target != kind).then(|| target.clone())
+        }
     }
 }
 
@@ -1379,6 +1447,42 @@ mod tests {
     }
 
     #[test]
+    fn in_guard_narrows_subject_to_the_collection_element_kind() {
+        // `$subject IN $a` where `$a : array<string>` narrows `$subject` to
+        // `string` on the POSITIVE branch (occurrence typing); the negative
+        // branch narrows nothing — "not in" proves nothing about the value.
+        let env = env_base("a", Kind::Array(Box::new(Kind::String), None));
+        let c = cond("RETURN $subject IN $a;");
+        assert_eq!(
+            positive_effects(&c, &env),
+            vec![Effect {
+                path: GuardPath::bare("subject".into()),
+                narrowing: Narrowing::Is(Kind::String),
+            }]
+        );
+        assert!(
+            negative_effects(&c, &env).is_empty(),
+            "not-in narrows nothing"
+        );
+
+        // A `set<T>` collection narrows the same way.
+        let set_env = env_base("a", Kind::Set(Box::new(Kind::Int), None));
+        assert_eq!(
+            positive_effects(&c, &set_env),
+            vec![Effect {
+                path: GuardPath::bare("subject".into()),
+                narrowing: Narrowing::Is(Kind::Int),
+            }]
+        );
+
+        // A bare `array` (element `any`) is undeterminable → no effect. Likewise
+        // an unbound / non-collection collection operand.
+        let any_env = env_base("a", Kind::Array(Box::new(Kind::Any), None));
+        assert!(positive_effects(&c, &any_env).is_empty());
+        assert!(positive_effects(&c, &StatementEnv::default()).is_empty());
+    }
+
+    #[test]
     fn indirect_discriminant_resolves_a_let_bound_type_table() {
         // `LET $t = type::table($r); IF $t = 'folder'` narrows `$r` the same
         // as the direct call form.
@@ -1655,6 +1759,125 @@ mod tests {
              }};"
         );
         assert_eq!(code_count(&colon, 5002), 0, "type::is::record normalizes to type::is_record");
+    }
+
+    // --- AND-operand narrowing (occurrence typing over `A AND B`) ----------
+
+    /// Callees demand a non-optional/concrete value; the `AND` guards prove it.
+    const AND_TABLES: &str = "DEFINE TABLE user SCHEMAFULL;\n\
+         DEFINE FUNCTION fn::takes_record($r: record) { RETURN true; };\n\
+         DEFINE FUNCTION fn::takes_int($n: int) { RETURN true; };\n\
+         DEFINE FUNCTION fn::two($a: record, $b: record) { RETURN true; };\n";
+
+    #[test]
+    fn and_none_guard_narrows_the_sibling_function_argument() {
+        // `($x != NONE) AND fn::takes_record($x)` — the right conjunct runs only
+        // when `$x` is non-none, so its argument sees `record<user>`.
+        let guarded = format!(
+            "{AND_TABLES}\
+             DEFINE FUNCTION fn::caller($x: option<record<user>>) {{\n\
+                IF $x != NONE AND fn::takes_record($x) THEN RETURN true END;\n\
+                RETURN false;\n\
+             }};"
+        );
+        assert_eq!(code_count(&guarded, 5002), 0, "AND-right sees non-none $x");
+
+        // Unguarded, the same call genuinely fails against `option<record<user>>`.
+        let unguarded = format!(
+            "{AND_TABLES}\
+             DEFINE FUNCTION fn::caller($x: option<record<user>>) {{\n\
+                RETURN fn::takes_record($x);\n\
+             }};"
+        );
+        assert_eq!(code_count(&unguarded, 5002), 1, "unguarded must fire");
+    }
+
+    #[test]
+    fn and_in_guard_narrows_the_sibling_function_argument() {
+        // `($s IN $ints) AND fn::takes_int($s)` — occurrence typing narrows the
+        // `option<int>` subject to the collection's `int` element in the arg.
+        let guarded = format!(
+            "{AND_TABLES}\
+             DEFINE FUNCTION fn::caller($s: option<int>, $ints: array<int>) {{\n\
+                IF $s IN $ints AND fn::takes_int($s) THEN RETURN true END;\n\
+                RETURN false;\n\
+             }};"
+        );
+        assert_eq!(code_count(&guarded, 5002), 0, "IN narrows $s to int in the arg");
+
+        // Unguarded, `option<int>` is not assignable to the `int` param.
+        let unguarded = format!(
+            "{AND_TABLES}\
+             DEFINE FUNCTION fn::caller($s: option<int>) {{\n\
+                RETURN fn::takes_int($s);\n\
+             }};"
+        );
+        assert_eq!(code_count(&unguarded, 5002), 1, "unguarded must fire");
+    }
+
+    #[test]
+    fn in_guard_narrows_the_then_branch() {
+        // `IF $s IN $ints THEN fn::takes_int($s) END` — the IN effect flows into
+        // the branch body the same as any positive guard.
+        let guarded = format!(
+            "{AND_TABLES}\
+             DEFINE FUNCTION fn::caller($s: option<int>, $ints: array<int>) {{\n\
+                IF $s IN $ints THEN RETURN fn::takes_int($s) END;\n\
+                RETURN false;\n\
+             }};"
+        );
+        assert_eq!(code_count(&guarded, 5002), 0, "THEN body sees the narrowed $s");
+    }
+
+    #[test]
+    fn and_chain_threads_all_prior_positive_effects() {
+        // `A AND B AND C`: the last conjunct sees BOTH earlier effects, so
+        // `fn::two($x, $y)` type-checks only if the union of effects reached it.
+        let guarded = format!(
+            "{AND_TABLES}\
+             DEFINE FUNCTION fn::caller($x: option<record<user>>, $y: option<record<user>>) {{\n\
+                IF $x != NONE AND $y != NONE AND fn::two($x, $y) THEN RETURN true END;\n\
+                RETURN false;\n\
+             }};"
+        );
+        assert_eq!(code_count(&guarded, 5002), 0, "both $x and $y narrowed for the tail call");
+
+        // Unguarded, both arguments fail — proving the chain cleared two findings.
+        let unguarded = format!(
+            "{AND_TABLES}\
+             DEFINE FUNCTION fn::caller($x: option<record<user>>, $y: option<record<user>>) {{\n\
+                RETURN fn::two($x, $y);\n\
+             }};"
+        );
+        assert_eq!(code_count(&unguarded, 5002), 2, "both args fire unguarded");
+    }
+
+    #[test]
+    fn or_does_not_narrow_the_sibling_operand() {
+        // `($x != NONE) OR fn::takes_record($x)` — the right disjunct runs only
+        // when `$x` IS none, so it must NOT be narrowed and the call still fires.
+        let or_guarded = format!(
+            "{AND_TABLES}\
+             DEFINE FUNCTION fn::caller($x: option<record<user>>) {{\n\
+                IF $x != NONE OR fn::takes_record($x) THEN RETURN true END;\n\
+                RETURN false;\n\
+             }};"
+        );
+        assert_eq!(code_count(&or_guarded, 5002), 1, "OR narrows nothing");
+    }
+
+    #[test]
+    fn and_narrowing_does_not_leak_past_the_and_expression() {
+        // The narrowing is scoped to the right operand: a later use of `$x`
+        // outside the `AND` is unnarrowed, so the record call still fires.
+        let leaky = format!(
+            "{AND_TABLES}\
+             DEFINE FUNCTION fn::caller($x: option<record<user>>) {{\n\
+                LET $ok = $x != NONE AND true;\n\
+                RETURN fn::takes_record($x);\n\
+             }};"
+        );
+        assert_eq!(code_count(&leaky, 5002), 1, "narrowing must not leak past the AND");
     }
 
     // --- Narrowing-aware guard verdicts ------------------------------------

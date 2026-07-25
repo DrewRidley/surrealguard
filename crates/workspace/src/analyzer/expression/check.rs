@@ -19,20 +19,41 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
     match &expr.node {
         ast::Expr::Binary { lhs, op, rhs } => {
             check_value_expression(ctx, lhs);
-            // The right operand of `$x = NONE OR ...` / `$x != NONE AND ...`
-            // runs only when `$x` is non-none, so check it (and the operator
-            // itself, which re-reads the rhs kind) with `$x` narrowed.
-            match crate::analyzer::expression::infer::none_guarded_path(&op.node, lhs) {
-                Some(path) => {
-                    crate::analyzer::expression::infer::with_guard_narrowed(&path, ctx, |ctx| {
-                        check_value_expression(ctx, rhs);
-                        check_binary(ctx, expr, lhs, &op.node, rhs);
-                    });
-                }
-                None => {
+            // Occurrence typing over `A AND B`: SurrealDB short-circuits, so the
+            // right operand is checked (and the operator itself, which re-reads
+            // the rhs kind) only when the left held. Apply the left's POSITIVE
+            // narrowing effects to a scoped child env so `(x != NONE) AND f(x)`,
+            // `(subject IN $a) AND fn::test(subject)`, and chains all see the
+            // narrowed subject in the right operand's function-call arguments.
+            // The child env is discarded after — the narrowing never leaks past
+            // the `AND`. (The `= NONE OR` mirror keeps its dedicated narrowing.)
+            let and_effects = if matches!(op.node, ast::BinaryOp::And) {
+                crate::analyzer::flow::narrow::positive_effects(&lhs.node, ctx.env())
+            } else {
+                Vec::new()
+            };
+            if !and_effects.is_empty() {
+                // The right operand (and `check_binary`, which re-reads the rhs
+                // kind via its function analysis) is checked with the left's
+                // effects applied to a scoped child env — discarded after, so the
+                // narrowing never leaks past the `AND`. A child env is forked only
+                // when there are effects to apply, so an ordinary effect-less
+                // `AND` keeps checking in the parent env (no re-recorded spans).
+                ctx.with_child_env(|ctx| {
+                    crate::analyzer::flow::narrow::apply_effects(ctx, &and_effects);
                     check_value_expression(ctx, rhs);
                     check_binary(ctx, expr, lhs, &op.node, rhs);
-                }
+                });
+            } else if let Some(path) =
+                crate::analyzer::expression::infer::none_guarded_path(&op.node, lhs)
+            {
+                crate::analyzer::expression::infer::with_guard_narrowed(&path, ctx, |ctx| {
+                    check_value_expression(ctx, rhs);
+                    check_binary(ctx, expr, lhs, &op.node, rhs);
+                });
+            } else {
+                check_value_expression(ctx, rhs);
+                check_binary(ctx, expr, lhs, &op.node, rhs);
             }
         }
         ast::Expr::Prefix { op, expr: inner } => {

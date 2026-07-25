@@ -557,14 +557,32 @@ fn binary_fact(
     ctx: &mut AnalysisContext<'_>,
 ) -> ExpressionFact {
     let lhs_fact = infer_expression_fact(lhs, ctx);
-    // NONE-narrowing: the right operand of `$x = NONE OR <rhs>` runs only when
-    // `$x` is NOT none (the left disjunct already handled the none case), and
-    // likewise `$x != NONE AND <rhs>`. Infer the rhs with `$x` narrowed to its
-    // non-none kind so `option<string>` reads as `string` there (a guarded
-    // `string::len($value)` / `string::is_email($value)` type-checks).
-    let rhs_fact = match none_guarded_path(&op.node, lhs) {
-        Some(path) => with_guard_narrowed(&path, ctx, |ctx| infer_expression_fact(rhs, ctx)),
-        None => infer_expression_fact(rhs, ctx),
+    // Occurrence typing over `A AND B`: SurrealDB short-circuits, so `B` is
+    // evaluated only when `A` held. Infer the right operand (and any
+    // function-call arguments inside it) with `A`'s POSITIVE narrowing effects
+    // applied to a scoped child env — so `(x != NONE) AND f(x)`,
+    // `(subject IN $a) AND fn::test(subject)`, and chains `A AND B AND C` all
+    // read the narrowed subject. The child env is discarded after, so the
+    // narrowing never leaks past the `AND` into the surrounding scope.
+    //
+    // The `= NONE OR` mirror (`$x = NONE OR <rhs>`, where `<rhs>` runs only when
+    // `$x` is non-none) is not an `AND` and keeps its dedicated narrowing.
+    let and_effects = if matches!(op.node, ast::BinaryOp::And) {
+        crate::analyzer::flow::narrow::positive_effects(&lhs.node, ctx.env())
+    } else {
+        Vec::new()
+    };
+    let rhs_fact = if !and_effects.is_empty() {
+        // A child env is forked only when the left proves something — an ordinary
+        // effect-less `AND` infers its right operand in the parent env unchanged.
+        ctx.with_child_env(|ctx| {
+            crate::analyzer::flow::narrow::apply_effects(ctx, &and_effects);
+            infer_expression_fact(rhs, ctx)
+        })
+    } else if let Some(path) = none_guarded_path(&op.node, lhs) {
+        with_guard_narrowed(&path, ctx, |ctx| infer_expression_fact(rhs, ctx))
+    } else {
+        infer_expression_fact(rhs, ctx)
     };
 
     let mut fact = ExpressionFact::new(span, ExpressionValueClass::Unknown);
