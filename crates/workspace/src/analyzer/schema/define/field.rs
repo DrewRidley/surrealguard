@@ -213,6 +213,53 @@ fn check_field_definition(
         }
         Some(_) => {}
     }
+
+    check_subfield_parent(ctx, stmt, &field_key);
+}
+
+/// A subfield may only be declared under a parent whose declared kind has room
+/// for it (1025).
+///
+/// The contract is the parent's declaration: `title TYPE string` says `title`
+/// holds a string, so `title.sub` describes a member that can never exist —
+/// and, left in the catalog, it would silently replace `title`'s declared kind
+/// with `{ sub: string }`, turning the perfectly valid `SET title = 'hello'`
+/// into a type error.
+///
+/// Only a parent whose declared kind PROVES there is no room is reported.
+/// An undeclared parent, an untyped/`any` parent, a bare (or `FLEXIBLE`)
+/// `object`, a literal object, and any collection reached through `[*]` all
+/// have room, and stay silent.
+fn check_subfield_parent(
+    ctx: &mut AnalysisContext<'_>,
+    stmt: &ast::DefineField,
+    field_key: &str,
+) {
+    let steps = crate::schema::idiom_field_steps(&stmt.path.node);
+    let Some(table) = ctx.schema().table(&stmt.table.node) else {
+        return;
+    };
+    let crate::schema::FieldPlacement::Rejected {
+        ancestor,
+        ancestor_kind,
+    } = crate::schema::field_placement(table, &steps)
+    else {
+        return;
+    };
+    let related = table.fields.get(&ancestor).map(|def| def.name_span.clone());
+    let rendered = crate::render_kind(&ancestor_kind);
+    let mut finding = surrealguard_diagnostics::catalog::finding(
+        surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.path.span),
+        1025,
+        format!("`{field_key}` declares a subfield of `{ancestor}`, which is `{rendered}`"),
+    )
+    .with_help(format!(
+        "only an object-shaped field has subfields — redeclare `{ancestor}` as an object, or drop this definition"
+    ));
+    if let Some(related) = related {
+        finding = finding.with_related(related, format!("`{ancestor}` is declared here"));
+    }
+    ctx.emit(finding);
 }
 
 /// Whether `path` redefines an existing field. The duplicate-definition

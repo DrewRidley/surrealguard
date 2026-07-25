@@ -449,6 +449,11 @@ impl Lowerer<'_> {
                 "Subscript" => self.subscript_parts(child, &mut parts),
                 "Lookup" => parts.push(self.spanned(child, self.graph_part(child))),
                 "Filter" => parts.push(self.spanned(child, self.filter_part(child))),
+                // `Idiom` nodes carry `[*]` as a bare `Any` child rather than
+                // the `Filter`/`Subscript` wrapper a `Path` uses — this is the
+                // shape a `DEFINE FIELD items[*].price` path takes. It is the
+                // same element step either way.
+                "Any" => parts.push(self.spanned(child, IdiomPart::All)),
                 // Any leading value node (`$user.name`, `fn().field`, ...).
                 _ if parts.is_empty() => {
                     parts.push(self.spanned(child, IdiomPart::Start(Box::new(self.expr(child)))));
@@ -1007,6 +1012,21 @@ mod tests {
             "ERROR must lower to Partial, got {:?}",
             lowered.node
         );
+    }
+
+    #[test]
+    fn an_idiom_node_carries_its_wildcard_as_an_element_step() {
+        // `Path` wraps `[*]` in a `Filter`, but an `Idiom` node (a DEFINE FIELD
+        // path, a FETCH/SPLIT/GROUP path) lists a bare `Any` child. Both are the
+        // same element step — dropping it collapses `items[*].price` onto
+        // `items.price`, which is a different declaration entirely.
+        let parsed = parse("DEFINE FIELD items[*].price ON t TYPE string;");
+        let node = find_first(parsed.tree().root_node(), "Idiom").expect("an Idiom node");
+        let idiom = lower_idiom_node(node, parsed.text());
+
+        assert!(matches!(idiom.parts[0].node, IdiomPart::Field(ref n) if n == "items"));
+        assert!(matches!(idiom.parts[1].node, IdiomPart::All));
+        assert!(matches!(idiom.parts[2].node, IdiomPart::Field(ref n) if n == "price"));
     }
 
     #[test]

@@ -306,6 +306,150 @@ pub(crate) fn record_link_shape(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Sub-path refinement (a descendant `DEFINE FIELD` narrows its parent's kind)
+// ---------------------------------------------------------------------------
+
+/// Narrows `parent` so the sub-path `steps` under it has kind `child`, or
+/// `None` when the parent's declared kind admits no such sub-path.
+///
+/// This is the "descendants REFINE, never replace" rule behind
+/// `DEFINE FIELD items TYPE array<object>` + `DEFINE FIELD items[*].price
+/// TYPE string` → `array<{ price: string }>`. Three properties matter:
+///
+/// * The parent's own shape survives. `array<...>`/`set<...>` stay collections
+///   and the refinement lands on the ELEMENT; a literal object keeps the
+///   siblings it already declared.
+/// * Optionality survives. `option<object>` + a subfield stays optional — a
+///   subfield declaration never makes its parent required, so
+///   `SET parent = NONE` keeps type-checking.
+/// * A bare `object` opens into a closed literal object, which is exactly what
+///   the nested-field prefix synthesis already produced.
+pub(crate) fn refine_subkind(
+    parent: &Kind,
+    steps: &[crate::schema::FieldStep],
+    child: &Kind,
+) -> Option<Kind> {
+    use crate::schema::FieldStep;
+
+    let Some((step, rest)) = steps.split_first() else {
+        return Some(child.clone());
+    };
+    match parent {
+        // A union: refine every payload arm and keep the `NONE`/`NULL` arms
+        // untouched, so `option<T>` refines to `option<T'>`.
+        Kind::Either(variants) => {
+            let mut refined = Vec::with_capacity(variants.len());
+            let mut touched = false;
+            for variant in variants {
+                if matches!(variant, Kind::None | Kind::Null) {
+                    refined.push(variant.clone());
+                    continue;
+                }
+                refined.push(refine_subkind(variant, steps, child)?);
+                touched = true;
+            }
+            touched.then(|| Kind::either(refined))
+        }
+        // A collection refines its element. A `Field` step here means the
+        // declaration wrote `items.price` where `items[*].price` was meant —
+        // SurrealDB's own idiom flattening reads it the same way, so take the
+        // element step implicitly rather than rejecting a real schema.
+        Kind::Array(element, len) => {
+            let tail = if matches!(step, FieldStep::Element) {
+                rest
+            } else {
+                steps
+            };
+            Some(Kind::Array(
+                Box::new(refine_subkind(element, tail, child)?),
+                *len,
+            ))
+        }
+        Kind::Set(element, len) => {
+            let tail = if matches!(step, FieldStep::Element) {
+                rest
+            } else {
+                steps
+            };
+            Some(Kind::Set(
+                Box::new(refine_subkind(element, tail, child)?),
+                *len,
+            ))
+        }
+        // An open object closes into a literal carrying just this subfield;
+        // later siblings refine the literal.
+        Kind::Object | Kind::Any => match step {
+            FieldStep::Field(name) => {
+                let mut fields = BTreeMap::new();
+                fields.insert(name.clone(), refine_subkind(&Kind::Any, rest, child)?);
+                Some(Kind::Literal(KindLiteral::Object(fields)))
+            }
+            // `any` is open enough to be a collection too; a bare `object`
+            // is not.
+            FieldStep::Element if matches!(parent, Kind::Any) => Some(Kind::Array(
+                Box::new(refine_subkind(&Kind::Any, rest, child)?),
+                None,
+            )),
+            FieldStep::Element => None,
+        },
+        Kind::Literal(KindLiteral::Object(fields)) => match step {
+            FieldStep::Field(name) => {
+                let current = fields.get(name).cloned().unwrap_or(Kind::Any);
+                let mut fields = fields.clone();
+                fields.insert(name.clone(), refine_subkind(&current, rest, child)?);
+                Some(Kind::Literal(KindLiteral::Object(fields)))
+            }
+            FieldStep::Element => None,
+        },
+        // Everything else — a scalar, a record link, a geometry — has no
+        // sub-path to refine.
+        _ => None,
+    }
+}
+
+/// The kind at the sub-path `steps` under `parent`, or `None` when the parent's
+/// declared kind proves no such sub-path exists. The read-only counterpart of
+/// [`refine_subkind`]: it never invents a member, so `Some` means "the schema
+/// declares this".
+pub(crate) fn subkind_at(parent: &Kind, steps: &[crate::schema::FieldStep]) -> Option<Kind> {
+    use crate::schema::FieldStep;
+
+    let Some((step, rest)) = steps.split_first() else {
+        return Some(parent.clone());
+    };
+    match parent {
+        Kind::Either(variants) => {
+            let mut payload = variants
+                .iter()
+                .filter(|variant| !matches!(variant, Kind::None | Kind::Null));
+            let only = payload.next()?;
+            if payload.next().is_some() {
+                return None;
+            }
+            let resolved = subkind_at(only, steps)?;
+            Some(if variants.len() > 1 {
+                Kind::either(vec![Kind::None, resolved])
+            } else {
+                resolved
+            })
+        }
+        Kind::Array(element, _) | Kind::Set(element, _) => {
+            let tail = if matches!(step, FieldStep::Element) {
+                rest
+            } else {
+                steps
+            };
+            subkind_at(element, tail)
+        }
+        Kind::Literal(KindLiteral::Object(fields)) => match step {
+            FieldStep::Field(name) => subkind_at(fields.get(name)?, rest),
+            FieldStep::Element => None,
+        },
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -756,5 +900,80 @@ mod tests {
         // Not a link at all.
         assert!(record_link_shape(&option_of(Kind::String)).is_none());
         assert!(record_link_shape(&Kind::Any).is_none());
+    }
+
+    #[test]
+    fn refining_a_sub_path_preserves_the_parent_shape() {
+        use crate::schema::FieldStep::{Element, Field};
+
+        let named = |name: &str| Field(name.to_string());
+
+        // A collection stays a collection; the refinement lands on the element.
+        assert_eq!(
+            refine_subkind(
+                &Kind::Array(Box::new(Kind::Object), None),
+                &[Element, named("price")],
+                &Kind::String
+            ),
+            Some(Kind::Array(
+                Box::new(object(&[("price", Kind::String)])),
+                None
+            ))
+        );
+        // A bare `array` gains an element type from its `[*]` declaration.
+        assert_eq!(
+            refine_subkind(
+                &Kind::Array(Box::new(Kind::Any), None),
+                &[Element],
+                &Kind::Object
+            ),
+            Some(Kind::Array(Box::new(Kind::Object), None))
+        );
+        // Optionality survives: a subfield never makes its parent required.
+        assert_eq!(
+            refine_subkind(
+                &Kind::either(vec![Kind::None, Kind::Object]),
+                &[named("theme")],
+                &Kind::String
+            ),
+            Some(Kind::either(vec![
+                Kind::None,
+                object(&[("theme", Kind::String)])
+            ]))
+        );
+        // A literal object keeps the siblings it already declared.
+        assert_eq!(
+            refine_subkind(
+                &object(&[("name", Kind::String)]),
+                &[named("age")],
+                &Kind::Int
+            ),
+            Some(object(&[("age", Kind::Int), ("name", Kind::String)]))
+        );
+        // A scalar has no sub-path at all (this is what 1025 reports), and a
+        // bare object has no ELEMENT.
+        assert!(refine_subkind(&Kind::String, &[named("sub")], &Kind::String).is_none());
+        assert!(refine_subkind(&Kind::Object, &[Element], &Kind::String).is_none());
+        assert!(refine_subkind(&Kind::Datetime, &[Element], &Kind::String).is_none());
+    }
+
+    #[test]
+    fn reading_a_sub_path_only_reports_what_the_kind_declares() {
+        use crate::schema::FieldStep::{Element, Field};
+
+        let named = |name: &str| Field(name.to_string());
+        let kind = Kind::Array(Box::new(object(&[("sku", Kind::String)])), None);
+
+        assert_eq!(
+            subkind_at(&kind, &[Element, named("sku")]),
+            Some(Kind::String)
+        );
+        // A `Field` step into a collection reads as the element step SurrealQL
+        // idiom flattening implies.
+        assert_eq!(subkind_at(&kind, &[named("sku")]), Some(Kind::String));
+        assert!(subkind_at(&kind, &[named("ghost")]).is_none());
+        // An open object proves nothing about its members, so it never claims
+        // one exists.
+        assert!(subkind_at(&Kind::Object, &[named("anything")]).is_none());
     }
 }
