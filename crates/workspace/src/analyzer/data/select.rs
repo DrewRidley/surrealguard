@@ -71,10 +71,7 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     }
     check_order_clause(stmt, table, ctx);
 
-    let has_wildcard_projection = stmt
-        .projections
-        .iter()
-        .any(|projection| matches!(projection, ast::Projection::Wildcard(_)));
+    let has_wildcard = has_wildcard_projection(stmt);
 
     // A wildcard contributes the whole materialized row — but only when the
     // rows are materialized. Under a GROUP clause the result rows are
@@ -87,8 +84,9 @@ pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisCon
     // the remaining projections alone type the row (`SELECT *, count() FROM t
     // GROUP BY k` is `{ count: number }`). Both behaviours verified against
     // the engine: 3.0.5 live, 2.x via `dbs::group::GroupsCollector`, which
-    // iterates `fields.other()` and never sees `Field::All`.
-    let row_kind = if has_wildcard_projection && stmt.group.is_none() {
+    // iterates `fields.other()` and never sees `Field::All`. The rejection
+    // itself is reported as 4025 at the `*`.
+    let row_kind = if has_wildcard && stmt.group.is_none() {
         object_kind_for_all_fields(table)
     } else if let Some(value_kind) = value_projection_kind(stmt, &table_name, table, ctx) {
         value_kind
@@ -554,15 +552,11 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
 fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
     check_clause_values(stmt, ctx);
     check_count_without_group(stmt, ctx);
+    check_wildcard_under_group(stmt, ctx);
     check_group_key_projection(stmt, ctx);
 
-    let has_wildcard = stmt
-        .projections
-        .iter()
-        .any(|projection| matches!(projection, ast::Projection::Wildcard(_)));
-
     // `SELECT *, age` — the explicit field is already inside `*`.
-    if has_wildcard {
+    if has_wildcard_projection(stmt) {
         for projection in &stmt.projections {
             if let ast::Projection::Expr { expr, alias: None } = projection {
                 if let ast::Expr::Idiom(idiom) = &expr.node {
@@ -689,25 +683,69 @@ fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContex
     }
 }
 
+/// 4025: SurrealDB 3.x rejects a wildcard projection under *any* GROUP
+/// clause outright — "Incorrect selector for aggregate selection, expression
+/// `*` within in selector cannot be aggregated in a group". Verified on a
+/// live 3.0.5 for `GROUP BY k`, `GROUP ALL`, and the mixed
+/// `SELECT *, count() … GROUP BY k` / `… GROUP ALL` forms, including over a
+/// table that doesn't exist (so it is a query-shape rejection, not a
+/// row-dependent one). 2.x doesn't reject it but silently drops the `*`,
+/// building grouped rows from the non-`*` fields only — so under either
+/// engine the query never returns what its author asked for, which is why
+/// this is an error rather than a version-gated warning.
+///
+/// `t.*` in expression position (`SELECT person.* … GROUP ALL`) is a
+/// different construct — an idiom with an `All` part, which 3.0.5 accepts —
+/// and is not a `Projection::Wildcard`, so it never reaches this.
+fn check_wildcard_under_group(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
+    if stmt.group.is_none() {
+        return;
+    }
+    for projection in &stmt.projections {
+        let ast::Projection::Wildcard(range) = projection else {
+            continue;
+        };
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), *range);
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                span,
+                4025,
+                "`*` cannot be aggregated by a GROUP clause — SurrealDB rejects this query"
+                    .to_string(),
+            )
+            .with_help(
+                "replace `*` with the group keys and aggregates you want, e.g. `SELECT status, count() FROM t GROUP BY status`",
+            ),
+        );
+    }
+}
+
+/// Whether the statement projects a wildcard — the shape 4025 reports under
+/// a GROUP clause, and the one that makes 4013 redundant there.
+fn has_wildcard_projection(stmt: &ast::SelectStmt) -> bool {
+    stmt.projections
+        .iter()
+        .any(|projection| matches!(projection, ast::Projection::Wildcard(_)))
+}
+
 /// 4013: a `GROUP BY` key that is not among the projected columns cannot
 /// appear in the result rows — the grouping label is silently dropped, so the
 /// rows can't be told apart. SurrealDB runs the query (it does not reject
 /// this), which is why it is a warning rather than an error. Conservative to
 /// zero false positives: suppressed when an unparseable projection is present
 /// (the key may be covered by it), for `SELECT VALUE` (a single value
-/// projection carries no named keys), and for `GROUP ALL`. A wildcard does
-/// *not* suppress it: `*` covers no key under a GROUP clause — 3.x rejects
-/// such a query outright, 2.x builds grouped rows from the non-`*` fields
-/// only — so the key genuinely cannot appear in the result rows, and the
-/// finding's own advice (name the key in the projection) is the fix. A key
-/// counts as projected when its dotted path equals — or is a prefix of — a
-/// projected field path or alias (projecting `address` covers a
-/// `GROUP BY address.city`).
+/// projection carries no named keys), and for `GROUP ALL`. A wildcard
+/// projection also suppresses it — not because `*` covers the key (it covers
+/// nothing under a GROUP clause) but because that query is *rejected*, which
+/// 4025 reports as an error at the `*` itself; 4013's premise, that the query
+/// runs and merely returns unlabelled rows, doesn't hold there. A key counts
+/// as projected when its dotted path equals — or is a prefix of — a projected
+/// field path or alias (projecting `address` covers a `GROUP BY address.city`).
 fn check_group_key_projection(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
     let Some(group) = &stmt.group else {
         return;
     };
-    if group.all || group.keys.is_empty() || stmt.value {
+    if group.all || group.keys.is_empty() || stmt.value || has_wildcard_projection(stmt) {
         return;
     }
     if stmt
@@ -2688,18 +2726,56 @@ mod tests {
     }
 
     #[test]
-    fn a_group_key_a_wildcard_cannot_carry_is_reported() {
+    fn a_wildcard_under_any_group_clause_is_an_error() {
         let schema = schema_from(RELATION_SCHEMA);
 
-        // `*` covers nothing under GROUP, so the key really is unprojected:
-        // 4013 fires and its help (project the key) is the actual fix.
-        let codes: Vec<u16> = diagnostics_for(&schema, "SELECT * FROM person GROUP BY name;")
+        // SurrealDB 3.0.5 rejects every one of these outright ("expression
+        // `*` within in selector cannot be aggregated in a group").
+        for query in [
+            "SELECT * FROM person GROUP BY name;",
+            "SELECT * FROM person GROUP ALL;",
+            "SELECT *, count() FROM person GROUP BY name;",
+            "SELECT *, count() FROM person GROUP ALL;",
+        ] {
+            let codes: Vec<u16> = diagnostics_for(&schema, query)
+                .iter()
+                .map(|finding| finding.code().number())
+                .collect();
+            assert!(codes.contains(&4025), "{query}: got {codes:?}");
+            // 4025 replaces 4013 here: that warning's premise is a query the
+            // engine *runs*, which this one isn't.
+            assert!(!codes.contains(&4013), "{query}: got {codes:?}");
+        }
+    }
+
+    #[test]
+    fn a_group_query_without_a_wildcard_does_not_fire_4025() {
+        let schema = schema_from(RELATION_SCHEMA);
+
+        // The explicit projections 4025's help asks for — plus a bare
+        // aggregate and a `t.*` idiom, both accepted by 3.0.5.
+        for query in [
+            "SELECT name, count() FROM person GROUP BY name;",
+            "SELECT count() FROM person GROUP ALL;",
+            "SELECT person.* FROM person GROUP ALL;",
+            "SELECT * FROM person;",
+        ] {
+            let codes: Vec<u16> = diagnostics_for(&schema, query)
+                .iter()
+                .map(|finding| finding.code().number())
+                .collect();
+            assert!(!codes.contains(&4025), "{query}: got {codes:?}");
+        }
+
+        // A GROUP key that isn't projected is still the ordinary 4013.
+        let codes: Vec<u16> = diagnostics_for(&schema, "SELECT count() FROM person GROUP BY name;")
             .iter()
             .map(|finding| finding.code().number())
             .collect();
         assert!(codes.contains(&4013), "got: {codes:?}");
+        assert!(!codes.contains(&4025), "got: {codes:?}");
 
-        // Projecting the key clears it.
+        // Projecting the key clears 4013.
         let projected: Vec<u16> = diagnostics_for(&schema, "SELECT name FROM person GROUP BY name;")
             .iter()
             .map(|finding| finding.code().number())

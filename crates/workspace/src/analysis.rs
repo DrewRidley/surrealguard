@@ -1449,6 +1449,47 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(codes(&output, 4013), 0, "{:?}", output.diagnostics);
     }
 
+    // ---- 4025: wildcard projection under a GROUP clause ----
+
+    #[test]
+    fn wildcard_under_group_fires_4025_once_per_wildcard() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE sale;\nDEFINE FIELD region ON sale TYPE string;".into(),
+        );
+        // SurrealDB 3.0.5 rejects both forms outright; 2.x drops the `*`.
+        workspace.add_virtual_source(
+            "query".into(),
+            "SELECT * FROM sale GROUP BY region;\nSELECT *, count() FROM sale GROUP ALL;".into(),
+        );
+        let output = analyze_workspace(&workspace);
+        assert_eq!(codes(&output, 4025), 2, "{:?}", output.diagnostics);
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .filter(|finding| finding.code().number() == 4025)
+                .all(|finding| finding.severity() == surrealguard_diagnostics::Severity::Error),
+            "4025 is an error: the engine rejects the query"
+        );
+    }
+
+    #[test]
+    fn explicit_group_projections_stay_silent_for_4025() {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE sale;\nDEFINE FIELD region ON sale TYPE string;\nDEFINE FIELD amount ON sale TYPE int;".into(),
+        );
+        workspace.add_virtual_source(
+            "query".into(),
+            "SELECT region, math::sum(amount) AS total FROM sale GROUP BY region;\nSELECT count() FROM sale GROUP ALL;\nSELECT * FROM sale;".into(),
+        );
+        let output = analyze_workspace(&workspace);
+        assert_eq!(codes(&output, 4025), 0, "{:?}", output.diagnostics);
+    }
+
     // ---- 6002: LET shadows a DEFINE PARAM with a different kind ----
 
     #[test]
