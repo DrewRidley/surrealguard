@@ -1202,20 +1202,21 @@ fn project_expr(
         }
 
         // Idioms with parts the branches above don't project (Start/Index/
-        // Method/...) still get their invariants checked.
-        ctx.with_row_table(ctx.schema().tables.get(&table.name), |ctx| {
-            crate::analyzer::expression::check::check_value_expression(ctx, expr);
-        });
+        // Method/...): the same full expression inference every other
+        // computed projection gets — a method resolves against its receiver's
+        // kind (`SELECT name.len()` is an `int`), an index reaches the
+        // element kind — with their invariants checked at the same site.
+        let kind = computed_kind(expr, table, ctx);
         match alias_name {
             Some(alias) => {
-                fields.insert(alias, Kind::Any);
+                fields.insert(alias, kind);
             }
             // Unaliased, the key follows SurrealDB's own simplification rule
             // (`name.len()` → `name`, `tags[0]` → `tags`).
             None => match simplified_key_segments(idiom) {
-                Some(segments) => insert_kind_at_path(fields, &segments, Kind::Any),
+                Some(segments) => insert_kind_at_path(fields, &segments, kind),
                 None => {
-                    fields.insert(slice(ctx.source_text(), expr.span).to_string(), Kind::Any);
+                    fields.insert(slice(ctx.source_text(), expr.span).to_string(), kind);
                 }
             },
         }
@@ -2895,6 +2896,30 @@ mod tests {
         assert!(chained.contains_key("name"), "got: {chained:?}");
         assert!(chained.contains_key("tags"), "got: {chained:?}");
         assert!(!chained.contains_key("tags[0]"), "got: {chained:?}");
+    }
+
+    #[test]
+    fn a_method_projection_is_typed_by_its_receivers_method() {
+        // `SELECT name.len()` is an `int` on 3.0.5, not an unknown: the
+        // projection runs the same inference every other computed projection
+        // gets, so method dispatch (and indexing) applies.
+        let schema = schema_from(KEY_SCHEMA);
+
+        let fields = row_fields(
+            &schema,
+            "SELECT name.len(), tags[0], name.uppercase(), age.to_string() FROM person;",
+        );
+        assert_eq!(fields["name"], Kind::String, "got: {fields:?}");
+        assert_eq!(fields["tags"], Kind::String);
+        assert_eq!(fields["age"], Kind::String);
+
+        // `name.len()` alone (the reported case) is an int.
+        let len = row_fields(&schema, "SELECT name.len() FROM person;");
+        assert_eq!(len["name"], Kind::Int);
+
+        // A method the receiver genuinely doesn't have stays a poison entry.
+        let unknown = row_fields(&schema, "SELECT name.frobnicate() FROM person;");
+        assert_eq!(unknown["name"], Kind::Any);
     }
 
     #[test]
