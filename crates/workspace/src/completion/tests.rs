@@ -242,12 +242,40 @@ fn a_mutation_target_and_its_set_clause_classify_separately() {
 }
 
 #[test]
-fn a_graph_step_names_a_table() {
-    assert_eq!(context_kind("RELATE $a->▏"), ContextKind::TableName);
+fn a_graph_step_alternates_edge_and_node_and_ranks_edges_first() {
+    // First arrow: the edge. Second: the node it lands on.
+    assert_eq!(context_kind("RELATE $a->▏"), ContextKind::EdgeTable);
+    assert_eq!(context_kind("SELECT ->▏ FROM person"), ContextKind::EdgeTable);
     assert_eq!(
-        context_kind("SELECT ->▏ FROM person"),
+        context_kind("SELECT ->works_at->▏ FROM person"),
         ContextKind::TableName
     );
+
+    // In the edge slot the relation table outranks the plain tables.
+    let fixture = Fixture::new("RELATE $a->▏");
+    let tables = fixture.labels_of(CandidateKind::Table);
+    assert_eq!(
+        tables.first().map(String::as_str),
+        Some("works_at"),
+        "the edge slot must rank `TYPE RELATION` tables first: {tables:?}"
+    );
+    // …but a plain table is demoted, not hidden.
+    assert!(tables.contains(&"person".to_string()));
+}
+
+#[test]
+fn an_edge_slot_prefers_an_edge_actually_attached_to_the_row_table() {
+    let schema = format!(
+        "{SCHEMA}\nDEFINE TABLE owns SCHEMAFULL TYPE RELATION IN company OUT company;\n"
+    );
+    // The row table is `person`, so `works_at` (IN person) must beat `owns`
+    // (which touches neither end of a person).
+    let fixture = Fixture::with_schema(&schema, "SELECT * FROM person WHERE id->▏");
+    assert_eq!(fixture.context().kind, ContextKind::EdgeTable);
+    let tables = fixture.labels_of(CandidateKind::Table);
+    let attached = tables.iter().position(|label| label == "works_at");
+    let unattached = tables.iter().position(|label| label == "owns");
+    assert!(attached < unattached, "{tables:?}");
 }
 
 #[test]

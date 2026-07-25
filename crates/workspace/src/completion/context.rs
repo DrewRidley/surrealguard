@@ -51,8 +51,11 @@ pub enum ContextKind {
     /// target, or `DEFINE INDEX … FIELDS`.
     FieldName,
     /// A table name: after `FROM`/`INTO`, a `CREATE`/`UPDATE`/`UPSERT`/
-    /// `DELETE`/`RELATE` target, a graph step (`->`/`<-`), or `DEFINE … ON`.
+    /// `DELETE`/`RELATE` target, or `DEFINE … ON`.
     TableName,
+    /// The edge slot of a graph step (`$a->▏`, `->▏->company`). Only a
+    /// `TYPE RELATION` table belongs here, so edges rank above plain tables.
+    EdgeTable,
     /// A key inside a `CONTENT`/`MERGE` object literal.
     ObjectKey,
     /// A member after `.` on a receiver whose kind is known.
@@ -221,9 +224,13 @@ pub(crate) fn classify(
         return context;
     }
 
-    // --- 4. A graph step names a table. ---
-    if matches!(preceding_operator(&tokens, source, cut), Some("->" | "<-")) {
-        context.kind = ContextKind::TableName;
+    // --- 4. A graph step alternates edge, node, edge, node… ---
+    if let Some(arrows) = graph_chain_arrows(&tokens, source, cut) {
+        context.kind = if arrows % 2 == 1 {
+            ContextKind::EdgeTable
+        } else {
+            ContextKind::TableName
+        };
         return context;
     }
 
@@ -548,6 +555,40 @@ fn preceding_operator<'a>(tokens: &[Token], source: &'a str, cut: usize) -> Opti
             .then_some(text)
         }
         _ => None,
+    }
+}
+
+/// How many arrows are in the graph-step chain ending at the cursor, or
+/// `None` when the cursor is not in one.
+///
+/// A traversal alternates edge and node — `$a->works_at->company` — so the
+/// arrow count's parity says which the cursor is at: odd is an edge slot,
+/// even is the node it lands on.
+fn graph_chain_arrows(tokens: &[Token], source: &str, cut: usize) -> Option<usize> {
+    let mut index = cut.checked_sub(1)?;
+    if !matches!(token_text(tokens, source, index), Some("->" | "<-")) {
+        return None;
+    }
+    let mut arrows = 0usize;
+    loop {
+        match token_text(tokens, source, index) {
+            Some("->" | "<-") => arrows += 1,
+            _ => return Some(arrows),
+        }
+        // Step over the edge/node name before this arrow, if there is one.
+        let Some(previous) = index.checked_sub(1) else {
+            return Some(arrows);
+        };
+        if !matches!(
+            tokens.get(previous).map(|token| token.kind),
+            Some(TokenKind::Ident | TokenKind::Param)
+        ) {
+            return Some(arrows);
+        }
+        let Some(before) = previous.checked_sub(1) else {
+            return Some(arrows);
+        };
+        index = before;
     }
 }
 

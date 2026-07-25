@@ -147,7 +147,7 @@ pub fn complete_at(
         }
     }
     if families.tables > 0.0 {
-        candidates.extend(table_candidates(schema, families.tables));
+        candidates.extend(table_candidates(schema, &context, families.tables));
     }
     if families.params > 0.0 {
         candidates.extend(params.candidates(families.params));
@@ -193,7 +193,7 @@ impl Families {
                 ..Families::default()
             },
             // Only a table (or a param holding one) can appear here.
-            ContextKind::TableName => Families {
+            ContextKind::TableName | ContextKind::EdgeTable => Families {
                 tables: 1.0,
                 params: 0.4,
                 ..Families::default()
@@ -365,11 +365,30 @@ fn member_candidate(
 
 /// Every table in the schema, with its relation spec as detail when it is an
 /// edge.
-fn table_candidates(schema: &SchemaIndex, weight: f32) -> Vec<Draft> {
+fn table_candidates(
+    schema: &SchemaIndex,
+    context: &CompletionContext,
+    weight: f32,
+) -> Vec<Draft> {
     schema
         .tables
         .values()
         .map(|table| {
+            // A graph step traverses an edge, so in that slot a `TYPE
+            // RELATION` table is the answer and a plain table almost never is
+            // — and among edges, one actually attached to the row table is
+            // the answer. Demoted rather than hidden: the row table is only a
+            // proxy for the step's real receiver, so a wrong guess must not
+            // hide a legal edge.
+            let weight = if context.kind == ContextKind::EdgeTable {
+                match &table.relation {
+                    Some(relation) if attaches_to(relation, &context.tables) => weight,
+                    Some(_) => weight * 0.6,
+                    None => weight * 0.25,
+                }
+            } else {
+                weight
+            };
             let detail = match &table.relation {
                 Some(relation) => Some(format!(
                     "relation {} -> {}",
@@ -399,6 +418,17 @@ fn table_candidates(schema: &SchemaIndex, weight: f32) -> Vec<Draft> {
             )
         })
         .collect()
+}
+
+/// Whether a relation edge has one of `tables` at either end. An edge with an
+/// unconstrained end attaches to everything, so it never loses this test.
+fn attaches_to(relation: &crate::schema::RelationDef, tables: &[String]) -> bool {
+    if tables.is_empty() || relation.in_tables.is_empty() || relation.out_tables.is_empty() {
+        return true;
+    }
+    tables.iter().any(|table| {
+        relation.in_tables.contains(table) || relation.out_tables.contains(table)
+    })
 }
 
 fn join_or(tables: &[String]) -> String {
