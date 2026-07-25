@@ -1542,6 +1542,104 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn a_valid_write_to_a_field_with_descendant_definitions_is_not_a_type_error() {
+        let mut workspace = Workspace::default();
+        // Two of the most common real schema shapes. A descendant definition
+        // used to REPLACE the parent's declared kind, so `items` read as a bare
+        // object and `cfg` lost its optionality — both of these writes were
+        // error-severity 2001s on valid SurrealQL, which aborts `generate` for
+        // the whole project.
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD items ON t TYPE array<object>;\n\
+             DEFINE FIELD items[*] ON t TYPE object;\n\
+             DEFINE FIELD items[*].price ON t TYPE string;\n\
+             DEFINE FIELD cfg ON t TYPE option<object>;\n\
+             DEFINE FIELD cfg.theme ON t TYPE string;\n\
+             CREATE t SET items = [{ price: '1' }], cfg = NONE;\n\
+             CREATE t SET items = [], cfg = { theme: 'dark' };"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 2001), 0, "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn a_wrong_write_to_a_refined_field_is_still_a_type_error() {
+        let mut workspace = Workspace::default();
+        // Refining must not turn into blanket permissiveness: the element type
+        // the descendants declare is enforced, and the parent's own shape is
+        // still a contract.
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD items ON t TYPE array<object>;\n\
+             DEFINE FIELD items[*].price ON t TYPE string;\n\
+             CREATE t SET items = [{ price: 1 }];\n\
+             CREATE t SET items = 'nope';"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 2001), 2, "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn a_subfield_under_a_scalar_parent_fires_1025_and_leaves_the_parent_writable() {
+        let mut workspace = Workspace::default();
+        // `title` is a string, so `title.sub` describes a member that can never
+        // exist. Report the definition (1025) — and keep `title` a string, so
+        // the perfectly valid `SET title = 'hello'` stays valid.
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD title ON t TYPE string;\n\
+             DEFINE FIELD title.sub ON t TYPE string;\n\
+             CREATE t SET title = 'hello';"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 1025), 1, "{:?}", output.diagnostics);
+        assert_eq!(codes(&output, 2001), 0, "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn a_subfield_under_an_object_shaped_or_undeclared_parent_never_fires_1025() {
+        let mut workspace = Workspace::default();
+        // Every shape with room for a subfield stays silent: an undeclared
+        // parent, a bare/FLEXIBLE `object`, an `option<object>`, a literal
+        // object, an untyped parent, and a collection reached through `[*]`.
+        workspace.add_virtual_source(
+            "schema".into(),
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD undeclared.name ON t TYPE string;\n\
+             DEFINE FIELD open ON t TYPE object;\n\
+             DEFINE FIELD open.name ON t TYPE string;\n\
+             DEFINE FIELD flex ON t FLEXIBLE TYPE object;\n\
+             DEFINE FIELD flex.name ON t TYPE string;\n\
+             DEFINE FIELD maybe ON t TYPE option<object>;\n\
+             DEFINE FIELD maybe.name ON t TYPE string;\n\
+             DEFINE FIELD shaped ON t TYPE { name: string };\n\
+             DEFINE FIELD shaped.age ON t TYPE int;\n\
+             DEFINE FIELD untyped ON t VALUE {};\n\
+             DEFINE FIELD untyped.name ON t TYPE string;\n\
+             DEFINE FIELD items ON t TYPE array;\n\
+             DEFINE FIELD items[*].sku ON t TYPE string;"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+
+        assert_eq!(codes(&output, 1025), 0, "{:?}", output.diagnostics);
+    }
+
+    #[test]
     fn record_field_referencing_undefined_table_fires_1001() {
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(

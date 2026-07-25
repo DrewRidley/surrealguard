@@ -171,6 +171,20 @@ pub struct RelationDef {
     pub span: SourceSpan,
 }
 
+/// One structural step of a `DEFINE FIELD` path.
+///
+/// The dotted key a field is stored under is lossy: `items[*].price` and
+/// `items.price` both collapse to `items.price`, even though only the first
+/// declares the ELEMENT type of an array. The step list keeps the distinction
+/// for the rules that need it — see [`field_placement`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FieldStep {
+    /// A named subfield: `.price`.
+    Field(String),
+    /// A collection's element: `[*]` or `.*`.
+    Element,
+}
+
 /// A `DEFINE FIELD` definition: its declared kind and write semantics.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldDef {
@@ -186,6 +200,12 @@ pub struct FieldDef {
     pub reference: bool,
     /// The field's dotted path split into segments.
     pub path: Vec<String>,
+    /// The declaration's STRUCTURAL path — like [`FieldDef::path`], but
+    /// keeping the `[*]` element steps that the dotted key collapses away, so
+    /// `items[*].price` is distinguishable from `items.price`. Empty when the
+    /// declaration's idiom is not a plain field/element path (an index
+    /// expression, a filter, ...), which no structural rule applies to.
+    pub steps: Vec<FieldStep>,
     /// The owning table's name.
     pub table: String,
     /// The declared kind, when the field is typed.
@@ -422,15 +442,43 @@ impl SchemaIndex {
 
     /// Attaches a field to its table. A field targeting an unknown table, or
     /// a redefinition without `OVERWRITE`, leaves the index unchanged.
+    ///
+    /// A declaration that describes part of an ALREADY-DECLARED field —
+    /// `items[*].price` under `items TYPE array<object>` — is not a field of
+    /// the row at all: it refines the declared kind in place (see
+    /// [`field_placement`]) and is not stored under its own key. Storing it
+    /// separately is what let a descendant silently replace its parent's
+    /// declared kind.
     pub fn insert_field(&mut self, field: FieldDef, overwrite: bool) {
         let field_key = field.path.join(".");
         let Some(table) = self.tables.get_mut(&field.table) else {
             return;
         };
-        if table.fields.contains_key(&field_key) && !overwrite {
-            return;
+        match field_placement(table, &field.steps) {
+            FieldPlacement::Refine { ancestor, tail } => {
+                let child = field.kind.clone().unwrap_or(Kind::Any);
+                let Some(parent) = table.fields.get_mut(&ancestor) else {
+                    return;
+                };
+                if let Some(refined) = parent
+                    .kind
+                    .as_ref()
+                    .and_then(|kind| crate::kinds::refine_subkind(kind, &tail, &child))
+                {
+                    parent.kind = Some(refined);
+                }
+            }
+            // The parent's declared kind has no room for this subfield (1025
+            // reports it). Dropping the declaration is what keeps the parent's
+            // own kind intact.
+            FieldPlacement::Rejected { .. } => {}
+            FieldPlacement::Standalone => {
+                if table.fields.contains_key(&field_key) && !overwrite {
+                    return;
+                }
+                table.fields.insert(field_key, field);
+            }
         }
-        table.fields.insert(field_key, field);
     }
 
     /// Drops a table and everything attached to it.
@@ -607,11 +655,135 @@ pub(crate) fn idiom_field_path(idiom: &ast::Idiom) -> Vec<String> {
         .collect()
 }
 
+/// The structural steps of a `DEFINE FIELD` path (`items[*].price` →
+/// `[Field(items), Element, Field(price)]`).
+///
+/// Empty when the idiom is not a pure field/element path — an index
+/// expression, a filter, a graph step. Such a declaration carries no
+/// structural claim about a parent field, so every rule keyed on steps leaves
+/// it alone.
+pub(crate) fn idiom_field_steps(idiom: &ast::Idiom) -> Vec<FieldStep> {
+    let mut steps = Vec::with_capacity(idiom.parts.len());
+    for part in &idiom.parts {
+        match &part.node {
+            ast::IdiomPart::Field(name) => steps.push(FieldStep::Field(name.clone())),
+            ast::IdiomPart::All => steps.push(FieldStep::Element),
+            _ => return Vec::new(),
+        }
+    }
+    steps
+}
+
+/// Where a `DEFINE FIELD` declaration belongs in the catalog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FieldPlacement {
+    /// Stored under its own dotted key, as its own field.
+    Standalone,
+    /// Not a field of its own: it refines the already-declared field
+    /// `ancestor` at the sub-path `tail`.
+    Refine {
+        /// Dotted key of the declared ancestor field being refined.
+        ancestor: String,
+        /// The sub-path under that ancestor this declaration describes.
+        tail: Vec<FieldStep>,
+    },
+    /// The declared ancestor's kind admits no such sub-path (1025).
+    Rejected {
+        /// Dotted key of the declared ancestor field.
+        ancestor: String,
+        /// That ancestor's declared kind, for the diagnostic.
+        ancestor_kind: Kind,
+    },
+}
+
+/// Decides whether a declaration is a field of the row or a REFINEMENT of an
+/// already-declared ancestor field.
+///
+/// A descendant declaration only ever refines a parent whose declared kind
+/// *carries shape the dotted key cannot* — a collection (`array`/`set`, which
+/// the nested-field synthesis would flatten away), an `option<...>` (whose
+/// optionality the synthesis would erase), or a literal object (whose already-
+/// declared siblings the synthesis would drop).
+///
+/// Deliberately left standalone, so their long-standing behaviour is untouched:
+/// * an ancestor that is not declared at all (`profile.name` with no `DEFINE
+///   FIELD profile`) — the nested-field prefix synthesis owns that shape;
+/// * an ancestor declared as a bare `object`, which is exactly the open shape
+///   that synthesis models correctly (and the `FLEXIBLE` case);
+/// * an untyped / `any` ancestor, which claims nothing to preserve.
+pub(crate) fn field_placement(table: &TableDef, steps: &[FieldStep]) -> FieldPlacement {
+    // The deepest declared ancestor: only a prefix made purely of named
+    // segments can be a stored dotted key.
+    let mut ancestor: Option<(usize, &FieldDef)> = None;
+    for split in 1..steps.len() {
+        let mut names = Vec::with_capacity(split);
+        for step in &steps[..split] {
+            let FieldStep::Field(name) = step else {
+                names.clear();
+                break;
+            };
+            names.push(name.as_str());
+        }
+        if names.is_empty() {
+            break;
+        }
+        if let Some(field) = table.fields.get(&names.join(".")) {
+            ancestor = Some((split, field));
+        }
+    }
+
+    let Some((split, parent)) = ancestor else {
+        return FieldPlacement::Standalone;
+    };
+    let Some(kind) = parent.kind.clone() else {
+        return FieldPlacement::Standalone;
+    };
+    let tail = &steps[split..];
+    let all_named = tail.iter().all(|step| matches!(step, FieldStep::Field(_)));
+    // `any` claims nothing, so there is nothing to preserve — and narrowing it
+    // to what a descendant happens to mention would invent a contract the
+    // author declined to write.
+    if matches!(kind, Kind::Any) || (matches!(kind, Kind::Object) && all_named) {
+        return FieldPlacement::Standalone;
+    }
+
+    let key = parent.path.join(".");
+    match crate::kinds::refine_subkind(&kind, tail, &Kind::Any) {
+        Some(_) => FieldPlacement::Refine {
+            ancestor: key,
+            tail: tail.to_vec(),
+        },
+        None => FieldPlacement::Rejected {
+            ancestor: key,
+            ancestor_kind: kind,
+        },
+    }
+}
+
 /// Whether an index/event field path resolves on a table, either directly or
 /// as the prefix of a declared nested field.
 pub(crate) fn index_field_path_exists_on_table(table: &TableDef, path: &[String]) -> bool {
     let key = path.join(".");
+    // A path that runs INTO a declared kind — `items.price` under
+    // `items: array<{ price: string }>`, however that element type was
+    // declared. Only what the kind proves counts, so this never invents a
+    // field.
+    let resolves_through_kind = || {
+        let Some((head, rest)) = path.split_first() else {
+            return false;
+        };
+        let steps: Vec<_> = rest
+            .iter()
+            .map(|name| FieldStep::Field(name.clone()))
+            .collect();
+        table
+            .fields
+            .get(head)
+            .and_then(|field| field.kind.as_ref())
+            .is_some_and(|kind| crate::kinds::subkind_at(kind, &steps).is_some())
+    };
     table.fields.contains_key(&key)
+        || resolves_through_kind()
         || table
             .fields
             .values()
@@ -668,6 +840,7 @@ pub(crate) fn field_def_from_ast(
         computed: def.value.is_some() || def.computed.is_some(),
         reference: def.reference,
         path: idiom_field_path(&def.path.node),
+        steps: idiom_field_steps(&def.path.node),
         table: def.table.node.clone(),
         kind,
         partial,
@@ -1094,11 +1267,150 @@ fn base_kind_for_name(name: &str) -> Option<Kind> {
 
 #[cfg(test)]
 mod tests {
-    use surrealdb_types::Kind;
+    use std::collections::BTreeMap;
+
+    use surrealdb_types::{Kind, KindLiteral};
     use surrealguard_syntax::parse::parse_source;
     use surrealguard_syntax::source::SourceId;
 
-    use super::{extract_schema, FieldPath};
+    use super::{extract_schema, FieldPath, SchemaIndex};
+
+    fn schema_of(text: &str) -> SchemaIndex {
+        let parsed = parse_source(SourceId::new("schema:sub"), text).expect("schema parses");
+        extract_schema(&[parsed]).schema
+    }
+
+    fn field_kind(schema: &SchemaIndex, table: &str, path: &str) -> Option<Kind> {
+        schema
+            .field(table, &FieldPath::parse(path))
+            .and_then(|field| field.kind.clone())
+    }
+
+    fn object(entries: &[(&str, Kind)]) -> Kind {
+        Kind::Literal(KindLiteral::Object(
+            entries
+                .iter()
+                .map(|(name, kind)| ((*name).to_string(), kind.clone()))
+                .collect::<BTreeMap<_, _>>(),
+        ))
+    }
+
+    #[test]
+    fn element_definitions_refine_the_declared_array_instead_of_replacing_it() {
+        // `items[*].price` describes the ELEMENT of `items`, not a field of the
+        // row. Storing it as a pseudo-field `items.price` used to shadow the
+        // parent's declaration and flatten `array<object>` to a bare object —
+        // an error-severity 2001 on every valid write.
+        let schema = schema_of(
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD items ON t TYPE array<object>;\n\
+             DEFINE FIELD items[*] ON t TYPE object;\n\
+             DEFINE FIELD items[*].price ON t TYPE string;\n\
+             DEFINE FIELD items[*].qty ON t TYPE int;",
+        );
+
+        assert_eq!(
+            field_kind(&schema, "t", "items"),
+            Some(Kind::Array(
+                Box::new(object(&[("price", Kind::String), ("qty", Kind::Int)])),
+                None
+            )),
+        );
+        // The element declarations are not fields of the row.
+        let t = schema.table("t").expect("table t");
+        assert_eq!(t.fields.keys().collect::<Vec<_>>(), vec!["items"]);
+    }
+
+    #[test]
+    fn an_undeclared_element_type_still_refines_a_bare_array() {
+        // The shape the oracle corpus uses: `TYPE array` with the element type
+        // supplied only by the `[*]` declarations.
+        let schema = schema_of(
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD items ON t TYPE array;\n\
+             DEFINE FIELD items[*].sku ON t TYPE string;",
+        );
+
+        assert_eq!(
+            field_kind(&schema, "t", "items"),
+            Some(Kind::Array(
+                Box::new(object(&[("sku", Kind::String)])),
+                None
+            )),
+        );
+    }
+
+    #[test]
+    fn a_subfield_never_makes_an_optional_parent_required() {
+        let schema = schema_of(
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD cfg ON t TYPE option<object>;\n\
+             DEFINE FIELD cfg.theme ON t TYPE string;",
+        );
+
+        assert_eq!(
+            field_kind(&schema, "t", "cfg"),
+            Some(Kind::either(vec![
+                Kind::None,
+                object(&[("theme", Kind::String)]),
+            ])),
+        );
+    }
+
+    #[test]
+    fn a_subfield_under_a_scalar_parent_leaves_the_parent_kind_alone() {
+        // `title` holds a string; `title.sub` can never exist. The definition is
+        // reported (1025) and dropped, so `title` stays `string` and
+        // `SET title = 'hello'` keeps type-checking.
+        let schema = schema_of(
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD title ON t TYPE string;\n\
+             DEFINE FIELD title.sub ON t TYPE string;",
+        );
+
+        assert_eq!(field_kind(&schema, "t", "title"), Some(Kind::String));
+        assert!(schema
+            .field("t", &FieldPath::parse("title.sub"))
+            .is_none());
+    }
+
+    #[test]
+    fn a_bare_object_parent_keeps_storing_its_subfields_as_fields() {
+        // An open `object` (and an undeclared parent) is exactly the shape the
+        // nested-field prefix synthesis already models, so those declarations
+        // stay standalone fields and keep resolving as such.
+        let schema = schema_of(
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD prof ON t TYPE object;\n\
+             DEFINE FIELD prof.name ON t TYPE string;\n\
+             DEFINE FIELD other.city ON t TYPE string;",
+        );
+
+        assert_eq!(field_kind(&schema, "t", "prof"), Some(Kind::Object));
+        assert_eq!(field_kind(&schema, "t", "prof.name"), Some(Kind::String));
+        assert_eq!(field_kind(&schema, "t", "other.city"), Some(Kind::String));
+    }
+
+    #[test]
+    fn an_index_over_a_refined_element_field_still_resolves() {
+        // The element declarations no longer exist as fields, so index
+        // field-existence has to read them out of the refined kind.
+        let schema = schema_of(
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD items ON t TYPE array;\n\
+             DEFINE FIELD items[*].sku ON t TYPE string;",
+        );
+        let t = schema.table("t").expect("table t");
+
+        assert!(super::index_field_path_exists_on_table(
+            t,
+            &["items".to_string(), "sku".to_string()]
+        ));
+        assert!(!super::index_field_path_exists_on_table(
+            t,
+            &["items".to_string(), "ghost".to_string()]
+        ));
+    }
 
     #[test]
     fn schema_index_stores_define_statements_for_direct_table_and_field_lookup() {
@@ -1648,4 +1960,5 @@ mod tests {
         assert!(extraction.schema.table("person").is_none());
     }
 }
+
 
