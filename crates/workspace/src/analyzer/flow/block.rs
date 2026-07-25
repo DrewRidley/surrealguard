@@ -2,7 +2,23 @@
 //!
 //! A block's job is composition: each child statement is dispatched to that
 //! statement's own analyzer, so per-statement rules stay attached to their
-//! own analyzer. A block evaluates to its final statement's value.
+//! own analyzer.
+//!
+//! A block is typed by its **exit set**: the union over every reachable
+//! control-flow exit. There are two kinds of exit:
+//!
+//! 1. a `RETURN e`, contributing the kind of `e` in the flow-narrowed env
+//!    that holds on the path to it (non-trailing `RETURN`s inside `IF`/`FOR`/
+//!    nested blocks are collected too, not just the trailing statement); and
+//! 2. the trailing statement's value, but **only when control can reach the
+//!    end of the block** — a block that provably diverges contributes no
+//!    trailing value.
+//!
+//! No-value diverging exits (`THROW`/`BREAK`/`CONTINUE`) contribute nothing.
+//! The union is built with [`Kind::either`], which flattens, dedupes, and
+//! collapses a singleton (and yields `Kind::None` for the empty set). The
+//! exit set over-approximates the runtime value set: widening (an extra exit,
+//! an extra `None`) is sound; dropping a reachable exit is the failure mode.
 
 use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
@@ -10,8 +26,56 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::statement::analyze_lowered_statement;
 
+/// The control-flow summary of a block or block-like construct: the value
+/// kinds carried by every `RETURN` reachable inside it, the value it
+/// evaluates to when control reaches its end, and whether control provably
+/// cannot reach that end.
+///
+/// `returns` bubble up to the enclosing function/closure/value-block exit set;
+/// `value` is the trailing-position contribution, used only when `!diverges`.
+pub(crate) struct Flow {
+    /// Kinds carried out by each reachable `RETURN` (already flow-narrowed).
+    pub returns: Vec<Kind>,
+    /// The value produced when control reaches the end of the construct.
+    pub value: Kind,
+    /// Whether control provably cannot reach the end.
+    pub diverges: bool,
+}
+
+impl Flow {
+    /// The exit-set union: every `RETURN` exit, plus the trailing value when
+    /// the construct does not provably diverge. `either([]) == Kind::None`.
+    ///
+    /// `Kind::Any` is the top type, so a union that includes it *is* `Any` —
+    /// any exit typed `Any` (e.g. `record::id(...)`, a recursive UDF call)
+    /// absorbs the whole union. This keeps `T | any` from leaking out (which
+    /// would, for instance, defeat the mutation checker's `Any` short-circuit)
+    /// and is the sound over-approximation.
+    pub(crate) fn into_kind(self) -> Kind {
+        let mut exits = self.returns;
+        if !self.diverges {
+            exits.push(self.value);
+        }
+        if exits.iter().any(|kind| matches!(kind, Kind::Any)) {
+            return Kind::Any;
+        }
+        Kind::either(exits)
+    }
+}
+
+/// A block's value is its exit-set union (see the module docs).
 pub(crate) fn analyze_block(ctx: &mut AnalysisContext<'_>, block: &ast::Block) -> Kind {
-    let mut last = Kind::None;
+    analyze_block_flow(ctx, block).into_kind()
+}
+
+/// Analyzes each statement in order and accumulates the block's [`Flow`]: the
+/// `RETURN` exits collected from every statement (each in the env in force at
+/// that point), the trailing statement's value, and whether the block
+/// diverges. This is the single analysis pass — every statement's own
+/// analyzer runs exactly once here.
+pub(crate) fn analyze_block_flow(ctx: &mut AnalysisContext<'_>, block: &ast::Block) -> Flow {
+    let mut returns: Vec<Kind> = Vec::new();
+    let mut value = Kind::None;
     let mut terminated = false;
     for statement in &block.statements {
         if terminated {
@@ -29,13 +93,54 @@ pub(crate) fn analyze_block(ctx: &mut AnalysisContext<'_>, block: &ast::Block) -
             );
             break;
         }
-        last = analyze_lowered_statement(ctx, statement);
+        let stmt_flow = statement_flow(ctx, statement);
+        returns.extend(stmt_flow.returns);
+        value = stmt_flow.value;
         // A guard that exits on its condition (`IF g THEN RETURN … END`) leaves
         // the negation of `g` holding for the statements that follow it.
         apply_fall_through_narrowing(ctx, &statement.node);
         terminated = statement_diverges(&statement.node);
     }
-    last
+    Flow {
+        returns,
+        value,
+        diverges: terminated,
+    }
+}
+
+/// The `RETURN` exits carried out of a single statement, plus the value it
+/// evaluates to. Composite statements (`IF`/`FOR`/nested blocks) surface the
+/// `RETURN`s nested inside them so an early exit is never dropped; every other
+/// statement dispatches to its own analyzer and carries no `RETURN` exit.
+fn statement_flow(ctx: &mut AnalysisContext<'_>, statement: &ast::Spanned<ast::Statement>) -> Flow {
+    match &statement.node {
+        // A `RETURN` is itself an exit: its value both bubbles up as a return
+        // and is the statement's value (moot — a `RETURN` diverges).
+        ast::Statement::Return(stmt) => {
+            let kind = crate::analyzer::flow::return_stmt::analyze_return(ctx, stmt);
+            Flow {
+                returns: vec![kind.clone()],
+                value: kind,
+                diverges: true,
+            }
+        }
+        // Composite constructs surface their nested `RETURN`s and their own
+        // pass-through value (see the respective flow builders).
+        ast::Statement::IfElse(stmt) => crate::analyzer::flow::if_else::analyze_if_else_flow(ctx, stmt),
+        ast::Statement::For(stmt) => crate::analyzer::flow::for_loop::analyze_for_loop_flow(ctx, stmt),
+        ast::Statement::Block(block) => analyze_block_flow(ctx, block),
+        // Everything else carries no `RETURN` exit; its value is the trailing
+        // contribution. `THROW`/`BREAK`/`CONTINUE` divergence is recognized by
+        // `statement_diverges`, which drops the (no-)value at the block level.
+        _ => {
+            let value = analyze_lowered_statement(ctx, statement);
+            Flow {
+                returns: Vec::new(),
+                value,
+                diverges: false,
+            }
+        }
+    }
 }
 
 /// After a preceding `IF` with no `ELSE` whose every branch diverges, the
@@ -103,6 +208,124 @@ mod tests {
     use surrealguard_syntax::source::SourceId;
 
     use crate::schema::SchemaIndex;
+
+    /// Lowers `source`'s first `Block` node, runs `bind` to seed the env, and
+    /// returns the block's exit-set kind.
+    fn block_exit_kind(source: &str, bind: impl FnOnce(&mut AnalysisContext<'_>)) -> Kind {
+        let parsed = parse_source(SourceId::new("flow:test"), source).expect("query parses");
+        let ast::Statement::Block(block) =
+            surrealguard_syntax::lower::lower_first_statement(&parsed, "Block")
+                .expect("no Block node in tree")
+                .node
+        else {
+            panic!("expected block");
+        };
+        let schema = SchemaIndex::default();
+        let mut diagnostics: Vec<Finding> = Vec::new();
+        let mut ctx = AnalysisContext::new(
+            &schema,
+            parsed.source_id().clone(),
+            parsed.text(),
+            &mut diagnostics,
+        );
+        bind(&mut ctx);
+        analyze_block(&mut ctx, &block)
+    }
+
+    /// Binds `$name` to `kind` as a local in `ctx`.
+    fn bind_param(ctx: &mut AnalysisContext<'_>, name: &str, kind: Kind) {
+        use crate::expression::{ExpressionFact, ExpressionValueClass};
+        let span = surrealguard_syntax::span::SourceSpan::new(
+            ctx.source().clone(),
+            surrealguard_syntax::span::ByteRange::new(0, 1).unwrap(),
+        );
+        let fact = ExpressionFact::new(span, ExpressionValueClass::Variable).with_kind(kind);
+        ctx.define_local(name.to_string(), fact);
+    }
+
+    #[test]
+    fn non_trailing_return_widens_the_block_to_the_exit_union() {
+        // The canonical bug (design §3.3): `$x` is `option<{ name: string }>`.
+        // The early `RETURN false` (in the NONE guard) must not be dropped —
+        // the block's honest type is `bool | string`, not just the trailing
+        // `string`. And the trailing `RETURN $x.name` is typed in the
+        // fall-through-narrowed env where `$x` is non-none, so `.name` resolves.
+        let x_kind = Kind::either(vec![
+            Kind::None,
+            Kind::Literal(surrealdb_types::KindLiteral::Object(
+                std::collections::BTreeMap::from([("name".to_string(), Kind::String)]),
+            )),
+        ]);
+        let kind = block_exit_kind(
+            "RETURN { IF $x = NONE THEN RETURN false END; RETURN $x.name };",
+            |ctx| bind_param(ctx, "x", x_kind.clone()),
+        );
+        assert_eq!(kind, Kind::Either(vec![Kind::Bool, Kind::String]));
+    }
+
+    #[test]
+    fn early_return_unions_with_the_trailing_return() {
+        // `IF c THEN RETURN 1 END; RETURN 'x'` → `int | string`. The non-trailing
+        // RETURN is captured; the IF's own NONE fall-through is not spuriously
+        // added (the trailing statement diverges).
+        let kind = block_exit_kind(
+            "RETURN { IF $c THEN RETURN 1 END; RETURN 'x' };",
+            |_ctx| {},
+        );
+        assert_eq!(kind, Kind::Either(vec![Kind::Int, Kind::String]));
+    }
+
+    #[test]
+    fn if_without_else_contributes_an_implicit_none_to_the_block_value() {
+        // A plain `IF c THEN 1 END` as a block's trailing value can fall
+        // through to NONE, so the block value is `int | none`.
+        let kind = block_exit_kind("RETURN { IF $c THEN 1 END };", |_ctx| {});
+        assert_eq!(kind, Kind::Either(vec![Kind::Int, Kind::None]));
+    }
+
+    #[test]
+    fn a_fully_diverging_block_has_no_trailing_none_contribution() {
+        // Every path RETURNs, so the block diverges: the exit set is exactly
+        // the two RETURN kinds — no trailing NONE is added.
+        let kind = block_exit_kind(
+            "RETURN { IF $c THEN RETURN 1 ELSE RETURN 'x' END };",
+            |_ctx| {},
+        );
+        assert_eq!(kind, Kind::Either(vec![Kind::Int, Kind::String]));
+    }
+
+    #[test]
+    fn returns_nested_in_a_child_block_bubble_to_the_exit_set() {
+        // A RETURN inside a nested block is an exit of the enclosing block too.
+        let kind = block_exit_kind(
+            "RETURN { IF $c THEN RETURN 1 END; { RETURN 'nested' } };",
+            |_ctx| {},
+        );
+        assert_eq!(kind, Kind::Either(vec![Kind::Int, Kind::String]));
+    }
+
+    #[test]
+    fn returns_inside_a_for_body_bubble_to_the_exit_set() {
+        // A loop may return an element or fall through to the trailing RETURN.
+        let kind = block_exit_kind(
+            "RETURN { FOR $i IN [1, 2] { RETURN $i; }; RETURN 'done' };",
+            |_ctx| {},
+        );
+        assert_eq!(kind, Kind::Either(vec![Kind::Int, Kind::String]));
+    }
+
+    #[test]
+    fn an_any_exit_absorbs_the_whole_union() {
+        // `record::id(...)` (and a recursive UDF call) is `Any` — the top type.
+        // A union of a concrete kind with `Any` IS `Any`, not `string | any`,
+        // which keeps the mutation checker's `Any` short-circuit working (a
+        // workshop-oracle regression: `string | any` tripped a false E2001).
+        let kind = block_exit_kind(
+            "RETURN { IF $c THEN RETURN 'x' END; RETURN record::id($r) };",
+            |_ctx| {},
+        );
+        assert_eq!(kind, Kind::Any);
+    }
 
     #[test]
     fn evaluates_to_the_final_statement_value_with_let_flow() {

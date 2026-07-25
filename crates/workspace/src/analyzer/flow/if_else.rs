@@ -1,16 +1,39 @@
 //! `IF`/`ELSE` statement analysis.
 //!
 //! Each branch body is analyzed in its own child scope (branch-local `LET`
-//! bindings don't leak); the statement's value is the union of the branch
-//! values, merged through upstream `Kind::either`.
+//! bindings don't leak) under the branch condition's flow narrowing (positive
+//! effects in a THEN, the negation of every branch in the ELSE).
+//!
+//! An `IF` is itself a value-block-like construct, so it is typed by the same
+//! exit-set model as a block ([`crate::analyzer::flow::block::Flow`]): each
+//! branch's `RETURN`s bubble out as exits, and its *pass-through* value (the
+//! trailing value of a branch that does not diverge, or `NONE` for the
+//! implicit fall-through of an `IF` with no `ELSE`) contributes to the value
+//! reached when control continues past the `IF`.
 
 use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::flow::block::{analyze_block_flow, Flow};
 
+/// The value of an `IF` as a statement: its exit-set union (every branch's
+/// `RETURN` exits, plus the pass-through value when it does not diverge).
 pub(crate) fn analyze_if_else(ctx: &mut AnalysisContext<'_>, stmt: &ast::IfElseStmt) -> Kind {
-    let mut branch_kinds = Vec::new();
+    analyze_if_else_flow(ctx, stmt).into_kind()
+}
+
+/// The [`Flow`] of an `IF`/`ELSE`: the `RETURN`s reachable through any branch,
+/// the value reached when control falls past the `IF`, and whether it
+/// provably diverges (only when an `ELSE` is present and every branch and the
+/// `ELSE` diverge).
+pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::IfElseStmt) -> Flow {
+    let mut returns: Vec<Kind> = Vec::new();
+    // Pass-through values: the trailing value of each branch through which
+    // control can continue past the `IF`.
+    let mut pass_through: Vec<Kind> = Vec::new();
+    // Whether *every* arm (branches and the `ELSE`, if any) diverges.
+    let mut all_arms_diverge = true;
 
     for branch in &stmt.branches {
         // Conditions are analyzed for their facts (params, dependencies),
@@ -47,12 +70,17 @@ pub(crate) fn analyze_if_else(ctx: &mut AnalysisContext<'_>, stmt: &ast::IfElseS
         // sees the positive narrowing of that condition's guards.
         let positive =
             crate::analyzer::flow::narrow::positive_effects(&branch.condition.node, ctx.env());
-        let kind = ctx.with_child_env(|ctx| {
+        let flow = ctx.with_child_env(|ctx| {
             crate::analyzer::flow::narrow::apply_effects(ctx, &positive);
-            crate::analyzer::flow::block::analyze_block(ctx, &branch.body)
+            analyze_block_flow(ctx, &branch.body)
         });
-        branch_kinds.push(kind);
+        returns.extend(flow.returns);
+        if !flow.diverges {
+            all_arms_diverge = false;
+            pass_through.push(flow.value);
+        }
     }
+
     if let Some(else_branch) = &stmt.else_branch {
         // The ELSE runs only when every preceding branch condition was false,
         // so it sees the negation of each.
@@ -63,17 +91,30 @@ pub(crate) fn analyze_if_else(ctx: &mut AnalysisContext<'_>, stmt: &ast::IfElseS
                 ctx.env(),
             ));
         }
-        let kind = ctx.with_child_env(|ctx| {
+        let flow = ctx.with_child_env(|ctx| {
             crate::analyzer::flow::narrow::apply_effects(ctx, &negative);
-            crate::analyzer::flow::block::analyze_block(ctx, else_branch)
+            analyze_block_flow(ctx, else_branch)
         });
-        branch_kinds.push(kind);
+        returns.extend(flow.returns);
+        if !flow.diverges {
+            all_arms_diverge = false;
+            pass_through.push(flow.value);
+        }
+    } else {
+        // With no ELSE, a non-matching `IF` falls through to `NONE` at runtime,
+        // so `NONE` is always a reachable pass-through value.
+        pass_through.push(Kind::None);
     }
 
-    if branch_kinds.is_empty() {
-        return Kind::Any;
+    // The `IF` diverges only when an `ELSE` is present and every arm diverges —
+    // otherwise control can fall through (mirrors `block::statement_diverges`).
+    let diverges = stmt.else_branch.is_some() && !stmt.branches.is_empty() && all_arms_diverge;
+
+    Flow {
+        returns,
+        value: Kind::either(pass_through),
+        diverges,
     }
-    Kind::either(branch_kinds)
 }
 
 /// Whether a condition of this kind can never evaluate to a boolean.
@@ -124,5 +165,46 @@ mod tests {
         assert_eq!(kind, Kind::Either(vec![Kind::Int, Kind::String]));
         // The branch-local LET must not leak into the outer scope.
         assert!(ctx.env().let_fact("v").is_none());
+    }
+
+    /// The kind of the first `IfElseStatement` in `source`.
+    fn if_else_kind(source: &str) -> Kind {
+        let parsed = parse_source(SourceId::new("flow:test"), source).expect("query parses");
+        let ast::Statement::IfElse(stmt) =
+            surrealguard_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
+                .expect("no IfElseStatement node in tree")
+                .node
+        else {
+            panic!("expected if statement");
+        };
+        let schema = SchemaIndex::default();
+        let mut diagnostics: Vec<Finding> = Vec::new();
+        let mut ctx = AnalysisContext::new(
+            &schema,
+            parsed.source_id().clone(),
+            parsed.text(),
+            &mut diagnostics,
+        );
+        analyze_if_else(&mut ctx, &stmt)
+    }
+
+    #[test]
+    fn if_without_an_else_includes_the_implicit_none_fall_through() {
+        // A value-producing branch plus the no-ELSE fall-through: `int | none`.
+        assert_eq!(
+            if_else_kind("IF $c THEN 1 END;"),
+            Kind::Either(vec![Kind::Int, Kind::None])
+        );
+    }
+
+    #[test]
+    fn diverging_branch_without_an_else_surfaces_return_and_none() {
+        // The THEN diverges (RETURN 1) but the no-ELSE fall-through still
+        // evaluates to NONE — the IF's value is `int | none`, and the `1`
+        // reaches the enclosing exit set as a RETURN.
+        assert_eq!(
+            if_else_kind("IF $c THEN RETURN 1 END;"),
+            Kind::Either(vec![Kind::Int, Kind::None])
+        );
     }
 }

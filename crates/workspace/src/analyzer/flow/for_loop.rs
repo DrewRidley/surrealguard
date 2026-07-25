@@ -1,15 +1,30 @@
 //! `FOR` statement analysis.
 //!
 //! The loop binding is defined in the body's child scope with the element
-//! kind of the iterable when it is known. The statement produces no value.
+//! kind of the iterable when it is known. The statement itself produces no
+//! value (a `FOR` evaluates to `NONE` and never diverges — the body may run
+//! zero times), but any `RETURN` reachable inside the body is an exit of the
+//! enclosing function/closure and bubbles up through its [`Flow`].
 
 use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::flow::block::{analyze_block_flow, Flow};
 use crate::expression::{ExpressionFact, ExpressionValueClass};
 
+/// A `FOR` as a statement produces no value; its body's `RETURN` exits are
+/// collected for the enclosing exit set by [`analyze_for_loop_flow`] and
+/// discarded here (a bare `FOR` at statement position has no exit set to
+/// bubble into).
 pub(crate) fn analyze_for_loop(ctx: &mut AnalysisContext<'_>, stmt: &ast::ForStmt) -> Kind {
+    analyze_for_loop_flow(ctx, stmt);
+    Kind::None
+}
+
+/// The [`Flow`] of a `FOR`: the `RETURN`s reachable inside its body (in the
+/// loop/element env), no pass-through value (`NONE`), and never diverging.
+pub(crate) fn analyze_for_loop_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::ForStmt) -> Flow {
     let iterable = crate::analyzer::expression::expr_fact(ctx, &stmt.iterable);
     let element_kind = match &iterable.kind {
         Some(Kind::Array(element, _) | Kind::Set(element, _)) => Some((**element).clone()),
@@ -65,7 +80,7 @@ pub(crate) fn analyze_for_loop(ctx: &mut AnalysisContext<'_>, stmt: &ast::ForStm
         }
     }
 
-    ctx.with_child_env(|ctx| {
+    let body = ctx.with_child_env(|ctx| {
         let mut binding =
             ExpressionFact::new(iterable.span.clone(), ExpressionValueClass::Variable);
         binding.kind = element_kind.clone();
@@ -82,10 +97,16 @@ pub(crate) fn analyze_for_loop(ctx: &mut AnalysisContext<'_>, stmt: &ast::ForStm
             kind: element_kind,
         });
         ctx.define_local(stmt.binding.node.clone(), binding);
-        ctx.with_loop(|ctx| crate::analyzer::flow::block::analyze_block(ctx, &stmt.body))
+        ctx.with_loop(|ctx| analyze_block_flow(ctx, &stmt.body))
     });
 
-    Kind::None
+    // The body's `RETURN`s exit the enclosing function; the `FOR` itself
+    // yields `NONE` and never diverges (it may iterate zero times).
+    Flow {
+        returns: body.returns,
+        value: Kind::None,
+        diverges: false,
+    }
 }
 
 #[cfg(test)]
