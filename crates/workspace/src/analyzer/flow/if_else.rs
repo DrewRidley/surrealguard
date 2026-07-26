@@ -15,6 +15,7 @@ use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::contract::{Contract, Position};
 use crate::analyzer::flow::block::{analyze_block_flow, Flow};
 
 /// The value of an `IF` as a statement: its exit-set union (every branch's
@@ -65,7 +66,10 @@ pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::If
             ));
         }
         let condition_kind = condition_fact.kind.unwrap_or(Kind::Any);
-        if definitely_not_bool(&condition_kind) {
+        if Contract::condition(Position::IfCond)
+            .decide(&condition_kind)
+            .is_violation()
+        {
             let span = surrealguard_syntax::span::SourceSpan::new(
                 ctx.source().clone(),
                 branch.condition.span,
@@ -191,17 +195,6 @@ fn block_span(block: &ast::Block) -> Option<surrealguard_syntax::span::ByteRange
     let first = block.statements.first()?;
     let last = block.statements.last()?;
     surrealguard_syntax::span::ByteRange::new(first.span.start(), last.span.end()).ok()
-}
-
-/// Whether a condition of this kind can never evaluate to a boolean.
-/// Unknowns, unions containing bool, and NONE/NULL (falsy) are all fine.
-pub(crate) fn definitely_not_bool(kind: &Kind) -> bool {
-    match kind {
-        Kind::Bool | Kind::Any | Kind::None | Kind::Null => false,
-        Kind::Either(variants) => variants.iter().all(definitely_not_bool),
-        Kind::Literal(literal) => !matches!(literal, surrealdb_types::KindLiteral::Bool(_)),
-        _ => true,
-    }
 }
 
 #[cfg(test)]

@@ -81,7 +81,10 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
         });
         check_computed_calls(ctx, assert);
         if let Some(kind) = kind {
-            if crate::analyzer::flow::if_else::definitely_not_bool(&kind) {
+            if Contract::condition(Position::FieldAssert)
+                .decide(&kind)
+                .is_violation()
+            {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), assert.span);
                 ctx.emit(surrealguard_diagnostics::catalog::finding(

@@ -64,7 +64,12 @@ pub(crate) fn analyze_permission_predicates(
                 // never gate access as written. Guarded to provably-non-bool
                 // scalars (`Any`/`None`/`Null` are skipped) to stay low-FP.
                 if let Some(kind) = fact.kind {
-                    if crate::analyzer::flow::if_else::definitely_not_bool(&kind) {
+                    if crate::analyzer::contract::Contract::condition(
+                        crate::analyzer::contract::Position::PermissionPredicate,
+                    )
+                    .decide(&kind)
+                    .is_violation()
+                    {
                         let span = SourceSpan::new(ctx.source().clone(), predicate.span);
                         ctx.emit(surrealguard_diagnostics::catalog::finding(
                             span,

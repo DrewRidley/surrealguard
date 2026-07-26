@@ -13,6 +13,7 @@ use surrealguard_syntax::ast;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::contract::{Contract, Position};
 use crate::expression::{ExpressionFact, ExpressionValueClass};
 
 pub(crate) fn analyze_define_event(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineEvent) -> Kind {
@@ -47,7 +48,27 @@ pub(crate) fn analyze_define_event(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
         let table = ctx.schema().tables.get(&stmt.table.node);
         ctx.with_row_table(table, |ctx| {
             if let Some(when) = &stmt.when {
-                crate::analyzer::expression::analyze_expr(ctx, when);
+                let kind = crate::analyzer::expression::analyze_expr(ctx, when);
+                // WHEN gates whether the event fires, so it is a condition like
+                // any other. It had no kind contract at all: `WHEN 'CREATE'`
+                // (the missing `$event =`) was silent.
+                if Contract::condition(Position::EventWhen)
+                    .decide(&kind)
+                    .is_violation()
+                {
+                    let span = SourceSpan::new(ctx.source().clone(), when.span);
+                    ctx.emit(
+                        surrealguard_diagnostics::catalog::finding(
+                            span,
+                            2005,
+                            format!(
+                                "this WHEN condition is a `{}`, not a `bool`",
+                                crate::render::render_offending(&kind, Some(&Kind::Bool))
+                            ),
+                        )
+                        .with_help("an event fires when its WHEN test is true; it must be a bool"),
+                    );
+                }
             }
             if let Some(then) = &stmt.then {
                 // An event THEN body is in statement position — nothing

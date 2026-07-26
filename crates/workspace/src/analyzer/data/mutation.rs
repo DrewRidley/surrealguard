@@ -44,10 +44,37 @@ pub(crate) fn analyze_expression_positions_for(
     let row_table = table.and_then(|name| ctx.schema().tables.get(name));
     ctx.with_row_table(row_table, |ctx| {
         if let Some(cond) = where_clause {
-            infer_expression_fact(cond, ctx);
+            let kind = infer_expression_fact(cond, ctx).kind;
             crate::analyzer::expression::check::check_value_expression(ctx, cond);
             if let Some(table) = row_table {
                 crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1002);
+            }
+            // A mutation's WHERE is the same contract a SELECT's is — it
+            // decides which rows the write touches. It was the one condition
+            // position that inferred its kind and never asked.
+            if let Some(kind) = kind {
+                if Contract::condition(Position::WhereMutation)
+                    .decide(&kind)
+                    .is_violation()
+                {
+                    let span = surrealguard_syntax::span::SourceSpan::new(
+                        ctx.source().clone(),
+                        cond.span,
+                    );
+                    ctx.emit(
+                        surrealguard_diagnostics::catalog::finding(
+                            span,
+                            2005,
+                            format!(
+                                "this WHERE condition is a `{}`, not a `bool`",
+                                crate::render::render_offending(&kind, Some(&Kind::Bool))
+                            ),
+                        )
+                        .with_help(
+                            "a WHERE filter picks the rows this statement touches; it must be a bool",
+                        ),
+                    );
+                }
             }
         }
         match data {

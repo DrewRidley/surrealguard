@@ -30,12 +30,6 @@
 //! *accepted*: inference widens a written `'red'` to `string`, so the widened
 //! kind carries no evidence about which string it holds. The evidence lives in
 //! the *value*, and [`checked_kind`] is what recovers it.
-//!
-//! ## No consumers yet
-//!
-//! This commit lands the rule and the harness that quantifies over it. The
-//! positions move onto it one per commit, because each one that stops being
-//! silent can raise a finding on real SurrealQL.
 
 #![allow(dead_code)]
 
@@ -179,6 +173,29 @@ impl Verdict {
     }
 }
 
+/// How a position folds the case that is neither proof: the value overlaps
+/// what the position admits without being wholly inside it.
+///
+/// Both folds already existed in the analyzer, unnamed and one per site, and
+/// the reason there are two is not sloppiness — the positions genuinely differ:
+///
+/// * A field write, a declared return and a function argument demand
+///   *inhabitation*. `SET n = <a number>` into a `TYPE int` field is reported
+///   today and should be: the write is only correct if every value the
+///   expression can produce fits.
+/// * A condition and a clause demand *possibility*. SurrealQL reads a
+///   `bool | string` as a condition happily, and a `LIMIT` accepts the
+///   `number` that `math::floor` returns. Reporting those would be a false
+///   positive on idiomatic input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Strictness {
+    /// A partial overlap is a violation: the value must inhabit `expects`.
+    Inhabits,
+    /// Only a proven-disjoint kind is a violation: the value must merely be
+    /// able to be one `expects` admits.
+    Possible,
+}
+
 /// A position that demands a kind: what it admits, and what it raises when a
 /// value is proven not to inhabit it.
 ///
@@ -195,23 +212,51 @@ pub(crate) struct Contract {
     pub expects: Kind,
     /// The finding raised when a value is proven not to inhabit it.
     pub code: u16,
+    /// How a partial overlap is folded.
+    pub strictness: Strictness,
 }
 
 impl Contract {
-    /// A contract for `position` admitting `expects`, raising `code`.
+    /// A contract for `position` admitting `expects`, raising `code`. The
+    /// value must *inhabit* `expects`.
     pub(crate) fn new(position: Position, expects: Kind, code: u16) -> Self {
         Self {
             position,
             expects,
             code,
+            strictness: Strictness::Inhabits,
         }
+    }
+
+    /// A contract that reports only what it can prove disjoint — see
+    /// [`Strictness::Possible`].
+    pub(crate) fn possible(position: Position, expects: Kind, code: u16) -> Self {
+        Self {
+            strictness: Strictness::Possible,
+            ..Self::new(position, expects, code)
+        }
+    }
+
+    /// The contract every condition position shares (2005).
+    ///
+    /// `bool | none | null` rather than `bool`, because SurrealQL reads the two
+    /// sentinels as falsy — a `WHERE $maybe` over an `option<bool>` is
+    /// idiomatic, not a mistake. And `Possible`, because a `bool | string`
+    /// really can be a bool at runtime; only a kind that can *never* be read as
+    /// a condition is reported.
+    pub(crate) fn condition(position: Position) -> Self {
+        Self::possible(
+            position,
+            Kind::Either(vec![Kind::Bool, Kind::None, Kind::Null]),
+            2005,
+        )
     }
 
     /// The verdict for a value already reduced to a kind — the Group C
     /// positions, which have no value to recover (a `SPLIT` names a field, not
     /// a constant) and the whole-body comparisons.
     pub(crate) fn decide(&self, actual: &Kind) -> Verdict {
-        decide(actual, &self.expects)
+        decide(actual, &self.expects, self.strictness)
     }
 
     /// The verdict for an expression, checked at the kind its value proves it
@@ -250,10 +295,13 @@ impl Contract {
 ///   provably disjoint under the meet alone. It is still wrong, and reporting
 ///   it is shipped behaviour.
 ///
+/// The third case — a real overlap that is not containment — is neither proof,
+/// and [`Strictness`] is which way the position folds it.
+///
 /// `Any` on the value side proves nothing in either direction and is the single
 /// most common source of a false positive, so it short-circuits to `Unknown`
 /// here rather than being spelled `kind != Kind::Any` at each of twenty sites.
-pub(crate) fn decide(actual: &Kind, expects: &Kind) -> Verdict {
+pub(crate) fn decide(actual: &Kind, expects: &Kind, strictness: Strictness) -> Verdict {
     if matches!(actual, Kind::Any) {
         return Verdict::Unknown;
     }
@@ -263,7 +311,10 @@ pub(crate) fn decide(actual: &Kind, expects: &Kind) -> Verdict {
     if kind_is_assignable_to(actual, expects) {
         return Verdict::Satisfied;
     }
-    Verdict::Violated
+    match strictness {
+        Strictness::Inhabits => Verdict::Violated,
+        Strictness::Possible => Verdict::Unknown,
+    }
 }
 
 /// The kind an expression must be *checked* at: the value it provably is, when
@@ -339,8 +390,8 @@ mod tests {
     #[test]
     fn a_known_value_outside_a_literal_union_is_proven_wrong() {
         let expects = union(vec![literal("red"), literal("blue")]);
-        assert_eq!(decide(&literal("green"), &expects), Verdict::Violated);
-        assert_eq!(decide(&literal("red"), &expects), Verdict::Satisfied);
+        assert_eq!(decide(&literal("green"), &expects, Strictness::Inhabits), Verdict::Violated);
+        assert_eq!(decide(&literal("red"), &expects, Strictness::Inhabits), Verdict::Satisfied);
     }
 
     #[test]
@@ -349,14 +400,14 @@ mod tests {
         // whose *kind* is `string` carries no evidence about which string, so
         // it is not provably outside the union.
         let expects = union(vec![literal("red"), literal("blue")]);
-        assert_eq!(decide(&Kind::String, &expects), Verdict::Satisfied);
+        assert_eq!(decide(&Kind::String, &expects, Strictness::Inhabits), Verdict::Satisfied);
     }
 
     #[test]
     fn any_proves_nothing_on_the_value_side() {
-        assert_eq!(decide(&Kind::Any, &Kind::Int), Verdict::Unknown);
+        assert_eq!(decide(&Kind::Any, &Kind::Int, Strictness::Inhabits), Verdict::Unknown);
         // …but an `any` *expectation* accepts anything.
-        assert_eq!(decide(&Kind::Int, &Kind::Any), Verdict::Satisfied);
+        assert_eq!(decide(&Kind::Int, &Kind::Any, Strictness::Inhabits), Verdict::Satisfied);
     }
 
     #[test]
@@ -364,14 +415,14 @@ mod tests {
         // `meet(float, int)` is `int`, not `⊥` — the lattice reads `int` into
         // `float` as a coercion — so disjointness alone would let a
         // `TYPE int VALUE 1.5` through. The subtype test is what catches it.
-        assert_eq!(decide(&Kind::Float, &Kind::Int), Verdict::Violated);
-        assert_eq!(decide(&Kind::Int, &Kind::Float), Verdict::Satisfied);
+        assert_eq!(decide(&Kind::Float, &Kind::Int, Strictness::Inhabits), Verdict::Violated);
+        assert_eq!(decide(&Kind::Int, &Kind::Float, Strictness::Inhabits), Verdict::Satisfied);
     }
 
     #[test]
     fn an_optional_target_accepts_the_sentinel_and_a_bare_one_does_not() {
         let optional = union(vec![Kind::None, Kind::Int]);
-        assert_eq!(decide(&Kind::None, &optional), Verdict::Satisfied);
-        assert_eq!(decide(&Kind::None, &Kind::Int), Verdict::Violated);
+        assert_eq!(decide(&Kind::None, &optional, Strictness::Inhabits), Verdict::Satisfied);
+        assert_eq!(decide(&Kind::None, &Kind::Int, Strictness::Inhabits), Verdict::Violated);
     }
 }

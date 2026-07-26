@@ -332,8 +332,6 @@ const SITES: &[Site] = &[
 const KNOWN_GAPS: &[(Position, &str)] = &[
     (Position::FieldComputed, "*"), // no contract at all: absent from the clause loop
     (Position::ParamDefault, "*"),  // no declared type to check against
-    (Position::WhereMutation, "*"), // no bool-ness check
-    (Position::EventWhen, "*"),     // no bool-ness check
 ];
 
 /// Whether the gap list excuses this crossing.

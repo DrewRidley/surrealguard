@@ -266,7 +266,12 @@ fn check_where_clause<'a>(
     });
     crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1002);
     if let Some(kind) = cond_kind {
-        if crate::analyzer::flow::if_else::definitely_not_bool(&kind) {
+        if crate::analyzer::contract::Contract::condition(
+            crate::analyzer::contract::Position::WhereSelect,
+        )
+        .decide(&kind)
+        .is_violation()
+        {
             let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), cond.span);
             ctx.emit(
                 surrealguard_diagnostics::catalog::finding(
