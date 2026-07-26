@@ -27,7 +27,7 @@ fn object_is_assignable_to(src: &BTreeMap<String, Kind>, dst: &BTreeMap<String, 
 
 /// Whether a kind accepts `NONE` — an `option<...>` (`none | t`), or the
 /// permissive `any`.
-fn kind_admits_none(kind: &Kind) -> bool {
+pub(crate) fn kind_admits_none(kind: &Kind) -> bool {
     match kind {
         Kind::None | Kind::Null | Kind::Any => true,
         Kind::Either(variants) => variants.iter().any(kind_admits_none),
@@ -151,7 +151,7 @@ fn length_fits(src: Option<u64>, dst: Option<u64>) -> bool {
 /// `2` -> `int`). Object and array literals are excluded: their base
 /// (`object` / `array<...>`) throws away the structure that assignability
 /// compares, so they are never widened.
-fn scalar_literal_base_kind(kind: &Kind) -> Option<Kind> {
+pub(crate) fn scalar_literal_base_kind(kind: &Kind) -> Option<Kind> {
     match kind {
         Kind::Literal(KindLiteral::Object(_) | KindLiteral::Array(_)) => None,
         _ => literal_base_kind(kind),

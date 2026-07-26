@@ -9,6 +9,7 @@ pub mod config;
 pub mod context_params;
 pub mod expression;
 pub mod kinds;
+pub mod lattice;
 pub mod query;
 pub mod schema;
 pub mod source_registry;
