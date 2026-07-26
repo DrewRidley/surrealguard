@@ -29,7 +29,7 @@ use surrealguard_syntax::span::ByteRange;
 use crate::analyzer::const_eval::{BranchReach, Reachability};
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::facts::{
-    eval, guard_of, Bindings, ConstValue, DiscriminantKind, KindOracle, NoOracle, Place, PlaceRoot,
+    eval, guard_of, Bindings, ConstValue, DiscriminantKind, KindOracle, Place, PlaceRoot,
     Refinement, Term,
 };
 use crate::analyzer::facts::place_of;
@@ -260,26 +260,12 @@ pub(crate) struct RowEffect {
 /// This mirrors the positive branch of [`effects`], but resolves **bare row
 /// fields** (`email`, not `$param`) rather than param bindings, so it produces
 /// [`RowEffect`]s keyed by field path.
+///
+/// **Recognizer path only.** Its consumer (`data::select::apply_where_narrowing`)
+/// reads the fact layer directly when the gate is on, so this function no longer
+/// branches on it: it is the *old* answer, kept whole so the two can be compared
+/// (`tests/fact_layer.rs`) until the gate comes down.
 pub(crate) fn where_effects(cond: &ast::Expr) -> Vec<RowEffect> {
-    if use_fact_layer() {
-        // The same guard, the same interpreter — with no environment, because
-        // a `WHERE` narrows the row it filters and there is no binding to
-        // resolve. Only row-rooted places survive: a `WHERE $p != NONE` says
-        // nothing about the projected row.
-        return guard_of(cond, true, None)
-            .facts(&NoOracle)
-            .iter()
-            .filter_map(|(place, refinement)| {
-                if !matches!(place.root, PlaceRoot::RowField) {
-                    return None;
-                }
-                Some(RowEffect {
-                    fields: place.field_path()?,
-                    narrowing: Narrowing::Refine(refinement.clone()),
-                })
-            })
-            .collect();
-    }
     match cond {
         ast::Expr::Binary { lhs, op, rhs } => match &op.node {
             ast::BinaryOp::And => {

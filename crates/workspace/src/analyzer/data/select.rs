@@ -19,6 +19,7 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::contract::{Contract, Position};
 use crate::analyzer::expression::infer::{infer_expression_fact, plain_field_segments};
+use crate::analyzer::facts::{Place, PlaceRoot};
 use crate::schema::{SchemaIndex, TableDef};
 
 pub(crate) fn analyze_select(ctx: &mut AnalysisContext<'_>, stmt: &ast::SelectStmt) -> Kind {
@@ -2204,26 +2205,33 @@ fn fetch_contains(fetch: &[ast::Spanned<ast::Idiom>], name: &str) -> bool {
 /// WHERE-narrowing of the projected row type (design §3.1). A SELECT's WHERE
 /// is a single positive flow-guard over the result set — every returned row
 /// satisfies it — so each recognized guard tightens the matching projected
-/// field's kind. It only ever *tightens* a leaf already present under its own
-/// name, so aliased projections, computed columns, and fields the WHERE does
-/// not mention are left at their schema kind (prove-or-fall-back-to-schema).
+/// field's kind. It only ever *tightens* a leaf already present in the
+/// projection, so computed columns and fields the WHERE does not mention are
+/// left at their schema kind (prove-or-fall-back-to-schema).
 ///
 /// The whole pass is disabled — the schema shape is returned unchanged — under
 /// any boundary condition where a projected field cannot be soundly keyed to a
 /// plain schema row: no WHERE clause, a `GROUP BY` (rows are groups, not source
-/// rows), a `VALUE` projection (P1), or a non-plain-table FROM (subquery /
-/// param / graph source).
+/// rows), or a non-plain-table FROM (subquery / param / graph source).
 fn apply_where_narrowing(row_kind: Kind, stmt: &ast::SelectStmt) -> Kind {
     let Some(cond) = &stmt.where_clause else {
         return row_kind;
     };
-    if stmt.group.is_some() || stmt.value {
+    if stmt.group.is_some() {
         return row_kind;
     }
     // A plain schema-object row is required to key row fields by name.
     match stmt.from.first().map(|from| &from.node) {
         Some(ast::Expr::Table(_) | ast::Expr::RecordId { .. }) => {}
         _ => return row_kind,
+    }
+    if crate::analyzer::flow::narrow::use_fact_layer() {
+        return narrow_row_by_facts(row_kind, stmt, &cond.node);
+    }
+    // The recognizer path, kept whole while the gate is up. It cannot key a
+    // `VALUE` projection or an alias, so both are boundary conditions here.
+    if stmt.value {
+        return row_kind;
     }
     let Kind::Literal(KindLiteral::Object(mut fields)) = row_kind else {
         return row_kind;
@@ -2232,6 +2240,162 @@ fn apply_where_narrowing(row_kind: Kind, stmt: &ast::SelectStmt) -> Kind {
         narrow_kind_at_path(&mut fields, &effect.fields, &effect.narrowing);
     }
     object_literal(fields)
+}
+
+/// [`apply_where_narrowing`] answered by the [expression-fact
+/// layer](crate::analyzer::facts): the `WHERE` is **one** guard, interpreted
+/// once against the row it filters, and each refinement is applied wherever the
+/// place it names lands in the projected row.
+///
+/// Two restrictions the recognizer path carried lift here, and both lift for
+/// the same reason — a refinement is keyed by a [`Place`], not by a schema
+/// field path that had to double as an output key:
+///
+/// * **`SELECT VALUE f … WHERE f != NONE`.** The row *is* the place, so the
+///   refinement applies to the whole row kind rather than to a leaf of an
+///   object that does not exist.
+/// * **`SELECT f AS g … WHERE f != NONE`.** The projection says where `f`
+///   landed, so the refinement reaches `g`. Both output names are tightened
+///   when both are projected (`SELECT f, f AS g`), because both hold the same
+///   value of the same row.
+fn narrow_row_by_facts(row_kind: Kind, stmt: &ast::SelectStmt, cond: &ast::Expr) -> Kind {
+    // The oracle borrows the row, so the interpretation is scoped: the kinds
+    // are read before any of them is rewritten.
+    let facts = {
+        let row = ProjectedRow {
+            stmt,
+            kind: &row_kind,
+        };
+        crate::analyzer::facts::guard_of(cond, true, None).facts(&row)
+    };
+    if stmt.value {
+        let Some(projected) = value_projection_place(stmt) else {
+            return row_kind;
+        };
+        let mut kind = row_kind;
+        for (place, refinement) in facts.iter() {
+            if *place != projected {
+                continue;
+            }
+            if let Some(narrowed) = refinement.apply(&kind) {
+                kind = narrowed;
+            }
+        }
+        return kind;
+    }
+    let Kind::Literal(KindLiteral::Object(mut fields)) = row_kind else {
+        return row_kind;
+    };
+    for (place, refinement) in facts.iter() {
+        if !matches!(place.root, PlaceRoot::RowField) {
+            continue;
+        }
+        for path in output_paths(place, stmt) {
+            refine_kind_at_path(&mut fields, &path, refinement);
+        }
+    }
+    object_literal(fields)
+}
+
+/// The kinds the projected row holds, as the fact layer reads them.
+///
+/// A `WHERE` has no environment — there is no binding to resolve — but it does
+/// have the row, and that is what a membership guard (`WHERE stage IN keywords`)
+/// needs to name an element kind. A place the projection does not carry is
+/// answered `None`, so an unprojected subject proves nothing rather than
+/// something guessed.
+struct ProjectedRow<'a> {
+    stmt: &'a ast::SelectStmt,
+    kind: &'a Kind,
+}
+
+impl crate::analyzer::facts::KindOracle for ProjectedRow<'_> {
+    fn kind_of(&self, place: &Place) -> Option<Kind> {
+        if !matches!(place.root, PlaceRoot::RowField) {
+            return None;
+        }
+        if self.stmt.value {
+            return (value_projection_place(self.stmt).as_ref() == Some(place))
+                .then(|| self.kind.clone());
+        }
+        let Kind::Literal(KindLiteral::Object(fields)) = self.kind else {
+            return None;
+        };
+        output_paths(place, self.stmt)
+            .into_iter()
+            .find_map(|path| kind_at_path(fields, &path).cloned())
+    }
+}
+
+/// The row-field place a `SELECT VALUE` projects, when it projects one.
+fn value_projection_place(stmt: &ast::SelectStmt) -> Option<Place> {
+    let [ast::Projection::Expr { expr, .. }] = stmt.projections.as_slice() else {
+        return None;
+    };
+    let place = crate::analyzer::facts::place_of(&expr.node)?;
+    matches!(place.root, PlaceRoot::RowField).then_some(place)
+}
+
+/// Every output path in the projected row that holds this place's value: the
+/// place's own field path (the key an unaliased projection lands under), plus
+/// one per `AS` alias whose source expression denotes the same place.
+///
+/// Absent keys are skipped downstream, so a path listed here that the
+/// projection does not carry costs nothing.
+fn output_paths(place: &Place, stmt: &ast::SelectStmt) -> Vec<Vec<String>> {
+    let mut paths: Vec<Vec<String>> = place.field_path().into_iter().collect();
+    for projection in &stmt.projections {
+        let ast::Projection::Expr {
+            expr,
+            alias: Some(alias),
+        } = projection
+        else {
+            continue;
+        };
+        if crate::analyzer::facts::place_of(&expr.node).as_ref() == Some(place) {
+            paths.push(vec![alias.node.clone()]);
+        }
+    }
+    paths
+}
+
+/// The kind at `segments` in a projected object literal, if that exact path is
+/// present.
+fn kind_at_path<'a>(fields: &'a BTreeMap<String, Kind>, segments: &[String]) -> Option<&'a Kind> {
+    let (first, rest) = segments.split_first()?;
+    let kind = fields.get(first)?;
+    if rest.is_empty() {
+        return Some(kind);
+    }
+    match kind {
+        Kind::Literal(KindLiteral::Object(child_fields)) => kind_at_path(child_fields, rest),
+        _ => None,
+    }
+}
+
+/// [`narrow_kind_at_path`] for a fact-layer [`Refinement`]. Tighten-only, by
+/// the same contract: `Refinement::apply` yields `None` when the claim does not
+/// tighten the leaf, and an absent key is skipped.
+fn refine_kind_at_path(
+    fields: &mut BTreeMap<String, Kind>,
+    segments: &[String],
+    refinement: &crate::analyzer::facts::Refinement,
+) {
+    let Some((first, rest)) = segments.split_first() else {
+        return;
+    };
+    let Some(kind) = fields.get_mut(first) else {
+        return;
+    };
+    if rest.is_empty() {
+        if let Some(narrowed) = refinement.apply(kind) {
+            *kind = narrowed;
+        }
+        return;
+    }
+    if let Kind::Literal(KindLiteral::Object(child_fields)) = kind {
+        refine_kind_at_path(child_fields, rest, refinement);
+    }
 }
 
 /// Tightens the leaf at `segments` in a projected object literal, if that exact
@@ -4849,19 +5013,76 @@ mod tests {
     }
 
     #[test]
-    fn value_projection_disables_narrowing() {
+    fn a_value_projection_narrows_the_row_itself() {
+        use crate::analyzer::flow::narrow::with_fact_layer;
         let schema = narrowing_schema();
-        let kind = analyze(&schema, "SELECT VALUE email FROM user WHERE email != NONE;");
-        assert_eq!(kind, Kind::Array(Box::new(option_string()), None));
+        let query = "SELECT VALUE email FROM user WHERE email != NONE;";
+
+        // The recognizer path keys refinements by schema field path and has no
+        // object leaf to put one in, so the whole pass was disabled.
+        assert_eq!(
+            with_fact_layer(false, || analyze(&schema, query)),
+            Kind::Array(Box::new(option_string()), None)
+        );
+        // A `Place` is not an output key: `VALUE email` says the row IS that
+        // place, so the refinement applies to the row kind.
+        assert_eq!(
+            with_fact_layer(true, || analyze(&schema, query)),
+            Kind::Array(Box::new(Kind::String), None)
+        );
     }
 
     #[test]
-    fn aliased_projection_is_not_narrowed() {
-        // `email AS e` does not match by identity in P1 — the projected `e`
-        // keeps its schema kind.
+    fn an_aliased_projection_narrows_under_its_alias() {
+        use crate::analyzer::flow::narrow::with_fact_layer;
         let schema = narrowing_schema();
-        let kind = analyze(&schema, "SELECT email AS e FROM user WHERE email != NONE;");
-        assert_eq!(object_fields(array_element(&kind))["e"], option_string());
+        let query = "SELECT email AS e FROM user WHERE email != NONE;";
+        let aliased = |kind: Kind| object_fields(array_element(&kind))["e"].clone();
+
+        // `email AS e` did not match by identity: the refinement was keyed
+        // `["email"]` and the only projected key is `e`.
+        assert_eq!(
+            aliased(with_fact_layer(false, || analyze(&schema, query))),
+            option_string()
+        );
+        // The projection says where the place landed, so the fact reaches it.
+        assert_eq!(
+            aliased(with_fact_layer(true, || analyze(&schema, query))),
+            Kind::String
+        );
+    }
+
+    #[test]
+    fn a_field_projected_twice_narrows_under_both_names() {
+        use crate::analyzer::flow::narrow::with_fact_layer;
+        let schema = narrowing_schema();
+        // Both keys hold the same value of the same row, so one fact tightens
+        // both — the alias route does not replace the plain one.
+        let kind = with_fact_layer(true, || {
+            analyze(
+                &schema,
+                "SELECT email, email AS e FROM user WHERE email != NONE;",
+            )
+        });
+        let fields = object_fields(array_element(&kind));
+        assert_eq!(fields["email"], Kind::String);
+        assert_eq!(fields["e"], Kind::String);
+    }
+
+    #[test]
+    fn a_computed_alias_is_not_the_place_the_guard_names() {
+        use crate::analyzer::flow::narrow::with_fact_layer;
+        // `string::len(email) AS e` is a *function of* the guarded place, not
+        // the place — narrowing it would claim something about a value the
+        // guard says nothing about.
+        let schema = narrowing_schema();
+        let kind = with_fact_layer(true, || {
+            analyze(
+                &schema,
+                "SELECT string::len(email) AS e FROM user WHERE email != NONE;",
+            )
+        });
+        assert_ne!(object_fields(array_element(&kind))["e"], Kind::String);
     }
 
     #[test]
