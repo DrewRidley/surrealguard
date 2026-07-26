@@ -349,6 +349,14 @@ fn lower_source(node: Node<'_>, text: &str) -> Spanned<Expr> {
             Expr::Table(Spanned::new(text[node.byte_range()].to_string(), span)),
             span,
         ),
+        // Parentheses around a source are grouping, not a subquery: `FROM
+        // (user)` is `FROM user` and must resolve to the same table (and
+        // report the same unknown-table/unknown-field diagnostics). Only a
+        // statement inside them is a real subquery source.
+        "SubQuery" => match super::expr::paren_group_inner(node) {
+            Some(inner) => lower_source(inner, text),
+            None => lower_expr(node, text),
+        },
         _ => lower_expr(node, text),
     }
 }
@@ -1650,6 +1658,22 @@ mod tests {
             panic!("expected subquery source, got {:?}", stmt.from[0].node);
         };
         assert!(matches!(inner.node, Statement::Select(_)));
+    }
+
+    #[test]
+    fn parentheses_around_a_source_are_grouping_not_a_subquery() {
+        // `FROM (person)` is `FROM person`: the parentheses are a semantic
+        // no-op, so the source must resolve to the same table (and report the
+        // same unknown-table / unknown-field diagnostics). Lowering it to an
+        // opaque subquery source silently dropped both.
+        for query in ["SELECT * FROM (person);", "SELECT * FROM ((person));"] {
+            let parsed = parse(query);
+            let stmt = lower_select_stmt(&parsed);
+            let Expr::Table(name) = &stmt.from[0].node else {
+                panic!("expected table source for {query}, got {:?}", stmt.from[0].node);
+            };
+            assert_eq!(name.node, "person");
+        }
     }
 
     #[test]

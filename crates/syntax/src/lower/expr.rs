@@ -356,8 +356,28 @@ impl Lowerer<'_> {
         TypeExpr::Object(properties)
     }
 
+    /// `( … )` — either grouping parentheses around a value, or a genuine
+    /// subquery around a statement.
+    ///
+    /// Parentheses are a semantic no-op in SurrealQL: `(email + 1)` **is**
+    /// `email + 1`, so it must lower to the inner expression and be inferred,
+    /// checked and narrowed identically. Wrapping it in an `Expr::Subquery`
+    /// instead put an opaque node in front of every consumer that matches on
+    /// expression shape, silently disabling narrowing, field validation and
+    /// every expression-level diagnostic behind a pair of parentheses.
+    /// Grouping still holds: the CST already nests `(a + b) * c` as
+    /// `Binary(Binary(a,+,b), *, c)`, and the outer span (applied by
+    /// [`Self::expr`]) keeps covering the parentheses for diagnostics.
+    ///
+    /// Only a *statement* inside the parentheses (`(SELECT …)`, `({ … })`,
+    /// `(THROW …)`) is a real subquery value.
     fn subquery(&self, node: Node<'_>) -> Expr {
-        let inner = single_named_child(node).unwrap_or(node);
+        let Some(inner) = subquery_content(node) else {
+            return Expr::Partial(partial(node));
+        };
+        if !is_statement_kind(inner.kind()) {
+            return self.expr(inner).node;
+        }
         Expr::Subquery(Box::new(super::statement::lower_statement(
             inner, self.text,
         )))
@@ -655,6 +675,33 @@ fn single_named_child<'tree>(node: Node<'tree>) -> Option<Node<'tree>> {
         [only] => Some(*only),
         _ => None,
     }
+}
+
+/// The single value/statement a `SubQuery`'s parentheses wrap, ignoring
+/// comments (`( /* why */ 1 )`). `None` for an empty or multi-child
+/// `SubQuery`, which has no inner expression to be transparent about.
+fn subquery_content<'tree>(node: Node<'tree>) -> Option<Node<'tree>> {
+    let mut children = named_children(node)
+        .into_iter()
+        .filter(|child| !matches!(child.kind(), "Comment" | "BlockComment"));
+    let first = children.next()?;
+    children.next().is_none().then_some(first)
+}
+
+/// The expression a `SubQuery`'s parentheses merely *group* — `Some` for
+/// `(email + 1)` / `(user)`, `None` for `(SELECT …)` and for a malformed
+/// `SubQuery`. Statement-position callers (a SELECT `FROM` source) use this to
+/// see through grouping parentheses exactly as expression lowering does.
+pub(crate) fn paren_group_inner<'tree>(node: Node<'tree>) -> Option<Node<'tree>> {
+    let inner = subquery_content(node)?;
+    (!is_statement_kind(inner.kind())).then_some(inner)
+}
+
+/// Whether a CST node kind sits in statement position. Inside a `SubQuery`,
+/// these are the contents that make a genuine subquery value; everything else
+/// is a grouped expression.
+fn is_statement_kind(kind: &str) -> bool {
+    kind.ends_with("Statement") || kind == "Block"
 }
 
 fn first_child_of_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>> {
@@ -1064,6 +1111,72 @@ mod tests {
             matches!(closure_arg.node, Expr::Closure(_) | Expr::Partial(_)),
             "closure argument must be explicitly unmodeled, got {:?}",
             closure_arg.node
+        );
+    }
+
+    #[test]
+    fn grouping_parentheses_lower_to_the_inner_expression() {
+        // Parentheses are a semantic no-op: `(a + b)` IS `a + b`. Lowering it
+        // to an opaque `Expr::Subquery` put a wall in front of every consumer
+        // that matches on expression shape, silently turning off narrowing,
+        // field validation and every expression-level diagnostic.
+        let parsed = parse("RETURN (1 + 2);");
+        let lowered = lower_first(&parsed, "SubQuery");
+        assert!(
+            matches!(lowered.node, Expr::Binary { .. }),
+            "a grouped expression must lower to itself, got {:?}",
+            lowered.node
+        );
+        // The span still covers the parentheses, so diagnostics point at the
+        // expression exactly as written.
+        let span = lowered.span.start() as usize..lowered.span.end() as usize;
+        assert_eq!(&parsed.text()[span], "(1 + 2)");
+
+        // Nested parentheses collapse all the way down.
+        let parsed = parse("RETURN (((1 + 2)));");
+        let lowered = lower_first(&parsed, "SubQuery");
+        assert!(matches!(lowered.node, Expr::Binary { .. }));
+
+        // Grouping is still structural: `(a + b) * c` keeps its shape.
+        let parsed = parse("RETURN (1 + 2) * 3;");
+        let lowered = lower_first(&parsed, "BinaryExpression");
+        let Expr::Binary { lhs, op, .. } = &lowered.node else {
+            panic!("expected a binary, got {:?}", lowered.node);
+        };
+        assert!(matches!(op.node, BinaryOp::Mul));
+        let Expr::Binary { op: inner_op, .. } = &lhs.node else {
+            panic!("expected the grouped binary on the left, got {:?}", lhs.node);
+        };
+        assert!(matches!(inner_op.node, BinaryOp::Add));
+    }
+
+    #[test]
+    fn parenthesized_statements_stay_subqueries() {
+        // A *statement* in parentheses is a genuine subquery value, and must
+        // keep its `Expr::Subquery` wrapper — only grouping is transparent.
+        let parsed = parse("RETURN (SELECT * FROM person);");
+        let lowered = lower_first(&parsed, "SubQuery");
+        let Expr::Subquery(inner) = &lowered.node else {
+            panic!("expected a subquery, got {:?}", lowered.node);
+        };
+        assert!(matches!(inner.node, crate::ast::Statement::Select(_)));
+
+        let parsed = parse("RETURN ({ RETURN 1; });");
+        let lowered = lower_first(&parsed, "SubQuery");
+        assert!(matches!(lowered.node, Expr::Subquery(_)));
+    }
+
+    #[test]
+    fn a_comment_inside_parentheses_does_not_recurse_forever() {
+        // `( /* why */ 1 )` gives the `SubQuery` two named children. Falling
+        // back to the `SubQuery` node itself made lowering re-enter through
+        // the bare-expression statement arm and overflow the stack.
+        let parsed = parse("RETURN (/* why */ 1);");
+        let lowered = lower_first(&parsed, "SubQuery");
+        assert!(
+            matches!(lowered.node, Expr::Literal(Literal::Int(1))),
+            "a commented group is still its inner expression, got {:?}",
+            lowered.node
         );
     }
 }

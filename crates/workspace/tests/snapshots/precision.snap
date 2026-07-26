@@ -388,3 +388,25 @@ table webhook_event  [schemafull]
   let       6:5 $payload         : option<any>
   let       8:5 $headers         : option<object>
   diag     4:31 I7014     Hint
+
+== source: queries/95_parens.surql ==
+  stmt      9:1 select           : array<{ scaled_length: int }>
+  stmt     14:1 select           : array<{ total_headcount: number }>
+       modifier group      row_preserving=false
+  stmt     18:1 select           : array<{ name: string, parent: record<organization> }>
+       modifier where      row_preserving=true
+  stmt     22:1 select           : array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     25:1 let              : (no response)
+  stmt     27:1 let              : (no response)
+  stmt     31:1 let              : (no response)
+  stmt     33:1 if_else          : none
+  stmt     35:1 let              : (no response)
+  stmt     37:1 return           : { grouped: int, one_name: string, rows: array<{ name: string }> }
+  let      25:5 $grouped         : int
+  let      27:5 $grouped_rows    : array<{ name: string }>
+  let      31:5 $one             : option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  let      35:5 $one_name        : string
+  diag     9:54 I7014     Hint
+  diag    14:55 I7014     Hint
+  diag    22:25 I7014     Hint
+  diag    27:40 I7014     Hint

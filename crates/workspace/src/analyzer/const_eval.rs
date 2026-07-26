@@ -47,12 +47,10 @@ pub fn const_eval(expr: &ast::Expr) -> Option<ConstValue> {
         ast::Expr::Literal(literal) => literal_const(literal),
         ast::Expr::Prefix { op, expr } => prefix_const(&op.node, &expr.node),
         ast::Expr::Binary { lhs, op, rhs } => binary_const(&op.node, &lhs.node, &rhs.node),
-        // A parenthesized expression lowers to a single-statement subquery;
-        // transparently fold through `(1 == 1)`.
-        ast::Expr::Subquery(inner) => match &inner.node {
-            ast::Statement::Expr(inner) => const_eval(&inner.node),
-            _ => None,
-        },
+        // `(1 == 1)` needs no arm here: grouping parentheses lower to the
+        // inner expression, so the folder sees the `Binary` directly. A
+        // surviving `Expr::Subquery` wraps a real statement, which is not a
+        // constant.
         _ => None,
     }
 }

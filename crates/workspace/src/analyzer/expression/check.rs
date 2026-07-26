@@ -947,6 +947,102 @@ mod tests {
         codes(query).iter().any(|c| c == code)
     }
 
+    // ---- parentheses are a semantic no-op, so every rule still applies ----
+
+    #[test]
+    fn parentheses_report_exactly_what_the_bare_expression_reports() {
+        // `(expr)` IS `expr` in SurrealQL. While it lowered to an opaque
+        // subquery node, every consumer that matches on expression shape fell
+        // off its `_ =>` arm, so a user who parenthesized for readability lost
+        // inference, narrowing, field validation and every expression-level
+        // diagnostic with no signal at all.
+        const SCHEMA: &str = concat!(
+            "DEFINE TABLE t SCHEMAFULL;\n",
+            "DEFINE FIELD name ON t TYPE string;\n",
+            "DEFINE FIELD nick ON t TYPE option<string>;\n",
+        );
+        for (bare, parenthesized) in [
+            // a projection
+            (
+                "SELECT VALUE nick + 1 FROM t;",
+                "SELECT VALUE (nick + 1) FROM t;",
+            ),
+            // a method call
+            (
+                "SELECT VALUE name.nomethod() FROM t;",
+                "SELECT VALUE (name.nomethod()) FROM t;",
+            ),
+            // a WHERE predicate
+            (
+                "SELECT name FROM t WHERE nofield = 1;",
+                "SELECT name FROM t WHERE (nofield = 1);",
+            ),
+            // a FROM target
+            ("SELECT nofield FROM t;", "SELECT nofield FROM (t);"),
+            // a function argument
+            ("RETURN string::len(1);", "RETURN string::len((1));"),
+            // a LET value
+            ("LET $x = 1 + 'a';", "LET $x = (1 + 'a');"),
+            // a RETURN value
+            ("RETURN 1 + 'a';", "RETURN (1 + 'a');"),
+            // nested parentheses
+            ("RETURN 1 + 'a';", "RETURN ((1 + 'a'));"),
+            // parentheses around a subquery
+            (
+                "RETURN (SELECT nofield FROM t);",
+                "RETURN ((SELECT nofield FROM t));",
+            ),
+        ] {
+            let mut bare_codes = codes(&format!("{SCHEMA}{bare}"));
+            let mut parenthesized_codes = codes(&format!("{SCHEMA}{parenthesized}"));
+            bare_codes.sort();
+            parenthesized_codes.sort();
+            assert!(
+                !bare_codes.is_empty(),
+                "{bare:?} must report something for this pair to prove anything"
+            );
+            assert_eq!(
+                bare_codes, parenthesized_codes,
+                "{parenthesized:?} must report what {bare:?} reports"
+            );
+        }
+    }
+
+    #[test]
+    fn a_valid_parenthesized_query_still_reports_nothing() {
+        // The other direction: seeing through the parentheses must not invent
+        // findings on valid SurrealQL. The first two were an error- and a
+        // warning-severity false positive while `(…)` was opaque — the
+        // aggregate-promotion and UNIQUE-index recognizers both failed to see
+        // their own shape through the wrapper.
+        const SCHEMA: &str = concat!(
+            "DEFINE TABLE t SCHEMAFULL;\n",
+            "DEFINE FIELD name  ON t TYPE string;\n",
+            "DEFINE FIELD email ON t TYPE option<string>;\n",
+            "DEFINE FIELD price ON t TYPE number;\n",
+            "DEFINE INDEX t_email ON t FIELDS email UNIQUE;\n",
+        );
+        for query in [
+            "SELECT (math::sum(price)) * 2 AS total FROM t GROUP ALL;",
+            "SELECT name FROM ONLY t WHERE (email = 'a@b.c');",
+            "SELECT name FROM (t);",
+            "RETURN (1 + 2) * 3;",
+            "RETURN (/* grouped */ 1);",
+        ] {
+            // Default-allowed hints (7014's whole-table SELECT) fire on the
+            // bare spelling too and say nothing about parentheses; only
+            // error/warning severities are the false positives at issue.
+            let reported: Vec<String> = codes(&format!("{SCHEMA}{query}"))
+                .into_iter()
+                .filter(|code| code.starts_with('E') || code.starts_with('W'))
+                .collect();
+            assert!(
+                reported.is_empty(),
+                "{query:?} is valid SurrealQL, got {reported:?}"
+            );
+        }
+    }
+
     // ---- `??` strips NONE, so a coalesced option is a plain value (2004) ----
 
     #[test]
