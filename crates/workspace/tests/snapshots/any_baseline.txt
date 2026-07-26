@@ -12,8 +12,16 @@
 #
 # Regenerating PRESERVES the `# expected:` notes on sites that still exist.
 #
-# total: 5 any/unknown leaves across 5 site(s)
+# total: 13 any/unknown leaves across 13 site(s)
 
+1  queries/41_iterables.surql/let/$from_range@58:5
+1  queries/41_iterables.surql/let/$from_range_expr@68:5
+1  queries/41_iterables.surql/let/$from_range_inclusive@63:5
+1  queries/41_iterables.surql/let/$mapped_set@80:5
+1  queries/41_iterables.surql/let/$range_elem@59:6
+1  queries/41_iterables.surql/let/$range_expr_elem@69:6
+1  queries/41_iterables.surql/let/$range_inclusive_elem@64:6
+1  queries/41_iterables.surql/stmt/return@84:1
 1  queries/90_opaque.surql/let/$payload@6:5  # expected: binds `webhook_event.payload`, which is declared `any`
 1  queries/90_opaque.surql/stmt/return@10:1  # expected: returns the `any`-declared payload
 1  queries/90_opaque.surql/stmt/select@4:1  # expected: projects `webhook_event.payload`, which is declared `any`
