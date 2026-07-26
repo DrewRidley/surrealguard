@@ -30,6 +30,23 @@ pub fn snapshot_path(name: &str) -> PathBuf {
         .join(name)
 }
 
+/// The golden file for the narrowing path currently under test.
+///
+/// Stage 3 of the expression-fact migration runs the whole harness both ways
+/// (`SG_FACT_LAYER=0|1`), and the fact layer is *expected* to infer narrower
+/// types than the recognizers it replaces. One golden could not hold both, so
+/// each path records its own and both are committed: `precision.snap` must not
+/// move at all while the old path still exists, and `precision.facts.snap` is
+/// where the improvement is read, line by line, and accepted. The diff between
+/// the two files is the migration's whole payload.
+pub fn golden_path(name: &str) -> PathBuf {
+    if !surrealguard_workspace::use_fact_layer() {
+        return snapshot_path(name);
+    }
+    let (stem, extension) = name.rsplit_once('.').expect("a golden file has an extension");
+    snapshot_path(&format!("{stem}.facts.{extension}"))
+}
+
 /// True when the harness was asked to rewrite its golden files.
 pub fn updating() -> bool {
     std::env::var_os("UPDATE_SNAPSHOTS").is_some()

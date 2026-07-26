@@ -17,12 +17,17 @@
 //! ```text
 //! UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test precision_snapshot
 //! ```
+//!
+//! While the expression-fact migration runs two narrowing paths there are two
+//! snapshots — `precision.snap` for the recognizers, `precision.facts.snap` for
+//! the fact layer (`SG_FACT_LAYER=1`). See `support::golden_path`; the diff
+//! between them is exactly what the migration buys.
 
 mod support;
 
 use std::fmt::Write as _;
 
-use support::{analyze_corpus, diff_lines, snapshot_path, updating, Corpus};
+use support::{analyze_corpus, diff_lines, golden_path, updating, Corpus};
 use surrealguard_workspace::render_kind;
 
 const SNAPSHOT: &str = "precision.snap";
@@ -41,7 +46,7 @@ const HEADER: &str = "\
 fn corpus_types_match_the_committed_snapshot() {
     let corpus = analyze_corpus();
     let actual = render_snapshot(&corpus);
-    let path = snapshot_path(SNAPSHOT);
+    let path = golden_path(SNAPSHOT);
 
     if updating() {
         std::fs::create_dir_all(path.parent().expect("snapshot dir")).expect("create snapshot dir");
@@ -102,6 +107,16 @@ fn corpus_is_free_of_error_findings() {
 
 fn render_snapshot(corpus: &Corpus) -> String {
     let mut out = String::from(HEADER);
+    // Appended rather than folded into `HEADER`, so the recognizer path's file
+    // stays byte-identical to the one committed before the fact layer existed.
+    if surrealguard_workspace::use_fact_layer() {
+        out.push_str(
+            "#\n\
+             # This is the SG_FACT_LAYER=1 variant: the same corpus, narrowed by the\n\
+             # expression-fact layer instead of the hand-written recognizers. Diff it\n\
+             # against `precision.snap` to read what the layer buys.\n",
+        );
+    }
     render_schema(corpus, &mut out);
     render_sources(corpus, &mut out);
     out

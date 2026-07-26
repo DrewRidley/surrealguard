@@ -35,7 +35,16 @@ pub(crate) fn kind_admits_none(kind: &Kind) -> bool {
     }
 }
 
-pub(crate) fn kind_is_assignable_to(actual: &Kind, expected: &Kind) -> bool {
+/// Whether a value of `actual` may land where `expected` is required — the one
+/// contract behind 2001 and friends, and the subtyping order
+/// [`crate::lattice`] is built on.
+///
+/// Public because it is also the *test* order: the expression-fact migration's
+/// both-ways harness asserts that the new narrowing path's kind at every site
+/// is assignable to the old path's, which is the mechanical statement of "no
+/// precision was lost". Asking that question with a second relation would let
+/// the two drift exactly as the refinement transforms did.
+pub fn kind_is_assignable_to(actual: &Kind, expected: &Kind) -> bool {
     if matches!(expected, Kind::Any) || actual == expected {
         return true;
     }

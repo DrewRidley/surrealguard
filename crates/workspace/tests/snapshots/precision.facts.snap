@@ -1,0 +1,982 @@
+# SurrealGuard precision snapshot — every inferred type the corpus produces.
+#
+# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test precision_snapshot
+#
+# This file records CURRENT behaviour, not correct behaviour. A diff means a
+# type changed: read it, decide whether the change is an improvement, and only
+# then accept it. Silent acceptance defeats the whole harness.
+#
+# This is the SG_FACT_LAYER=1 variant: the same corpus, narrowed by the
+# expression-fact layer instead of the hand-written recognizers. Diff it
+# against `precision.snap` to read what the layer buys.
+
+== schema: tables ==
+table account  [schemafull]
+  field active                       : bool  [default]
+  field created_at                   : datetime  [default]
+  field deactivated_reason           : option<string | null>
+  field email                        : string
+  field person                       : option<record<person>>
+  field settings                     : { locale: option<string>, notify: bool, timezone: string }  [default]
+  field updated_at                   : datetime  [computed, default]
+  field username                     : string
+table assigned_to  [schemafull, relation organization_unit -> organization_role]
+  field weight                       : int  [default]
+table document  [schemafull]
+  field keywords                     : set<string>
+  field length_band                  : string  [computed, default]
+  field length_band_eq               : string  [computed, default]
+  field owner                        : record<account | organization>
+  field reviewer                     : option<record<account | organization>>
+  field stage                        : 'draft' | 'review' | 'published'  [default]
+  field summary                      : option<string | null>
+  field tags                         : option<array<string>>
+  field title                        : string
+  field word_count                   : option<int>
+  field word_count_or_zero           : int  [computed, default]
+table employee_of  [schemafull, relation account -> organization]
+  field joined_at                    : datetime  [default]
+  field role                         : record<organization_role>
+  field status                       : 'invited' | 'active' | 'suspended'  [default]
+  field title                        : option<string>
+  field unit                         : record<organization_unit>
+table milestone  [schemafull]
+  field label                        : string
+  field project                      : record<project>  [reference]
+table organization  [schemafull]
+  field address                      : { city: string, country: string, line1: string, line2: option<string> }
+  field contacts                     : array<{ email: string, label: string, primary: bool }>  [default]
+  field created_at                   : datetime  [default]
+  field employees                    : array<record<employee_of>>  [computed, default]
+  field legal_name                   : string
+  field logo                         : option<string>
+  field name                         : string
+  field owner                        : record<account>
+  field parent                       : option<record<organization>>  [reference]
+  field sectors                      : array<record<sector>>  [default]
+  field subsidiaries                 : array<record<organization>>  [computed, default]
+  field tier                         : 'free' | 'pro' | 'enterprise'  [default]
+table organization_permission  [schemafull]
+  field name                         : string
+table organization_role  [schemafull]
+  field name                         : string
+  field organization                 : record<organization>
+  field permissions                  : array<record<organization_permission>>  [default]
+table organization_settings  [schemafull]
+  field data_region                  : 'us' | 'eu'  [computed, default]
+  field organization                 : record<organization>
+  field retention_days               : 30 | 90 | 365  [default]
+  field security                     : { byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }
+  field updated_at                   : datetime  [computed, default]
+table organization_unit  [schemafull]
+  field headcount                    : int  [default]
+  field name                         : string
+  field organization                 : record<organization>
+  field parent                       : option<record<organization_unit>>
+table person  [schemafull]
+  field created_at                   : datetime  [default]
+  field date_of_birth                : option<datetime>
+  field first_name                   : string
+  field full_name                    : string  [computed, default]
+  field last_name                    : string
+  field middle_name                  : option<string>
+table project  [schemafull]
+  field milestones                   : array<record<milestone>>  [computed, default]
+  field name                         : string
+  field tasks                        : array<record<task>>  [computed, default]
+  field unlinked                     : unknown  [computed, default]
+table sector  [schemafull]
+  field name                         : string
+table task  [schemafull]
+  field project                      : record<project>  [reference]
+  field title                        : string
+table webhook_event  [schemafull]
+  field headers                      : object
+  field payload                      : any
+  field provider                     : 'stripe' | 'github'
+  field received_at                  : datetime  [default]
+
+== schema: functions ==
+  fn::account::reason_or_default($r: option<string | null>) -> string  [inferred]
+  fn::account::reason_set($r: option<string | null>) -> string | null  [inferred]
+  fn::account::reason_uncleared($r: option<string | null>) -> option<string>  [inferred]
+  fn::facts::guard_alias($v: option<string>) -> option<string>  [inferred]
+  fn::facts::guard_alias_after($v: option<string>) -> string  [inferred]
+  fn::facts::guard_field_path($o: { name: option<string> }) -> string  [inferred]
+  fn::facts::guard_is_none($v: option<string>) -> string  [inferred]
+  fn::facts::guard_is_not_none($v: option<string>) -> string  [inferred]
+  fn::facts::guard_not($v: option<string>) -> string  [inferred]
+  fn::facts::guard_paren($v: option<string>) -> string  [inferred]
+  fn::facts::guard_return($v: option<string>) -> string  [inferred]
+  fn::facts::guard_throw_block($v: option<string>) -> string  [inferred]
+  fn::facts::guard_throw_then($v: option<string>) -> string  [inferred]
+  fn::facts::guard_truthy($v: option<string>) -> string  [inferred]
+  fn::facts::guard_type_is_none($v: option<string>) -> string  [inferred]
+  fn::facts::guard_type_is_string($v: option<string>) -> string  [inferred]
+  fn::facts::is_none_guard($r: option<string | null>) -> string | null  [inferred]
+  fn::facts::is_null_guard($r: option<string | null>) -> option<string>  [inferred]
+  fn::facts::not_ne_none_guard($r: option<string | null>) -> string | null  [inferred]
+  fn::facts::not_ne_null_guard($r: option<string | null>) -> option<string>  [inferred]
+  fn::org::display_name($org: record<organization>) -> string  [declared]
+  fn::org::headcount($org: record<organization>) -> int  [inferred]
+  fn::org::is_pro($org: record<organization>) -> bool  [inferred]
+  fn::org::label($org: record<organization>) -> string  [inferred]
+  fn::org::owner($org: record<organization>) -> record<account>  [inferred]
+  fn::person::initials($first: string, $last: string) -> string  [inferred]
+
+== schema: params ==
+  $default_tier
+
+== schema: analyzers ==
+  simple  tokenizers=[blank, class] filters=[lowercase, ascii]
+
+== source: schema/01_account.surql ==
+  stmt      9:1 define_table     : (no response)
+  stmt     11:1 define_field     : (no response)
+  stmt     13:1 define_field     : (no response)
+  stmt     15:1 define_field     : (no response)
+  stmt     17:1 define_field     : (no response)
+  stmt     19:1 define_field     : (no response)
+  stmt     21:1 define_field     : (no response)
+  stmt     23:1 define_table     : (no response)
+  stmt     25:1 define_field     : (no response)
+  stmt     27:1 define_field     : (no response)
+  stmt     29:1 define_field     : (no response)
+  stmt     31:1 define_field     : (no response)
+  stmt     37:1 define_field     : (no response)
+  stmt     39:1 define_field     : (no response)
+  stmt     45:1 define_field     : (no response)
+  stmt     47:1 define_field     : (no response)
+
+== source: schema/02_organization.surql ==
+  stmt      5:1 define_table     : (no response)
+  stmt      7:1 define_field     : (no response)
+  stmt      9:1 define_table     : (no response)
+  stmt     11:1 define_field     : (no response)
+  stmt     13:1 define_field     : (no response)
+  stmt     15:1 define_field     : (no response)
+  stmt     17:1 define_field     : (no response)
+  stmt     19:1 define_field     : (no response)
+  stmt     21:1 define_field     : (no response)
+  stmt     23:1 define_field     : (no response)
+  stmt     25:1 define_field     : (no response)
+  stmt     27:1 define_field     : (no response)
+  stmt     33:1 define_field     : (no response)
+  stmt     40:1 define_field     : (no response)
+  stmt     42:1 define_field     : (no response)
+  stmt     44:1 define_field     : (no response)
+  stmt     46:1 define_table     : (no response)
+  stmt     48:1 define_field     : (no response)
+  stmt     50:1 define_field     : (no response)
+  stmt     52:1 define_field     : (no response)
+  stmt     54:1 define_field     : (no response)
+  stmt     56:1 define_table     : (no response)
+  stmt     58:1 define_field     : (no response)
+  stmt     60:1 define_field     : (no response)
+  stmt     74:1 define_field     : (no response)
+  stmt     76:1 define_field     : (no response)
+  stmt     78:1 define_field     : (no response)
+
+== source: schema/03_relations.surql ==
+  stmt      5:1 define_table     : (no response)
+  stmt      7:1 define_field     : (no response)
+  stmt      9:1 define_table     : (no response)
+  stmt     11:1 define_field     : (no response)
+  stmt     13:1 define_field     : (no response)
+  stmt     15:1 define_field     : (no response)
+  stmt     17:1 define_table     : (no response)
+  stmt     19:1 define_field     : (no response)
+  stmt     21:1 define_field     : (no response)
+  stmt     23:1 define_field     : (no response)
+  stmt     25:1 define_field     : (no response)
+  stmt     27:1 define_field     : (no response)
+  stmt     32:1 define_table     : (no response)
+  stmt     34:1 define_field     : (no response)
+
+== source: schema/04_functions.surql ==
+  stmt      5:1 define_param     : (no response)
+  stmt      7:1 define_analyzer  : (no response)
+  stmt     10:1 define_function  : (no response)
+  stmt     15:1 define_function  : (no response)
+  stmt     19:1 define_function  : (no response)
+  stmt     23:1 define_function  : (no response)
+  stmt     29:1 define_function  : (no response)
+  stmt     34:1 define_function  : (no response)
+  stmt     42:1 define_function  : (no response)
+  stmt     47:1 define_function  : (no response)
+  stmt     54:1 define_function  : (no response)
+  let      24:6 $a               : string
+  let      25:6 $b               : string
+
+== source: schema/05_opaque.surql ==
+  stmt      6:1 define_table     : (no response)
+  stmt      8:1 define_field     : (no response)
+  stmt     10:1 define_field     : (no response)
+  stmt     13:1 define_field     : (no response)
+  stmt     16:1 define_field     : (no response)
+
+== source: schema/06_references_early.surql ==
+  stmt     15:1 define_table     : (no response)
+  stmt     17:1 define_field     : (no response)
+  stmt     20:1 define_field     : (no response)
+  stmt     22:1 define_table     : (no response)
+  stmt     24:1 define_field     : (no response)
+  stmt     26:1 define_field     : (no response)
+  stmt     32:1 define_field     : (no response)
+
+== source: schema/07_references_late.surql ==
+  stmt      4:1 define_table     : (no response)
+  stmt      6:1 define_field     : (no response)
+  stmt      9:1 define_field     : (no response)
+  stmt     13:1 define_field     : (no response)
+
+== source: schema/08_facts.surql ==
+  stmt     20:1 define_table     : (no response)
+  stmt     22:1 define_field     : (no response)
+  stmt     24:1 define_field     : (no response)
+  stmt     26:1 define_field     : (no response)
+  stmt     28:1 define_field     : (no response)
+  stmt     30:1 define_field     : (no response)
+  stmt     32:1 define_field     : (no response)
+  stmt     37:1 define_field     : (no response)
+  stmt     39:1 define_field     : (no response)
+  stmt     44:1 define_index     : (no response)
+  stmt     48:1 define_field     : (no response)
+  stmt     52:1 define_field     : (no response)
+  stmt     56:1 define_field     : (no response)
+  stmt     61:1 define_function  : (no response)
+  stmt     67:1 define_function  : (no response)
+  stmt     74:1 define_function  : (no response)
+  stmt     81:1 define_function  : (no response)
+  stmt     88:1 define_function  : (no response)
+  stmt     94:1 define_function  : (no response)
+  stmt    101:1 define_function  : (no response)
+  stmt    109:1 define_function  : (no response)
+  stmt    116:1 define_function  : (no response)
+  stmt    123:1 define_function  : (no response)
+  stmt    130:1 define_function  : (no response)
+  stmt    137:1 define_function  : (no response)
+  stmt    145:1 define_function  : (no response)
+  stmt    155:1 define_function  : (no response)
+  stmt    160:1 define_function  : (no response)
+  stmt    165:1 define_function  : (no response)
+  stmt    170:1 define_function  : (no response)
+  let     131:6 $alias           : option<string>
+  let     139:6 $alias           : string
+
+== source: queries/10_select.surql ==
+  stmt      4:1 select           : array<{ created_at: datetime, name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt      6:1 select           : array<{ legal: string, org_name: string }>
+  stmt      8:1 select           : array<{ address: { city: string, line2: option<string> } }>
+  stmt     10:1 select           : array<{ address: { city: string, country: string } }>
+  stmt     12:1 select           : array<{ contacts: { email: array<string> } }>
+  stmt     14:1 select           : array<{ contacts: { label: array<string> } }>
+  stmt     16:1 select           : array<{ owner: { settings: { timezone: string }, username: string } }>
+  stmt     18:1 select           : array<{ person: { first_name: option<string>, last_name: option<string> } }>
+  stmt     20:1 select           : array<{ data_region: 'us' | 'eu', id: record<organization_settings>, organization: record<organization>, retention_days: 30 | 90 | 365, security: { byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }, updated_at: datetime }>
+  stmt     24:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, org_name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     26:1 select           : array<{ active: bool, created_at: datetime, deactivated_reason: option<string | null>, email: string, id: record<account>, memberships: array<record<employee_of>>, person: option<record<person>>, settings: { locale: option<string>, notify: bool, timezone: string }, updated_at: datetime, username: string }>
+  stmt     28:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, name_length: int, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     30:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, city: string, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     32:1 select           : array<{ address: { city: string }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     34:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, org_owner: record<account>, parent: option<record<organization>>, plan: 'free' | 'pro' | 'enterprise', sectors: array<record<sector>>, subsidiaries: array<record<organization>> }>
+  stmt     36:1 select           : array<string>
+  stmt     38:1 select           : option<{ name: string }>
+       modifier where      row_preserving=true
+       modifier limit      row_preserving=true max=1
+  stmt     40:1 select           : array<{ id: record<organization>, name: string }, 10>
+       modifier order      row_preserving=true
+       modifier limit      row_preserving=true max=10
+       modifier start      row_preserving=true
+  diag     4:36 I7014     Hint
+  diag     6:51 I7014     Hint
+  diag     8:41 I7014     Hint
+  diag    10:39 I7014     Hint
+  diag    12:31 I7014     Hint
+  diag    14:50 I7014     Hint
+  diag    16:53 I7014     Hint
+  diag    18:49 I7014     Hint
+  diag     20:8 I7015     Hint
+  diag    20:15 I7014     Hint
+  diag    24:33 I7014     Hint
+  diag    26:45 I7014     Hint
+  diag    28:49 I7014     Hint
+  diag    30:37 I7014     Hint
+  diag    32:33 I7014     Hint
+  diag    34:49 I7014     Hint
+  diag    36:24 I7014     Hint
+
+== source: queries/20_graph.surql ==
+  stmt      4:1 select           : array<{ orgs: array<record<organization>> }>
+  stmt      6:1 select           : array<{ titles: array<option<string>> }>
+  stmt      8:1 select           : array<{ members: array<record<account>> }>
+  stmt     10:1 select           : array<{ org_names: array<string> }>
+  stmt     12:1 select           : array<{ active_orgs: array<record<organization>> }>
+  stmt     14:1 select           : array<{ roles: array<record<organization_role>> }>
+  stmt     16:1 select           : array<{ employees: array<record<employee_of>> }>
+  stmt     18:1 let              : (no response)
+  stmt     20:1 let              : (no response)
+  let      18:5 $member          : option<array<record<organization>>>
+  let      20:5 $edge_titles     : array<array<option<string>>>
+  diag     4:49 I7014     Hint
+  diag     6:43 I7014     Hint
+  diag     8:47 I7014     Hint
+  diag    10:59 I7014     Hint
+  diag    12:81 I7014     Hint
+  diag    14:55 I7014     Hint
+  diag    16:23 I7014     Hint
+  diag     18:5 W7001     Warning
+  diag     20:5 W7001     Warning
+  diag    20:59 I7014     Hint
+
+== source: queries/30_narrowing.surql ==
+  stmt      5:1 let              : (no response)
+  stmt      7:1 if_else          : none
+  stmt      9:1 let              : (no response)
+  stmt     11:1 let              : (no response)
+  stmt     13:1 let              : (no response)
+  stmt     15:1 let              : (no response)
+  stmt     17:1 let              : (no response)
+  stmt     19:1 let              : (no response)
+  stmt     21:1 let              : (no response)
+  stmt     23:1 return           : { after_guard: string, unit_name: string, with_default: string }
+  let       5:5 $org             : option<{ name: string, parent: option<record<organization>>, tier: 'pro' }>
+  let       9:5 $after_guard     : string
+  let      11:5 $maybe           : option<string>
+  let      13:5 $with_default    : string
+  let      15:5 $unit            : option<{ headcount: int, name: string, parent: option<record<organization_unit>> }>
+  let      17:5 $unit_name       : string
+  let      19:5 $link            : option<record<person>>
+  let      21:5 $person_id       : option<record<person>>
+  diag     21:5 W7001     Warning
+
+== source: queries/31_guard_subjects.surql ==
+  stmt     14:1 let              : (no response)
+  stmt     16:1 let              : (no response)
+  stmt     21:1 let              : (no response)
+  stmt     23:1 if_else          : none
+  stmt     25:1 let              : (no response)
+  stmt     29:1 let              : (no response)
+  stmt     31:1 if_else          : none
+  stmt     33:1 let              : (no response)
+  stmt     38:1 let              : (no response)
+  stmt     40:1 let              : (no response)
+  stmt     42:1 let              : (no response)
+  stmt     47:1 let              : (no response)
+  stmt     51:1 let              : (no response)
+  stmt     55:1 let              : (no response)
+  stmt     57:1 return           : { alias: string, alias_cross: option<string>, alias_cross_back: option<string>, bare: string, deep: string, paren: string, path: string }
+  let      14:5 $bare            : option<string>
+  let      16:5 $bare_narrowed   : string
+  let      21:5 $row             : option<{ logo: option<string>, name: string }>
+  let      25:5 $path_narrowed   : string
+  let      29:5 $settings        : option<{ locale: option<string>, notify: bool, timezone: string }>
+  let      33:5 $deep_narrowed   : string
+  let      38:5 $alias_src       : option<string>
+  let      40:5 $alias           : option<string>
+  let      42:5 $alias_narrowed  : string
+  let      47:5 $alias_cross     : option<string>
+  let      51:5 $alias_cross_back : option<string>
+  let      55:5 $paren_narrowed  : string
+
+== source: queries/32_guard_placement.surql ==
+  stmt     12:1 let              : (no response)
+  stmt     14:1 if_else          : none
+  stmt     16:1 let              : (no response)
+  stmt     20:1 let              : (no response)
+  stmt     28:1 let              : (no response)
+  stmt     30:1 for              : (no response)
+  stmt     36:1 for              : (no response)
+  stmt     46:1 let              : (no response)
+  stmt     48:1 let              : (no response)
+  stmt     53:1 let              : (no response)
+  stmt     55:1 return           : { block: string, outer: option<string>, scoped: int, top: string }
+  let      12:5 $top             : option<string>
+  let      16:5 $top_after       : string
+  let      21:6 $inner           : option<string>
+  let      20:5 $block_after     : string
+  let      28:5 $logos           : array<option<string>>
+  let      30:5 $logo            : option<string>
+  let      32:6 $for_after       : string
+  let      36:5 $logo2           : option<string>
+  let      37:6 $nested_after    : string
+  let      46:5 $outer           : option<string>
+  let      48:5 $scoped          : int
+  let      53:5 $outer_after     : option<string>
+  diag    28:38 I7014     Hint
+  diag     32:6 W7001     Warning
+  diag     37:6 W7001     Warning
+
+== source: queries/33_guard_forms.surql ==
+  stmt     14:1 let              : (no response)
+  stmt     16:1 if_else          : none
+  stmt     18:1 let              : (no response)
+  stmt     21:1 let              : (no response)
+  stmt     23:1 if_else          : none
+  stmt     25:1 let              : (no response)
+  stmt     29:1 let              : (no response)
+  stmt     36:1 let              : (no response)
+  stmt     44:1 let              : (no response)
+  stmt     46:1 let              : (no response)
+  stmt     51:1 let              : (no response)
+  stmt     53:1 for              : (no response)
+  stmt     59:1 for              : (no response)
+  stmt     66:1 for              : (no response)
+  stmt     72:1 for              : (no response)
+  stmt     79:1 let              : (no response)
+  stmt     81:1 if_else          : option<array<{ id: record<organization_role>, name: string, organization: record<organization>, permissions: array<record<organization_permission>> }>>
+  stmt     83:1 let              : (no response)
+  stmt     85:1 return           : { both_diverge: string, non_diverging: option<string>, return_block: string, return_then: string, throw_block: string, throw_then: string }
+  let      14:5 $a               : option<string>
+  let      18:5 $after_throw_then : string
+  let      21:5 $b               : option<string>
+  let      25:5 $after_throw_block : string
+  let      30:6 $c               : option<string>
+  let      29:5 $after_return_block : string
+  let      37:6 $d               : option<string>
+  let      36:5 $after_return_then : string
+  let      44:5 $e               : option<string>
+  let      46:5 $both_diverge    : string
+  let      51:5 $logos           : array<option<string>>
+  let      53:5 $l               : option<string>
+  let      55:6 $after_continue_then : string
+  let      59:5 $l2              : option<string>
+  let      61:6 $after_continue_block : string
+  let      66:5 $l3              : option<string>
+  let      68:6 $after_break_then : string
+  let      72:5 $l4              : option<string>
+  let      74:6 $after_break_block : string
+  let      79:5 $f               : option<string>
+  let      83:5 $after_non_diverging : option<string>
+  diag    51:38 I7014     Hint
+  diag     55:6 W7001     Warning
+  diag     61:6 W7001     Warning
+  diag     68:6 W7001     Warning
+  diag     74:6 W7001     Warning
+
+== source: queries/35_sentinels.surql ==
+  stmt     11:1 select           : array<{ deactivated_reason: string | null }>
+       modifier where      row_preserving=true
+  stmt     13:1 select           : array<{ deactivated_reason: option<string> }>
+       modifier where      row_preserving=true
+  stmt     17:1 let              : (no response)
+  stmt     19:1 let              : (no response)
+  stmt     21:1 let              : (no response)
+  stmt     24:1 let              : (no response)
+  stmt     26:1 return           : { after_none_guard: string | null, after_null_guard: option<string>, coalesced: string }
+  let      17:5 $reason          : option<string | null>
+  let      19:5 $after_none_guard : string | null
+  let      21:5 $after_null_guard : option<string>
+  let      24:5 $coalesced       : string
+
+== source: queries/36_sentinel_spellings.surql ==
+  stmt     14:1 let              : (no response)
+  stmt     16:1 let              : (no response)
+  stmt     19:1 let              : (no response)
+  stmt     21:1 let              : (no response)
+  stmt     25:1 let              : (no response)
+  stmt     27:1 let              : (no response)
+  stmt     32:1 let              : (no response)
+  stmt     34:1 let              : (no response)
+  stmt     39:1 let              : (no response)
+  stmt     41:1 let              : (no response)
+  stmt     43:1 let              : (no response)
+  stmt     45:1 let              : (no response)
+  stmt     50:1 let              : (no response)
+  stmt     52:1 let              : (no response)
+  stmt     54:1 let              : (no response)
+  stmt     56:1 let              : (no response)
+  stmt     61:1 let              : (no response)
+  stmt     63:1 let              : (no response)
+  stmt     68:1 select           : array<{ summary: string | null }>
+       modifier where      row_preserving=true
+  stmt     70:1 select           : array<{ summary: string | null }>
+       modifier where      row_preserving=true
+  stmt     72:1 select           : array<{ summary: option<string> }>
+       modifier where      row_preserving=true
+  stmt     74:1 select           : array<{ summary: option<string> }>
+       modifier where      row_preserving=true
+  stmt     76:1 select           : array<{ logo: string }>
+       modifier where      row_preserving=true
+  stmt     78:1 select           : array<{ logo: string }>
+       modifier where      row_preserving=true
+  stmt     80:1 return           : { on_both: string, on_coalesced: string, on_eq_none: string | null, on_eq_null: option<string>, on_is_none: string | null, on_is_not_none: string | null, on_is_not_null: option<string>, on_is_null: option<string>, on_ne_none: string | null, on_ne_null: option<string>, opt_eq_none: string, opt_is_none: string, opt_is_not_none: string, opt_is_not_null: option<string>, opt_ne_none: string, opt_ne_null: option<string> }
+  let      14:5 $opt             : option<string>
+  let      16:5 $optnull         : option<string | null>
+  let      19:5 $opt_ne_none     : string
+  let      21:5 $opt_is_not_none : string
+  let      25:5 $opt_eq_none     : string
+  let      27:5 $opt_is_none     : string
+  let      32:5 $opt_ne_null     : option<string>
+  let      34:5 $opt_is_not_null : option<string>
+  let      39:5 $on_ne_none      : string | null
+  let      41:5 $on_is_not_none  : string | null
+  let      43:5 $on_eq_none      : string | null
+  let      45:5 $on_is_none      : string | null
+  let      50:5 $on_ne_null      : option<string>
+  let      52:5 $on_is_not_null  : option<string>
+  let      54:5 $on_eq_null      : option<string>
+  let      56:5 $on_is_null      : option<string>
+  let      61:5 $on_both         : string
+  let      63:5 $on_coalesced    : string
+  diag    32:23 W7005     Warning
+
+== source: queries/37_discriminants.surql ==
+  stmt     18:1 let              : (no response)
+  stmt     20:1 if_else          : none
+  stmt     23:1 let              : (no response)
+  stmt     26:1 let              : (no response)
+  stmt     29:1 let              : (no response)
+  stmt     32:1 let              : (no response)
+  stmt     36:1 let              : (no response)
+  stmt     39:1 let              : (no response)
+  stmt     42:1 let              : (no response)
+  stmt     45:1 let              : (no response)
+  stmt     47:1 if_else          : none
+  stmt     49:1 let              : (no response)
+  stmt     52:1 let              : (no response)
+  stmt     56:1 select           : array<{ name: 'acme' }>
+       modifier where      row_preserving=true
+  stmt     61:1 select           : array<{ stage: 'draft' }>
+       modifier where      row_preserving=true
+  stmt     63:1 select           : array<{ tier: 'pro' }>
+       modifier where      row_preserving=true
+  stmt     66:1 select           : array<{ tier: 'pro' }>
+       modifier where      row_preserving=true
+  stmt     68:1 select           : array<{ tier: 'pro' | 'enterprise' }>
+       modifier where      row_preserving=true
+  stmt     71:1 select           : array<{ owner: record<account> }>
+       modifier where      row_preserving=true
+  stmt     73:1 select           : array<{ owner: record<account> }>
+       modifier where      row_preserving=true
+  stmt     75:1 select           : array<{ owner: record<account> }>
+       modifier where      row_preserving=true
+  stmt     77:1 return           : { is_record: option<record<account>>, mt: option<record<account>>, rt: option<record<account>>, stage_eq: 'draft' | string, stage_in: 'draft' | 'review' | string, tt: option<record<account>>, tt_flipped: option<record<account>>, tt_negative: option<record<account>>, tt_paren: option<record<account>> }
+  let      18:5 $doc             : option<{ owner: record<account | organization>, reviewer: option<record<account | organization>>, stage: 'draft' | 'review' | 'published' }>
+  let      23:5 $tt_positive     : option<record<account>>
+  let      26:5 $rt_positive     : option<record<account>>
+  let      29:5 $mt_positive     : option<record<account>>
+  let      32:5 $tt_flipped      : option<record<account>>
+  let      36:5 $tt_negative     : option<record<account>>
+  let      39:5 $tt_paren        : option<record<account>>
+  let      42:5 $is_record_positive : option<record<account>>
+  let      45:5 $stage           : option<'draft' | 'review' | 'published'>
+  let      49:5 $stage_eq        : 'draft' | string
+  let      52:5 $stage_in        : 'draft' | 'review' | string
+
+== source: queries/38_membership.surql ==
+  stmt     12:1 let              : (no response)
+  stmt     14:1 let              : (no response)
+  stmt     17:1 let              : (no response)
+  stmt     20:1 let              : (no response)
+  stmt     23:1 let              : (no response)
+  stmt     27:1 let              : (no response)
+  stmt     30:1 let              : (no response)
+  stmt     33:1 let              : (no response)
+  stmt     35:1 let              : (no response)
+  stmt     38:1 let              : (no response)
+  stmt     43:1 let              : (no response)
+  stmt     48:1 let              : (no response)
+  stmt     50:1 let              : (no response)
+  stmt     53:1 select           : array<{ name: string, tier: 'pro' | 'enterprise' }>
+       modifier where      row_preserving=true
+  stmt     55:1 select           : array<{ name: string, tier: 'pro' | 'enterprise' }>
+       modifier where      row_preserving=true
+  stmt     57:1 select           : array<{ name: string, tier: 'pro' | 'enterprise' }>
+       modifier where      row_preserving=true
+  stmt     60:1 select           : array<{ logo: option<string>, name: string }>
+       modifier where      row_preserving=true
+  stmt     62:1 select           : array<{ logo: option<string>, name: string }>
+       modifier where      row_preserving=true
+  stmt     64:1 return           : { contains_param: string, in_field: option<string>, in_literal: 'acme' | 'globex' | string, in_param: string, in_paren: string, in_set: string, in_subquery: option<string>, inside_param: string, not_in: string }
+  let      12:5 $names           : array<string>
+  let      14:5 $maybe           : option<string>
+  let      17:5 $in_param        : string
+  let      20:5 $inside_param    : string
+  let      23:5 $contains_param  : string
+  let      27:5 $in_literal      : 'acme' | 'globex' | string
+  let      30:5 $in_subquery     : option<string>
+  let      33:5 $holder          : { pool: array<string> }
+  let      35:5 $in_field        : option<string>
+  let      38:5 $in_paren        : string
+  let      43:5 $not_in          : string
+  let      48:5 $keywords        : option<set<string>>
+  let      50:5 $in_set          : string
+  diag    12:38 I7014     Hint
+  diag    30:57 I7014     Hint
+
+== source: queries/39_composition.surql ==
+  stmt     15:1 let              : (no response)
+  stmt     17:1 let              : (no response)
+  stmt     20:1 let              : (no response)
+  stmt     23:1 let              : (no response)
+  stmt     26:1 let              : (no response)
+  stmt     29:1 let              : (no response)
+  stmt     33:1 let              : (no response)
+  stmt     38:1 let              : (no response)
+  stmt     41:1 let              : (no response)
+  stmt     45:1 let              : (no response)
+  stmt     48:1 let              : (no response)
+  stmt     52:1 let              : (no response)
+  stmt     55:1 let              : (no response)
+  stmt     58:1 let              : (no response)
+  stmt     62:1 let              : (no response)
+  stmt     64:1 let              : (no response)
+  stmt     67:1 let              : (no response)
+  stmt     69:1 let              : (no response)
+  stmt     73:1 let              : (no response)
+  stmt     75:1 let              : (no response)
+  stmt     77:1 let              : (no response)
+  stmt     79:1 let              : (no response)
+  stmt     82:1 select           : array<{ logo: string, name: string, parent: record<organization> }>
+       modifier where      row_preserving=true
+  stmt     84:1 select           : array<{ logo: string, name: string, parent: record<organization> }>
+       modifier where      row_preserving=true
+  stmt     86:1 select           : array<{ logo: option<string>, name: string, parent: option<record<organization>> }>
+       modifier where      row_preserving=true
+  stmt     88:1 select           : array<{ logo: string, name: string }>
+       modifier where      row_preserving=true
+  stmt     90:1 select           : array<{ logo: string, name: string }>
+       modifier where      row_preserving=true
+  stmt     92:1 select           : array<{ logo: string, name: string }>
+       modifier where      row_preserving=true
+  stmt     94:1 return           : { and_both: string, and_flipped: string, and_same_place: string, and_short_circuit: string, andand_both: string, demorgan_and: string, demorgan_not_and: string, demorgan_not_or: string, demorgan_or: string, not_eq: string, not_ne: string, not_not: string, or_else: string, or_mixed: option<string>, or_same_fact: string, oror_else: string, paren_conjunct: string, paren_leaf: string, paren_twice: string, paren_whole: string }
+  let      15:5 $p               : option<string>
+  let      17:5 $q               : option<string>
+  let      20:5 $and_both        : string
+  let      23:5 $andand_both     : string
+  let      26:5 $and_flipped     : string
+  let      29:5 $and_same_place  : string
+  let      33:5 $and_short_circuit : string
+  let      38:5 $or_mixed        : option<string>
+  let      41:5 $or_else         : string
+  let      45:5 $or_same_fact    : string
+  let      48:5 $oror_else       : string
+  let      52:5 $not_eq          : string
+  let      55:5 $not_ne          : string
+  let      58:5 $not_not         : string
+  let      62:5 $demorgan_and    : string
+  let      64:5 $demorgan_not_or : string
+  let      67:5 $demorgan_or     : string
+  let      69:5 $demorgan_not_and : string
+  let      73:5 $paren_leaf      : string
+  let      75:5 $paren_twice     : string
+  let      77:5 $paren_conjunct  : string
+  let      79:5 $paren_whole     : string
+  diag    29:41 W7005     Warning
+
+== source: queries/40_bindings.surql ==
+  source response       : { arr: array<int, 3>, block: number, count: int, destructured: array<{ place: { city: string, country: string } }>, first: { name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }, names: array<string>, obj: { alpha: int, beta: 'two', gamma: array<bool, 2> }, tiers: array<'free' | 'pro' | 'enterprise'> }
+  stmt      5:1 let              : (no response)
+  stmt      7:1 let              : (no response)
+  stmt      9:1 let              : (no response)
+  stmt     11:1 let              : (no response)
+  stmt     13:1 let              : (no response)
+  stmt     15:1 for              : (no response)
+  stmt     21:1 let              : (no response)
+  stmt     27:1 let              : (no response)
+  stmt     29:1 let              : (no response)
+  stmt     31:1 let              : (no response)
+  stmt     33:1 return           : { arr: array<int, 3>, block: number, count: int, destructured: array<{ place: { city: string, country: string } }>, first: { name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }, names: array<string>, obj: { alpha: int, beta: 'two', gamma: array<bool, 2> }, tiers: array<'free' | 'pro' | 'enterprise'> }
+  let       5:5 $orgs            : array<{ name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }>
+  let       7:5 $count           : int
+  let       9:5 $names           : array<string>
+  let      11:5 $first           : { name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }
+  let      13:5 $tiers           : array<'free' | 'pro' | 'enterprise'>
+  let      15:5 $org             : { name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }
+  let      16:6 $label           : string
+  let      17:6 $inner           : array<string, 1>
+  let      22:6 $nested          : array<int>
+  let      23:6 $total           : number
+  let      21:5 $block           : number
+  let      27:5 $destructured    : array<{ place: { city: string, country: string } }>
+  let      29:5 $obj             : { alpha: int, beta: 'two', gamma: array<bool, 2> }
+  let      31:5 $arr             : array<int, 3>
+  diag     5:44 I7014     Hint
+  diag    13:38 I7014     Hint
+  diag     17:6 W7001     Warning
+  diag    17:63 W7005     Warning
+  diag    22:45 I7014     Hint
+  diag    27:69 I7014     Hint
+
+== source: queries/41_iterables.surql ==
+  stmt     14:1 let              : (no response)
+  stmt     16:1 let              : (no response)
+  stmt     18:1 let              : (no response)
+  stmt     21:1 for              : (no response)
+  stmt     26:1 for              : (no response)
+  stmt     31:1 for              : (no response)
+  stmt     36:1 for              : (no response)
+  stmt     41:1 for              : (no response)
+  stmt     46:1 for              : (no response)
+  stmt     51:1 if_else          : none
+  stmt     53:1 for              : (no response)
+  stmt     58:1 for              : (no response)
+  stmt     63:1 for              : (no response)
+  stmt     68:1 for              : (no response)
+  stmt     78:1 let              : (no response)
+  stmt     80:1 let              : (no response)
+  stmt     82:1 let              : (no response)
+  stmt     84:1 return           : { mapped: array<string>, mapped_option: array<string>, mapped_set: any }
+  let      14:5 $names           : array<string>
+  let      16:5 $keywords        : option<set<string>>
+  let      18:5 $tags            : option<array<string>>
+  let      21:5 $from_array      : string
+  let      22:6 $array_elem      : string
+  let      26:5 $from_literal    : string
+  let      27:6 $literal_elem    : string
+  let      31:5 $from_subquery   : string
+  let      32:6 $subquery_elem   : string
+  let      36:5 $from_paren      : string
+  let      37:6 $paren_elem      : string
+  let      41:5 $from_set        : string
+  let      42:6 $set_elem        : string
+  let      46:5 $from_option     : string
+  let      47:6 $option_elem     : string
+  let      53:5 $from_guarded_option : string
+  let      54:6 $guarded_option_elem : string
+  let      58:5 $from_range      : unknown
+  let      59:6 $range_elem      : unknown
+  let      63:5 $from_range_inclusive : unknown
+  let      64:6 $range_inclusive_elem : unknown
+  let      68:5 $from_range_expr : unknown
+  let      69:6 $range_expr_elem : unknown
+  let      78:5 $mapped_array    : array<string>
+  let      80:5 $mapped_set      : any
+  let      82:5 $mapped_option   : array<string>
+  diag    14:38 I7014     Hint
+  diag     22:6 W7001     Warning
+  diag     27:6 W7001     Warning
+  diag    31:47 I7014     Hint
+  diag     32:6 W7001     Warning
+  diag     37:6 W7001     Warning
+  diag     42:6 W7001     Warning
+  diag     47:6 W7001     Warning
+  diag     54:6 W7001     Warning
+  diag     59:6 W7001     Warning
+  diag     64:6 W7001     Warning
+  diag     69:6 W7001     Warning
+
+== source: queries/42_subquery_values.surql ==
+  stmt     10:1 let              : (no response)
+  stmt     13:1 let              : (no response)
+  stmt     16:1 let              : (no response)
+  stmt     20:1 let              : (no response)
+  stmt     29:1 let              : (no response)
+  stmt     32:1 let              : (no response)
+  stmt     36:1 let              : (no response)
+  stmt     39:1 let              : (no response)
+  stmt     42:1 let              : (no response)
+  stmt     46:1 let              : (no response)
+  stmt     51:1 select           : array<{ doubled: int }>
+       modifier group      row_preserving=false
+  stmt     53:1 select           : array<{ doubled: int }>
+       modifier group      row_preserving=false
+  stmt     58:1 select           : array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     60:1 select           : array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     63:1 select           : array<{ name: string }>
+       modifier where      row_preserving=true
+  stmt     65:1 return           : { count: int, count_or_zero: int, count_paren: int, one: option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>, one_indexed: { name: string, tier: 'free' | 'pro' | 'enterprise' }, one_unique: option<{ title: 'spec' }>, one_unique_paren: option<{ title: 'spec' }>, rows: array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>, rows_alias: array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>, rows_paren: array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }> }
+  let      10:5 $rows            : array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  let      13:5 $rows_paren      : array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  let      16:5 $rows_alias      : array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  let      20:5 $one             : option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  let      29:5 $one_indexed     : { name: string, tier: 'free' | 'pro' | 'enterprise' }
+  let      32:5 $one_unique      : option<{ title: 'spec' }>
+  let      36:5 $one_unique_paren : option<{ title: 'spec' }>
+  let      39:5 $count           : int
+  let      42:5 $count_paren     : int
+  let      46:5 $count_or_zero   : int
+  diag    10:37 I7014     Hint
+  diag    13:44 I7014     Hint
+  diag    39:41 I7014     Hint
+  diag    42:49 I7014     Hint
+  diag    46:49 I7014     Hint
+  diag    51:49 I7014     Hint
+  diag    53:51 I7014     Hint
+  diag    58:24 I7014     Hint
+  diag    60:25 I7014     Hint
+  diag    63:69 I7014     Hint
+
+== source: queries/43_expression_forms.surql ==
+  stmt     10:1 let              : (no response)
+  stmt     12:1 let              : (no response)
+  stmt     15:1 let              : (no response)
+  stmt     18:1 let              : (no response)
+  stmt     22:1 let              : (no response)
+  stmt     25:1 let              : (no response)
+  stmt     28:1 let              : (no response)
+  stmt     32:1 let              : (no response)
+  stmt     35:1 let              : (no response)
+  stmt     38:1 let              : (no response)
+  stmt     41:1 let              : (no response)
+  stmt     45:1 let              : (no response)
+  stmt     48:1 let              : (no response)
+  stmt     51:1 let              : (no response)
+  stmt     55:1 let              : (no response)
+  stmt     59:1 let              : (no response)
+  stmt     62:1 let              : (no response)
+  stmt     67:1 select           : array<{ coalesced: string }>
+  stmt     69:1 select           : array<{ cast: string }>
+  stmt     71:1 select           : array<{ coalesced_paren: string }>
+  stmt     73:1 return           : { cast_guarded: string, cast_identity: string, cast_int: int, cast_option: string, cast_paren: int, coalesce: string, coalesce_after_guard: string, coalesce_as_if: string, coalesce_chain: string, coalesce_paren: string, if_block: string, if_chain: string, if_expr: string, if_no_else: option<string>, if_paren: string }
+  let      10:5 $p               : option<string>
+  let      12:5 $n               : option<int>
+  let      15:5 $if_expr         : string
+  let      18:5 $if_block        : string
+  let      22:5 $if_chain        : string
+  let      25:5 $if_no_else      : option<string>
+  let      28:5 $if_paren        : string
+  let      32:5 $coalesce        : string
+  let      35:5 $coalesce_as_if  : string
+  let      38:5 $coalesce_paren  : string
+  let      41:5 $coalesce_chain  : string
+  let      45:5 $coalesce_after_guard : string
+  let      48:5 $cast_int        : int
+  let      51:5 $cast_paren      : int
+  let      55:5 $cast_guarded    : string
+  let      59:5 $cast_option     : string
+  let      62:5 $cast_identity   : string
+  diag    67:48 I7014     Hint
+  diag    69:36 I7014     Hint
+  diag    71:58 I7014     Hint
+
+== source: queries/50_aggregates.surql ==
+  stmt      4:1 select           : array<{ count: int }>
+       modifier group      row_preserving=false
+  stmt      6:1 select           : array<{ tier: 'free' | 'pro' | 'enterprise', total: int }>
+       modifier group      row_preserving=false
+  stmt      8:1 select           : array<{ heads: number, organization: record<organization> }>
+       modifier group      row_preserving=false
+  stmt     10:1 select           : array<{ avg_heads: number }>
+       modifier group      row_preserving=false
+  stmt     12:1 select           : array<{ names: array<string>, tier: 'free' | 'pro' | 'enterprise' }>
+       modifier group      row_preserving=false
+  stmt     14:1 select           : array<{ n: int, status: 'invited' | 'active' | 'suspended' }>
+       modifier group      row_preserving=false
+  stmt     16:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: { email: string, label: string, primary: bool }, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+       modifier split      row_preserving=false
+  stmt     18:1 select           : array<{ name: string, year: int }>
+       modifier group      row_preserving=false
+  stmt     22:1 select           : array<{ names: array<string>, tier: 'free' | 'pro' | 'enterprise' }>
+       modifier group      row_preserving=false
+  diag     4:21 I7014     Hint
+  diag     6:36 I7014     Hint
+  diag     8:57 I7014     Hint
+  diag    10:48 I7014     Hint
+  diag    12:47 I7014     Hint
+  diag    14:34 I7014     Hint
+  diag     16:8 I7015     Hint
+  diag    16:15 I7014     Hint
+  diag    18:50 I7014     Hint
+  diag    22:50 I7014     Hint
+
+== source: queries/60_mutations.surql ==
+  stmt      4:1 create           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt      7:1 create           : { headcount: int, id: record<organization_unit>, name: string, organization: record<organization>, parent: option<record<organization_unit>> }
+  stmt      9:1 create           : array<{ id: record<organization_role>, name: string, organization: record<organization>, permissions: array<record<organization_permission>> }>
+  stmt     11:1 update           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     13:1 update           : { address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }
+  stmt     15:1 upsert           : array<{ data_region: 'us' | 'eu', id: record<organization_settings>, organization: record<organization>, retention_days: 30 | 90 | 365, security: { byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }, updated_at: datetime }>
+  stmt     17:1 delete           : array<{ headcount: int, id: record<organization_unit>, name: string, organization: record<organization>, parent: option<record<organization_unit>> }>
+  stmt     19:1 delete           : array<{ id: record<organization_role>, name: string, organization: record<organization>, permissions: array<record<organization_permission>> }>
+  stmt     21:1 relate           : array<{ id: record<employee_of>, in: record<account>, joined_at: datetime, out: record<organization>, role: record<organization_role>, status: 'invited' | 'active' | 'suspended', title: option<string>, unit: record<organization_unit> }>
+  stmt     23:1 insert           : array<{ id: record<sector>, name: string }>
+  stmt     25:1 insert           : array<{ id: record<sector>, name: string }>
+  stmt     27:1 update           : array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     31:1 update           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, plan: 'free' | 'pro' | 'enterprise', sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  diag     27:8 W7009     Warning
+  diag     31:8 W7009     Warning
+
+== source: queries/70_params.surql ==
+  stmt      4:1 select           : array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+       modifier where      row_preserving=true
+  stmt      6:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+       modifier where      row_preserving=true
+       modifier limit      row_preserving=true
+  stmt      8:1 select           : option<{ name: string }>
+       modifier where      row_preserving=true
+       modifier limit      row_preserving=true max=1
+  stmt     13:1 create           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     16:1 let              : (no response)
+  stmt     18:1 update           : array<{ headcount: int, id: record<organization_unit>, name: string, organization: record<organization>, parent: option<record<organization_unit>> }>
+  stmt     20:1 select           : array<{ id: record<employee_of>, in: record<account>, joined_at: datetime, out: record<organization>, role: record<organization_role>, status: 'invited' | 'active' | 'suspended', title: option<string>, unit: record<organization_unit> }>
+       modifier where      row_preserving=true
+  let      16:5 $tier_default    : string
+  param $city                   : string  [required]
+  param $default_tier           : string  [optional]
+  param $headcount              : int  [required]
+  param $line1                  : string  [required]
+  param $new_legal              : string  [required]
+  param $new_name               : string  [required]
+  param $org_id                 : record<organization>  [required]
+  param $org_name               : string  [required]
+  param $owner_id               : record<account>  [required]
+  param $page_size              : int  [required]  domain=Range { min: Some(0), max: None }
+  param $since                  : datetime  [required]
+  param $tier                   : 'free' | 'pro' | 'enterprise'  [required]
+  diag      6:8 I7015     Hint
+  diag     16:5 W7001     Warning
+  diag     20:8 I7015     Hint
+
+== source: queries/80_functions.surql ==
+  stmt      4:1 select           : array<{ label: string }>
+  stmt      6:1 let              : (no response)
+  stmt      8:1 let              : (no response)
+  stmt     10:1 let              : (no response)
+  stmt     12:1 let              : (no response)
+  stmt     14:1 let              : (no response)
+  stmt     16:1 let              : (no response)
+  stmt     18:1 let              : (no response)
+  stmt     20:1 let              : (no response)
+  stmt     22:1 let              : (no response)
+  stmt     24:1 return           : { heads: int, initials: string, joined: string, label: string, owner: record<account>, parsed: int, pro: bool, upper: string, when: datetime }
+  let       6:5 $owner           : record<account>
+  let       8:5 $heads           : int
+  let      10:5 $initials        : string
+  let      12:5 $pro             : bool
+  let      14:5 $label           : string
+  let      16:5 $upper           : string
+  let      18:5 $joined          : string
+  let      20:5 $when            : datetime
+  let      22:5 $parsed          : int
+  diag     4:48 I7014     Hint
+
+== source: queries/90_opaque.surql ==
+  stmt      4:1 select           : array<{ payload: any, provider: 'stripe' | 'github' }>
+  stmt      6:1 let              : (no response)
+  stmt      8:1 let              : (no response)
+  stmt     10:1 return           : { headers: option<object>, payload: option<any> }
+  let       6:5 $payload         : option<any>
+  let       8:5 $headers         : option<object>
+  diag     4:31 I7014     Hint
+
+== source: queries/95_parens.surql ==
+  stmt      9:1 select           : array<{ scaled_length: int }>
+  stmt     14:1 select           : array<{ total_headcount: number }>
+       modifier group      row_preserving=false
+  stmt     18:1 select           : array<{ name: string, parent: record<organization> }>
+       modifier where      row_preserving=true
+  stmt     22:1 select           : array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     25:1 let              : (no response)
+  stmt     27:1 let              : (no response)
+  stmt     31:1 let              : (no response)
+  stmt     33:1 if_else          : none
+  stmt     35:1 let              : (no response)
+  stmt     37:1 return           : { grouped: int, one_name: string, rows: array<{ name: string }> }
+  let      25:5 $grouped         : int
+  let      27:5 $grouped_rows    : array<{ name: string }>
+  let      31:5 $one             : option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  let      35:5 $one_name        : string
+  diag     9:54 I7014     Hint
+  diag    14:55 I7014     Hint
+  diag    22:25 I7014     Hint
+  diag    27:40 I7014     Hint
+
+== source: queries/96_references.surql ==
+  stmt     13:1 select           : array<{ tasks: array<record<task>> }>
+  stmt     16:1 select           : array<{ milestones: array<record<milestone>> }>
+  stmt     19:1 select           : array<{ milestones: array<record<milestone>>, name: string, tasks: array<record<task>> }>
+  diag    13:19 I7014     Hint
+  diag    16:24 I7014     Hint
+  diag    19:37 I7014     Hint
