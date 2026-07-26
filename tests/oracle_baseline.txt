@@ -15,168 +15,168 @@
 
 E1001  schema/apps/commerce/discount.surql
     `record<loyalty_tier>` targets a table that's never defined
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — the table is defined as `commerce_loyalty_tier` (loyalty_tier.surql:1); the `loyalty_*` names are stale post-rename references. No `DEFINE TABLE loyalty_tier` exists anywhere in the corpus.
 
 E1001  schema/apps/commerce/loyalty/loyalty_reward.surql
     `record<loyalty_program>` targets a table that's never defined
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — same stale rename: the file itself defines `commerce_loyalty_reward`, but its fields still point at `loyalty_program` / `loyalty_tier`.
 
 E1001  schema/apps/commerce/loyalty/loyalty_reward.surql
     `record<loyalty_tier>` targets a table that's never defined
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — same stale rename: the file itself defines `commerce_loyalty_reward`, but its fields still point at `loyalty_program` / `loyalty_tier`.
 
 E1001  schema/apps/commerce/loyalty/loyalty_tier.surql
     `record<loyalty_program>` targets a table that's never defined
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — same stale rename: defines `commerce_loyalty_tier`, references `record<loyalty_program>`.
 
 E1001  schema/apps/commerce/loyalty/loyalty_transaction.surql
     `record<loyalty_program>` targets a table that's never defined
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — same stale rename: three fields point at `loyalty_program` / `loyalty_reward` / `loyalty_tier`, all defined as `commerce_*`.
 
 E1001  schema/apps/commerce/loyalty/loyalty_transaction.surql
     `record<loyalty_reward>` targets a table that's never defined
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — same stale rename: three fields point at `loyalty_program` / `loyalty_reward` / `loyalty_tier`, all defined as `commerce_*`.
 
 E1001  schema/apps/commerce/loyalty/loyalty_transaction.surql
     `record<loyalty_tier>` targets a table that's never defined
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — same stale rename: three fields point at `loyalty_program` / `loyalty_reward` / `loyalty_tier`, all defined as `commerce_*`.
 
 E1001  schema/apps/commerce/order/has_line_item.surql
     `record<kitchen_station>` targets a table that's never defined
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — the table is `pos_kitchen_station` (pos_kitchen_station.surql:1); `kitchen_station` is never defined.
 
 E1001  schema/apps/commerce/pos/kitchen/pos_kitchen_ticket.surql
     `record<kitchen_station>` targets a table that's never defined
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — same file's own table is `pos_kitchen_station`; the ticket's `station` field still says `record<kitchen_station>`.
 
 E1001  schema/apps/commerce/products/service.surql
     `record<product_kind>` targets a table that's never defined
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — `product_kind` is defined nowhere in the corpus (nearest real tables are `product_category` / `product`).
 
 E1001  schema/apps/crm/customer.surql
     `record<loyalty_program>` targets a table that's never defined
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — `loyalty_program` / `loyalty_tier` are the pre-rename names; the real tables are `commerce_loyalty_program` / `commerce_loyalty_tier`.
 
 E1001  schema/apps/crm/customer.surql
     `record<loyalty_tier>` targets a table that's never defined
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — `loyalty_program` / `loyalty_tier` are the pre-rename names; the real tables are `commerce_loyalty_program` / `commerce_loyalty_tier`.
 
 E1001  schema/communication/email_address.surql
     `mailbox_folder` is not a defined table
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — `COMPUTED <~mailbox_folder` back-references a table that is never defined; the computed field can only ever be `[]`.
 
 E1001  schema/organization/@functions.surql
     `has_billing_module` is not a defined table
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `SELECT * FROM <undefined table>` errors outright on SurrealDB 3.0.5 ("The table 'X' does not exist"). `fn::organization::modules` and `fn::organization::billing::usage` cannot run at all.
 
 E1001  schema/organization/@functions.surql
     `organization_billing_limit` is not a defined table
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `SELECT * FROM <undefined table>` errors outright on SurrealDB 3.0.5 ("The table 'X' does not exist"). `fn::organization::modules` and `fn::organization::billing::usage` cannot run at all.
 
 E1001  schema/organization/organization_delegation_grant.surql
     `record<user>` targets a table that's never defined
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — `record<team | user | organization_unit>`; there is no `user` table in the corpus (accounts live in `account`).
 
 E1001  schema/person/account.surql
     `passkey` is not a defined table
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — `COMPUTED <~passkey` back-references a table that is never defined.
 
 E1001  schema/suite/task/task.surql
     `task_comment` is not a defined table
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — `COMPUTED <~task_comment` back-references a table that is never defined.
 
 E1002  schema/auth/entity_access.surql
     `member_of` has no field `status`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — `member_of` is SCHEMAFULL with only `role` / `joined_at` (+ in/out). `WHERE ... AND status = 'active'` therefore never matches, so both team-membership permission branches are dead.
 
 E1002  schema/organization/organization.surql
     `organization_unit` has no field `random`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `random = 'test'` (organization.surql:78) on SCHEMAFULL `organization_unit` fails with "Found field 'random', but no such field exists". Leftover debug line; the setup_roles event throws on every organization CREATE.
 
 E1002  schema/person/@function.surql
     `organization` has no field `slug`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — `organization` is SCHEMAFULL and has no `slug` field, so the username-vs-org-slug collision check at line 24 can never fire.
 
 E1002  schema/suite/project/project.surql
     `task_status` has no field `category`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `task_status` is SCHEMAFULL with template/name/description/color/state. `CREATE task_status SET ... category = ..., project = ...` fails with "Found field 'category', but no such field exists for table 'task_status'". The setup_statuses event is stale — projects now get statuses via `project_task_status`.
 
 E1002  schema/suite/project/project.surql
     `task_status` has no field `category`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `task_status` is SCHEMAFULL with template/name/description/color/state. `CREATE task_status SET ... category = ..., project = ...` fails with "Found field 'category', but no such field exists for table 'task_status'". The setup_statuses event is stale — projects now get statuses via `project_task_status`.
 
 E1002  schema/suite/project/project.surql
     `task_status` has no field `category`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `task_status` is SCHEMAFULL with template/name/description/color/state. `CREATE task_status SET ... category = ..., project = ...` fails with "Found field 'category', but no such field exists for table 'task_status'". The setup_statuses event is stale — projects now get statuses via `project_task_status`.
 
 E1002  schema/suite/project/project.surql
     `task_status` has no field `category`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `task_status` is SCHEMAFULL with template/name/description/color/state. `CREATE task_status SET ... category = ..., project = ...` fails with "Found field 'category', but no such field exists for table 'task_status'". The setup_statuses event is stale — projects now get statuses via `project_task_status`.
 
 E1002  schema/suite/project/project.surql
     `task_status` has no field `category`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `task_status` is SCHEMAFULL with template/name/description/color/state. `CREATE task_status SET ... category = ..., project = ...` fails with "Found field 'category', but no such field exists for table 'task_status'". The setup_statuses event is stale — projects now get statuses via `project_task_status`.
 
 E1002  schema/suite/project/project.surql
     `task_status` has no field `project`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `task_status` is SCHEMAFULL with template/name/description/color/state. `CREATE task_status SET ... category = ..., project = ...` fails with "Found field 'category', but no such field exists for table 'task_status'". The setup_statuses event is stale — projects now get statuses via `project_task_status`.
 
 E1002  schema/suite/project/project.surql
     `task_status` has no field `project`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `task_status` is SCHEMAFULL with template/name/description/color/state. `CREATE task_status SET ... category = ..., project = ...` fails with "Found field 'category', but no such field exists for table 'task_status'". The setup_statuses event is stale — projects now get statuses via `project_task_status`.
 
 E1002  schema/suite/project/project.surql
     `task_status` has no field `project`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `task_status` is SCHEMAFULL with template/name/description/color/state. `CREATE task_status SET ... category = ..., project = ...` fails with "Found field 'category', but no such field exists for table 'task_status'". The setup_statuses event is stale — projects now get statuses via `project_task_status`.
 
 E1002  schema/suite/project/project.surql
     `task_status` has no field `project`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `task_status` is SCHEMAFULL with template/name/description/color/state. `CREATE task_status SET ... category = ..., project = ...` fails with "Found field 'category', but no such field exists for table 'task_status'". The setup_statuses event is stale — projects now get statuses via `project_task_status`.
 
 E1002  schema/suite/project/project.surql
     `task_status` has no field `project`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `task_status` is SCHEMAFULL with template/name/description/color/state. `CREATE task_status SET ... category = ..., project = ...` fails with "Found field 'category', but no such field exists for table 'task_status'". The setup_statuses event is stale — projects now get statuses via `project_task_status`.
 
 E2004  schema/organization/@functions.surql
     `=` can't combine a `array<bool>` and a `bool`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `array::matches([1,2,3], 2)` returns `[false, true, false]`, an array<bool>. `fn::organization::modules::contain(...) = false` is therefore never true, so `fn::organization::modules::require` never THROWs — the module gate is dead.
 
 E2004  schema/organization/employee_of.surql
     `=` can't combine a `array<{ count: int }>` and a `int`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `SELECT count() FROM t GROUP ALL` returns `[{ count: N }]`, an array. `IF $admins = 0` is never true, so guard_last_admin never protects the last administrator.
 
 E2034  schema/suite/project/project.surql
     `template` must be set when creating a `task_status`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `template` is `TYPE record<task_status_template>` with no DEFAULT, so the CREATE fails with "Couldn't coerce value for field `template` ... Expected `record<task_status_template>` but found `NONE`". Same stale setup_statuses event as the E1002s above.
 
 E2034  schema/suite/project/project.surql
     `template` must be set when creating a `task_status`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `template` is `TYPE record<task_status_template>` with no DEFAULT, so the CREATE fails with "Couldn't coerce value for field `template` ... Expected `record<task_status_template>` but found `NONE`". Same stale setup_statuses event as the E1002s above.
 
 E2034  schema/suite/project/project.surql
     `template` must be set when creating a `task_status`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `template` is `TYPE record<task_status_template>` with no DEFAULT, so the CREATE fails with "Couldn't coerce value for field `template` ... Expected `record<task_status_template>` but found `NONE`". Same stale setup_statuses event as the E1002s above.
 
 E2034  schema/suite/project/project.surql
     `template` must be set when creating a `task_status`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `template` is `TYPE record<task_status_template>` with no DEFAULT, so the CREATE fails with "Couldn't coerce value for field `template` ... Expected `record<task_status_template>` but found `NONE`". Same stale setup_statuses event as the E1002s above.
 
 E2034  schema/suite/project/project.surql
     `template` must be set when creating a `task_status`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `template` is `TYPE record<task_status_template>` with no DEFAULT, so the CREATE fails with "Couldn't coerce value for field `template` ... Expected `record<task_status_template>` but found `NONE`". Same stale setup_statuses event as the E1002s above.
 
 E5002  schema/organization/billing/organization_billing.surql
     argument 1 to `fn::stripe::customer::delete` is a `option<string>`, but `$stripe_id` is declared `string`
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — engine-verified: `organization_billing.stripe` is `option<string>` and `fn::stripe::customer::delete($stripe_id: string)` rejects NONE ("Incorrect arguments ... Expected `string` but found `NONE`"). Deleting a billing row that never reached Stripe throws.
 
 W4023  schema/@functions.surql
     count() without GROUP BY yields 1 per row, not a total; add GROUP ALL for a total
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: BUG — false positive. Both sites consume the SELECT as `array::is_empty(SELECT count() FROM ...) = false`, an existence test, not a total; the code is correct as written. Engine-verified that the suggested remedy is actively harmful: with no matching rows `SELECT count() FROM t WHERE ...` yields `[]` (is_empty -> true) but `... GROUP ALL` yields `[{count: 0}]` (is_empty -> false), which would make fn::entity::permissible return true for everyone. See docs/plans/2026-07-26-oracle-triage.md, BUG-1.
 
 W4023  schema/@functions.surql
     count() without GROUP BY yields 1 per row, not a total; add GROUP ALL for a total
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: BUG — false positive. Both sites consume the SELECT as `array::is_empty(SELECT count() FROM ...) = false`, an existence test, not a total; the code is correct as written. Engine-verified that the suggested remedy is actively harmful: with no matching rows `SELECT count() FROM t WHERE ...` yields `[]` (is_empty -> true) but `... GROUP ALL` yields `[{count: 0}]` (is_empty -> false), which would make fn::entity::permissible return true for everyone. See docs/plans/2026-07-26-oracle-triage.md, BUG-1.
 
 W7005  schema/@functions.surql
     `!=` between `record<organization_unit>` and `none` is always true
-    verdict: TRIAGE ME — genuine / expected / BUG?
+    verdict: genuine — `employee_of.unit` is declared `TYPE record<organization_unit>` (employee_of.surql:19-21), not `option<...>`, so `$grant.unit != NONE` at @functions.surql:23 is dead. Either the field should be optional or the guard should go.
