@@ -1,7 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
+  // `test-d/gen` mimics a real generated file, which imports the package by
+  // name. Map that to source so `pnpm typecheck` needs no prior build.
   "compilerOptions": {
-    "rootDir": "."
+    "rootDir": ".",
+    "paths": { "@surrealguard/client": ["./src/index.ts"] }
   },
   "include": ["src", "test-d"]
 }
