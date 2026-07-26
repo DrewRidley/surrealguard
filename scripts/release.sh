@@ -43,22 +43,35 @@ cmd_check() {
   cargo test 2>&1 | grep -E 'test result: (ok|FAILED)' \
     | awk '{s+=$4; f+=$6} END {print "   passed:", s, " failed:", f; if (f>0) exit 1}'
 
-  echo "== oracle (all-valid corpus: the count must not grow) =="
+  # The corpus is NOT entirely valid — it contains genuinely wrong SurrealQL
+  # (undefined tables like `passkey`, for instance). So a growing count is not
+  # itself a failure: what matters is that every finding is genuine. Compare
+  # against the previous release and triage anything new before publishing.
+  echo "== oracle (real-world corpus: triage any NEW finding, don't just count) =="
   local ws=/Users/drewridley/Documents/Projects/workshop/database
+  local bin="$PWD/target/release/surrealguard"
   if [ -d "$ws" ]; then
-    ( cd "$ws" && "$OLDPWD/target/release/surrealguard" check --json 2>/dev/null \
+    # `check` exits non-zero whenever any finding is error-severity, which the
+    # corpus has by design — so the exit code is not a failure signal here and
+    # must not take down the script (`set -e` + `pipefail`). The count is.
+    ( cd "$ws" && "$bin" check --json 2>/dev/null || true ) \
       | python3 -c "import sys,json,collections
 d=json.load(sys.stdin); c=collections.Counter(x['code'] for x in d['diagnostics'])
-print('   total:', sum(c.values()), dict(c))" )
+print('   total:', sum(c.values()), dict(c))"
   else
     echo "   (corpus not present — skipped)"
   fi
 
-  echo "== packaging dry-run (catches missing files / bad metadata) =="
+  # `--no-verify` on purpose: verification builds the tarball against the
+  # *registry*, so any crate using an API added in this same release fails until
+  # its dependency is published. That is expected in a coordinated release and
+  # resolves itself as `publish` walks the dependency order. What is worth
+  # checking ahead of time is metadata and file inclusion, which this does.
+  echo "== packaging dry-run (metadata + file inclusion) =="
   for c in "${CRATES[@]}"; do
     printf '   %-38s ' "$c"
-    if cargo package -p "$c" --allow-dirty --quiet >/dev/null 2>&1; then echo ok
-    else echo "FAILED — run: cargo package -p $c"; fi
+    if cargo package -p "$c" --allow-dirty --no-verify --quiet >/dev/null 2>&1; then echo ok
+    else echo "FAILED — run: cargo package -p $c --no-verify"; fi
   done
 }
 
