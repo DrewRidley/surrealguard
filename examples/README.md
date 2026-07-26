@@ -58,13 +58,9 @@ cd ../..
 pnpm --filter @surrealguard-example/basic run typecheck
 ```
 
-> **Known gap.** `crates/embed` recognises `` surql`…` ``, `surql("…")` and any
-> `.query(…)` / `.live(…)` member call, but **not** `defineQuery("…")` /
-> `defineLive("…")`. Step 2 therefore extracts nothing from these examples
-> today, and their committed `surrealguard.generated.ts` files were produced by
-> running the real analyzer over the same query texts through a recognised sink.
-> Teaching the extractor the two new names is a ~3-line change to
-> `is_surql_tag`, or a `[codegen] sinks` config key.
+Both examples' committed `surrealguard.generated.ts` files are byte-identical to
+what step 2 produces, so you can verify the round-trip by running it and
+checking `git diff` is empty.
 
 ## The guarantee
 
@@ -94,6 +90,26 @@ properly:
 import { RecordId } from "../surrealguard.generated";
 await db.run(peopleOf, { team: new RecordId("team", "red") });
 ```
+
+## What the examples deliberately cannot show
+
+A query text the registry does not contain is a hard error carrying its own
+remedy (`SurqlError<"this query is not in the generated registry - run
+\`surrealguard generate\`">`) rather than a silent degrade to `unknown[]`.
+
+That guarantee cannot be demonstrated *in* a generated example, and the reason
+is structural: `generate` extracts every `defineQuery` / `defineLive` literal in
+the project, so any query written in an example is by construction in the
+example's generated file. A registry miss is therefore only ever a **stale**
+registry — and an example that regenerates cleanly is precisely one that cannot
+hold a stale one. Reflowing a literal is the same case, not a different one: it
+changes the key, so it errors until the next `generate`, which then picks the
+reflowed text up as its own entry.
+
+So the guarantee lives where the registry is hand-declared and no tool rewrites
+it: [`packages/client/test-d/query.test-d.ts`](../packages/client/test-d/query.test-d.ts).
+What the examples show instead is the deliberate opt-out, `defineQuery.unchecked`,
+which degrades to `unknown[]` — never `any`.
 
 ## Type-checking
 

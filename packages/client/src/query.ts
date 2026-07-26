@@ -114,9 +114,10 @@ export interface AnyQuery {
  * purpose: tsc prints the alias name if there is one, so `SurqlError<"…">`
  * spelled out here is what makes the remedy appear *in the compiler output*.
  *
- * This also closes a silent failure that had nothing to do with staleness:
- * reformatting a query changes its text, so it changes its key, so its result
- * quietly became `unknown[]`. Now it stops the build.
+ * The case worth naming is the one nobody recognises as an edit: reformatting a
+ * query changes its text, so it changes its key. `generate` will happily pick
+ * the reflowed text up on its next run — but in the window before that, the
+ * result used to degrade quietly to `unknown[]`. Now it stops the build.
  */
 export type DefinedQuery<Q extends string> = Q extends keyof SurqlRegistry
   ? SurqlQuery<ResultOf<Q>, ParamsOf<Q>>

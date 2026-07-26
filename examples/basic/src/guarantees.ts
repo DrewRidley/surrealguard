@@ -33,11 +33,27 @@ export async function guarantees() {
   // @ts-expect-error an unbound live query cannot be watched.
   db.watch(liveTeam, () => {});
 
-  // A query text the registry does not contain is a hard error, not a silent
-  // degrade to `unknown[]`. The compiler prints the remedy:
+  // A query text the registry does not contain is a hard error carrying its own
+  // remedy, not a silent degrade to `unknown[]`:
   //   Argument of type 'SurqlError<"this query is not in the generated
   //   registry - run `surrealguard generate`">' is not assignable to …
-  const stale = defineQuery("SELECT nope FROM nowhere");
-  // @ts-expect-error the generated file does not know this query.
-  await db.run(stale);
+  //
+  // That guarantee CANNOT be demonstrated here, and the reason is worth stating.
+  // `surrealguard generate` extracts every `defineQuery` / `defineLive` literal
+  // in this project, so any query written in this file is, by construction, in
+  // the generated file. A registry miss is therefore only ever a *stale*
+  // registry — and an example that regenerates cleanly is exactly one that
+  // cannot hold a stale one. (Reflowing a literal is the same thing: it changes
+  // the key, so it errors until the next `generate`, which then picks the new
+  // text up.) The guarantee is proven where the registry is hand-declared and
+  // no tool rewrites it: `packages/client/test-d/query.test-d.ts`.
+  //
+  // What IS demonstrable is the deliberate opt-out, for a genuinely dynamic
+  // query that no generated file could ever contain:
+  const dynamic = defineQuery.unchecked(`SELECT * FROM ${"person"}`);
+  const rows = await db.run(dynamic);
+  // It degrades to `unknown[]` — never `any`, so the rows stay unusable until
+  // you narrow them yourself, and nothing silently typechecks.
+  // @ts-expect-error the row is `unknown`, so nothing can be read off it.
+  rows[0]!.name;
 }

@@ -66,8 +66,16 @@ export async function guarantees() {
   createMutation(addPerson, { client: db }).mutate({ name: 1, age: 36, team });
 
   // A query text the registry does not contain is a hard error carrying its own
-  // remedy, not a silent degrade to `unknown[]`.
-  const stale = defineQuery("SELECT nope FROM nowhere");
-  // @ts-expect-error the generated file does not know this query.
-  await db.run(stale);
+  // remedy, not a silent degrade to `unknown[]`. It cannot be demonstrated in a
+  // generated example — `generate` extracts every `defineQuery` literal here, so
+  // a miss is only ever a *stale* registry, and this example regenerates
+  // cleanly. See `packages/client/test-d/query.test-d.ts`, where the registry is
+  // hand-declared and no tool rewrites it.
+  //
+  // The deliberate opt-out is demonstrable, and degrades to `unknown[]` —
+  // never `any`:
+  const dynamic = defineQuery.unchecked(`SELECT * FROM ${"person"}`);
+  const rows = await db.run(dynamic);
+  // @ts-expect-error the row is `unknown`, so nothing can be read off it.
+  rows[0]!.name;
 }
