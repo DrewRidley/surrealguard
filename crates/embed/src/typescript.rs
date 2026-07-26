@@ -58,12 +58,20 @@ fn collect(node: Node<'_>, text: &str, queries: &mut Vec<EmbeddedQuery>) {
 }
 
 /// The tag is `surql` itself or a `.surql` member (`db.surql`, ...).
+/// The identifiers whose call form carries a query literal. `surql` is the
+/// original; `defineQuery`/`defineLive` are the 0.5 API, where a query is a
+/// *value* built once and reused. Extraction has to know all three, or a query
+/// written the new way is invisible to `generate` — the registry comes out
+/// empty and every call resolves to `unknown`, with nothing to say why.
+const QUERY_SINKS: [&str; 3] = ["surql", "defineQuery", "defineLive"];
+
 fn is_surql_tag(node: Node<'_>, text: &str) -> bool {
+    let names = |name: &str| QUERY_SINKS.contains(&name);
     match node.kind() {
-        "identifier" => &text[node.byte_range()] == "surql",
+        "identifier" => names(&text[node.byte_range()]),
         "member_expression" => node
             .child_by_field_name("property")
-            .is_some_and(|property| &text[property.byte_range()] == "surql"),
+            .is_some_and(|property| names(&text[property.byte_range()])),
         _ => false,
     }
 }
