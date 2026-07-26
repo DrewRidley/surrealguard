@@ -47,7 +47,9 @@ table organization_role  [schemafull]
   field organization                 : record<organization>
   field permissions                  : array<record<organization_permission>>  [default]
 table organization_settings  [schemafull]
+  field data_region                  : 'us' | 'eu'  [computed, default]
   field organization                 : record<organization>
+  field retention_days               : 30 | 90 | 365  [default]
   field security                     : { byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }
   field updated_at                   : datetime  [computed, default]
 table organization_unit  [schemafull]
@@ -138,7 +140,9 @@ table webhook_event  [schemafull]
   stmt     56:1 define_table     : (no response)
   stmt     58:1 define_field     : (no response)
   stmt     60:1 define_field     : (no response)
-  stmt     69:1 define_field     : (no response)
+  stmt     74:1 define_field     : (no response)
+  stmt     76:1 define_field     : (no response)
+  stmt     78:1 define_field     : (no response)
 
 == source: schema/03_relations.surql ==
   stmt      5:1 define_table     : (no response)
@@ -202,7 +206,7 @@ table webhook_event  [schemafull]
   stmt     14:1 select           : array<{ contacts: { label: array<string> } }>
   stmt     16:1 select           : array<{ owner: { settings: { timezone: string }, username: string } }>
   stmt     18:1 select           : array<{ person: { first_name: option<string>, last_name: option<string> } }>
-  stmt     20:1 select           : array<{ id: record<organization_settings>, organization: record<organization>, security: { byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }, updated_at: datetime }>
+  stmt     20:1 select           : array<{ data_region: 'us' | 'eu', id: record<organization_settings>, organization: record<organization>, retention_days: 30 | 90 | 365, security: { byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }, updated_at: datetime }>
   stmt     24:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, org_name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
   stmt     26:1 select           : array<{ active: bool, created_at: datetime, deactivated_reason: option<string | null>, email: string, id: record<account>, memberships: array<record<employee_of>>, person: option<record<person>>, settings: { locale: option<string>, notify: bool, timezone: string }, updated_at: datetime, username: string }>
   stmt     28:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, name_length: int, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
@@ -364,7 +368,7 @@ table webhook_event  [schemafull]
   stmt      9:1 create           : array<{ id: record<organization_role>, name: string, organization: record<organization>, permissions: array<record<organization_permission>> }>
   stmt     11:1 update           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
   stmt     13:1 update           : { address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }
-  stmt     15:1 upsert           : array<{ id: record<organization_settings>, organization: record<organization>, security: { byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }, updated_at: datetime }>
+  stmt     15:1 upsert           : array<{ data_region: 'us' | 'eu', id: record<organization_settings>, organization: record<organization>, retention_days: 30 | 90 | 365, security: { byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }, updated_at: datetime }>
   stmt     17:1 delete           : array<{ headcount: int, id: record<organization_unit>, name: string, organization: record<organization>, parent: option<record<organization_unit>> }>
   stmt     19:1 delete           : array<{ id: record<organization_role>, name: string, organization: record<organization>, permissions: array<record<organization_permission>> }>
   stmt     21:1 relate           : array<{ id: record<employee_of>, in: record<account>, joined_at: datetime, out: record<organization>, role: record<organization_role>, status: 'invited' | 'active' | 'suspended', title: option<string>, unit: record<organization_unit> }>

@@ -195,6 +195,37 @@ pub(crate) fn constrains_scalar_literals(kind: &Kind) -> bool {
     }
 }
 
+/// The kind an expression must be *checked* as when its value has to inhabit
+/// `expected` — the one rule behind every 2001, shared by the two sites that
+/// ask it: a value written to a field (`SET st = 'bogus'`) and a value declared
+/// for one (`DEFINE FIELD st ... VALUE 'bogus'`).
+///
+/// Normally that is just the inferred kind. The exception is a
+/// literal-constrained target (`'active' | 'inactive'`, `1 | 2 | 3`): inference
+/// widens a written `'bogus'` to `string`, and a `string` can never be shown to
+/// fall outside a string-literal union, so the wrong value would slip through.
+/// When the expression has a statically known scalar value, its exact literal
+/// kind is recovered so the equality branch of [`kind_is_assignable_to`] applies
+/// instead of the prove-or-silent widening.
+///
+/// Bounded to literal-constrained targets: everywhere else a literal is
+/// assignable exactly where its base is, so substituting it changes nothing.
+/// Returns `None` when the expression has no inferred kind at all — the caller
+/// has nothing to check and must stay silent.
+pub(crate) fn checked_value_kind(
+    fact: &crate::expression::ExpressionFact,
+    expected: &Kind,
+) -> Option<Kind> {
+    let inferred = fact.kind.clone()?;
+    Some(
+        fact.value
+            .as_ref()
+            .filter(|_| constrains_scalar_literals(expected))
+            .and_then(scalar_value_literal_kind)
+            .unwrap_or(inferred),
+    )
+}
+
 /// The base kind a `Kind::Literal` value inhabits, if `kind` is one.
 pub(crate) fn literal_base_kind(kind: &Kind) -> Option<Kind> {
     use surrealdb_types::KindLiteral;
@@ -774,6 +805,97 @@ mod tests {
                 codes(query).iter().any(|code| code == "E2001"),
                 "codes for {query:?}: {:?}",
                 codes(query)
+            );
+        }
+    }
+
+    /// Whether a query reports the type-mismatch contract.
+    fn has_2001(query: &str) -> bool {
+        codes(query).iter().any(|code| code == "E2001")
+    }
+
+    #[test]
+    fn a_wrong_literal_declared_in_a_field_clause_fires() {
+        // The DEFINE site is the same contract as the write site: a `VALUE` /
+        // `DEFAULT` constant has to inhabit the field's declared type. It used
+        // to widen `'green'` to `string` and go silent, so the mistake was
+        // caught only once someone wrote the field.
+        for query in [
+            "DEFINE FIELD e ON t TYPE 'red' | 'blue' VALUE 'green';",
+            "DEFINE FIELD e ON t TYPE 'red' | 'blue' DEFAULT 'green';",
+            "DEFINE FIELD e ON t TYPE 'red' | 'blue' DEFAULT ALWAYS 'green';",
+            "DEFINE FIELD e ON t TYPE option<'red' | 'blue'> VALUE 'green';",
+            "DEFINE FIELD n ON t TYPE 1 | 2 | 3 VALUE 9;",
+            "DEFINE FIELD n ON t TYPE 1 | 2 | 3 DEFAULT 9;",
+        ] {
+            assert!(has_2001(query), "codes for {query:?}: {:?}", codes(query));
+        }
+    }
+
+    #[test]
+    fn a_correct_or_unknowable_field_clause_stays_silent() {
+        for query in [
+            // The right literal fits, so recovering its exact kind must not
+            // turn a valid enum field into an error.
+            "DEFINE FIELD e ON t TYPE 'red' | 'blue' VALUE 'red';",
+            "DEFINE FIELD e ON t TYPE 'red' | 'blue' DEFAULT 'blue';",
+            "DEFINE FIELD e ON t TYPE option<'red' | 'blue'> DEFAULT NONE;",
+            "DEFINE FIELD n ON t TYPE 1 | 2 | 3 VALUE 2;",
+            // Prove-or-stay-silent: a call, a param, and a subquery are not
+            // statically known values, so there is nothing to compare against
+            // the union and the clause must not be reported.
+            "DEFINE FIELD e ON t TYPE 'red' | 'blue' VALUE string::lowercase($value);",
+            "DEFINE FIELD e ON t TYPE 'red' | 'blue' DEFAULT $default_colour;",
+            "DEFINE FIELD e ON t TYPE 'red' | 'blue' VALUE (SELECT VALUE name FROM ONLY t LIMIT 1);",
+            // A plain field is unaffected: no literal constrains it.
+            "DEFINE FIELD s ON t TYPE string DEFAULT 'anything at all';",
+        ] {
+            assert!(!has_2001(query), "codes for {query:?}: {:?}", codes(query));
+        }
+    }
+
+    /// The invariant whose absence let the DEFINE-site gap survive a
+    /// thousand-test suite: a value either inhabits a field's declared type or
+    /// it does not, and *where* it appears cannot change the answer. Declaring
+    /// it (`DEFAULT <v>`) and writing it (`SET f = <v>`) must reach the same
+    /// verdict for every pairing — including the ones where both stay silent.
+    #[test]
+    fn declaring_a_value_and_writing_it_reach_the_same_verdict() {
+        for (declared_type, value) in [
+            // Scalar literal unions: the shape the fix is about.
+            ("'red' | 'blue'", "'green'"),
+            ("'red' | 'blue'", "'red'"),
+            ("'red' | 'blue'", "42"),
+            ("option<'red' | 'blue'>", "'green'"),
+            ("option<'red' | 'blue'>", "'blue'"),
+            ("1 | 2 | 3", "9"),
+            ("1 | 2 | 3", "2"),
+            // Not statically known — silent on both sides.
+            ("'red' | 'blue'", "$colour"),
+            ("'red' | 'blue'", "string::lowercase('RED')"),
+            // A literal union nested in an object literal, which keeps its
+            // element kinds through inference and so is caught on both sides.
+            ("{ c: 'red' | 'blue' }", "{ c: 'green' }"),
+            ("{ c: 'red' | 'blue' }", "{ c: 'red' }"),
+            // A literal union nested in an array: inference widens the element
+            // to `string`, so BOTH sides stay silent. Symmetric, and therefore
+            // a precision limit rather than this bug.
+            ("array<'red' | 'blue'>", "['green']"),
+            ("array<'red' | 'blue'>", "['red']"),
+            // Plain kinds, where no literal narrowing is in play at all.
+            ("string", "'anything at all'"),
+            ("int", "'nope'"),
+            ("int", "7"),
+        ] {
+            let at_definition = has_2001(&format!(
+                "DEFINE FIELD f ON t TYPE {declared_type} DEFAULT {value};"
+            ));
+            let at_write = has_2001(&format!(
+                "DEFINE FIELD f ON t TYPE {declared_type};\nCREATE t SET f = {value};"
+            ));
+            assert_eq!(
+                at_definition, at_write,
+                "`{declared_type}` vs `{value}`: DEFINE site says {at_definition}, write site says {at_write}"
             );
         }
     }

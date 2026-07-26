@@ -66,4 +66,13 @@ DEFINE FIELD security ON organization_settings TYPE {
 	}
 };
 
+-- A field's own `DEFAULT`/`VALUE` is checked against its declared type under
+-- the same contract a *written* value is: a constant must be a member of the
+-- union (`DEFAULT 45` here is the same E2001 as `SET retention_days = 45`),
+-- while a value that is not statically known — this `string::lowercase` call —
+-- can never be proven to fall outside it and stays silent.
+DEFINE FIELD retention_days ON organization_settings TYPE 30 | 90 | 365 DEFAULT 30;
+
+DEFINE FIELD data_region ON organization_settings TYPE 'us' | 'eu' VALUE string::lowercase($value);
+
 DEFINE FIELD updated_at ON organization_settings TYPE datetime VALUE time::now();

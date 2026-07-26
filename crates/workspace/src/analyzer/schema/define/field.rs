@@ -29,19 +29,24 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
     check_record_targets(ctx, stmt, declared.as_ref());
     check_reference_back_target(ctx, stmt);
 
-    for (clause, checks_type) in [(&stmt.default, true), (&stmt.value, true)] {
+    for clause in [&stmt.default, &stmt.value] {
         let Some(expr) = clause else {
             continue;
         };
-        let kind = with_value_bound(ctx, declared.clone(), |ctx| {
+        let fact = with_value_bound(ctx, declared.clone(), |ctx| {
             let fact = crate::analyzer::expression::infer::infer_expression_fact(expr, ctx);
             crate::analyzer::expression::check::check_value_expression(ctx, expr);
-            fact.kind
+            fact
         });
         check_computed_calls(ctx, expr);
-        if !checks_type {
-            continue;
-        }
+        // A declared `VALUE`/`DEFAULT` inhabits the field's type under exactly
+        // the contract a *written* value does, so it is checked through the
+        // same [`crate::kinds::checked_value_kind`]: against a literal-union
+        // field a constant is compared as the literal it is, and a non-constant
+        // (call, param, subquery) keeps its widened kind and stays silent.
+        let kind = declared
+            .as_ref()
+            .and_then(|declared| crate::kinds::checked_value_kind(&fact, declared));
         if let (Some(declared), Some(kind)) = (&declared, kind) {
             if kind != Kind::Any && !crate::kinds::kind_is_assignable_to(&kind, declared) {
                 let span =
