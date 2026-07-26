@@ -38,7 +38,11 @@ export AR_wasm32_wasip1="$LLVM_AR"
 echo "Building surrealguard-wasm for wasm32-wasip1 (release)…"
 cargo build -p surrealguard-wasm --target wasm32-wasip1 --release
 
-ARTIFACT="target/wasm32-wasip1/release/surrealguard_wasm.wasm"
+# Honour CARGO_TARGET_DIR so the build can be pointed at scratch space
+# (`CARGO_TARGET_DIR=/tmp/web-target crates/wasm/build-wasm.sh`) without the
+# copy below silently looking in the wrong place.
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+ARTIFACT="$TARGET_DIR/wasm32-wasip1/release/surrealguard_wasm.wasm"
 DEST="web/public/playground/surrealguard_wasm.wasm"
 cp "$ARTIFACT" "$DEST"
 echo "Wrote $DEST ($(du -h "$DEST" | cut -f1))"
