@@ -2,10 +2,12 @@
  * Next.js / React bindings for SurrealGuard (client entry — `"use client"`).
  *
  * - {@link SurrealGuardProvider} / {@link useClient} — provide the typed client.
- * - {@link useLiveQuery} — live queries as reactive `{ data, status, error }`.
+ * - {@link useQuery} — a one-shot query with loading and error state.
+ * - {@link useLive} — a live query; `data` stays reconciled.
+ * - {@link useMutation} — a write plus the invalidation that follows it.
  *
- * Server-side seed helpers (`queryServer`, `dehydrate`, `hydrate`) live in the
- * separate, server-safe entry `@surrealguard/next/server`.
+ * Server helpers (`preload`, `dehydrate`, `hydrate`) live in the separate,
+ * server-safe entry `@surrealguard/next/server`.
  */
 
 export {
@@ -13,4 +15,16 @@ export {
   useClient,
   type SurrealGuardProviderProps,
 } from "./context.js";
-export { useLiveQuery, type UseLiveQueryOptions } from "./use-live-query.js";
+export {
+  useLive,
+  useMutation,
+  useQuery,
+  type LiveResult,
+  type MutationResult,
+  type QueryResult,
+  type Skip,
+  type UseMutationOptions,
+  type UseQueryOptions,
+} from "./hooks.js";
+export { SurrealGuardError } from "@surrealguard/client";
+export type { Json, Preloaded, RowOf, SurqlLive, SurqlQuery } from "@surrealguard/client";

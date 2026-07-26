@@ -1,44 +1,78 @@
 /**
- * Server-side helpers (`@surrealguard/next/server`). No `"use client"` — safe to
- * call from a Server Component, `getServerSideProps`, or a route handler.
+ * Server-side helpers (`@surrealguard/next/server`). No `"use client"` — safe
+ * to call from a Server Component, a route handler, or `getServerSideProps`.
  *
- * A `LIVE SELECT` cannot resolve rows in one shot, so {@link queryServer} runs
- * its underlying `SELECT` once and returns the typed rows. Pass them to
- * {@link useLiveQuery}'s `initialData` for a gap-free first paint that then
- * upgrades to live on the client.
+ * ## Use a per-request client
+ *
+ * A module-level `export const db = createClient(...)` is a real hazard on the
+ * server: Next imports that module into the server runtime, so **one connection
+ * — one auth session, one cache — is shared by every concurrent request and
+ * every user**. Any `signin()` mutates global state for everyone. Scope it with
+ * React's `cache()`:
+ *
+ * ```ts
+ * // lib/db.server.ts
+ * import { cache } from "react";
+ * import { createClient } from "@/surrealguard.generated";
+ *
+ * export const getDb = cache(() =>
+ *   createClient({
+ *     url: process.env.SURREAL_URL!,
+ *     namespace: "app",
+ *     database: "app",
+ *   }),
+ * );
+ * ```
+ *
+ * ## Read data in the Server Component
+ *
+ * The default way to read data in the App Router is to await it in an RSC,
+ * shipping zero client JS. That needs nothing from this package:
  *
  * ```tsx
- * // app/users/page.tsx  (Server Component)
- * import { queryServer } from "@surrealguard/next/server";
- * import { db } from "@/lib/db";
- * import { UsersList } from "./users-list"; // "use client", uses useLiveQuery
+ * // app/people/page.tsx
+ * const people = await getDb().runJson(allPeople);
+ * return <StaticRoster rows={people} />;
+ * ```
+ *
+ * Use `runJson`, not `run`: an RSC → client-component boundary accepts only
+ * plain values, and it has no transport hook. A `RecordId` instance crossing it
+ * throws "Only plain objects can be passed to Client Components".
+ *
+ * ## Seed a live client component
+ *
+ * ```tsx
+ * import { preload } from "@surrealguard/next/server";
+ *
  * export default async function Page() {
- *   const users = await queryServer(db, db.live(`SELECT * FROM user`));
- *   return <UsersList initialData={users} />;
+ *   const preloaded = await preload(getDb(), livePeople);
+ *   return <PeopleList preloaded={preloaded} />;
  * }
  * ```
  *
- * For whole-cache transport, {@link dehydrate} on the server and {@link hydrate}
- * on the client (e.g. inside a `<HydrationBoundary>`-style component).
+ * The payload carries its own key, so the client subscribes to exactly the
+ * query the server ran and the text is written once, in `lib/queries.ts`.
+ *
+ * ## Stream a slow query
+ *
+ * Pass an *un-awaited* promise and `use()` it in a client component:
+ *
+ * ```tsx
+ * // page.tsx (server)
+ * const rows = getDb().runJson(slowReport);          // not awaited
+ * return <Suspense fallback={<Skeleton />}><Report rows={rows} /></Suspense>;
+ *
+ * // report.tsx (client) -> const data = use(rows);
+ * ```
  */
 
-import type { LiveDescriptor, SurrealGuardClient } from "@surrealguard/client";
+import { preload, type SurrealGuardClient } from "@surrealguard/client";
 import { getQueryClient, type DehydratedState } from "@surrealguard/query";
 
-/**
- * Run a live descriptor's underlying `SELECT` once and return the typed rows,
- * caching them under the live key so a later {@link useLiveQuery} of the same
- * query renders without a refetch, then upgrades to live.
- */
-export function queryServer<Row>(
-  client: SurrealGuardClient,
-  descriptor: LiveDescriptor<Row>,
-  params?: Record<string, unknown>,
-): Promise<Row[]> {
-  return getQueryClient(client).prime(descriptor, params);
-}
+export { preload };
+export type { Preloaded, Json } from "@surrealguard/client";
 
-/** Snapshot a client's cached results for transport to the browser (SSR). */
+/** Snapshot a client's cached results for transport to the browser. */
 export function dehydrate(client: SurrealGuardClient): DehydratedState {
   return getQueryClient(client).dehydrate();
 }

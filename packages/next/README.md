@@ -1,175 +1,237 @@
 # @surrealguard/next
 
-Next.js / React bindings for SurrealGuard: live SurrealQL queries as a hook,
-typed from your schema. `useLiveQuery` returns `{ data, status, error }` backed
-by `useSyncExternalStore`, and keeps `data` reconciled as `LIVE SELECT`
-notifications arrive.
+Next.js / React bindings for SurrealGuard. Typed queries as hooks, with the
+query text written exactly once.
 
-`react >= 18` and `surrealdb` are peer dependencies. Nothing is typed until you
-run `surrealguard generate`, so the setup below starts there.
+```tsx
+"use client";
+import { useLive } from "@surrealguard/next";
+import { livePeople } from "@/lib/queries";
+
+export function People() {
+  const people = useLive(livePeople);
+  return <ul>{people.data.map((p) => <li key={p.id}>{p.name}</li>)}</ul>;
+}
+```
+
+`people.data` is `Array<{ id: `person:${string}`; name: string; age: number }>`,
+inferred from your schema.
 
 ## Install
 
 ```sh
-npm i @surrealguard/next @surrealguard/client @surrealguard/query surrealdb
-npm i -D surrealguard
+npm install @surrealguard/next @surrealguard/client surrealdb
 ```
 
-## 1. Describe your schema
-
-`npx surrealguard init` writes a commented `surrealguard.toml`. Point its
-`schema` glob at your `.surql` files, and ignore Next's build output:
-
-```toml
-# surrealguard.toml
-[sources]
-schema = ["schema/**/*.surql"]
-queries = ["queries/**/*.surql"]
-ignore = ["node_modules/**", ".next/**"]
-```
-
-```surql
--- schema/schema.surql
-DEFINE TABLE team SCHEMAFULL;
-DEFINE FIELD name ON team TYPE string;
-
-DEFINE TABLE person SCHEMAFULL;
-DEFINE FIELD name ON person TYPE string;
-DEFINE FIELD age ON person TYPE int;
-DEFINE FIELD team ON person TYPE record<team>;
-```
-
-## 2. Generate the typed client
-
-```sh
-npx surrealguard generate --out lib/surrealguard.generated.ts
-```
-
-`generate` scans your `.ts`/`.tsx` files for ``db.live(`…`)`` and `db.query("…")`
-calls, analyzes each against the schema, and writes a module that re-exports
-`SurrealGuardClient` plus a type registry keyed by each query's exact text.
-Without `--out` it writes `surrealguard.generated.ts` at the workspace root; the
-path above just keeps it next to `lib/db.ts` so the import is relative and
-independent of how your `paths` aliases are configured.
-
-Re-run it whenever a query or the schema changes. `generate` and `check` support
-a watch mode (`--watch`) that stays running and regenerates on save; check
-`surrealguard generate --help` for the flags your installed version has.
-
-## 3. Create the client
+## Setup
 
 ```ts
-// lib/db.ts
-import { SurrealGuardClient } from "./surrealguard.generated";
+// lib/queries.ts — the one place query text lives
+import { defineQuery, defineLive } from "@/surrealguard.generated";
 
-export const db = new SurrealGuardClient();
+export const allPeople  = defineQuery("SELECT id, name, age FROM person");
+export const addPerson  = defineQuery("CREATE person SET name = $name, joined = $joined");
+export const livePeople = defineLive("SELECT id, name, age FROM person");
+export const liveTeam   = defineLive("SELECT id, name FROM person WHERE team = $team");
 ```
 
-Import the client **from the generated file**. That import is what loads the type
-registry; importing it from `@surrealguard/client` instead leaves the registry
-empty and every query degrades to `unknown`.
+### The server client must be per-request
 
-## 4. Provide it
+```ts
+// lib/db.server.ts
+import { cache } from "react";
+import { createClient } from "@/surrealguard.generated";
 
-`SurrealGuardProvider` is a React context provider, so it has to live in a client
-component. Wrap the app once and every `useLiveQuery` below it resolves the
-client without props threading.
+export const getDb = cache(() =>
+  createClient({
+    url: process.env.SURREAL_URL!,
+    namespace: "app",
+    database: "app",
+  }),
+);
+```
+
+**Do not export a module-level client for server use.** Next imports that module
+into the server runtime, so one connection — one auth session, one cache — would
+be shared by every concurrent request and every user, and any `signin()` would
+mutate global state for everyone. React's `cache()` scopes it to a request.
+
+### The browser client
 
 ```tsx
 // app/providers.tsx
 "use client";
 import { SurrealGuardProvider } from "@surrealguard/next";
-import { db } from "@/lib/db";
+import { createClient } from "@/surrealguard.generated";
+
+const db = createClient({ url: process.env.NEXT_PUBLIC_SURREAL_URL! });
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return <SurrealGuardProvider client={db}>{children}</SurrealGuardProvider>;
 }
 ```
 
-Render `<Providers>` inside your root layout. If it is missing, `useLiveQuery`
-throws `[@surrealguard/next] No client in context…` rather than failing later
-with an undefined-property error.
+A module-level client is correct here: the browser is one user, one session.
 
-## 5. Query
+## Reading data in a Server Component
+
+The default App Router pattern — await it in an RSC, ship zero client JS —
+needs nothing from this package:
+
+```tsx
+// app/people/page.tsx
+import { getDb } from "@/lib/db.server";
+import { allPeople } from "@/lib/queries";
+
+export default async function Page() {
+  const people = await getDb().runJson(allPeople);
+  return <ul>{people.map((p) => <li key={p.id}>{p.name}</li>)}</ul>;
+}
+```
+
+Use `runJson`, not `run`, for anything you pass to a client component. An RSC
+boundary accepts only plain values and offers no transport hook, so a `RecordId`
+instance crossing it throws *"Only plain objects can be passed to Client
+Components"*. `runJson` gives you `` `person:${string}` `` and ISO strings.
+
+## Seeding a live client component — `preload`
+
+```tsx
+// app/people/page.tsx  (Server Component)
+import { preload } from "@surrealguard/next/server";
+import { getDb } from "@/lib/db.server";
+import { livePeople } from "@/lib/queries";
+import { PeopleList } from "./people-list";
+
+export default async function Page() {
+  const preloaded = await preload(getDb(), livePeople);
+  return <PeopleList preloaded={preloaded} />;
+}
+```
 
 ```tsx
 // app/people/people-list.tsx
 "use client";
-import { useLiveQuery } from "@surrealguard/next";
+import { useLive, useMutation, type Preloaded, type Json } from "@surrealguard/next";
+import { addPerson, allPeople, livePeople } from "@/lib/queries";
 
-export function PeopleList({ initialData }: { initialData?: { name: string; age: number }[] }) {
-  // `db` is the context client. The row type comes from the generated registry.
-  const { data, status } = useLiveQuery((db) => db.live(`SELECT name, age FROM person`), {
-    initialData,
-  });
+type Person = Json<{ id: string; name: string; age: number }>;
 
-  if (status === "loading") return <p>Loading…</p>;
+export function PeopleList({ preloaded }: { preloaded: Preloaded<Person[]> }) {
+  const people = useLive(preloaded);        // hydrates, then upgrades to live
+  const add = useMutation(addPerson, { invalidates: [allPeople, livePeople] });
+
+  if (people.error) return <p>{people.error.message}</p>;
   return (
-    <ul>
-      {data.map((person) => (
-        <li key={person.name}>
-          {person.name} — {person.age}
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul>{people.data.map((p) => <li key={p.id}>{p.name}</li>)}</ul>
+      <button onClick={() => add.mutate({ name: "ada", joined: new Date() })}
+              disabled={add.pending}>Add</button>
+    </>
   );
 }
 ```
 
-Subscriptions are reference-counted per `(sql, params)`, so ten components
-watching the same query share one `LIVE SELECT` and one reconciled array; the
-last unmount tears it down.
+The payload carries its own key, text and params, so the client component
+subscribes to *exactly* the query the server ran — the text appears in the
+client component nowhere.
 
-Note the parentheses in ``db.live(`…`)``: the query is an *argument*, not a
-tagged template. TypeScript widens a tagged template's text to `string`, which
-would throw the row type away. A query that is not in the registry degrades to
-`unknown` — never `any`.
+This is the flaw the package was rebuilt around. Before, the RSC and the client
+component each spelled the query out; change one and the key stopped matching,
+so the seed was silently discarded and the page refetched, with no error and no
+type failure.
 
-## RSC: seed on the server, go live on the client
+## Hooks
 
-`@surrealguard/next/server` carries no `"use client"`, so it is safe to import
-from a Server Component, a route handler, or `getServerSideProps`. A
-`LIVE SELECT` cannot resolve rows in one shot, so `queryServer` runs its
-underlying `SELECT` once and returns typed rows — pass them to `useLiveQuery`'s
-`initialData` for a first paint with no loading state.
+### `useLive` — a live query
 
 ```tsx
-// app/people/page.tsx  (Server Component)
-import { queryServer } from "@surrealguard/next/server";
-import { db } from "@/lib/db";
-import { PeopleList } from "./people-list";
+const people = useLive(livePeople);
+const forTeam = useLive(liveTeam.with({ team }));
+```
 
-export default async function Page() {
-  const people = await queryServer(db, db.live(`SELECT name, age FROM person`));
-  return <PeopleList initialData={people} />;
+`data` is always an array and starts `[]`, so `.map(...)` needs no `?? []`.
+N components sharing a query share one `LIVE SELECT`; the last unmount `KILL`s
+it. Backed by `useSyncExternalStore`.
+
+**No thunk.** A query reference carries a stable `key`, so the hook's memo
+dependency is `[client, source.key]` and React's "did my deps change" problem
+does not arise. (`@surrealguard/svelte` does need a thunk — the frameworks
+differ, so the APIs do.)
+
+### `useQuery` — a one-shot query
+
+```tsx
+const roster = useQuery(allPeople);
+if (roster.loading) return <Skeleton />;
+if (roster.error) return <p>{roster.error.message}</p>;
+return <ul>{roster.data?.map((p) => <li key={p.id}>{p.name}</li>)}</ul>;
+```
+
+`data` is `T | undefined`, because a one-shot query's result may be a scalar
+(`RETURN count(…)`).
+
+### Conditional queries
+
+`"skip"` says "not yet", and keeps the row type:
+
+```tsx
+const forTeam = useLive(session ? liveTeam.with({ team }) : "skip");
+```
+
+### `useMutation` — a write and what it invalidates
+
+```tsx
+const add = useMutation(addPerson, { invalidates: [allPeople, livePeople] });
+add.mutate({ name: "ada", joined: new Date() });      // errors land on .error
+await add.mutateAsync({ name: "ada", joined: new Date() });  // throws
+```
+
+## Streaming a slow query
+
+Pass an un-awaited promise from the server and `use()` it on the client — the
+App Router idiom:
+
+```tsx
+// page.tsx (server)
+const rows = getDb().runJson(slowReport);   // deliberately not awaited
+return <Suspense fallback={<Skeleton />}><Report rows={rows} /></Suspense>;
+```
+
+```tsx
+// report.tsx
+"use client";
+import { use } from "react";
+
+export function Report({ rows }: { rows: Promise<Row[]> }) {
+  const data = use(rows);
+  return <Table rows={data} />;
 }
 ```
 
-To move a whole cache rather than one query's rows, call `dehydrate(db)` on the
-server and `hydrate(db, state)` on the client.
+## Values are JSON in the hooks
 
-## Escape hatches
+The reactive layer is `Json<T>`-shaped: a `RecordId` arrives as
+`` `person:${string}` ``, a `datetime` as an ISO string. That is not a
+preference — it is what an RSC boundary accepts at all.
 
-- **No context** — `useLiveQuery(fn, { client })` uses the client you pass and
-  never reads context. Useful in tests, in a subtree outside the provider, or
-  when you hold two connections.
-- **Bindings** — `useLiveQuery(fn, { params })`. Params take part in the cache
-  key, so different params get their own subscription, and changing them
-  re-observes.
-- **A different generated path** — `generate --out <path>` takes any location.
+`getDb().run(allPeople)` gives the SDK's real values (`RecordId`, `Date`) for
+server-only use.
 
 ## API
 
-| Export | Entry | What it does |
+| Export | Entry | |
 | --- | --- | --- |
-| `SurrealGuardProvider` | `@surrealguard/next` | Put the client in React context. |
-| `useClient(override?)` | `@surrealguard/next` | Read it back. Throws a named error if absent. |
-| `useLiveQuery(fn, options?)` | `@surrealguard/next` | Reactive `{ data, status, error }`. |
-| `queryServer(db, descriptor, params?)` | `@surrealguard/next/server` | Run a live query's `SELECT` once (RSC seed). |
-| `dehydrate(db)` / `hydrate(db, state)` | `@surrealguard/next/server` | Move the whole result cache across the boundary. |
+| `SurrealGuardProvider` / `useClient` | `.` | context |
+| `useLive(source, options?)` | `.` | live query; `data` is always an array |
+| `useQuery(source, options?)` | `.` | one-shot; `data` is `T \| undefined` |
+| `useMutation(query, options?)` | `.` | write + invalidation |
+| `preload(db, query)` | `./server` | seed a client component |
+| `dehydrate` / `hydrate` | `./server` | whole-cache transport |
 
-Built on [`@surrealguard/query`](https://www.npmjs.com/package/@surrealguard/query),
-which holds the cache, the reference counting, and the live reconciliation.
+`@surrealguard/next/server` carries no `"use client"` directive, so it is safe
+in an RSC.
 
-Part of [SurrealGuard](https://github.com/DrewRidley/surrealguard). Licensed
-under MIT OR Apache-2.0.
+## Licence
+
+MIT OR Apache-2.0

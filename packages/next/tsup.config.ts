@@ -1,9 +1,9 @@
 import { defineConfig } from "tsup";
 
 // Two entries: the client entry (`.`) carries a `"use client"` banner so the
-// provider + hook are a client module in the App Router; the server entry
-// (`./server`) stays server-safe (no directive), so an RSC / getServerSideProps
-// can call `queryServer` / `dehydrate`.
+// provider + hooks are a client module in the App Router; the server entry
+// (`./server`) stays server-safe (no directive), so an RSC or a route handler
+// can call `preload` / `dehydrate`.
 export default defineConfig([
   {
     entry: { index: "src/index.ts" },

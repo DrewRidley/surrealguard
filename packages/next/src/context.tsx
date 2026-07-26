@@ -2,18 +2,22 @@
 
 /**
  * Client context. Wrap the app (or a subtree) in {@link SurrealGuardProvider}
- * once; every {@link useLiveQuery} below it resolves that client, so components
- * never thread `db` through props.
+ * once; every hook below it resolves that client, so components never thread
+ * `db` through props.
  *
  * ```tsx
  * // app/providers.tsx
  * "use client";
  * import { SurrealGuardProvider } from "@surrealguard/next";
  * import { db } from "@/lib/db";
+ *
  * export function Providers({ children }: { children: React.ReactNode }) {
  *   return <SurrealGuardProvider client={db}>{children}</SurrealGuardProvider>;
  * }
  * ```
+ *
+ * Note this is the **browser** client. A Server Component must use a
+ * per-request client instead — see `@surrealguard/next/server`.
  */
 
 import { createContext, useContext, type ReactNode } from "react";
@@ -32,9 +36,9 @@ export function SurrealGuardProvider({ client, children }: SurrealGuardProviderP
 }
 
 /**
- * Read the client from context. An explicit `override` wins (e.g. tests,
- * multiple connections). Throws with a clear message if neither is present —
- * failing fast beats a confusing "cannot read property of undefined".
+ * Read the client from context. An explicit `override` wins (tests, multiple
+ * connections). Throws with a clear message if neither is present — failing
+ * fast beats a confusing "cannot read property of undefined".
  */
 export function useClient(override?: SurrealGuardClient): SurrealGuardClient {
   const ctx = useContext(ClientContext);
@@ -42,7 +46,7 @@ export function useClient(override?: SurrealGuardClient): SurrealGuardClient {
   if (!client) {
     throw new Error(
       "[@surrealguard/next] No client in context. Wrap your app in " +
-        "<SurrealGuardProvider client={db}>, or pass { client } to useLiveQuery.",
+        "<SurrealGuardProvider client={db}>, or pass { client } to the hook.",
     );
   }
   return client;
