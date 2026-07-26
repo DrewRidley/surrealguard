@@ -10,6 +10,7 @@ use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analysis::{AnalysisOutput, NarrowingAnalysis};
+use crate::render::render_kind;
 use crate::schema::SchemaIndex;
 
 /// A type hint for a `LET $x = <expr>` binding: where the bound `$x` token
@@ -515,103 +516,6 @@ fn table_field_lines(table: &str, schema: &SchemaIndex) -> Vec<String> {
             format!("{}: {kind}", field.path.join("."))
         })
         .collect()
-}
-
-/// Renders a [`Kind`] compactly for editor surfaces: `record<file>`,
-/// `array<{ name: string }>`, `option<string>`. Falls back to the kind's
-/// own `Display` for shapes without a special compact form.
-pub fn render_kind(kind: &Kind) -> String {
-    match kind {
-        Kind::Any => "any".to_string(),
-        Kind::None => "none".to_string(),
-        Kind::Null => "null".to_string(),
-        Kind::Bool => "bool".to_string(),
-        Kind::Bytes => "bytes".to_string(),
-        Kind::Datetime => "datetime".to_string(),
-        Kind::Decimal => "decimal".to_string(),
-        Kind::Duration => "duration".to_string(),
-        Kind::Float => "float".to_string(),
-        Kind::Int => "int".to_string(),
-        Kind::Number => "number".to_string(),
-        Kind::Object => "object".to_string(),
-        Kind::String => "string".to_string(),
-        Kind::Uuid => "uuid".to_string(),
-        Kind::Regex => "regex".to_string(),
-        Kind::Range => "range".to_string(),
-        Kind::Record(tables) => wrap_tables("record", tables),
-        Kind::Table(tables) => wrap_tables("table", tables),
-        Kind::Array(inner, len) => wrap_collection("array", inner, *len),
-        Kind::Set(inner, len) => wrap_collection("set", inner, *len),
-        Kind::File(buckets) => {
-            if buckets.is_empty() {
-                "file".to_string()
-            } else {
-                format!("file<{}>", buckets.join(", "))
-            }
-        }
-        Kind::Either(variants) => render_either(variants),
-        Kind::Literal(literal) => render_literal(literal),
-        // Geometry, Function, and any future variant: defer to Display.
-        other => other.to_string(),
-    }
-}
-
-fn wrap_tables(head: &str, tables: &[surrealdb_types::Table]) -> String {
-    if tables.is_empty() {
-        head.to_string()
-    } else {
-        let names: Vec<&str> = tables.iter().map(surrealdb_types::Table::as_str).collect();
-        format!("{head}<{}>", names.join(" | "))
-    }
-}
-
-fn wrap_collection(head: &str, inner: &Kind, len: Option<u64>) -> String {
-    match len {
-        Some(len) => format!("{head}<{}, {len}>", render_kind(inner)),
-        None => format!("{head}<{}>", render_kind(inner)),
-    }
-}
-
-/// `option<T>` when the union is `none` plus other variants; otherwise a
-/// `a | b | c` union.
-fn render_either(variants: &[Kind]) -> String {
-    let has_none = variants.iter().any(|kind| matches!(kind, Kind::None));
-    let rest: Vec<String> = variants
-        .iter()
-        .filter(|kind| !matches!(kind, Kind::None))
-        .map(render_kind)
-        .collect();
-    if rest.is_empty() {
-        return "none".to_string();
-    }
-    let joined = rest.join(" | ");
-    if has_none {
-        format!("option<{joined}>")
-    } else {
-        joined
-    }
-}
-
-fn render_literal(literal: &KindLiteral) -> String {
-    match literal {
-        KindLiteral::String(value) => format!("'{value}'"),
-        KindLiteral::Integer(value) => value.to_string(),
-        KindLiteral::Float(value) => value.to_string(),
-        KindLiteral::Decimal(value) => value.to_string(),
-        KindLiteral::Duration(value) => value.to_string(),
-        KindLiteral::Bool(value) => value.to_string(),
-        KindLiteral::Array(kinds) => {
-            let rendered: Vec<String> = kinds.iter().map(render_kind).collect();
-            format!("[{}]", rendered.join(", "))
-        }
-        KindLiteral::Object(entries) => {
-            let rendered: Vec<String> = entries
-                .iter()
-                .map(|(name, kind)| format!("{name}: {}", render_kind(kind)))
-                .collect();
-            format!("{{ {} }}", rendered.join(", "))
-        }
-    }
 }
 
 /// Collects hover candidates for table references and field names by walking
@@ -1809,7 +1713,7 @@ fn record_link_target(kind: &Kind) -> Option<String> {
 mod tests {
     use super::*;
     use crate::analysis::{analyze_workspace, Workspace};
-    use surrealdb_types::{KindLiteral, Table};
+    use surrealdb_types::KindLiteral;
 
     fn analyze(text: &str) -> (AnalysisOutput, SchemaIndex, SourceId) {
         let mut workspace = Workspace::default();
@@ -1832,34 +1736,6 @@ mod tests {
         // `double`'s inferred `int` and `noop`'s unit body get ghosts, in source
         // order; the explicitly-typed `greet` gets none (its return is written).
         assert_eq!(labels, vec!["-> <int>".to_string(), "-> none".to_string()]);
-    }
-
-    #[test]
-    fn render_kind_compact_forms() {
-        assert_eq!(render_kind(&Kind::String), "string");
-        assert_eq!(
-            render_kind(&Kind::Record(vec![Table::from("file")])),
-            "record<file>"
-        );
-        assert_eq!(
-            render_kind(&Kind::Either(vec![Kind::None, Kind::String])),
-            "option<string>"
-        );
-        assert_eq!(
-            render_kind(&Kind::Array(Box::new(Kind::String), None)),
-            "array<string>"
-        );
-        assert_eq!(
-            render_kind(&Kind::Either(vec![Kind::Int, Kind::String])),
-            "int | string"
-        );
-        let object = Kind::Literal(KindLiteral::Object(
-            [("name".to_string(), Kind::String)].into_iter().collect(),
-        ));
-        assert_eq!(
-            render_kind(&Kind::Array(Box::new(object), None)),
-            "array<{ name: string }>"
-        );
     }
 
     #[test]
