@@ -717,32 +717,43 @@ fn binary_fact(
     ctx: &mut AnalysisContext<'_>,
 ) -> ExpressionFact {
     let lhs_fact = infer_expression_fact(lhs, ctx);
-    // Occurrence typing over `A AND B`: SurrealDB short-circuits, so `B` is
-    // evaluated only when `A` held. Infer the right operand (and any
-    // function-call arguments inside it) with `A`'s POSITIVE narrowing effects
-    // applied to a scoped child env — so `(x != NONE) AND f(x)`,
-    // `(subject IN $a) AND fn::test(subject)`, and chains `A AND B AND C` all
+    // Occurrence typing over a short-circuit operator: SurrealDB evaluates the
+    // right operand of `A AND B` only where `A` held, and of `A OR B` only
+    // where it did not. Either way the right operand is inferred (and any
+    // function-call arguments inside it) with what the left proves applied to a
+    // scoped child env, so `(x != NONE) AND f(x)`, `(subject IN $a) AND
+    // fn::test(subject)`, `$x IS NONE OR f($x)` and chains `A AND B AND C` all
     // read the narrowed subject. The child env is discarded after, so the
-    // narrowing never leaks past the `AND` into the surrounding scope.
-    //
-    // The `= NONE OR` mirror (`$x = NONE OR <rhs>`, where `<rhs>` runs only when
-    // `$x` is non-none) is not an `AND` and keeps its dedicated narrowing.
-    let and_effects = if matches!(op.node, ast::BinaryOp::And) {
-        crate::analyzer::flow::narrow::positive_effects(&lhs.node, ctx.env())
+    // narrowing never leaks past the operator into the surrounding scope.
+    let rhs_fact = if crate::analyzer::flow::narrow::use_fact_layer() {
+        match short_circuit_facts(&op.node, &lhs.node, ctx.env()) {
+            // A child env is forked only where the left proves something — an
+            // operator that narrows nothing infers its right operand in the
+            // parent env unchanged.
+            Some(facts) => ctx.with_child_env(|ctx| {
+                crate::analyzer::flow::narrow::apply_facts(ctx, &facts);
+                infer_expression_fact(rhs, ctx)
+            }),
+            None => infer_expression_fact(rhs, ctx),
+        }
     } else {
-        Vec::new()
-    };
-    let rhs_fact = if !and_effects.is_empty() {
-        // A child env is forked only when the left proves something — an ordinary
-        // effect-less `AND` infers its right operand in the parent env unchanged.
-        ctx.with_child_env(|ctx| {
-            crate::analyzer::flow::narrow::apply_effects(ctx, &and_effects);
+        // The recognizer path: `AND` only, through `Vec<Effect>`, with the
+        // legacy `= NONE OR` recognizer beside it.
+        let and_effects = if matches!(op.node, ast::BinaryOp::And) {
+            crate::analyzer::flow::narrow::positive_effects(&lhs.node, ctx.env())
+        } else {
+            Vec::new()
+        };
+        if !and_effects.is_empty() {
+            ctx.with_child_env(|ctx| {
+                crate::analyzer::flow::narrow::apply_effects(ctx, &and_effects);
+                infer_expression_fact(rhs, ctx)
+            })
+        } else if let Some(effect) = none_guarded_effect(&op.node, lhs) {
+            with_guard_narrowed(&effect, ctx, |ctx| infer_expression_fact(rhs, ctx))
+        } else {
             infer_expression_fact(rhs, ctx)
-        })
-    } else if let Some(effect) = none_guarded_effect(&op.node, lhs) {
-        with_guard_narrowed(&effect, ctx, |ctx| infer_expression_fact(rhs, ctx))
-    } else {
-        infer_expression_fact(rhs, ctx)
+        }
     };
 
     let mut fact = ExpressionFact::new(span, ExpressionValueClass::Unknown);
@@ -760,6 +771,33 @@ fn binary_fact(
     }
 
     fact.with_partial(PartialReason::UnsupportedSyntax("BinaryExpression".into()))
+}
+
+/// What the **left** operand of a short-circuit operator proves about the
+/// region the **right** one runs in, or `None` when it proves nothing.
+///
+/// One rule for both operators, and it is the definition of short-circuiting:
+/// `A AND B` evaluates `B` only where `A` held, `A OR B` only where it did not.
+/// So the region is `guard_of(A, polarity)` with `polarity` the operator's own
+/// truth value — which is why this replaces both the `AND`-only effect list and
+/// the separate `= NONE OR` recognizer beside it, and why every spelling the
+/// guard IR knows now works on both sides (`$x IS NONE OR f($x)`,
+/// `!($x != NONE) OR f($x)`, `type::is_none($x) OR f($x)`).
+///
+/// Both operands are still read left-to-right only: `B` narrows nothing about
+/// `A`, because `A` was already evaluated.
+pub(crate) fn short_circuit_facts(
+    op: &ast::BinaryOp,
+    lhs: &ast::Expr,
+    env: &crate::statement_env::StatementEnv,
+) -> Option<crate::analyzer::facts::Facts> {
+    let polarity = match op {
+        ast::BinaryOp::And => true,
+        ast::BinaryOp::Or => false,
+        _ => return None,
+    };
+    let facts = crate::analyzer::flow::narrow::guard_facts(lhs, polarity, env);
+    (!facts.is_empty()).then_some(facts)
 }
 
 /// The refinement a `= <sentinel> OR` / `!= <sentinel> AND` guard on the

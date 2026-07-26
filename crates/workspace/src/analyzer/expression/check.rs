@@ -19,26 +19,48 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
     match &expr.node {
         ast::Expr::Binary { lhs, op, rhs } => {
             check_value_expression(ctx, lhs);
-            // Occurrence typing over `A AND B`: SurrealDB short-circuits, so the
-            // right operand is checked (and the operator itself, which re-reads
-            // the rhs kind) only when the left held. Apply the left's POSITIVE
-            // narrowing effects to a scoped child env so `(x != NONE) AND f(x)`,
-            // `(subject IN $a) AND fn::test(subject)`, and chains all see the
-            // narrowed subject in the right operand's function-call arguments.
-            // The child env is discarded after — the narrowing never leaks past
-            // the `AND`. (The `= NONE OR` mirror keeps its dedicated narrowing.)
+            // Occurrence typing over a short-circuit operator: SurrealDB
+            // evaluates the right operand of `A AND B` only where `A` held, and
+            // of `A OR B` only where it did not, so the right operand — and
+            // `check_binary`, which re-reads the rhs kind via its function
+            // analysis — is checked with what the left proves applied to a
+            // scoped child env. `(x != NONE) AND f(x)`,
+            // `(subject IN $a) AND fn::test(subject)`, `$x IS NONE OR f($x)`
+            // and chains all see the narrowed subject in the right operand's
+            // function-call arguments. The child env is discarded after, so the
+            // narrowing never leaks past the operator. A child env is forked
+            // only when the left proves something, so an ordinary operator
+            // keeps checking in the parent env (no re-recorded spans).
+            let facts = if crate::analyzer::flow::narrow::use_fact_layer() {
+                crate::analyzer::expression::infer::short_circuit_facts(
+                    &op.node,
+                    &lhs.node,
+                    ctx.env(),
+                )
+            } else {
+                None
+            };
+            if let Some(facts) = facts {
+                ctx.with_child_env(|ctx| {
+                    crate::analyzer::flow::narrow::apply_facts(ctx, &facts);
+                    check_value_expression(ctx, rhs);
+                    check_binary(ctx, expr, lhs, &op.node, rhs);
+                });
+                return;
+            }
+            if crate::analyzer::flow::narrow::use_fact_layer() {
+                check_value_expression(ctx, rhs);
+                check_binary(ctx, expr, lhs, &op.node, rhs);
+                return;
+            }
+            // The recognizer path: `AND` only, through `Vec<Effect>`, with the
+            // legacy `= NONE OR` recognizer beside it.
             let and_effects = if matches!(op.node, ast::BinaryOp::And) {
                 crate::analyzer::flow::narrow::positive_effects(&lhs.node, ctx.env())
             } else {
                 Vec::new()
             };
             if !and_effects.is_empty() {
-                // The right operand (and `check_binary`, which re-reads the rhs
-                // kind via its function analysis) is checked with the left's
-                // effects applied to a scoped child env — discarded after, so the
-                // narrowing never leaks past the `AND`. A child env is forked only
-                // when there are effects to apply, so an ordinary effect-less
-                // `AND` keeps checking in the parent env (no re-recorded spans).
                 ctx.with_child_env(|ctx| {
                     crate::analyzer::flow::narrow::apply_effects(ctx, &and_effects);
                     check_value_expression(ctx, rhs);

@@ -2221,6 +2221,36 @@ INSERT INTO person { name: 'Ada' };
     }
 
     #[test]
+    fn every_spelling_of_the_or_guard_narrows_the_right_operand() {
+        use crate::analyzer::flow::narrow::with_fact_layer;
+        // The recognizer for the `OR` short-circuit accepted one shape:
+        // `$x = NONE OR …`, written with `=`, on a bare param. Each of these
+        // asserts the identical fact and none of them matched, so each was a
+        // 5002 on code the analyzer had already proven safe.
+        let spellings = [
+            "$value IS NONE OR string::len($value) = 10",
+            "!($value != NONE) OR string::len($value) = 10",
+            "type::is_none($value) OR string::len($value) = 10",
+            "$value = NONE OR $value = '' OR string::len($value) = 10",
+        ];
+        for assertion in spellings {
+            let schema = format!(
+                "DEFINE TABLE t SCHEMAFULL;\n\
+                 DEFINE FIELD code ON t TYPE option<string> ASSERT {assertion};"
+            );
+            let findings = |fact_layer: bool| {
+                with_fact_layer(fact_layer, || {
+                    let mut workspace = Workspace::default();
+                    workspace.add_virtual_source("schema".into(), schema.clone());
+                    codes(&analyze_workspace(&workspace), 5002)
+                })
+            };
+            assert_eq!(findings(false), 1, "recognizers: `{assertion}`");
+            assert_eq!(findings(true), 0, "fact layer: `{assertion}`");
+        }
+    }
+
+    #[test]
     fn an_unguarded_optional_argument_still_fails_the_arg_check() {
         let mut workspace = Workspace::default();
         // Without the `= NONE OR` guard the optional reaches `string::len`

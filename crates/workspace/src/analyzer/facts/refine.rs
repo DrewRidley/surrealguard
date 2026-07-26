@@ -52,17 +52,6 @@ pub(crate) trait KindOracle {
     fn kind_of(&self, place: &Place) -> Option<Kind>;
 }
 
-/// An oracle that knows nothing. The honest answer for a consumer with no
-/// environment — a `WHERE` clause narrowing projected rows — and never a
-/// source of a wrong refinement, only of a missing one.
-pub(crate) struct NoOracle;
-
-impl KindOracle for NoOracle {
-    fn kind_of(&self, _place: &Place) -> Option<Kind> {
-        None
-    }
-}
-
 /// A claim, as a function on kinds.
 ///
 /// Every variant either meets or subtracts, which is why the six hand-written
@@ -156,6 +145,13 @@ impl Facts {
     /// hand-written effect lists happened to have.
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&Place, &Refinement)> {
         self.refined.iter()
+    }
+
+    /// Whether the guard proved nothing at all. A consumer that forks a scope
+    /// to hold refinements asks this first, so an ordinary guard that narrows
+    /// nothing costs no scope.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.refined.is_empty()
     }
 
     /// Adds a claim about one place, composing it with anything already known.

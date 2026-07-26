@@ -29,7 +29,7 @@ use surrealguard_syntax::span::ByteRange;
 use crate::analyzer::const_eval::{BranchReach, Reachability};
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::facts::{
-    eval, guard_of, Bindings, ConstValue, DiscriminantKind, KindOracle, Place, PlaceRoot,
+    eval, guard_of, Bindings, ConstValue, DiscriminantKind, Facts, KindOracle, Place, PlaceRoot,
     Refinement, Term,
 };
 use crate::analyzer::facts::place_of;
@@ -191,6 +191,17 @@ pub(crate) fn negative_effects(cond: &ast::Expr, env: &StatementEnv) -> Vec<Effe
         return fact_effects(cond, false, env);
     }
     effects(cond, false, env)
+}
+
+/// The refinements `cond` proves in the region where it evaluates to
+/// `polarity`, read straight from the [expression-fact
+/// layer](crate::analyzer::facts).
+///
+/// This is what a consumer that has been cut over reads. `positive_effects` and
+/// `negative_effects` are the same answer flattened into the old `Vec<Effect>`
+/// shape, kept for the consumers still on it.
+pub(crate) fn guard_facts(cond: &ast::Expr, polarity: bool, env: &StatementEnv) -> Facts {
+    guard_of(cond, polarity, Some(env)).facts(&EnvOracle(env))
 }
 
 /// [`positive_effects`]/[`negative_effects`], answered by the fact layer.
@@ -852,6 +863,79 @@ pub(crate) fn apply_effects_over(
                 ctx.record_narrowing(effect.path.key(), region, narrowed.clone());
             }
             ctx.define_narrowed_path(effect.path.key(), narrowed);
+        }
+    }
+}
+
+/// [`apply_effects`] for a consumer that reads [`Facts`].
+pub(crate) fn apply_facts(ctx: &mut AnalysisContext<'_>, facts: &Facts) {
+    apply_facts_over(ctx, facts, None);
+}
+
+/// [`apply_effects_over`] for a consumer that reads [`Facts`].
+///
+/// The same application, place by place instead of effect by effect: a bare
+/// param rebinds its binding, a field path records a per-path override keyed on
+/// the exact `param.field…` string, and a refinement that does not tighten the
+/// kind currently in force records nothing.
+///
+/// Row-rooted places are skipped. A `Place` can name one, but the flow
+/// environment binds params — the row side is the projection's business
+/// (`data::select::narrow_row_by_facts`).
+///
+/// Refinements are applied in place order, and each reads the environment as
+/// the previous one left it, so a bare param is narrowed before the paths that
+/// read through it.
+pub(crate) fn apply_facts_over(
+    ctx: &mut AnalysisContext<'_>,
+    facts: &Facts,
+    region: Option<ByteRange>,
+) {
+    for (place, refinement) in facts.iter() {
+        let PlaceRoot::Param(param) = &place.root else {
+            continue;
+        };
+        // A subscript ends a path: only the exact written field path is
+        // refinable, so a place carrying one names nothing this can key.
+        let Some(fields) = place.field_path() else {
+            continue;
+        };
+        let Some(base) = ctx.env().let_fact(param).cloned() else {
+            continue;
+        };
+        let Some(base_kind) = base.kind.clone() else {
+            continue;
+        };
+        if fields.is_empty() {
+            let Some(narrowed) = refinement.apply(&base_kind) else {
+                continue;
+            };
+            let mut new_fact = base;
+            new_fact.kind = Some(narrowed.clone());
+            // Mark this as a flow narrowing (not a base binding) so dead-branch
+            // folding may draw a verdict from the tightened kind.
+            ctx.narrow_local(param.clone(), new_fact);
+            if let Some(region) = region {
+                ctx.record_narrowing(param.clone(), region, narrowed);
+            }
+        } else {
+            // Resolve the path's declared kind through the schema, then narrow
+            // and record it under the exact path key.
+            let Some(current) = crate::analyzer::expression::infer::step_field_path(
+                &base_kind,
+                &fields,
+                ctx.schema(),
+            ) else {
+                continue;
+            };
+            let Some(narrowed) = refinement.apply(&current) else {
+                continue;
+            };
+            let key = format!("{param}.{}", fields.join("."));
+            if let Some(region) = region {
+                ctx.record_narrowing(key.clone(), region, narrowed.clone());
+            }
+            ctx.define_narrowed_path(key, narrowed);
         }
     }
 }
