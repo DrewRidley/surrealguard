@@ -1,0 +1,10 @@
+#V2
+DEFINE TABLE person SCHEMAFULL;
+DEFINE FIELD name ON person TYPE string;
+DEFINE TABLE account SCHEMAFULL;
+DEFINE TABLE has_account SCHEMAFULL TYPE RELATION FROM person TO account;
+CREATE person:p SET name = 'A';
+CREATE account:a;
+RELATE person:p->has_account->account:a;
+SELECT *, name AS n FROM person;
+SELECT *, ->has_account AS acc FROM person;

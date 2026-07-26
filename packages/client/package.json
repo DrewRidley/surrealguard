@@ -1,6 +1,6 @@
 {
   "name": "@surrealguard/client",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Typed SurrealQL client \u2014 literal queries resolve their result and params from generated types.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
