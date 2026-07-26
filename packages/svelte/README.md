@@ -1,84 +1,48 @@
 # @surrealguard/svelte
 
-Svelte 5 bindings for SurrealGuard: live SurrealQL queries as reactive state,
-typed from your schema. `liveQuery` returns a `$state`-backed object you read
-directly in markup — `people.data`, no store `$` prefix — and it keeps that array
-reconciled as `LIVE SELECT` notifications arrive.
+Svelte 5 / SvelteKit bindings for SurrealGuard. Typed queries as reactive
+primitives, with the query text written exactly once.
 
-Requires Svelte 5 (runes). Nothing is typed until you run
-`surrealguard generate`, so the setup below starts there.
+```svelte
+<script lang="ts">
+  import { createLive } from "@surrealguard/svelte";
+  import { livePeople } from "$lib/queries";
+
+  const people = createLive(livePeople);
+</script>
+
+{#each people.data as person (person.id)}
+  <li>{person.name} — {person.age}</li>
+{/each}
+```
+
+`people.data` is `Array<{ id: `person:${string}`; name: string; age: number }>`,
+inferred from your schema. No `$` prefix — reading a getter tracks.
 
 ## Install
 
 ```sh
-npm i @surrealguard/svelte @surrealguard/client @surrealguard/query surrealdb
-npm i -D surrealguard
+npm install @surrealguard/svelte @surrealguard/client surrealdb
 ```
 
-`svelte ^5` and `surrealdb` are peer dependencies. `surrealguard` is the CLI that
-generates the types; it downloads a prebuilt binary on first run.
-
-## 1. Describe your schema
-
-`npx surrealguard init` writes a commented `surrealguard.toml`. Point its
-`schema` glob at your `.surql` files, and make sure SvelteKit's build output is
-ignored:
-
-```toml
-# surrealguard.toml
-[sources]
-schema = ["schema/**/*.surql"]
-queries = ["queries/**/*.surql"]
-ignore = ["node_modules/**", ".svelte-kit/**", "build/**"]
-```
-
-```surql
--- schema/schema.surql
-DEFINE TABLE team SCHEMAFULL;
-DEFINE FIELD name ON team TYPE string;
-
-DEFINE TABLE person SCHEMAFULL;
-DEFINE FIELD name ON person TYPE string;
-DEFINE FIELD age ON person TYPE int;
-DEFINE FIELD team ON person TYPE record<team>;
-```
-
-## 2. Generate the typed client
-
-```sh
-npx surrealguard generate --out src/lib/surrealguard.generated.ts
-```
-
-`generate` scans your `.svelte` and `.ts` files for ``db.live(`…`)`` and
-`db.query("…")` calls, analyzes each against the schema, and writes a module that
-re-exports `SurrealGuardClient` plus a type registry keyed by each query's exact
-text. Without `--out` it writes `surrealguard.generated.ts` at the workspace
-root, which `$lib` cannot reach — `--out src/lib/…` puts it where `$lib`
-resolves, so keep the flag.
-
-Re-run it whenever a query or the schema changes. `generate` and `check` support
-a watch mode (`--watch`) that stays running and regenerates on save; check
-`surrealguard generate --help` for the flags your installed version has.
-
-## 3. Create the client
+## Setup
 
 ```ts
 // src/lib/db.ts
-import { SurrealGuardClient } from "$lib/surrealguard.generated";
+import { createClient } from "$lib/surrealguard.generated";
 
-export const db = new SurrealGuardClient();
+export const db = createClient({ url: "ws://localhost:8000/rpc" });
 ```
 
-Import the client **from the generated file**. That import is what loads the type
-registry; importing it from `@surrealguard/client` instead leaves the registry
-empty and every query degrades to `unknown`.
+```ts
+// src/lib/queries.ts — the one place query text lives
+import { defineQuery, defineLive } from "$lib/surrealguard.generated";
 
-## 4. Provide it once, at the root
-
-`setClient` is a symbol-keyed `setContext`, so it has to run during component
-initialisation in an ancestor of everything that queries — in practice, the root
-`+layout.svelte`. Every `liveQuery` below it then resolves the client from
-context, and no component has to thread `db` through props.
+export const allPeople  = defineQuery("SELECT id, name, age FROM person");
+export const addPerson  = defineQuery("CREATE person SET name = $name, joined = $joined");
+export const livePeople = defineLive("SELECT id, name, age FROM person");
+export const liveTeam   = defineLive("SELECT id, name FROM person WHERE team = $team");
+```
 
 ```svelte
 <!-- src/routes/+layout.svelte -->
@@ -87,116 +51,201 @@ context, and no component has to thread `db` through props.
   import { db } from "$lib/db";
 
   setClient(db);
-
-  // Connect in the browser only: a live subscription needs a long-lived socket,
-  // which the server render does not have.
-  $effect(() => {
-    void db
-      .connect("ws://localhost:8000/rpc")
-      .then(() => db.use({ namespace: "app", database: "app" }));
-    return () => void db.close();
-  });
-
   let { children } = $props();
 </script>
 
 {@render children()}
 ```
 
-If `setClient` never ran, `liveQuery` throws
-`[@surrealguard/svelte] No client in context…` instead of failing later with an
-undefined-property error.
-
-## 5. Query
+## `createLive` — a live query
 
 ```svelte
-<!-- src/routes/+page.svelte -->
 <script lang="ts">
-  import { liveQuery } from "@surrealguard/svelte";
+  import { createLive } from "@surrealguard/svelte";
+  import { livePeople } from "$lib/queries";
 
-  // `db` is the context client. The row type comes from the generated registry,
-  // so `person.name` is `string` and `person.nope` is a compile error.
-  const people = liveQuery((db) => db.live(`SELECT name, age FROM person`));
+  const people = createLive(livePeople);
 </script>
 
-{#if people.loading}
-  <p>Loading…</p>
+{#if people.error}
+  <p class="error">{people.error.message}</p>
 {:else}
-  <ul>
-    {#each people.data as person (person.name)}
-      <li>{person.name} — {person.age}</li>
-    {/each}
-  </ul>
+  <ul>{#each people.data as p (p.id)}<li>{p.name}</li>{/each}</ul>
 {/if}
 ```
 
-`liveQuery` returns `{ data, status, loading, error }` — read the fields
-directly; they are runes-backed getters, not a store. The subscription starts in
-an `$effect` and is torn down when the component is destroyed. Subscriptions are
-reference-counted per `(sql, params)`, so ten components watching the same query
-share one `LIVE SELECT` and one reconciled array.
+`data` is always an array and starts `[]`, so markup never needs `?? []`.
+N components sharing a query share one `LIVE SELECT`, and the last one to
+unmount issues the `KILL`.
 
-Note the parentheses in ``db.live(`…`)``: the query is an *argument*, not a
-tagged template. TypeScript widens a tagged template's text to `string`, which
-would throw the row type away. A query that is not in the registry degrades to
-`unknown` — never `any`.
+## Reactive parameters
 
-## SSR: seed on the server, go live on the client
+**Wrap the query in a function.** A thunk re-runs when its dependencies change,
+so the query re-subscribes:
 
-A `LIVE SELECT` cannot resolve rows in one shot, so `loadLive` runs its
-underlying `SELECT` once and returns typed rows. Pass them to `liveQuery`'s
-`initial` for a first paint with no loading gap; the client then upgrades the
-same data to live in place.
+```svelte
+<script lang="ts">
+  import { page } from "$app/state";
+  import { createLive } from "@surrealguard/svelte";
+  import { liveTeam } from "$lib/queries";
+
+  // navigating to another team KILLs the old subscription and opens a new one
+  const team = createLive(() => liveTeam.with({ team: page.params.team }));
+</script>
+```
+
+This is the same rule `@tanstack/svelte-query` v6 and `convex-svelte` both
+arrived at: *the argument must be wrapped in a function to preserve
+reactivity*.
+
+### Conditional queries
+
+`"skip"` says "not yet", and keeps the row type:
+
+```ts
+const team = createLive(() => (session ? liveTeam.with({ team }) : "skip"));
+```
+
+## `createQuery` — a one-shot query
+
+```svelte
+<script lang="ts">
+  import { createQuery } from "@surrealguard/svelte";
+  import { allPeople } from "$lib/queries";
+
+  const roster = createQuery(allPeople);
+</script>
+
+{#if roster.loading}
+  <Spinner />
+{:else if roster.error}
+  <p>{roster.error.message}</p>
+{:else}
+  <ul>{#each roster.data ?? [] as p (p.id)}<li>{p.name}</li>{/each}</ul>
+{/if}
+```
+
+`data` is `T | undefined` here, because a one-shot query's result may be a
+scalar (`RETURN count(…)`) and there is nothing honest to default it to.
+
+## `createMutation` — a write, and what it invalidates
+
+```svelte
+<script lang="ts">
+  import { createMutation } from "@surrealguard/svelte";
+  import { addPerson, allPeople, livePeople } from "$lib/queries";
+
+  const add = createMutation(addPerson, { invalidates: [allPeople, livePeople] });
+</script>
+
+<button onclick={() => add.mutate({ name: "ada", joined: new Date() })}
+        disabled={add.pending}>Add</button>
+{#if add.error}<p class="error">{add.error.message}</p>{/if}
+```
+
+`mutate` is fire-and-forget (errors land on `.error`); `mutateAsync` returns the
+result and throws.
+
+## SSR — `preload`
 
 ```ts
 // src/routes/+page.ts
-import { loadLive } from "@surrealguard/svelte";
+import { preload } from "@surrealguard/svelte";
 import { db } from "$lib/db";
+import { livePeople } from "$lib/queries";
 
 export async function load() {
-  const people = await loadLive(db, db.live(`SELECT name, age FROM person`));
-  return { people };
+  return { people: await preload(db, livePeople) };
 }
 ```
 
 ```svelte
-<!-- src/routes/+page.svelte -->
+<!-- src/routes/+page.svelte : the query text appears nowhere -->
 <script lang="ts">
-  import { liveQuery } from "@surrealguard/svelte";
-
+  import { createLive } from "@surrealguard/svelte";
   let { data } = $props();
 
-  const people = liveQuery((db) => db.live(`SELECT name, age FROM person`), {
-    initial: data.people,
-  });
+  const people = createLive(() => data.people);
 </script>
+
+<ul>{#each people.data as p (p.id)}<li>{p.name}</li>{/each}</ul>
 ```
 
-To move a whole cache rather than one query's rows, call `dehydrate(db)` on the
-server and `hydrate(db, state)` on the client.
+The payload carries its own key, text and params, so the component subscribes to
+*exactly* the query the server ran. It renders from the seed on the first paint
+and upgrades to live in place.
 
-## Escape hatches
+This is the flaw the package was rebuilt around. Before, `+page.ts` and
+`+page.svelte` each spelled the query out; change one and the key stopped
+matching, so the seed was silently discarded and the page refetched — no error,
+no warning, no type failure.
 
-- **No context** — `liveQuery(fn, { client })` uses the client you pass and never
-  touches context. Useful in tests, in a component rendered outside the provider,
-  or when you hold two connections.
-- **Bindings** — `liveQuery(fn, { params })`. Params take part in the cache key,
-  so different params get their own subscription.
-- **A different generated path** — `generate --out <path>` takes any location;
-  `$lib/surrealguard.generated` above is just what `src/lib/` resolves to.
+Wrap it in a thunk (`() => data.people`) if the route's `data` can change under
+you on a client-side navigation.
+
+## Values are JSON here
+
+The reactive layer is `Json<T>`-shaped: a `RecordId` arrives as
+`` `person:${string}` ``, a `datetime` as an ISO string. That is what survives
+devalue and what `JSON.stringify` produces, so an SSR payload needs no special
+handling.
+
+`db.run(allPeople)` outside the reactive layer gives the SDK's real values
+(`RecordId`, `Date`) instead. The two differ, deliberately: a React Server
+Component boundary rejects class instances and has no transport hook, so
+uniformity in the other direction is not available.
+
+### If you want SDK classes through `load`
+
+devalue rejects class instances, so `load` cannot return a `RecordId` on its
+own. Register the transport hook:
+
+```ts
+// src/hooks.ts
+export { transport } from "@surrealguard/svelte/transport";
+```
+
+It covers `RecordId`, `DateTime`, `Duration`, `Uuid` and `Decimal`. Spread it to
+add your own:
+
+```ts
+import { transport as surrealguard } from "@surrealguard/svelte/transport";
+export const transport = { ...surrealguard, MyType: { encode, decode } };
+```
+
+## Sharing a query from a `.svelte.ts` module
+
+The primitives use `createSubscriber`, not `$effect`, so they work outside a
+component and tear down automatically:
+
+```ts
+// src/lib/people.svelte.ts
+import { createLive } from "@surrealguard/svelte";
+import { livePeople } from "$lib/queries";
+import { db } from "$lib/db";
+
+export const people = createLive(livePeople, { client: db });
+```
+
+(Pass `{ client }` explicitly there — `setContext` is only readable during
+component initialisation.)
 
 ## API
 
-| Export | What it does |
+| Export | |
 | --- | --- |
-| `setClient(db)` | Put the client in context. Call during init in the root layout. |
-| `getClient()` | Read it back. Throws a named error if absent. |
-| `liveQuery(fn, options?)` | Runes-reactive `{ data, status, loading, error }`. |
-| `loadLive(db, descriptor, params?)` | Run a live query's underlying `SELECT` once (SSR seed). |
-| `dehydrate(db)` / `hydrate(db, state)` | Move the whole result cache across the SSR boundary. |
+| `setClient(db)` / `useClient(override?)` | context |
+| `createLive(source, options?)` | live query; `data` is always an array |
+| `createQuery(source, options?)` | one-shot; `data` is `T \| undefined` |
+| `createMutation(query, options?)` | write + invalidation |
+| `preload(db, query)` | SSR payload that remembers its query |
+| `dehydrate(db)` / `hydrate(db, state)` | whole-cache transport |
+| `transport` (`/transport`) | SvelteKit hook for SDK value classes |
+| `Source<Q>` | `Q \| (() => Q \| "skip") \| "skip"` |
 
-Built on [`@surrealguard/query`](https://www.npmjs.com/package/@surrealguard/query),
-which holds the cache, the reference counting, and the live reconciliation.
+`create*` for reactive primitives, `use*` for context — TanStack Svelte v6's
+split.
 
-Part of [SurrealGuard](https://github.com/DrewRidley/surrealguard). Licensed
-under MIT OR Apache-2.0.
+## Licence
+
+MIT OR Apache-2.0

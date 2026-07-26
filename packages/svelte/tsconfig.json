@@ -4,5 +4,5 @@
     "rootDir": ".",
     "types": ["svelte"]
   },
-  "include": ["src", "test-d", "svelte.config.js"]
+  "include": ["src", "test", "test-d", "svelte.config.js"]
 }

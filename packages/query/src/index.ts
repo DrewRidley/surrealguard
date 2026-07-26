@@ -335,6 +335,10 @@ export class QueryClient {
     // unless SSR already handed us rows.
     if (entry.state.status !== "success") await this.#load(entry);
     if (!entry.isLive || !entry.liveText) return;
+    // If the seed failed, don't open a subscription on top of it — doing so
+    // overwrites the error the caller needs to see with whatever the LIVE
+    // attempt reports (usually the same failure, described worse).
+    if (entry.state.status === "error") return;
     try {
       const { openLive } = await import("@surrealguard/client");
       const subscription = await openLive(

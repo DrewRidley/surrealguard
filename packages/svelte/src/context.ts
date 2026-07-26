@@ -1,20 +1,15 @@
 /**
  * Client context. Set the client once at the root of the app — in
- * `+layout.svelte` — and every {@link liveQuery} below it resolves that client
- * from context, so components never thread `db` through props.
- *
- * The generated module is written by `surrealguard generate --out
- * src/lib/surrealguard.generated.ts`, which is what makes `$lib` resolve it —
- * the default output path is the workspace root, outside `$lib`.
+ * `+layout.svelte` — and every primitive below it resolves that client from
+ * context, so components never thread `db` through props.
  *
  * ```svelte
  * <!-- src/routes/+layout.svelte -->
  * <script lang="ts">
  *   import { setClient } from "@surrealguard/svelte";
- *   import { SurrealGuardClient } from "$lib/surrealguard.generated";
+ *   import { db } from "$lib/db";
  *
- *   setClient(new SurrealGuardClient());
- *
+ *   setClient(db);
  *   let { children } = $props();
  * </script>
  *
@@ -34,16 +29,20 @@ export function setClient(client: SurrealGuardClient): SurrealGuardClient {
 }
 
 /**
- * Read the client from context. Throws with a clear message if no
- * {@link setClient} ran in an ancestor and no explicit `client` was passed —
- * failing fast beats a confusing "cannot read property of undefined".
+ * Read the client from context. An explicit `override` wins (tests, a second
+ * connection). Throws with a clear message if neither is present — failing fast
+ * beats a confusing "cannot read property of undefined".
+ *
+ * `use*` for context and imperative access, `create*` for reactive primitives,
+ * is TanStack Svelte v6's split; matching it exactly is free consistency for
+ * anyone arriving from there.
  */
-export function getClient(): SurrealGuardClient {
-  const client = getContext<SurrealGuardClient | undefined>(CLIENT_KEY);
+export function useClient(override?: SurrealGuardClient): SurrealGuardClient {
+  const client = override ?? getContext<SurrealGuardClient | undefined>(CLIENT_KEY);
   if (!client) {
     throw new Error(
       "[@surrealguard/svelte] No client in context. Call setClient(db) in your root " +
-        "+layout.svelte, or pass { client } to liveQuery.",
+        "+layout.svelte, or pass { client } to the primitive.",
     );
   }
   return client;

@@ -1,15 +1,33 @@
 <script lang="ts">
-  // Reads the client from context (via liveQuery → getClient) and renders the
-  // runes-reactive `users.data` DIRECTLY — no store `$` prefix.
-  import { liveQuery } from "../src/index.js";
+  // Reads the client from context (via createLive -> useClient) and renders the
+  // reactive `users.data` DIRECTLY — no store `$` prefix.
+  //
+  // Everything reaches `createLive` through a THUNK, which is the whole point
+  // of `Source<Q>`: changing `team` (or the route's preloaded `data`)
+  // re-resolves the query and re-subscribes. In 0.4 params were read once at
+  // construction, so this could not work at all.
+  import type { Json, Preloaded } from "@surrealguard/client";
+  import { createLive } from "../src/index.js";
+  import { liveUsers, liveUsersOfTeam } from "./queries.js";
 
-  let { initial = undefined }: { initial?: Array<Record<string, unknown>> } = $props();
+  type Row = Json<{ id: import("@surrealguard/client").RecordId<"user">; name: string }>;
 
-  const users = liveQuery((db) => db.live(`SELECT * FROM user`), { initial });
+  let {
+    team = undefined,
+    preloaded = undefined,
+  }: { team?: string; preloaded?: Preloaded<Row[]> } = $props();
+
+  const users = createLive(
+    () => preloaded ?? (team ? liveUsersOfTeam.with({ team }) : liveUsers),
+  );
 </script>
 
+<p data-testid="status">{users.status}</p>
+{#if users.error}
+  <p data-testid="error">{users.error.message}</p>
+{/if}
 <ul>
   {#each users.data as user (user.id)}
-    <li>{String(user.name)}</li>
+    <li>{user.name}</li>
   {/each}
 </ul>
