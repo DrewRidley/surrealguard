@@ -79,10 +79,21 @@ pub enum Position {
     /// `SPLIT f`.
     Split,
     /// `FETCH f`.
+    ///
+    /// Not a [`Contract`] row, and not because nobody got to it: its rule is
+    /// "does this kind hold a record *anywhere* inside it", which recurses
+    /// through element kinds (`array<array<record<t>>>` fetches). That is a
+    /// structural search, not a kind, so there is no `expects` to write.
     Fetch,
     /// The collection of a `FOR $x IN e`.
     ForIterable,
     /// The operand of a `<type>` cast.
+    ///
+    /// Not a [`Contract`] row either. A cast does not ask whether the value
+    /// inhabits the target — that is the whole point of writing one — it asks
+    /// whether the *conversion* can succeed, which is a relation between two
+    /// kinds with its own per-target table (`string` converts to `datetime`,
+    /// `datetime` does not convert to `int`).
     Cast,
     /// `SELECT … WHERE p`.
     WhereSelect,

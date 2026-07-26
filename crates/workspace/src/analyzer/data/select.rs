@@ -17,6 +17,7 @@ use surrealdb_types::{Kind, KindLiteral};
 use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::contract::{Contract, Position};
 use crate::analyzer::expression::infer::{infer_expression_fact, plain_field_segments};
 use crate::schema::{SchemaIndex, TableDef};
 
@@ -266,11 +267,9 @@ fn check_where_clause<'a>(
     });
     crate::analyzer::data::check_expression_field_paths(ctx, table, cond, 1002);
     if let Some(kind) = cond_kind {
-        if crate::analyzer::contract::Contract::condition(
-            crate::analyzer::contract::Position::WhereSelect,
-        )
-        .decide(&kind)
-        .is_violation()
+        if Contract::condition(Position::WhereSelect)
+            .decide(&kind)
+            .is_violation()
         {
             let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), cond.span);
             ctx.emit(
@@ -378,8 +377,10 @@ fn check_split_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analy
             // SPLIT fans rows out over a collection field. Resolve across
             // record links so a linked collection field types precisely.
             if let Some(kind) = resolve_field_path(ctx.schema(), table, &segments) {
-                let base = crate::kinds::literal_base_kind(&kind).unwrap_or_else(|| kind.clone());
-                if !matches!(base, Kind::Array(_, _) | Kind::Set(_, _) | Kind::Any) {
+                if Contract::possible(Position::Split, collection_kind(), 1024)
+                    .decide(&kind)
+                    .is_violation()
+                {
                     let span = surrealguard_syntax::span::SourceSpan::new(
                         ctx.source().clone(),
                         idiom.span,
@@ -496,7 +497,10 @@ fn walk_projections_for_findings(stmt: &ast::SelectStmt, ctx: &mut AnalysisConte
 /// Clause-value invariants: LIMIT/START must be integers (2018) and
 /// non-negative when constant (2024); TIMEOUT takes a duration (2019).
 fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
-    for (clause, name) in [(&stmt.limit, "LIMIT"), (&stmt.start, "START")] {
+    for (clause, name, position) in [
+        (&stmt.limit, "LIMIT", Position::Limit),
+        (&stmt.start, "START", Position::Start),
+    ] {
         let Some(expr) = clause else {
             continue;
         };
@@ -518,8 +522,12 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
         }
         let fact = infer_expression_fact(expr, ctx);
         if let Some(kind) = &fact.kind {
-            let base = crate::kinds::literal_base_kind(kind).unwrap_or_else(|| kind.clone());
-            if !matches!(base, Kind::Int | Kind::Number | Kind::Any) {
+            // `number` is admitted alongside `int` because that is what an
+            // arithmetic or `math::` result infers as, and the clause takes it.
+            if Contract::possible(position, Kind::either(vec![Kind::Int, Kind::Number]), 2018)
+                .decide(kind)
+                .is_violation()
+            {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
@@ -550,7 +558,10 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
     if let Some(expr) = &stmt.timeout {
         let kind = infer_expression_fact(expr, ctx).kind;
         if let Some(kind) = kind {
-            if !matches!(kind, Kind::Duration | Kind::Any) {
+            if Contract::possible(Position::Timeout, Kind::Duration, 2019)
+                .decide(&kind)
+                .is_violation()
+            {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
@@ -1016,6 +1027,15 @@ fn is_bare_count(call: &ast::Call) -> bool {
 
 /// Whether a kind can transitively hold record links (making FETCH
 /// meaningful): records themselves, collections/options/unions of them.
+/// What `SPLIT` and `FOR` iterate: any array or set. The element kind is `any`
+/// because neither position cares what is inside, only that there is an inside.
+fn collection_kind() -> Kind {
+    Kind::either(vec![
+        Kind::Array(Box::new(Kind::Any), None),
+        Kind::Set(Box::new(Kind::Any), None),
+    ])
+}
+
 fn kind_may_hold_record(kind: &Kind) -> bool {
     match kind {
         Kind::Record(_) | Kind::Any | Kind::Object => true,

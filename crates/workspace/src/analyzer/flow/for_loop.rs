@@ -10,6 +10,7 @@ use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::contract::{Contract, Position};
 use crate::analyzer::flow::block::{analyze_block_flow, Flow};
 use crate::expression::{ExpressionFact, ExpressionValueClass};
 
@@ -38,21 +39,21 @@ pub(crate) fn analyze_for_loop_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::F
     // FOR's contract: the iterable is a collection (or a range, once those
     // are modeled). Definitely-scalar kinds are 2022.
     if let Some(kind) = &iterable.kind {
-        let base = crate::kinds::literal_base_kind(kind).unwrap_or_else(|| kind.clone());
-        if matches!(
-            base,
-            Kind::Int
-                | Kind::Float
-                | Kind::Decimal
-                | Kind::Number
-                | Kind::Bool
-                | Kind::String
-                | Kind::Datetime
-                | Kind::Duration
-                | Kind::Uuid
-                | Kind::None
-                | Kind::Null
-        ) {
+        // A whitelist, where this was a scalar blocklist. The difference is
+        // every kind neither list named — a `record`, a `bytes`, a `geometry`
+        // — which SurrealDB cannot iterate either and which the blocklist let
+        // through by omission.
+        let contract = Contract::possible(
+            Position::ForIterable,
+            Kind::either(vec![
+                Kind::Array(Box::new(Kind::Any), None),
+                Kind::Set(Box::new(Kind::Any), None),
+                Kind::Object,
+                Kind::Range,
+            ]),
+            2022,
+        );
+        if contract.decide(kind).is_violation() {
             let span = surrealguard_syntax::span::SourceSpan::new(
                 ctx.source().clone(),
                 stmt.iterable.span,
