@@ -4895,7 +4895,7 @@ INSERT INTO person { name: 'Ada' };
         for (code, needle) in [
             (
                 "E2012",
-                "`fn::bad` declares `-> string` but its body returns `int`",
+                "`fn::bad` declares `-> string` but its body returns `1`",
             ),
             ("E5009", "never terminates"),
             // $event is the literal union, so the typo comparison is the
