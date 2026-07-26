@@ -1,99 +1,119 @@
 # @surrealguard/query
 
-The framework-agnostic reactive core behind
-[`@surrealguard/svelte`](https://www.npmjs.com/package/@surrealguard/svelte) and
-[`@surrealguard/next`](https://www.npmjs.com/package/@surrealguard/next). It
-wraps a [`@surrealguard/client`](https://www.npmjs.com/package/@surrealguard/client)
-with a result cache, reference-counted subscriptions, live-query reconciliation,
-and SSR hydration.
-
-Use it directly when you are binding SurrealGuard to a framework it has no
-adapter for, or when you want the cache without any framework at all. If you are
-on Svelte or Next, use those packages instead — they are thin wrappers over what
-this returns.
-
-## Install
-
-```sh
-npm i @surrealguard/query @surrealguard/client surrealdb
-npm i -D surrealguard
-```
-
-## Generate the types first
-
-The row types come from `surrealguard generate`, which analyzes the queries in
-your source against your `.surql` schema and writes a module that re-exports the
-client along with a registry keyed by each query's exact text. See
-[`@surrealguard/client`](https://www.npmjs.com/package/@surrealguard/client) for
-the full setup; the short version is:
-
-```sh
-npx surrealguard init                                    # writes surrealguard.toml
-npx surrealguard generate --out src/surrealguard.generated.ts
-```
-
-Re-run it whenever a query or the schema changes. `generate` and `check` support
-a watch mode (`--watch`) that stays running and regenerates on save;
-`surrealguard generate --help` lists the flags your installed version has.
-
-## Use
+The framework-agnostic reactive core behind `@surrealguard/svelte` and
+`@surrealguard/next`. Use it directly if you are writing your own binding, or
+want a cache without a framework.
 
 ```ts
 import { getQueryClient } from "@surrealguard/query";
-import { SurrealGuardClient } from "./surrealguard.generated";
+import { db } from "./db";
+import { livePeople } from "./queries";
 
-const db = new SurrealGuardClient();
-await db.connect("ws://localhost:8000/rpc");
-await db.use({ namespace: "app", database: "app" });
-
-const qc = getQueryClient(db);
-
-// `db.live(...)` returns a typed descriptor, so `state.data` is Array<{ name; age }>.
-const people = qc.observeLive(db.live(`SELECT name, age FROM person`));
-
-const unsubscribe = people.subscribe((state) => {
-  if (state.status === "error") console.error(state.error);
-  else for (const person of state.data) console.log(person.name, person.age);
+const people = getQueryClient(db).observeLive(livePeople);
+const stop = people.subscribe((state) => {
+  if (state.status === "success") render(state.data);
 });
 ```
 
-`subscribe` delivers the current state synchronously, then again on every change,
-and returns an unsubscribe function. The first subscriber starts the query; the
-last one to leave tears the live subscription down. The cached rows survive that
-teardown, so re-subscribing renders immediately.
-
-`getQueryClient(db)` returns **one** `QueryClient` per underlying connection,
-cached in a `WeakMap`. That matters: the reference counting that lets N
-subscribers share one `LIVE SELECT` only works if everyone resolves the same
-core. `new QueryClient(db)` is exported too, but constructing a second one for
-the same connection quietly opens a second subscription for every query.
+For a single live subscription and nothing else, `db.watch(livePeople, render)`
+in `@surrealguard/client` is simpler and needs no cache.
 
 ## What it does
 
-- **Dedup** — the cache key is `(sql, params)`, with params serialised in sorted
-  key order so two callers writing the same bindings in a different order still
-  share an entry.
-- **Live reconciliation** — a `LIVE SELECT` resolves to a live-query id, which
-  the core subscribes to; each notification is applied to the array by record
-  `id` (CREATE appends, UPDATE replaces in place, DELETE removes).
-- **SSR** — `prime(descriptor)` runs a live query's underlying `SELECT` once on
-  the server and caches the rows under the *live* key, so the client's first
-  render is gap-free and then upgrades to live. `dehydrate()` / `hydrate()` move
-  the whole cache across the boundary.
+- **Deduplicates.** N subscribers to the same query share one cache entry, one
+  `LIVE SELECT`, and one reconciled array. The last unsubscribe issues one
+  `KILL`.
+- **Reconciles.** A live query seeds from its underlying `SELECT` — a
+  `LIVE SELECT` never replays existing records — then applies notifications by
+  record `id`: CREATE appends, UPDATE replaces, DELETE removes.
+- **Caches by the query's own key.** The key is `text` plus stably serialised
+  params, computed once on the query reference. Nothing re-derives it, so an SSR
+  seed and a client subscription cannot disagree about which entry they mean.
+- **Bounds itself.** Entries are dropped `gcTime` after their last subscriber
+  leaves, and the cache is capped at `maxEntries`.
+
+## Everything here is `Json<T>`
+
+Rows pass through the SDK's `jsonify` on the way in, so a `RecordId` is already
+the `` `person:${string}` `` string it will be on the far side of an SSR
+boundary — SvelteKit's devalue and a React Server Component's props both reject
+class instances, and the RSC boundary has no transport hook to widen.
+
+```ts
+const people = await db.run(allPeople);
+//    ^? Array<{ id: RecordId<"person">; … }>       — SDK values
+const state = getQueryClient(db).observe(allPeople).get();
+//    state.data ^? Array<{ id: `person:${string}`; … }>   — JSON projection
+```
+
+`db.run` gives SDK values; this layer gives their JSON projection. That is a
+real inconsistency, and it is the deliberate one: uniformity here would either
+break SSR or break Next entirely.
+
+## State is a discriminated union
+
+```ts
+type QueryState<T> =
+  | { status: "pending"; data: T | undefined; error: undefined }
+  | { status: "success"; data: T;             error: undefined }
+  | { status: "error";   data: T | undefined; error: SurrealGuardError };
+```
+
+`status` narrows `data`, so reading rows before checking the status is a type
+error rather than a silently empty array.
 
 ## API
 
-| Method | What it does |
-| --- | --- |
-| `getQueryClient(db)` | The `QueryClient` for a connection. Prefer this over `new QueryClient(db)`. |
-| ``qc.observeLive(db.live(`…`), opts?)`` | Typed reactive handle. The entry point adapters use. |
-| `qc.observe(sql, opts?)` | Same, for a raw SQL string. Rows are untyped — no registry lookup. |
-| `qc.fetch(sql, params?)` | One-shot query, cached, outside the reactive layer. |
-| `qc.prime(descriptor, params?)` | Run a live query's `SELECT` once and cache under the live key (SSR seed). |
-| `qc.dehydrate()` / `qc.hydrate(state)` | Snapshot / restore the cache. |
+```ts
+const qc = getQueryClient(db);            // one core per client, cached
 
-`observe` and `observeLive` take `{ params, initialData }`; `initialData` seeds
-the entry so `status` starts at `"success"` instead of `"loading"`.
+qc.observe(allPeople)                     // one-shot; result may be a scalar
+qc.observeLive(livePeople)                // live; data is always an array
+qc.fetch(allPeople)                       // run once, outside the reactive layer
+qc.prime(livePeople)                      // run a live query's SELECT once (SSR seed)
 
-Part of [SurrealGuard](https://github.com/DrewRidley/surrealguard). Licensed
-under MIT OR Apache-2.0.
+qc.getData(allPeople.key)                 // types itself from the branded key
+qc.setData(allPeople, (prev) => [...])    // optimistic write
+qc.refetch(allPeople)
+qc.invalidate(allPeople)                  // every binding of that query
+qc.invalidate(peopleOf.with({ team }))    // exactly that binding
+qc.mutate(addPerson, { name }, { invalidates: [allPeople] })
+
+qc.dehydrate()                            // snapshot for the SSR payload
+qc.hydrate(snapshot)
+```
+
+`db.invalidate(...)` on the client reaches this cache too — the client publishes
+invalidations and the core subscribes, so the client never has to import the
+reactive layer.
+
+### Invalidation granularity
+
+An unbound query's key is its text; a bound one's is `text::params`. Matching is
+by key prefix, so both granularities fall out of the same rule:
+
+```ts
+qc.invalidate(peopleOf);                   // all teams
+qc.invalidate(peopleOf.with({ team }));    // just that team
+```
+
+### Bounding the cache
+
+```ts
+new QueryClient(db, { gcTime: 60_000, maxEntries: 200 });
+```
+
+`gcTime: Infinity` keeps entries forever.
+
+## Observing a scalar
+
+A one-shot query's result is whatever the query returns:
+
+```ts
+const count = getQueryClient(db).observe(peopleCount);
+count.get().data;   // ^? number | undefined
+```
+
+## Licence
+
+MIT OR Apache-2.0
