@@ -26,6 +26,7 @@ use surrealguard_workspace::{analyze_workspace, Workspace};
 
 /// One invariant: a declared kind, a value that inhabits it, one that provably
 /// does not, and one that cannot be proven either way.
+#[derive(Clone, Copy)]
 struct Case {
     /// Fills the `{ty}` hole. `any` for positions whose contract is fixed by
     /// the syntax rather than declared (`LIMIT`, a condition).
@@ -97,6 +98,25 @@ const DECLARED: &[Case] = &[
         bad: "['x']",
         unprovable: "$p",
     },
+];
+
+/// `FunctionArg`'s own list, identical to [`DECLARED`] except for its literal
+/// case. The grammar cannot parse *any* union in a `DEFINE FUNCTION` parameter
+/// type — `$a: int | string` is a syntax error, not just `$a: 'red' | 'blue'` —
+/// so a union-typed parameter is not expressible input and a row using one
+/// would be asserting against a mis-parse. A single literal exercises the same
+/// property: a written constant is compared as the value it is.
+const FUNCTION_ARG: &[Case] = &[
+    Case {
+        declared: "'red'",
+        ok: "'red'",
+        bad: "'green'",
+        unprovable: "$p",
+    },
+    DECLARED[1],
+    DECLARED[2],
+    DECLARED[3],
+    DECLARED[4],
 ];
 
 /// A condition position: the contract is `bool`, whatever is declared.
@@ -213,7 +233,7 @@ const SITES: &[Site] = &[
         position: Position::FunctionArg,
         schema: "DEFINE FUNCTION fn::take($a: {ty}) { RETURN $a; };",
         query: "RETURN fn::take({val});",
-        cases: DECLARED,
+        cases: FUNCTION_ARG,
     },
     Site {
         position: Position::FunctionReturn,
@@ -329,10 +349,21 @@ fn fires(site: &Site, case: &Case, value: &str) -> bool {
         fill(PRELUDE, case.declared, value),
         fill(site.schema, case.declared, value)
     );
-    workspace.add_virtual_source("schema".into(), schema);
+    workspace.add_virtual_source("schema".into(), schema.clone());
     workspace.add_virtual_source("query".into(), fill(site.query, case.declared, value));
-    analyze_workspace(&workspace)
-        .diagnostics
+    let diagnostics = analyze_workspace(&workspace).diagnostics;
+    // A template that does not parse asserts nothing. The grammar is narrower
+    // than the type system in several clause positions, and a row that trips
+    // one would pass for the wrong reason.
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|finding| finding.code().prefix() == 'S'),
+        "{} does not parse with `{value}`:\n{schema}\n{}",
+        site.position.name(),
+        fill(site.query, case.declared, value),
+    );
+    diagnostics
         .iter()
         .any(|finding| finding.code().number() == site.position.code())
 }
