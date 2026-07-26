@@ -11,12 +11,29 @@ keywords.workspace = true
 categories.workspace = true
 description = "Runtime for compile-time-checked SurrealQL — the query! macro and typed results"
 
+[features]
+default = ["runtime"]
+# Execution against the official SurrealDB SDK: the `fetch*` and `execute`
+# methods on `Query<T>`. With it off, the crate still checks, types and decodes.
+runtime = ["dep:surrealdb"]
+
 [dependencies]
 surrealguard-macros = { path = "../macros", version = "0.4.1" }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1", features = ["serde"] }
+# Not optional: generated result types implement `SurrealValue`, which is what
+# the SDK's `take` requires. This crate is small and carries no engine.
+surrealdb-types.workspace = true
+# `default-features = false` on purpose: this crate needs only the `Connection`
+# trait and `Surreal<C>`, never an engine or protocol. The executing crate picks
+# those through its own `surrealdb` dependency and Cargo unifies the two, so
+# depending on `surrealguard-rs` never forces a transport choice on anyone.
+surrealdb = { version = "3.2", default-features = false, optional = true }
+
+[dev-dependencies]
+surrealdb = { version = "3.2", features = ["protocol-ws"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+trybuild = "1"
+# Only to build a `Datetime` to assert against in the execution tests.
+chrono = "0.4"
 
 [lints]
 workspace = true

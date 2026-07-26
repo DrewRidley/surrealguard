@@ -1,0 +1,5 @@
+error: this query has no parameter `$limit` — this query reads no parameters
+ --> tests/ui/unknown_param.rs:3:63
+  |
+3 |     let _ = surrealguard_rs::query!("SELECT name FROM user;", limit = 10);
+  |                                                               ^^^^^

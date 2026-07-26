@@ -1,0 +1,79 @@
+error[E0277]: this query does not return a set of rows
+ --> tests/ui/fetch_all_on_a_scalar.rs:7:13
+  |
+7 |     let _ = surrealguard_rs::query!("RETURN 1 + 1;").fetch_all(db).await;
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ --------- required by a bound introduced by this call
+  |             |
+  |             not a row set
+  |
+  = help: the trait `Rows` is not implemented for `i64`
+  = note: `fetch_all`, `fetch_one` and `fetch_optional` apply to queries whose result is a row set (`SELECT`, `CREATE`, `UPDATE`, `DELETE`)
+  = note: use `.fetch(&db)` to get the value this query actually returns
+help: the following other types implement trait `Rows`
+ --> src/lib.rs
+  |
+  | impl<R> Rows for Vec<R> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^ `Vec<R>`
+...
+  | impl<R> Rows for Option<R> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^ `Option<R>`
+note: required by a bound in `surrealguard_rs::Query::<T>::fetch_all`
+ --> src/lib.rs
+  |
+  |     pub async fn fetch_all<C: surrealdb::Connection>(
+  |                  --------- required by a bound in this associated function
+...
+  |         T: Rows,
+  |            ^^^^ required by this bound in `Query::<T>::fetch_all`
+
+error[E0277]: this query does not return a set of rows
+ --> tests/ui/fetch_all_on_a_scalar.rs:7:13
+  |
+7 |     let _ = surrealguard_rs::query!("RETURN 1 + 1;").fetch_all(db).await;
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not a row set
+  |
+  = help: the trait `Rows` is not implemented for `i64`
+  = note: `fetch_all`, `fetch_one` and `fetch_optional` apply to queries whose result is a row set (`SELECT`, `CREATE`, `UPDATE`, `DELETE`)
+  = note: use `.fetch(&db)` to get the value this query actually returns
+help: the following other types implement trait `Rows`
+ --> src/lib.rs
+  |
+  | impl<R> Rows for Vec<R> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^ `Vec<R>`
+...
+  | impl<R> Rows for Option<R> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^ `Option<R>`
+note: required by a bound in `surrealguard_rs::Query::<T>::fetch_all`
+ --> src/lib.rs
+  |
+  |     pub async fn fetch_all<C: surrealdb::Connection>(
+  |                  --------- required by a bound in this associated function
+...
+  |         T: Rows,
+  |            ^^^^ required by this bound in `Query::<T>::fetch_all`
+
+error[E0277]: this query does not return a set of rows
+ --> tests/ui/fetch_all_on_a_scalar.rs:7:68
+  |
+7 |     let _ = surrealguard_rs::query!("RETURN 1 + 1;").fetch_all(db).await;
+  |                                                                    ^^^^^ not a row set
+  |
+  = help: the trait `Rows` is not implemented for `i64`
+  = note: `fetch_all`, `fetch_one` and `fetch_optional` apply to queries whose result is a row set (`SELECT`, `CREATE`, `UPDATE`, `DELETE`)
+  = note: use `.fetch(&db)` to get the value this query actually returns
+help: the following other types implement trait `Rows`
+ --> src/lib.rs
+  |
+  | impl<R> Rows for Vec<R> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^ `Vec<R>`
+...
+  | impl<R> Rows for Option<R> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^ `Option<R>`
+note: required by a bound in `surrealguard_rs::Query::<T>::fetch_all`
+ --> src/lib.rs
+  |
+  |     pub async fn fetch_all<C: surrealdb::Connection>(
+  |                  --------- required by a bound in this associated function
+...
+  |         T: Rows,
+  |            ^^^^ required by this bound in `Query::<T>::fetch_all`

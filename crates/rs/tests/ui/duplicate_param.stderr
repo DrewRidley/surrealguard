@@ -1,0 +1,5 @@
+error: `min` is supplied more than once
+ --> tests/ui/duplicate_param.rs:6:9
+  |
+6 |         min = 21,
+  |         ^^^

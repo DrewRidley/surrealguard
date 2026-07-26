@@ -1,0 +1,6 @@
+error: SurrealGuard rejected this query:
+         [E1002] `user` has no field `ssn`
+ --> tests/ui/unknown_field.rs:3:37
+  |
+3 |     let _ = surrealguard_rs::query!("SELECT name, ssn FROM user;");
+  |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
