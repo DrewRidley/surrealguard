@@ -19,6 +19,9 @@
 //! `= NONE OR` / `!= NONE AND` narrowing (`infer::none_guarded_param`) to
 //! statement and branch flow.
 
+use std::cell::Cell;
+use std::sync::OnceLock;
+
 use surrealdb_types::{Kind, Table};
 use surrealguard_syntax::ast;
 use surrealguard_syntax::span::ByteRange;
@@ -26,11 +29,61 @@ use surrealguard_syntax::span::ByteRange;
 use crate::analyzer::const_eval::{BranchReach, Reachability};
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::facts::{
-    eval, Bindings, ConstValue, DiscriminantKind, Place, PlaceRoot, Term,
+    eval, guard_of, Bindings, ConstValue, DiscriminantKind, KindOracle, NoOracle, Place, PlaceRoot,
+    Refinement, Term,
 };
 use crate::analyzer::facts::place_of;
 use crate::analyzer::expression::infer::narrow_out_none;
 use crate::statement_env::StatementEnv;
+
+// ---------------------------------------------------------------------------
+// The fact-layer gate
+// ---------------------------------------------------------------------------
+
+/// Whether the [expression-fact layer](crate::analyzer::facts) answers the
+/// narrowing questions, or the hand-written recognizers below do.
+///
+/// Both paths are compiled, and the answer is read at run time rather than at
+/// compile time so one process can exercise both — which is what
+/// `tests/fact_layer.rs` does to prove the new path is never *wider* than the
+/// old one at any site in the corpus. `SG_FACT_LAYER=1` selects the fact layer
+/// for a whole run; [`with_fact_layer`] selects it for one scope.
+///
+/// This is scaffolding with a stated end: when every consumer reads `Facts`
+/// directly the old recognizers go, and the gate goes with them.
+pub fn use_fact_layer() -> bool {
+    OVERRIDE.with(Cell::get).unwrap_or_else(env_default)
+}
+
+thread_local! {
+    /// A scoped override, per thread: analysis is single-threaded, and a test
+    /// that flips the gate must not flip it for a test running beside it.
+    static OVERRIDE: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+fn env_default() -> bool {
+    static DEFAULT: OnceLock<bool> = OnceLock::new();
+    *DEFAULT.get_or_init(|| {
+        matches!(
+            std::env::var("SG_FACT_LAYER").as_deref(),
+            Ok("1" | "true" | "on")
+        )
+    })
+}
+
+/// Runs `f` with the gate forced one way, restoring the previous setting after
+/// — including on unwind, so a failing assertion inside cannot leak the
+/// setting into the next test.
+pub fn with_fact_layer<T>(enabled: bool, f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<bool>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            OVERRIDE.with(|slot| slot.set(self.0));
+        }
+    }
+    let _restore = Restore(OVERRIDE.with(|slot| slot.replace(Some(enabled))));
+    f()
+}
 
 /// A refinement a guard proves about a param at a program point.
 #[derive(Clone, Debug, PartialEq)]
@@ -64,6 +117,16 @@ pub(crate) enum Narrowing {
     /// element kind (occurrence typing over `x IN <collection>`). The value is
     /// tightened to this kind on the positive branch only.
     Is(Kind),
+    /// A refinement computed by the [expression-fact layer](crate::analyzer::facts):
+    /// a composition of lattice meets and subtractions rather than one of the
+    /// fixed transforms above.
+    ///
+    /// This is the whole of the adapter. Every consumer keeps reading
+    /// `Narrowing` and applying it through [`narrow_kind`]; only where the
+    /// refinement *comes from* changes with the gate. When the consumers read
+    /// `Facts` directly (stage 4) the other variants go and this one stops
+    /// being a variant at all.
+    Refine(Refinement),
 }
 
 /// The target of a narrowing: a bare param (`$x`) or a param plus a short
@@ -115,13 +178,61 @@ pub(crate) struct Effect {
 /// THEN body). `env` resolves indirect discriminants (a `LET`-bound
 /// `type::table($x)`).
 pub(crate) fn positive_effects(cond: &ast::Expr, env: &StatementEnv) -> Vec<Effect> {
+    if use_fact_layer() {
+        return fact_effects(cond, true, env);
+    }
     effects(cond, true, env)
 }
 
 /// The refinements that hold in the region where `cond` is FALSE (an `IF`'s
 /// ELSE body, or the fall-through after a diverging guard).
 pub(crate) fn negative_effects(cond: &ast::Expr, env: &StatementEnv) -> Vec<Effect> {
+    if use_fact_layer() {
+        return fact_effects(cond, false, env);
+    }
     effects(cond, false, env)
+}
+
+/// [`positive_effects`]/[`negative_effects`], answered by the fact layer.
+///
+/// One guard, interpreted once, projected back into the `Vec<Effect>` shape the
+/// consumers already read. Only param-rooted places survive the projection —
+/// an `Effect` is keyed by [`GuardPath`], and a bare row field is the `WHERE`
+/// side's business ([`where_effects`]), exactly as it was when the two sides
+/// were two recognizers.
+fn fact_effects(cond: &ast::Expr, positive: bool, env: &StatementEnv) -> Vec<Effect> {
+    guard_of(cond, positive, Some(env))
+        .facts(&EnvOracle(env))
+        .iter()
+        .filter_map(|(place, refinement)| {
+            Some(Effect {
+                path: param_path(place)?,
+                narrowing: Narrowing::Refine(refinement.clone()),
+            })
+        })
+        .collect()
+}
+
+/// The kinds the flow environment holds, as the fact layer reads them.
+///
+/// A bare param resolves to its binding; a field path resolves only when an
+/// earlier narrowing recorded one. The *declared* kind of a field path is not
+/// available here — stepping it needs the schema, which the effect callers do
+/// not pass — so a place it cannot answer is answered `None`, and the atoms
+/// that need a kind (membership) simply prove nothing. That is the same
+/// coverage the recognizer it replaces had, for the same reason.
+struct EnvOracle<'a>(&'a StatementEnv);
+
+impl KindOracle for EnvOracle<'_> {
+    fn kind_of(&self, place: &Place) -> Option<Kind> {
+        let PlaceRoot::Param(name) = &place.root else {
+            return None;
+        };
+        if place.path.is_empty() {
+            return self.0.let_fact(name)?.kind.clone();
+        }
+        self.0.narrowed_path(&place.key()?).cloned()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +261,25 @@ pub(crate) struct RowEffect {
 /// fields** (`email`, not `$param`) rather than param bindings, so it produces
 /// [`RowEffect`]s keyed by field path.
 pub(crate) fn where_effects(cond: &ast::Expr) -> Vec<RowEffect> {
+    if use_fact_layer() {
+        // The same guard, the same interpreter — with no environment, because
+        // a `WHERE` narrows the row it filters and there is no binding to
+        // resolve. Only row-rooted places survive: a `WHERE $p != NONE` says
+        // nothing about the projected row.
+        return guard_of(cond, true, None)
+            .facts(&NoOracle)
+            .iter()
+            .filter_map(|(place, refinement)| {
+                if !matches!(place.root, PlaceRoot::RowField) {
+                    return None;
+                }
+                Some(RowEffect {
+                    fields: place.field_path()?,
+                    narrowing: Narrowing::Refine(refinement.clone()),
+                })
+            })
+            .collect();
+    }
     match cond {
         ast::Expr::Binary { lhs, op, rhs } => match &op.node {
             ast::BinaryOp::And => {
@@ -768,6 +898,10 @@ pub(crate) fn narrow_kind(kind: &Kind, narrowing: &Narrowing) -> Option<Kind> {
         Narrowing::Is(target) => {
             (*target != Kind::Any && target != kind).then(|| target.clone())
         }
+        // The fact layer answers this one itself: a `Refinement` already *is*
+        // the function from kind to narrowed kind, and it reports "no
+        // tightening" the same way every arm above does.
+        Narrowing::Refine(refinement) => refinement.apply(kind),
     }
 }
 
@@ -1166,6 +1300,25 @@ mod tests {
         lower_first_expr(&parsed, "FunctionCall")
             .expect("has a call condition")
             .node
+    }
+
+    // The tests below are about the hand-written recognizers *themselves* —
+    // which shapes they match and which [`Narrowing`] each yields — so they
+    // read the recognizer path whatever the gate says. The fact layer's own
+    // answers are asserted in `facts::guard` and `facts::refine`, and the two
+    // paths are compared over the whole corpus in `tests/fact_layer.rs`.
+    // These three shadow the module's functions for the whole test module.
+
+    fn positive_effects(cond: &ast::Expr, env: &StatementEnv) -> Vec<Effect> {
+        with_fact_layer(false, || super::positive_effects(cond, env))
+    }
+
+    fn negative_effects(cond: &ast::Expr, env: &StatementEnv) -> Vec<Effect> {
+        with_fact_layer(false, || super::negative_effects(cond, env))
+    }
+
+    fn where_effects(cond: &ast::Expr) -> Vec<RowEffect> {
+        with_fact_layer(false, || super::where_effects(cond))
     }
 
     /// The WHERE condition of a SELECT, lowered exactly as the result-type

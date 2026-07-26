@@ -18,6 +18,8 @@ pub mod statement_env;
 mod suggest;
 mod suppress;
 
+pub use analyzer::flow::narrow::{use_fact_layer, with_fact_layer};
+
 pub use analysis::{
     analyze_one_source, analyze_query, analyze_source, analyze_workspace, build_global_catalog,
     AnalysisOutput, GlobalCatalog, LetBindingAnalysis, ParamInference, SelectModifierAnalysis,

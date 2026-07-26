@@ -4814,13 +4814,28 @@ mod tests {
     }
 
     #[test]
-    fn where_or_narrows_nothing() {
+    fn where_or_narrows_only_what_every_disjunct_proves() {
+        use crate::analyzer::flow::narrow::with_fact_layer;
         let schema = narrowing_schema();
-        let kind = analyze(
-            &schema,
-            "SELECT role FROM user WHERE role = 'admin' OR role = 'mod';",
+        let query = "SELECT role FROM user WHERE role = 'admin' OR role = 'mod';";
+        let role = |kind: Kind| object_fields(array_element(&kind))["role"].clone();
+
+        // The hand-written recognizer decomposes no `OR` at all.
+        assert_eq!(
+            role(with_fact_layer(false, || analyze(&schema, query))),
+            Kind::String
         );
-        assert_eq!(object_fields(array_element(&kind))["role"], Kind::String);
+        // The fact layer joins the disjuncts, because BOTH pin the same place:
+        // every surviving row has one of the two values. A disjunct about a
+        // different field would still prove nothing — that is
+        // `a_disjunction_refines_only_what_every_arm_refines` in `facts::refine`.
+        assert_eq!(
+            role(with_fact_layer(true, || analyze(&schema, query))),
+            Kind::either(vec![
+                Kind::Literal(surrealdb_types::KindLiteral::String("admin".into())),
+                Kind::Literal(surrealdb_types::KindLiteral::String("mod".into())),
+            ])
+        );
     }
 
     #[test]
