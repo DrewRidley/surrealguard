@@ -132,9 +132,9 @@ files, and reports findings rustc-style at their real `file:line`:
 
 ```
 error[E1002]: `person` has no field `ag`
-  --> src/routes/+page.svelte:4:58
+  --> src/routes/+page.svelte:6:58
   |
-4 |   const people = liveQuery((db) => db.live(`SELECT name, ag FROM person`));
+6 |   const people = liveQuery((db) => db.live(`SELECT name, ag FROM person`));
   |                                                          ^^
   = help: did you mean `age`?
 note: `person` is defined here
