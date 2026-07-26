@@ -15,6 +15,7 @@
 
 pub mod const_eval;
 pub mod context;
+pub mod contract;
 pub mod data;
 pub mod expression;
 pub(crate) mod facts;
