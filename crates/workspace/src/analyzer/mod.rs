@@ -17,6 +17,7 @@ pub mod const_eval;
 pub mod context;
 pub mod data;
 pub mod expression;
+pub(crate) mod facts;
 pub mod flow;
 pub mod function;
 pub mod pipeline;
