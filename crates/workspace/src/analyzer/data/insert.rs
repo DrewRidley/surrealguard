@@ -7,7 +7,9 @@ use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::contract::{Contract, Position};
 use crate::analyzer::data::mutation;
+use crate::analyzer::facts::Bindings;
 use crate::schema::TableDef;
 
 pub(crate) fn analyze_insert(ctx: &mut AnalysisContext<'_>, stmt: &ast::InsertStmt) -> Kind {
@@ -54,7 +56,7 @@ fn check_insert_payload(
                     for row in mutation::insert_payload_rows(value) {
                         mutation::check_payload_object_keys(
                             ctx,
-                            crate::analyzer::contract::Position::MutationContent,
+                            Position::MutationContent,
                             table,
                             row,
                         );
@@ -83,8 +85,8 @@ fn check_insert_payload(
             }
             for row in rows {
                 for (column, value) in row {
-                    let value_kind =
-                        crate::analyzer::expression::infer::infer_expression_fact(value, ctx).kind;
+                    let fact =
+                        crate::analyzer::expression::infer::infer_expression_fact(value, ctx);
                     let Some(table) = row_table else {
                         continue;
                     };
@@ -105,12 +107,15 @@ fn check_insert_payload(
                         );
                         continue;
                     };
-                    let Some(value_kind) = value_kind else {
-                        continue;
-                    };
-                    if value_kind != Kind::Any
-                        && !crate::kinds::kind_is_assignable_to(&value_kind, &column_kind)
-                    {
+                    // One column, one value: the same contract a `SET` obeys,
+                    // so a constant is compared as the literal it is.
+                    let term = crate::analyzer::facts::eval(&value.node, Bindings::NONE);
+                    let contract = Contract::new(
+                        Position::InsertValues,
+                        column_kind.clone(),
+                        2001,
+                    );
+                    if let Some(value_kind) = contract.violation(&term, &fact) {
                         let span = surrealguard_syntax::span::SourceSpan::new(
                             ctx.source().clone(),
                             value.span,

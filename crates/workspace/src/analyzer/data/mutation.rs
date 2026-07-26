@@ -595,19 +595,33 @@ fn check_assignment_value(
             }
         }
     };
-    if !contract.decide(&value_kind).is_violation() {
-        return;
+    if contract.decide(&value_kind).is_violation() {
+        emit_write_mismatch(
+            ctx,
+            table,
+            &segments.join("."),
+            assignment.value.span,
+            &value_kind,
+            &field_kind,
+        );
     }
-    let span =
-        surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), assignment.value.span);
-    let field = segments.join(".");
-    // The field's declared type is the contract the value failed, so it is
-    // both what the reader is pointed at and what decides which members of
-    // the value are worth naming.
-    let declared = crate::render_kind(&field_kind);
-    let actual = crate::render::render_offending(&value_kind, Some(&field_kind));
-    // One contract: the value must inhabit the field's declared type. NONE
-    // gets the actionable variant of the message, not its own code.
+}
+
+/// The 2001 a failed write raises. One contract — the value must inhabit the
+/// field's declared type — so the declared type is both what the reader is
+/// pointed at and what decides which members of the value are worth naming.
+/// NONE gets the actionable variant of the message, not its own code.
+fn emit_write_mismatch(
+    ctx: &mut AnalysisContext<'_>,
+    table: &TableDef,
+    field: &str,
+    span: ByteRange,
+    value_kind: &Kind,
+    field_kind: &Kind,
+) {
+    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
+    let declared = crate::render_kind(field_kind);
+    let actual = crate::render::render_offending(value_kind, Some(field_kind));
     let mut finding = if matches!(value_kind, Kind::None | Kind::Null) {
         surrealguard_diagnostics::catalog::finding(
             span,
@@ -624,7 +638,7 @@ fn check_assignment_value(
             format!("`{field}` is declared `{declared}`, but this value is `{actual}`"),
         )
     };
-    if let Some(def) = table.fields.get(&field) {
+    if let Some(def) = table.fields.get(field) {
         finding = finding.with_related(def.name_span.clone(), format!("`{field}` is defined here"));
     }
     ctx.emit(finding);

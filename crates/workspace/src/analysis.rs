@@ -3788,7 +3788,7 @@ INSERT INTO person { name: 'Ada' };
                 "`age` is declared `int`, but this value is `'old'`",
                 "`age` is declared `int`, but this value is `'old'`",
                 "`age` is declared `int`, but this value is `'old'`",
-                "`age` is declared `int`, but this value is `string`",
+                "`age` is declared `int`, but this value is `'old'`",
             ]
         );
     }
@@ -3877,7 +3877,7 @@ INSERT INTO person { name: 'Ada' };
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(messages, vec!["`age` is declared `int`, but this value is `string`"]);
+        assert_eq!(messages, vec!["`age` is declared `int`, but this value is `'old'`"]);
     }
 
     #[test]
