@@ -742,8 +742,8 @@ fn binary_fact(
             crate::analyzer::flow::narrow::apply_effects(ctx, &and_effects);
             infer_expression_fact(rhs, ctx)
         })
-    } else if let Some(path) = none_guarded_path(&op.node, lhs) {
-        with_guard_narrowed(&path, ctx, |ctx| infer_expression_fact(rhs, ctx))
+    } else if let Some(effect) = none_guarded_effect(&op.node, lhs) {
+        with_guard_narrowed(&effect, ctx, |ctx| infer_expression_fact(rhs, ctx))
     } else {
         infer_expression_fact(rhs, ctx)
     };
@@ -765,14 +765,23 @@ fn binary_fact(
     fact.with_partial(PartialReason::UnsupportedSyntax("BinaryExpression".into()))
 }
 
-/// The param/path narrowed by a `= NONE OR` / `!= NONE AND` guard on the
-/// *left* operand: `$x = NONE` under `OR`, or `$x != NONE` under `AND`. The
-/// guarded target is a bare param (`$x`) or a simple field path
-/// (`$file.folder`) whose non-none kind the right operand may assume.
-pub(crate) fn none_guarded_path(
+/// The refinement a `= <sentinel> OR` / `!= <sentinel> AND` guard on the
+/// *left* operand proves about the right one: `$x = NONE` under `OR`, or
+/// `$x != NONE` under `AND` — and the same two spellings against `NULL`.
+///
+/// Either way the right operand runs only where the sentinel test **failed**,
+/// so it may assume the subject is not that sentinel — and *only* that one.
+/// `NULL = NONE` is FALSE on the engine, so `$x != NONE AND …` on an
+/// `option<string | null>` leaves `null` reachable in the right operand.
+///
+/// The guarded target is a bare param (`$x`) or a simple field path
+/// (`$file.folder`). The sentinel recognizer is the one the flow guards and
+/// the dead-branch verdicts use, so all three can never disagree about which
+/// sentinel a comparison eliminates.
+pub(crate) fn none_guarded_effect(
     op: &ast::BinaryOp,
     lhs: &ast::Spanned<ast::Expr>,
-) -> Option<crate::analyzer::flow::narrow::GuardPath> {
+) -> Option<crate::analyzer::flow::narrow::Effect> {
     let want_eq = match op {
         ast::BinaryOp::Or => true,
         ast::BinaryOp::And => false,
@@ -794,74 +803,43 @@ pub(crate) fn none_guarded_path(
     if !matches_op {
         return None;
     }
-    // One side is the param/path, the other the `NONE` literal.
-    let is_none = |e: &ast::Spanned<ast::Expr>| {
-        matches!(&e.node, ast::Expr::Literal(ast::Literal::None))
-    };
-    if is_none(inner_rhs) {
-        crate::analyzer::flow::narrow::guard_path_of(&inner_lhs.node)
-    } else if is_none(inner_lhs) {
-        crate::analyzer::flow::narrow::guard_path_of(&inner_rhs.node)
-    } else {
-        None
-    }
+    let (path, is_none) =
+        crate::analyzer::flow::narrow::none_or_null_guard(&inner_lhs.node, &inner_rhs.node)?;
+    Some(crate::analyzer::flow::narrow::Effect {
+        path,
+        narrowing: crate::analyzer::flow::narrow::sentinel_is_not(is_none),
+    })
 }
 
-/// Runs `f` with the guard's target narrowed to its non-none kind
-/// (`none | t` → `t`). A bare param rebinds its binding; a field path records
-/// a per-path override. A missing base or an unresolvable path leaves the
-/// environment unchanged. Shared by inference (this module) and checking
-/// (`super::check`), so both sides of a `= NONE OR` / `!= NONE AND` guard read
-/// the narrowed kind.
+/// Runs `f` with the guard's refinement applied in a scoped child env. A bare
+/// param rebinds its binding; a field path records a per-path override. An
+/// unbound base or a refinement that does not tighten leaves the environment
+/// unchanged.
+///
+/// This is [`crate::analyzer::flow::narrow::apply_effects`] — the same
+/// application the statement/branch guards use — so an in-expression guard and
+/// the identical guard written as an `IF` can never narrow to different kinds.
+/// Shared by inference (this module) and checking (`super::check`), so both
+/// read the same narrowed kind.
 pub(crate) fn with_guard_narrowed<T>(
-    path: &crate::analyzer::flow::narrow::GuardPath,
+    effect: &crate::analyzer::flow::narrow::Effect,
     ctx: &mut AnalysisContext<'_>,
     f: impl FnOnce(&mut AnalysisContext<'_>) -> T,
 ) -> T {
-    if path.is_bare() {
-        return with_none_narrowed(&path.param, ctx, f);
-    }
-    // Resolve the path's declared kind, strip none, and override that exact
-    // path for the duration of `f`.
-    let narrowed = ctx
-        .env()
-        .let_fact(&path.param)
-        .and_then(|fact| fact.kind.clone())
-        .and_then(|base| step_field_path(&base, &path.fields, ctx.schema()))
-        .map(|kind| narrow_out_none(&kind));
-    match narrowed {
-        Some(kind) => ctx.with_child_env(|ctx| {
-            ctx.define_narrowed_path(path.key(), kind);
-            f(ctx)
-        }),
-        None => f(ctx),
-    }
-}
-
-/// Runs `f` with bare param `param` rebound to its non-none kind
-/// (`none | t` → `t`). A missing or non-optional binding leaves the
-/// environment unchanged.
-pub(crate) fn with_none_narrowed<T>(
-    param: &str,
-    ctx: &mut AnalysisContext<'_>,
-    f: impl FnOnce(&mut AnalysisContext<'_>) -> T,
-) -> T {
-    let narrowed = ctx.env().let_fact(param).cloned().and_then(|mut fact| {
-        let kind = narrow_out_none(fact.kind.as_ref()?);
-        fact.kind = Some(kind);
-        Some(fact)
-    });
-    match narrowed {
-        Some(fact) => ctx.with_child_env(|ctx| {
-            ctx.define_local(param.to_string(), fact);
-            f(ctx)
-        }),
-        None => f(ctx),
-    }
+    ctx.with_child_env(|ctx| {
+        crate::analyzer::flow::narrow::apply_effects(ctx, std::slice::from_ref(effect));
+        f(ctx)
+    })
 }
 
 /// Drops the `none`/`null` variants from a union: `none | string` becomes
-/// `string`. A non-union kind is returned unchanged.
+/// `string`.
+///
+/// This is the **coalesce** rule, not a guard rule: `??` falls through on both
+/// sentinels (`NONE ?? 'd'` and `NULL ?? 'd'` both yield `'d'` on the engine),
+/// so both go. A `!= NONE` guard eliminates only `none` — that is
+/// [`crate::analyzer::flow::narrow::Narrowing::StripNone`]. A non-union kind is
+/// returned unchanged.
 pub(crate) fn narrow_out_none(kind: &Kind) -> Kind {
     let Kind::Either(variants) = kind else {
         return kind.clone();

@@ -44,10 +44,10 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
                     check_value_expression(ctx, rhs);
                     check_binary(ctx, expr, lhs, &op.node, rhs);
                 });
-            } else if let Some(path) =
-                crate::analyzer::expression::infer::none_guarded_path(&op.node, lhs)
+            } else if let Some(effect) =
+                crate::analyzer::expression::infer::none_guarded_effect(&op.node, lhs)
             {
-                crate::analyzer::expression::infer::with_guard_narrowed(&path, ctx, |ctx| {
+                crate::analyzer::expression::infer::with_guard_narrowed(&effect, ctx, |ctx| {
                     check_value_expression(ctx, rhs);
                     check_binary(ctx, expr, lhs, &op.node, rhs);
                 });
@@ -1043,7 +1043,51 @@ mod tests {
         }
     }
 
+    // ---- sentinel guards eliminate only their own sentinel ----
+
+    #[test]
+    fn an_in_expression_none_guard_leaves_null_reachable() {
+        // `$x != NONE AND f($x)` runs `f` exactly where the left held — and
+        // `RETURN NULL != NONE` is `true` on the engine, so a NULL reaches
+        // `f`. `string::len(NULL)` is a runtime error ("Expected `string` but
+        // found `NULL`"), so this must fire; narrowing `$x` to `string` here
+        // hid a genuine failure.
+        const NULLABLE: &str =
+            "DEFINE FUNCTION fn::f($x: option<string | null>) { RETURN ";
+        for guard in [
+            "$x != NONE AND string::len($x) > 0",
+            "$x = NONE OR string::len($x) > 0",
+        ] {
+            let query = format!("{NULLABLE}{guard}; }};");
+            assert!(fires(&query, "E5002"), "{guard}: {:?}", codes(&query));
+        }
+
+        // The must-still-narrow boundary: with no `null` in the declared type
+        // the same guards make `$x` a plain `string`, and nothing fires.
+        const OPTIONAL: &str = "DEFINE FUNCTION fn::f($x: option<string>) { RETURN ";
+        for guard in [
+            "$x != NONE AND string::len($x) > 0",
+            "$x = NONE OR string::len($x) > 0",
+        ] {
+            let query = format!("{OPTIONAL}{guard}; }};");
+            assert!(!fires(&query, "E5002"), "{guard}: {:?}", codes(&query));
+        }
+    }
+
     // ---- `??` strips NONE, so a coalesced option is a plain value (2004) ----
+
+    #[test]
+    fn coalesce_strips_both_sentinels_unlike_a_none_guard() {
+        // `??` is not a guard: it falls through on BOTH sentinels (`NONE ?? 'd'`
+        // and `NULL ?? 'd'` both yield `'d'` on the engine), so a coalesced
+        // `option<string | null>` really is a plain `string`.
+        let query = concat!(
+            "DEFINE TABLE t SCHEMAFULL;\n",
+            "DEFINE FIELD note ON t TYPE option<string | null>;\n",
+            "SELECT VALUE (note ?? 'd') + '!' FROM t;\n",
+        );
+        assert!(!fires(query, "E2004"), "codes: {:?}", codes(query));
+    }
 
     #[test]
     fn coalesced_option_is_usable_in_arithmetic() {

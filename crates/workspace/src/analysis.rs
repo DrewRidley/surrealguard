@@ -1341,6 +1341,48 @@ INSERT INTO person { name: 'Ada' };
         );
     }
 
+    #[test]
+    fn a_sentinel_guard_narrows_out_only_its_own_sentinel() {
+        // `NONE` and `NULL` are distinct values in SurrealDB — verified on the
+        // engine, `RETURN NULL = NONE` is `false` and `RETURN NONE IS NULL` is
+        // `false`. So a NULL passes an `IF $x = NONE THEN THROW` guard and
+        // reaches the code after it: the narrowed type is `string | null`, and
+        // reporting `string` is a type the database can violate.
+        //
+        // Each row is (param type, guard, expected narrowed return).
+        for (param, guard, expected) in [
+            // The unsoundness: `= NONE` / `IS NONE` must keep the `null`.
+            ("option<string | null>", "$x = NONE", "string | null"),
+            ("option<string | null>", "$x IS NONE", "string | null"),
+            // The mirror: `= NULL` eliminates only NULL, keeping `none`.
+            ("option<string | null>", "$x = NULL", "option<string>"),
+            ("option<string | null>", "$x IS NULL", "option<string>"),
+            // A plain `option<T>` has no `null`, so it still narrows to `T`.
+            ("option<string>", "$x = NONE", "string"),
+            ("option<string>", "$x IS NONE", "string"),
+        ] {
+            let mut workspace = Workspace::default();
+            workspace.add_virtual_source(
+                "schema".into(),
+                format!(
+                    "DEFINE FUNCTION fn::probe($x: {param}) {{ \
+                     IF {guard} THEN THROW 'x' END; RETURN $x; }};"
+                ),
+            );
+            let query =
+                workspace.add_virtual_source("query".into(), "RETURN fn::probe('a');".into());
+
+            let output = analyze_workspace(&workspace);
+            let rendered = crate::render_kind(
+                output.sources[&query]
+                    .response_kind
+                    .as_ref()
+                    .expect("response kind"),
+            );
+            assert_eq!(rendered, expected, "{param} guarded by `{guard}`");
+        }
+    }
+
     /// The 1001 findings raised for a one-source schema workspace.
     fn unknown_table_findings(schema: &str) -> Vec<String> {
         let mut workspace = Workspace::default();

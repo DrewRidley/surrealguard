@@ -10,6 +10,7 @@
 table account  [schemafull]
   field active                       : bool  [default]
   field created_at                   : datetime  [default]
+  field deactivated_reason           : option<string | null>
   field email                        : string
   field person                       : option<record<person>>
   field settings                     : { locale: option<string>, notify: bool, timezone: string }  [default]
@@ -67,6 +68,9 @@ table webhook_event  [schemafull]
   field received_at                  : datetime  [default]
 
 == schema: functions ==
+  fn::account::reason_or_default($r: option<string | null>) -> string  [inferred]
+  fn::account::reason_set($r: option<string | null>) -> string | null  [inferred]
+  fn::account::reason_uncleared($r: option<string | null>) -> option<string>  [inferred]
   fn::org::display_name($org: record<organization>) -> string  [declared]
   fn::org::headcount($org: record<organization>) -> int  [inferred]
   fn::org::is_pro($org: record<organization>) -> bool  [inferred]
@@ -93,9 +97,10 @@ table webhook_event  [schemafull]
   stmt     27:1 define_field     : (no response)
   stmt     29:1 define_field     : (no response)
   stmt     31:1 define_field     : (no response)
-  stmt     33:1 define_field     : (no response)
+  stmt     37:1 define_field     : (no response)
   stmt     39:1 define_field     : (no response)
-  stmt     41:1 define_field     : (no response)
+  stmt     45:1 define_field     : (no response)
+  stmt     47:1 define_field     : (no response)
 
 == source: schema/02_organization.surql ==
   stmt      5:1 define_table     : (no response)
@@ -149,6 +154,9 @@ table webhook_event  [schemafull]
   stmt     23:1 define_function  : (no response)
   stmt     29:1 define_function  : (no response)
   stmt     34:1 define_function  : (no response)
+  stmt     42:1 define_function  : (no response)
+  stmt     47:1 define_function  : (no response)
+  stmt     54:1 define_function  : (no response)
   let      24:6 $a               : string
   let      25:6 $b               : string
 
@@ -170,7 +178,7 @@ table webhook_event  [schemafull]
   stmt     18:1 select           : array<{ person: { first_name: option<string>, last_name: option<string> } }>
   stmt     20:1 select           : array<{ id: record<organization_settings>, organization: record<organization>, security: { byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }, updated_at: datetime }>
   stmt     24:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, org_name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
-  stmt     26:1 select           : array<{ active: bool, created_at: datetime, email: string, id: record<account>, memberships: array<record<employee_of>>, person: option<record<person>>, settings: { locale: option<string>, notify: bool, timezone: string }, updated_at: datetime, username: string }>
+  stmt     26:1 select           : array<{ active: bool, created_at: datetime, deactivated_reason: option<string | null>, email: string, id: record<account>, memberships: array<record<employee_of>>, person: option<record<person>>, settings: { locale: option<string>, notify: bool, timezone: string }, updated_at: datetime, username: string }>
   stmt     28:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, name_length: int, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
   stmt     30:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, city: string, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
   stmt     32:1 select           : array<{ address: { city: string }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
@@ -244,6 +252,21 @@ table webhook_event  [schemafull]
   let      19:5 $link            : option<record<person>>
   let      21:5 $person_id       : option<record<person>>
   diag     21:5 W7001     Warning
+
+== source: queries/35_sentinels.surql ==
+  stmt     11:1 select           : array<{ deactivated_reason: string | null }>
+       modifier where      row_preserving=true
+  stmt     13:1 select           : array<{ deactivated_reason: option<string> }>
+       modifier where      row_preserving=true
+  stmt     17:1 let              : (no response)
+  stmt     19:1 let              : (no response)
+  stmt     21:1 let              : (no response)
+  stmt     24:1 let              : (no response)
+  stmt     26:1 return           : { after_none_guard: string | null, after_null_guard: option<string>, coalesced: string }
+  let      17:5 $reason          : option<string | null>
+  let      19:5 $after_none_guard : string | null
+  let      21:5 $after_null_guard : option<string>
+  let      24:5 $coalesced       : string
 
 == source: queries/40_bindings.surql ==
   source response       : { arr: array<int, 3>, block: number, count: int, destructured: array<{ place: { city: string, country: string } }>, first: { name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }, names: array<string>, obj: { alpha: int, beta: 'two', gamma: array<bool, 2> }, tiers: array<'free' | 'pro' | 'enterprise'> }

@@ -4,9 +4,11 @@
 //! downstream sees the param narrowed to the kind consistent with the guard.
 //! This module recognizes two guard shapes on a param/`LET`-bound `$x`:
 //!
-//! - **NONE guards** — `$x = NONE`, `$x IS NONE`, `$x != NONE`,
-//!   `$x IS NOT NONE`. The positive form narrows `$x` to its non-none kind;
-//!   the negative form is the complement.
+//! - **Sentinel guards** — `$x = NONE`, `$x IS NONE`, `$x != NONE`,
+//!   `$x IS NOT NONE`, and the same four against `NULL`. Each eliminates
+//!   **only its own sentinel**: `NULL = NONE` is FALSE on the engine, so a
+//!   `!= NONE` guard leaves `null` on the table (and `!= NULL` leaves `none`).
+//!   The positive form narrows `$x`; the negative form is the complement.
 //! - **Discriminant guards** — `type::table($x) = 'lit'` / `!= 'lit'` on a
 //!   `record<...>` union. The positive `=` narrows to `record<lit>`; the
 //!   negative removes `lit` from the union.
@@ -29,17 +31,22 @@ use crate::statement_env::StatementEnv;
 /// A refinement a guard proves about a param at a program point.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Narrowing {
-    /// The param is NONE.
+    /// The value IS NONE — it can be nothing else.
     None,
+    /// The value IS NULL — it can be nothing else. `NULL` and `NONE` are
+    /// distinct values (`NULL = NONE` is FALSE on the engine), so proving one
+    /// says nothing about the other.
+    Null,
     /// The param is not NONE *and* not NULL (strip both `none` and `null`).
-    /// Used by `> / >=` ordering guards and the legacy param `!= NONE` path.
+    /// Used by the `> / >=` ordering guards (`NONE > 18` and `NULL > 18` are
+    /// both FALSE) and by `type::is_record`.
     NotNone,
     /// The value is not NONE, but MAY still be NULL — strip `none` only,
-    /// **keep `null`**. A NULL row has `is_none() == false`, so it survives a
-    /// `!= NONE` filter; stripping `null` here would be unsound.
+    /// **keep `null`**. A NULL value has `is_none() == false`, so it survives a
+    /// `!= NONE` guard; stripping `null` here would be unsound.
     StripNone,
     /// The value is not NULL, but MAY still be NONE — strip `null` only,
-    /// **keep `none`**. `NONE != NULL` is TRUE, so a NONE row survives.
+    /// **keep `none`**. `NONE != NULL` is TRUE, so a NONE value survives.
     NotNull,
     /// The value equals a literal: it becomes that literal's singleton
     /// [`Kind::Literal`], but only when the literal's base kind unifies with
@@ -410,17 +417,23 @@ fn leaf_effect(
     positive: bool,
     env: &StatementEnv,
 ) -> Option<Effect> {
-    // NONE guard: `$x = NONE` / `$x IS NONE` / `$x != NONE` / `$x IS NOT NONE`,
-    // on a bare param or a simple field path (`$file.folder != NONE`).
-    if let Some(equals_none) = none_test_polarity(op) {
-        if let Some(path) = none_guard_path(lhs, rhs) {
-            // `$x = NONE` true ⇒ None; `$x != NONE` true ⇒ NotNone.
-            let when_true = if equals_none {
-                Narrowing::None
+    // Sentinel guard: `$x = NONE` / `$x IS NONE` / `$x != NONE` /
+    // `$x IS NOT NONE` and the same four against `NULL`, on a bare param or a
+    // simple field path (`$file.folder != NONE`). This is the same recognizer
+    // the row/WHERE side uses (`row_none_null_effect`) and the same recognizer
+    // the dead-branch verdicts use — one notion of "which sentinel".
+    if let Some(equals) = none_test_polarity(op) {
+        if let Some((path, is_none)) = none_or_null_guard(lhs, rhs) {
+            // `= <sentinel>` true ⇒ the value IS that sentinel; `!=` true ⇒ it
+            // is not — and eliminates ONLY that one. `NULL = NONE` is FALSE on
+            // the engine, so `$x != NONE` on an `option<string | null>` still
+            // leaves `null` reachable; dropping it here shipped a wrong type.
+            let when_true = if equals {
+                sentinel_is(is_none)
             } else {
-                Narrowing::NotNone
+                sentinel_is_not(is_none)
             };
-            let narrowing = if positive { when_true } else { when_true.flip_none() };
+            let narrowing = if positive { when_true } else { when_true.flip_sentinel() };
             return Some(Effect { path, narrowing });
         }
     }
@@ -502,11 +515,36 @@ fn collection_element_kind(expr: &ast::Expr, env: &StatementEnv) -> Option<Kind>
     }
 }
 
+/// "The value IS this sentinel" — `NONE` when `is_none`, else `NULL`.
+pub(crate) fn sentinel_is(is_none: bool) -> Narrowing {
+    if is_none {
+        Narrowing::None
+    } else {
+        Narrowing::Null
+    }
+}
+
+/// "The value is NOT this sentinel" — and **only** this one. `NONE` and `NULL`
+/// are distinct values on the engine (`NULL = NONE` is FALSE, `NONE IS NULL` is
+/// FALSE), so `!= NONE` leaves `null` reachable and `!= NULL` leaves `none`.
+pub(crate) fn sentinel_is_not(is_none: bool) -> Narrowing {
+    if is_none {
+        Narrowing::StripNone
+    } else {
+        Narrowing::NotNull
+    }
+}
+
 impl Narrowing {
-    fn flip_none(self) -> Narrowing {
+    /// The refinement the *negation* of this guard proves. Only the sentinel
+    /// refinements have a complement worth recording: `= NONE` failing means
+    /// the value is not NONE (but may be NULL), and vice versa.
+    fn flip_sentinel(self) -> Narrowing {
         match self {
-            Narrowing::None => Narrowing::NotNone,
-            Narrowing::NotNone => Narrowing::None,
+            Narrowing::None => Narrowing::StripNone,
+            Narrowing::StripNone => Narrowing::None,
+            Narrowing::Null => Narrowing::NotNull,
+            Narrowing::NotNull => Narrowing::Null,
             other => other,
         }
     }
@@ -540,13 +578,14 @@ fn none_test_polarity(op: &ast::BinaryOp) -> Option<bool> {
     }
 }
 
-/// The param/path compared against a `NONE` literal, from either side.
-fn none_guard_path(lhs: &ast::Expr, rhs: &ast::Expr) -> Option<GuardPath> {
-    let is_none = |e: &ast::Expr| matches!(e, ast::Expr::Literal(ast::Literal::None));
-    if is_none(rhs) {
-        guard_path_of(lhs)
-    } else if is_none(lhs) {
-        guard_path_of(rhs)
+/// The `(subject path, is_none)` a `NONE`/`NULL` comparison names, from either
+/// operand order. `is_none` is `true` for the `NONE` sentinel, `false` for
+/// `NULL`.
+pub(crate) fn none_or_null_guard(lhs: &ast::Expr, rhs: &ast::Expr) -> Option<(GuardPath, bool)> {
+    if let Some(is_none) = none_or_null_literal(rhs) {
+        Some((guard_path_of(lhs)?, is_none))
+    } else if let Some(is_none) = none_or_null_literal(lhs) {
+        Some((guard_path_of(rhs)?, is_none))
     } else {
         None
     }
@@ -717,6 +756,7 @@ pub(crate) fn apply_effects_over(
 pub(crate) fn narrow_kind(kind: &Kind, narrowing: &Narrowing) -> Option<Kind> {
     match narrowing {
         Narrowing::None => Some(Kind::None),
+        Narrowing::Null => Some(Kind::Null),
         Narrowing::NotNone => {
             let narrowed = narrow_out_none(kind);
             (narrowed != *kind).then_some(narrowed)
@@ -951,19 +991,6 @@ fn is_record_verdict(call: &ast::Call, env: &StatementEnv) -> Verdict {
         return Verdict::Unknown;
     };
     table_eq_verdict(&kind, &table)
-}
-
-/// The `(subject path, is_none)` a `NONE`/`NULL` comparison names, from either
-/// operand order. `is_none` is `true` for the `NONE` sentinel, `false` for
-/// `NULL`.
-fn none_or_null_guard(lhs: &ast::Expr, rhs: &ast::Expr) -> Option<(GuardPath, bool)> {
-    if let Some(is_none) = none_or_null_literal(rhs) {
-        Some((guard_path_of(lhs)?, is_none))
-    } else if let Some(is_none) = none_or_null_literal(lhs) {
-        Some((guard_path_of(rhs)?, is_none))
-    } else {
-        None
-    }
 }
 
 /// The **flow-narrowed** kind in force for a guard subject, or `None` when the
@@ -1399,12 +1426,20 @@ mod tests {
 
     #[test]
     fn none_guards_narrow_both_polarities() {
+        // Each sentinel guard eliminates ONLY its own sentinel. `NULL = NONE`
+        // is FALSE on the engine, so a NULL value passes a `= NONE` guard and
+        // reaches the code after it: `!= NONE` is `StripNone` (keep `null`),
+        // never the both-sentinel `NotNone`. `!= NULL` is the mirror.
         let env = StatementEnv::default();
         for (query, pos, neg) in [
-            ("RETURN $x = NONE;", Narrowing::None, Narrowing::NotNone),
-            ("RETURN $x != NONE;", Narrowing::NotNone, Narrowing::None),
-            ("RETURN $x IS NONE;", Narrowing::None, Narrowing::NotNone),
-            ("RETURN $x IS NOT NONE;", Narrowing::NotNone, Narrowing::None),
+            ("RETURN $x = NONE;", Narrowing::None, Narrowing::StripNone),
+            ("RETURN $x != NONE;", Narrowing::StripNone, Narrowing::None),
+            ("RETURN $x IS NONE;", Narrowing::None, Narrowing::StripNone),
+            ("RETURN $x IS NOT NONE;", Narrowing::StripNone, Narrowing::None),
+            ("RETURN $x = NULL;", Narrowing::Null, Narrowing::NotNull),
+            ("RETURN $x != NULL;", Narrowing::NotNull, Narrowing::Null),
+            ("RETURN $x IS NULL;", Narrowing::Null, Narrowing::NotNull),
+            ("RETURN $x IS NOT NULL;", Narrowing::NotNull, Narrowing::Null),
         ] {
             let c = cond(query);
             assert_eq!(
@@ -1439,7 +1474,7 @@ mod tests {
             positive_effects(&c, &env),
             vec![Effect {
                 path: path.clone(),
-                narrowing: Narrowing::NotNone
+                narrowing: Narrowing::StripNone
             }]
         );
         assert_eq!(
@@ -1538,13 +1573,62 @@ mod tests {
             vec![
                 Effect {
                     path: GuardPath::bare("a".into()),
-                    narrowing: Narrowing::NotNone
+                    narrowing: Narrowing::StripNone
                 },
                 Effect {
                     path: GuardPath::bare("b".into()),
-                    narrowing: Narrowing::NotNone
+                    narrowing: Narrowing::StripNone
                 }
             ]
+        );
+    }
+
+    #[test]
+    fn each_sentinel_refinement_removes_only_its_own_sentinel() {
+        // `option<string | null>`. Verified on SurrealDB 3.x:
+        //   RETURN NULL = NONE   -> false      RETURN NONE IS NULL     -> false
+        //   RETURN NULL != NONE  -> true       RETURN NONE IS NOT NULL -> true
+        // so a `!= NONE` guard leaves `null` reachable and a `!= NULL` guard
+        // leaves `none` reachable. Collapsing either to the both-sentinel
+        // `NotNone` produces a type the database can violate.
+        let optional_nullable = Kind::Either(vec![Kind::None, Kind::Null, Kind::String]);
+
+        assert_eq!(
+            narrow_kind(&optional_nullable, &Narrowing::StripNone),
+            Some(Kind::Either(vec![Kind::Null, Kind::String])),
+            "`!= NONE` must keep `null`"
+        );
+        assert_eq!(
+            narrow_kind(&optional_nullable, &Narrowing::NotNull),
+            Some(Kind::Either(vec![Kind::None, Kind::String])),
+            "`!= NULL` must keep `none`"
+        );
+        assert_eq!(
+            narrow_kind(&optional_nullable, &Narrowing::None),
+            Some(Kind::None)
+        );
+        assert_eq!(
+            narrow_kind(&optional_nullable, &Narrowing::Null),
+            Some(Kind::Null)
+        );
+
+        // A plain `option<string>` has no `null` to keep, so both the sentinel
+        // refinement and the both-sentinel one land on `string`.
+        let optional = Kind::Either(vec![Kind::None, Kind::String]);
+        assert_eq!(
+            narrow_kind(&optional, &Narrowing::StripNone),
+            Some(Kind::String)
+        );
+        assert_eq!(
+            narrow_kind(&optional, &Narrowing::NotNone),
+            Some(Kind::String)
+        );
+
+        // The ordering guards keep the both-sentinel refinement: `NONE > 18`
+        // and `NULL > 18` are both FALSE, so both are filtered out.
+        assert_eq!(
+            narrow_kind(&optional_nullable, &Narrowing::NotNone),
+            Some(Kind::String)
         );
     }
 

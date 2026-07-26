@@ -30,6 +30,12 @@ DEFINE FIELD person ON account TYPE option<record<person>>;
 
 DEFINE FIELD active ON account TYPE bool DEFAULT true;
 
+-- `NONE` and `NULL` are distinct values: never set vs explicitly cleared. The
+-- engine agrees — `NULL = NONE` is FALSE, so a NULL row survives a `!= NONE`
+-- filter and a NONE row survives a `!= NULL` one. This field is what keeps the
+-- two apart in the snapshot.
+DEFINE FIELD deactivated_reason ON account TYPE option<string | null>;
+
 DEFINE FIELD settings ON account TYPE {
 	timezone: string,
 	locale: option<string>,

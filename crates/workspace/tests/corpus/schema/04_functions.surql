@@ -34,3 +34,23 @@ DEFINE FUNCTION fn::org::is_pro($org: record<organization>) {
 DEFINE FUNCTION fn::org::label($org: record<organization>) {
 	RETURN string::concat(fn::org::display_name($org), ' (', $org.tier, ')');
 };
+
+-- Sentinel guards: each eliminates ONLY its own sentinel. `IF $r = NONE THEN
+-- THROW` leaves `null` reachable (a NULL passes the guard), and `IF $r = NULL
+-- THEN THROW` leaves `none` reachable. Collapsing either to "not none and not
+-- null" is a type the database can violate.
+DEFINE FUNCTION fn::account::reason_set($r: option<string | null>) {
+	IF $r = NONE THEN THROW 'never set' END;
+	RETURN $r;
+};
+
+DEFINE FUNCTION fn::account::reason_uncleared($r: option<string | null>) {
+	IF $r = NULL THEN THROW 'explicitly cleared' END;
+	RETURN $r;
+};
+
+-- `??` is not a guard: it falls through on BOTH sentinels, so the coalesced
+-- value really is a plain `string`.
+DEFINE FUNCTION fn::account::reason_or_default($r: option<string | null>) {
+	RETURN $r ?? 'none given';
+};
