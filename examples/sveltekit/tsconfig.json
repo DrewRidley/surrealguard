@@ -16,6 +16,5 @@
       "$lib/*": ["./src/lib/*"]
     }
   },
-  "//": "tsc type-checks the .ts data layer (the typed round-trip). Run svelte-check for the .svelte components.",
-  "include": ["src/**/*.ts", "surrealguard.generated.ts"]
+  "include": ["src/**/*.ts", "src/**/*.svelte", "surrealguard.generated.ts"]
 }

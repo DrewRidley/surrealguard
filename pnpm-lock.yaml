@@ -49,9 +49,14 @@ importers:
       svelte:
         specifier: ^5.1.0
         version: 5.56.7
+      svelte-check:
+        specifier: ^4.0.0
+        version: 4.7.3(picomatch@4.0.5)(svelte@5.56.7)(typescript@5.9.3)
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
+
+  npm/surrealguard: {}
 
   packages/client:
     devDependencies:
@@ -62,10 +67,10 @@ importers:
   packages/next:
     dependencies:
       '@surrealguard/client':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../client
       '@surrealguard/query':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../query
     devDependencies:
       '@testing-library/react':
@@ -93,7 +98,7 @@ importers:
   packages/query:
     dependencies:
       '@surrealguard/client':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../client
     devDependencies:
       surrealdb:
@@ -103,10 +108,10 @@ importers:
   packages/svelte:
     dependencies:
       '@surrealguard/client':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../client
       '@surrealguard/query':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../query
     devDependencies:
       '@sveltejs/package':

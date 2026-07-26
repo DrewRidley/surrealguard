@@ -3,10 +3,10 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "SvelteKit / Svelte 5 SurrealGuard example: typed liveQuery + db.query.",
+  "description": "SvelteKit / Svelte 5 SurrealGuard example: typed createLive + preload.",
   "scripts": {
     "generate": "surrealguard generate --out surrealguard.generated.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
     "@surrealguard/client": "workspace:*",
@@ -16,6 +16,7 @@
   },
   "devDependencies": {
     "svelte": "^5.1.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "svelte-check": "^4.0.0"
   }
 }

@@ -1,64 +1,96 @@
 // A vanilla-TypeScript SurrealGuard demo.
 //
-// `surrealguard generate` scanned this file, found the `db.query("...")` calls
-// below, analyzed each against `schema/schema.surql`, and wrote
-// `surrealguard.generated.ts` — a module augmentation that types every query by
-// its exact text. We import the client from that generated file, so the
-// augmentation loads with it and `db.query(...)` is fully typed.
+// `surrealguard generate` scanned this project, found the query text in
+// `src/queries.ts`, analyzed each query against `schema/schema.surql`, and
+// wrote `surrealguard.generated.ts` — a module augmentation that types every
+// query by its exact text. We import the entry points from that generated file,
+// so the augmentation loads with them and everything below is fully typed.
 
-import { SurrealGuardClient } from "../surrealguard.generated";
-import type { RecordId } from "@surrealguard/client";
+import { createClient, RecordId, SurrealGuardError } from "../surrealguard.generated";
+import {
+  addPerson,
+  allPeople,
+  liveTeam,
+  livePeople,
+  namesAndAges,
+  peopleOf,
+} from "./queries";
+
+// The connection opens lazily on first use, so a module-level client is safe
+// and nothing has to remember to `await db.connect(...)`.
+const db = createClient({
+  url: "ws://localhost:8000/rpc",
+  namespace: "demo",
+  database: "demo",
+});
 
 async function main() {
-  const db = new SurrealGuardClient();
-  await db.connect("ws://localhost:8000/rpc");
-
-  const team = "team:red" as RecordId<"team">;
-
-  // Result AND params are inferred from the query text against the schema:
-  //   result: Array<{ name: string }>
-  //   params: { team: RecordId<"team"> }   (person.team is `record<team>`)
-  const [rows] = await db.query(
-    "SELECT name FROM person WHERE team = $team",
-    { team },
-  );
-
-  for (const row of rows) {
-    // `row.name` is a string; `row.nope` would be a compile error.
-    console.log(row.name.toUpperCase());
-  }
-
-  // A second query with no params: the params argument is forbidden, and the
-  // result carries the record link as a branded `RecordId<"team">`.
-  const [people] = await db.query("SELECT name, age, team FROM person");
+  // ---- Reading ------------------------------------------------------------
+  // A single-statement query resolves to its rows directly — no destructure.
+  // Result and params are both inferred from the query text against the schema.
+  const people = await db.run(allPeople);
   for (const person of people) {
-    console.log(person.name, person.age, person.team);
+    // `person.name` is a string; `person.nope` would be a compile error.
+    console.log(person.name.toUpperCase(), person.age.toFixed(0));
   }
 
-  // ---- Multi-statement: one result per statement, in order ------------------
-  // The SDK returns one result per statement, so a two-statement query resolves
-  // to a two-element tuple. Each destructured element is typed from its own
-  // statement: `names` is the first SELECT's rows, `ages` the second's.
-  const [names, ages] = await db.query(
-    "SELECT name FROM person; SELECT age FROM person",
-  );
+  // ---- Record links are RecordId, and that is the whole point --------------
+  // `person.team` is `record<team>` in the schema, so it decodes as a RecordId
+  // — the SDK's own class, not a string. Reading it is honest:
+  console.log(people[0]?.team.table, people[0]?.team.id);
+
+  // …and WRITING it is why this matters. A RecordId parameter encodes to a
+  // record link on the wire (CBOR tag 8); a plain string encodes to a SurrealQL
+  // string. `WHERE team = $team` matches only with the class, so the 0.4 shape
+  // — a branded string — returned zero rows, silently.
+  const team = new RecordId("team", "red");
+  const red = await db.run(peopleOf, { team });
+  console.log(red.map((person) => person.name));
+
+  // ---- Multi-statement: the per-statement tuple stays ---------------------
+  // SurrealDB returns one result per statement, so nothing is hidden: only a
+  // SINGLE-statement query unwraps.
+  const [names, ages] = await db.run(namesAndAges);
   for (const { name } of names) console.log(name.toUpperCase());
   for (const { age } of ages) console.log(age.toFixed(0));
 
-  // The tuple has exactly two statements — a third element is out of range.
-  // @ts-expect-error the result tuple has no third statement.
-  const [, , third] = await db.query(
-    "SELECT name FROM person; SELECT age FROM person",
-  );
-  void third;
+  // ---- Writing, and telling the cache about it ---------------------------
+  await db.run(addPerson, { name: "ada", age: 36, team });
+  await db.invalidate(allPeople);           // every binding of that query
+  await db.invalidate(peopleOf.with({ team })); // just that binding
 
-  // ---- The guarantee, made concrete ---------------------------------------
-  // A wrong param type is a *compile* error, not a runtime surprise. `team` is
-  // a `RecordId<"team">` (a branded string); a number is rejected. The
-  // `@ts-expect-error` asserts tsc catches it — remove it and `tsc --noEmit`
-  // fails, which is the whole point of generating types.
-  // @ts-expect-error team must be a RecordId<"team">, not a number.
-  await db.query("SELECT name FROM person WHERE team = $team", { team: 123 });
+  // ---- Live, with no other package ---------------------------------------
+  // `@surrealguard/client` can subscribe on its own. In 0.4, `db.live(...)`
+  // returned an inert descriptor and receiving a row required installing
+  // `@surrealguard/query` and finding `getQueryClient(db).observeLive(...)`.
+  const stop = db.watch(livePeople, (rows) => {
+    for (const row of rows) console.log("live:", row.name, row.age);
+  });
+
+  // A live query with parameters must be bound before it can be watched — one
+  // uniform rule, enforced by the compiler.
+  const stopTeam = db.watch(liveTeam.with({ team }), (rows) => {
+    console.log("red team:", rows.length);
+  });
+
+  // ---- Crossing a serialisation boundary ---------------------------------
+  // `Json<T>` is the SDK's own projection: a RecordId becomes `person:${string}`
+  // and a datetime becomes a string, so this survives JSON.stringify, devalue,
+  // and a React Server Component's props.
+  const serialisable = await db.runJson(allPeople);
+  console.log(JSON.stringify(serialisable));
+  console.log(serialisable[0]?.team.startsWith("team:"));
+
+  stop();
+  stopTeam();
+  await db.close();
 }
 
-void main;
+// ---- Errors carry the query that failed ----------------------------------
+void main().catch((error: unknown) => {
+  if (error instanceof SurrealGuardError) {
+    console.error("query failed:", error.query, error.params, error.cause);
+  } else {
+    throw error;
+  }
+});

@@ -42,8 +42,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@surrealguard/client": "0.5.0",
-    "@surrealguard/query": "0.5.0"
+    "@surrealguard/client": "workspace:^",
+    "@surrealguard/query": "workspace:^"
   },
   "peerDependencies": {
     "svelte": "^5",

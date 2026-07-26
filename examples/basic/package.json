@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Vanilla-TS SurrealGuard example: surrealguard generate -> typed db.query.",
+  "description": "Vanilla-TS SurrealGuard example: surrealguard generate -> typed defineQuery + db.run.",
   "scripts": {
     "generate": "surrealguard generate --out surrealguard.generated.ts",
     "typecheck": "tsc --noEmit"

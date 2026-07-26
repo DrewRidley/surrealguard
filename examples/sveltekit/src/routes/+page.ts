@@ -1,21 +1,24 @@
-// SvelteKit `load`: seed the live query's rows on the server so the first paint
-// is gap-free, then the component upgrades to live on the client.
+// SvelteKit `load`: fetch on the server so the first paint is gap-free, then
+// the component upgrades to live on the client.
 //
-// `loadLive` runs the live descriptor's underlying SELECT once; its row type is
-// inferred from the generated registry, so `people` is fully typed here.
+// `preload` returns a payload that REMEMBERS which query it is — its key, text
+// and params travel with the rows — so `+page.svelte` subscribes to exactly
+// this query without naming it again. In 0.4 the component had to repeat the
+// query text byte-for-byte or silently lose the seed.
+//
+// The payload is plain values (a RecordId is already `person:${string}`), so
+// devalue accepts it without a `transport` hook.
 
-import { loadLive } from "@surrealguard/svelte";
+import { preload } from "@surrealguard/svelte";
 import { db } from "$lib/db";
+import { livePeople } from "$lib/queries";
 
 export async function load() {
-  const people = await loadLive(
-    db,
-    db.live(`SELECT name, age, team FROM person`),
-  );
+  const people = await preload(db, livePeople);
 
-  // `people` is Array<{ name: string; age: number; team: RecordId<"team">; ... }>
-  // — typed from the schema, no cast. Reading a bogus field is a compile error.
-  const names: string[] = people.map((person) => person.name);
+  // Fully typed from the schema, with no cast: reading a bogus field here is a
+  // compile error.
+  const names: string[] = people.data.map((person) => person.name);
 
   return { people, names };
 }

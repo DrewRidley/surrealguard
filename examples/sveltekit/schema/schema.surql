@@ -1,5 +1,5 @@
 -- Schema for the SvelteKit example. `surrealguard generate` types every
--- embedded `db.query(...)` / `db.live(\`...\`)` against these DEFINEs.
+-- query named with `defineQuery` / `defineLive` against these DEFINEs.
 
 DEFINE TABLE team SCHEMAFULL;
 DEFINE FIELD name ON team TYPE string;
