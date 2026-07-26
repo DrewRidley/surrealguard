@@ -450,25 +450,22 @@ pub fn method_result(
 /// one or more plain `Field` parts), if the idiom is one. This is the shape a
 /// flow guard can narrow (`$file.folder != NONE`); anything with an index,
 /// method, graph step, etc. is not a narrowable path.
+///
+/// The same denotation `guard_path_of` reads, so the two can no longer
+/// disagree about what a path is — they differed only in return type, and
+/// that is now the only thing they differ in.
 pub(crate) fn simple_idiom_path_key(idiom: &ast::Idiom) -> Option<String> {
-    let mut parts = idiom.parts.iter();
-    let ast::IdiomPart::Start(start) = &parts.next()?.node else {
+    let place = crate::analyzer::facts::place_of(&ast::Expr::Idiom(idiom.clone()))?;
+    let crate::analyzer::facts::PlaceRoot::Param(_) = &place.root else {
         return None;
     };
-    let ast::Expr::Param(param) = &start.node else {
+    // A bare `$x` is not a *field* path: this key exists to look up a
+    // narrowing recorded for a sub-path, and the base param has its own
+    // binding.
+    if place.path.is_empty() {
         return None;
-    };
-    let mut key = param.clone();
-    let mut had_field = false;
-    for part in parts {
-        let ast::IdiomPart::Field(name) = &part.node else {
-            return None;
-        };
-        key.push('.');
-        key.push_str(name);
-        had_field = true;
     }
-    had_field.then_some(key)
+    place.key()
 }
 
 /// Steps a base kind through a chain of field segments via the schema —

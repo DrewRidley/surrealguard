@@ -657,9 +657,10 @@ fn literal_union_excludes(
 
 /// The sentinel kind an operand is a bare literal of, if it is `NONE`/`NULL`.
 fn sentinel_literal(expr: &ast::Spanned<ast::Expr>) -> Option<Kind> {
-    match &expr.node {
-        ast::Expr::Literal(ast::Literal::None) => Some(Kind::None),
-        ast::Expr::Literal(ast::Literal::Null) => Some(Kind::Null),
+    use crate::analyzer::facts::{eval, Bindings, ConstValue, Term};
+    match eval(&expr.node, Bindings::NONE) {
+        Term::Const(ConstValue::None) => Some(Kind::None),
+        Term::Const(ConstValue::Null) => Some(Kind::Null),
         _ => None,
     }
 }

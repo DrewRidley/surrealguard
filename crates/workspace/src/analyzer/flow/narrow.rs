@@ -19,12 +19,16 @@
 //! `= NONE OR` / `!= NONE AND` narrowing (`infer::none_guarded_param`) to
 //! statement and branch flow.
 
-use surrealdb_types::{Kind, KindLiteral, Table};
+use surrealdb_types::{Kind, Table};
 use surrealguard_syntax::ast;
 use surrealguard_syntax::span::ByteRange;
 
 use crate::analyzer::const_eval::{BranchReach, Reachability};
 use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::facts::{
+    eval, Bindings, ConstValue, DiscriminantKind, Place, PlaceRoot, Term,
+};
+use crate::analyzer::facts::place_of;
 use crate::analyzer::expression::infer::narrow_out_none;
 use crate::statement_env::StatementEnv;
 
@@ -285,51 +289,49 @@ fn flip_order(op: &ast::BinaryOp) -> Option<ast::BinaryOp> {
     })
 }
 
-/// The bare row-field path an expression names — an idiom of plain `Field`
-/// segments only (`email`, `profile.email`). A param-rooted idiom (`$x.f`)
-/// has a `Start` first part and yields `None`, so it is never a row field.
+/// The bare row-field path an expression names (`email`, `profile.email`).
+/// A param-rooted expression (`$x.f`) names a param place, not a row field.
 fn row_field_path(expr: &ast::Expr) -> Option<Vec<String>> {
-    let ast::Expr::Idiom(idiom) = expr else {
-        return None;
-    };
-    crate::analyzer::expression::infer::plain_field_segments(idiom)
+    let place = place_of(expr)?;
+    matches!(place.root, PlaceRoot::RowField)
+        .then(|| place.field_path())
+        .flatten()
 }
 
-/// The row-field argument of a `type::table(<field>)` call.
+/// The row-field path a `type::table(<field>)` call discriminates.
 fn row_type_table_field(expr: &ast::Expr) -> Option<Vec<String>> {
-    let ast::Expr::Call(call) = expr else {
+    let Term::Discriminant {
+        of,
+        kind: DiscriminantKind::RecordTable,
+    } = eval(expr, Bindings::NONE)
+    else {
         return None;
     };
-    if call.path.node != "type::table" {
-        return None;
-    }
-    let [arg] = call.args.as_slice() else {
-        return None;
-    };
-    row_field_path(&arg.node)
+    matches!(of.root, PlaceRoot::RowField)
+        .then(|| of.field_path())
+        .flatten()
 }
 
-/// `Some(true)` for the `NONE` literal, `Some(false)` for `NULL`, else `None`.
+/// `Some(true)` for the `NONE` sentinel, `Some(false)` for `NULL`, else `None`.
+///
+/// One of the four recognizers §1.5 of the fact-layer design counted; the
+/// other three keep their own *policies* (which sentinel narrows what) but
+/// now read the same denotation, so they can no longer disagree about which
+/// sentinel a comparison names.
 fn none_or_null_literal(expr: &ast::Expr) -> Option<bool> {
-    match expr {
-        ast::Expr::Literal(ast::Literal::None) => Some(true),
-        ast::Expr::Literal(ast::Literal::Null) => Some(false),
+    match eval(expr, Bindings::NONE) {
+        Term::Const(ConstValue::None) => Some(true),
+        Term::Const(ConstValue::Null) => Some(false),
         _ => None,
     }
 }
 
-/// The singleton [`Kind::Literal`] a comparable scalar literal denotes, for the
-/// `f = <lit>` refinement. NONE/NULL and non-representable literals (datetime,
-/// uuid, regex) are excluded — they are handled elsewhere or not narrowed.
+/// The singleton [`Kind::Literal`] a comparable scalar constant denotes, for
+/// the `f = <lit>` refinement. NONE/NULL and non-representable literals
+/// (datetime, uuid, regex) have no singleton kind, so they narrow nothing.
 fn eq_literal_kind(expr: &ast::Expr) -> Option<Kind> {
-    let ast::Expr::Literal(literal) = expr else {
-        return None;
-    };
-    match literal {
-        ast::Literal::String(text) => Some(Kind::Literal(KindLiteral::String(text.clone()))),
-        ast::Literal::Int(value) => Some(Kind::Literal(KindLiteral::Integer(*value))),
-        ast::Literal::Float(value) => Some(Kind::Literal(KindLiteral::Float(*value))),
-        ast::Literal::Bool(value) => Some(Kind::Literal(KindLiteral::Bool(*value))),
+    match eval(expr, Bindings::NONE) {
+        Term::Const(value) => value.singleton_kind(),
         _ => None,
     }
 }
@@ -500,16 +502,19 @@ fn in_effect(
     })
 }
 
-/// The element kind of a collection expression, resolved through `env`: a bound
-/// param that holds an `array<E>`/`set<E>`. Only env-resolvable collections
-/// narrow here — this recognizer runs without a schema, so a field-path
-/// collection (which would need schema stepping) is deliberately left alone.
+/// The element kind of a collection expression, resolved through `env`: a bare
+/// bound param that holds an `array<E>`/`set<E>`. Only a bare param resolves
+/// here — this recognizer runs without a schema, so a field-path collection
+/// (which would need schema stepping) is deliberately left alone.
 fn collection_element_kind(expr: &ast::Expr, env: &StatementEnv) -> Option<Kind> {
-    let kind = match expr {
-        ast::Expr::Param(name) => env.let_fact(name)?.kind.clone()?,
-        _ => return None,
+    let place = place_of(expr)?;
+    let PlaceRoot::Param(name) = &place.root else {
+        return None;
     };
-    match kind {
+    if !place.path.is_empty() {
+        return None;
+    }
+    match env.let_fact(name)?.kind.clone()? {
         Kind::Array(element, _) | Kind::Set(element, _) => Some(*element),
         _ => None,
     }
@@ -592,37 +597,23 @@ pub(crate) fn none_or_null_guard(lhs: &ast::Expr, rhs: &ast::Expr) -> Option<(Gu
 }
 
 /// The narrowable target an expression names: a bare `$param`, or a simple
-/// idiom path `$param.field.field` (plain field parts only). Shared by both
-/// the statement/branch guards here and the in-expression `!= NONE AND` /
+/// path `$param.field.field` (plain field steps only). Shared by both the
+/// statement/branch guards here and the in-expression `!= NONE AND` /
 /// `= NONE OR` narrowing (`infer`).
 pub(crate) fn guard_path_of(expr: &ast::Expr) -> Option<GuardPath> {
-    match expr {
-        ast::Expr::Param(name) => Some(GuardPath::bare(name.clone())),
-        ast::Expr::Idiom(idiom) => idiom_guard_path(idiom),
-        _ => None,
-    }
+    param_path(&place_of(expr)?)
 }
 
-/// The `$param.field.field` path of a simple idiom (a param start followed by
-/// one or more plain field segments), if it is one.
-fn idiom_guard_path(idiom: &ast::Idiom) -> Option<GuardPath> {
-    let mut parts = idiom.parts.iter();
-    let ast::IdiomPart::Start(start) = &parts.next()?.node else {
+/// A place as a [`GuardPath`], when it is rooted in a param and every step
+/// names a field. A subscript ends the path: only the exact written field
+/// path is refinable.
+fn param_path(place: &Place) -> Option<GuardPath> {
+    let PlaceRoot::Param(param) = &place.root else {
         return None;
     };
-    let ast::Expr::Param(param) = &start.node else {
-        return None;
-    };
-    let mut fields = Vec::new();
-    for part in parts {
-        let ast::IdiomPart::Field(name) = &part.node else {
-            return None;
-        };
-        fields.push(name.clone());
-    }
-    (!fields.is_empty()).then(|| GuardPath {
+    Some(GuardPath {
         param: param.clone(),
-        fields,
+        fields: place.field_path()?,
     })
 }
 
@@ -654,18 +645,16 @@ fn discriminated_path(expr: &ast::Expr, env: &StatementEnv) -> Option<GuardPath>
     })
 }
 
-/// The param/path argument of a `type::table(...)` call.
+/// The param path a `type::table(...)` call discriminates.
 fn type_table_path(expr: &ast::Expr) -> Option<GuardPath> {
-    let ast::Expr::Call(call) = expr else {
+    let Term::Discriminant {
+        of,
+        kind: DiscriminantKind::RecordTable,
+    } = eval(expr, Bindings::NONE)
+    else {
         return None;
     };
-    if call.path.node != "type::table" {
-        return None;
-    }
-    let [arg] = call.args.as_slice() else {
-        return None;
-    };
-    guard_path_of(&arg.node)
+    param_path(&of)
 }
 
 /// The param name, when `expr` is a bare `type::table($param)` call — used to
@@ -678,10 +667,10 @@ pub(crate) fn type_table_arg(expr: &ast::Expr) -> Option<String> {
     }
 }
 
-/// The string a literal holds, if `expr` is a plain string literal.
+/// The string `expr` provably denotes, if it denotes one.
 fn string_literal(expr: &ast::Expr) -> Option<String> {
-    match expr {
-        ast::Expr::Literal(ast::Literal::String(text)) => Some(text.clone()),
+    match eval(expr, Bindings::NONE) {
+        Term::Const(value) => value.as_str().map(str::to_string),
         _ => None,
     }
 }
@@ -1159,6 +1148,7 @@ pub(crate) fn branch_reachability_in_env(stmt: &ast::IfElseStmt, env: &Statement
 #[cfg(test)]
 mod tests {
     use super::*;
+    use surrealdb_types::KindLiteral;
     use surrealguard_syntax::ast;
     use surrealguard_syntax::lower::lower_first_expr;
     use surrealguard_syntax::parse::parse_source;
