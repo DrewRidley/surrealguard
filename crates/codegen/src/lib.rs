@@ -6,9 +6,14 @@
 //! type, substitution tuple, and named-parameter object, plus the `surql`
 //! tag and `SurqlQuery` carrier the host code consumes.
 //!
-//! Value conventions (documented in the generated header): datetimes are
-//! `Date`, durations/uuids/records are strings (records branded by
-//! table), `NONE` is `undefined`, decimals are `number`.
+//! Value conventions (documented in the generated header) name the values
+//! the SurrealDB SDK **actually decodes**, which are its own value classes:
+//! `record` is `RecordId<"table">`, `uuid` is `Uuid`, `duration` is
+//! `Duration`, `decimal` is `Decimal`, and `datetime` is a native `Date`
+//! because `createClient` sets `codecOptions.useNativeDates`. `NONE` is
+//! `undefined`. These are not cosmetic: a `RecordId` param encodes to a
+//! record link on the wire (CBOR tag 8) while a plain string encodes to a
+//! SurrealQL string, so `WHERE team = $team` only matches with the class.
 
 use surrealdb_types::{Kind, KindLiteral};
 use surrealguard_workspace::analysis::{ParamInference, ValueDomain};
@@ -24,8 +29,17 @@ pub fn ts_type(kind: &Kind) -> String {
         Kind::None => "undefined".into(),
         Kind::Null => "null".into(),
         Kind::Bool => "boolean".into(),
-        Kind::Int | Kind::Float | Kind::Decimal | Kind::Number => "number".into(),
-        Kind::String | Kind::Uuid | Kind::Duration => "string".into(),
+        Kind::Int | Kind::Float | Kind::Number => "number".into(),
+        // The SDK decodes a SurrealQL `decimal` as its arbitrary-precision
+        // `Decimal` class, never a JS number — `number` would silently lose
+        // precision and typecheck arithmetic that throws.
+        Kind::Decimal => "Decimal".into(),
+        Kind::String => "string".into(),
+        Kind::Uuid => "Uuid".into(),
+        Kind::Duration => "Duration".into(),
+        // `Date` is truthful only because `createClient` sets
+        // `codecOptions.useNativeDates`; without it the SDK hands back its
+        // own `DateTime` class.
         Kind::Datetime => "Date".into(),
         Kind::Bytes => "Uint8Array".into(),
         Kind::Object => "Record<string, unknown>".into(),
@@ -60,7 +74,7 @@ fn literal_type(literal: &KindLiteral) -> String {
         KindLiteral::Float(value) => value.to_string(),
         KindLiteral::Decimal(value) => value.to_string(),
         KindLiteral::Bool(value) => value.to_string(),
-        KindLiteral::Duration(_) => "string".into(),
+        KindLiteral::Duration(_) => "Duration".into(),
         KindLiteral::Array(kinds) => {
             let items: Vec<String> = kinds.iter().map(ts_type).collect();
             format!("[{}]", items.join(", "))
@@ -211,6 +225,29 @@ mod tests {
             ts_type(&Kind::Literal(KindLiteral::String("active".into()))),
             "\"active\""
         );
+    }
+
+    /// The SDK hands back its own value classes, so the generated types must
+    /// name them. Verified against `surrealdb@2.0.8`: a CBOR round-trip of each
+    /// of these decodes to the class, not to a string or a number, and a
+    /// `RecordId` param encodes to a record link (tag 8) where a plain string
+    /// encodes to a SurrealQL string — so `WHERE team = $team` only matches
+    /// when the param is a `RecordId`.
+    #[test]
+    fn sdk_value_classes_render_as_their_classes() {
+        assert_eq!(ts_type(&Kind::Uuid), "Uuid");
+        assert_eq!(ts_type(&Kind::Duration), "Duration");
+        assert_eq!(ts_type(&Kind::Decimal), "Decimal");
+        assert_eq!(
+            ts_type(&Kind::Record(vec!["team".into()])),
+            "RecordId<\"team\">"
+        );
+        // `datetime` stays `Date`: `createClient` sets
+        // `codecOptions.useNativeDates`, which makes that true.
+        assert_eq!(ts_type(&Kind::Datetime), "Date");
+        // `int`/`float` really are JS numbers; only `decimal` is not.
+        assert_eq!(ts_type(&Kind::Int), "number");
+        assert_eq!(ts_type(&Kind::Float), "number");
     }
 
     #[test]
