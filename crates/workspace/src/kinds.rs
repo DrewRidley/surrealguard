@@ -39,17 +39,27 @@ pub(crate) fn kind_is_assignable_to(actual: &Kind, expected: &Kind) -> bool {
     if matches!(expected, Kind::Any) || actual == expected {
         return true;
     }
-    // A union accepts anything one of its variants accepts (`option<t>` is
-    // `none | t`); a union value fits only where every variant fits.
-    if let Kind::Either(variants) = expected {
-        return variants
-            .iter()
-            .any(|variant| kind_is_assignable_to(actual, variant));
-    }
+    // The two union rules. A union SOURCE fits where every one of its variants
+    // fits; a union TARGET accepts whatever any one of its variants accepts
+    // (`option<t>` is `none | t`).
+    //
+    // The source rule has to be asked FIRST, and it has to be asked whatever
+    // shape the target has. Testing the target first and returning from that
+    // branch asks "does the whole source fit inside ONE target variant" — which
+    // no multi-variant source can satisfy, so a sub-union was not assignable to
+    // its own superset (`'b' | 'c'` into `'a' | 'b' | 'c'` was a false 2001).
+    // Split across the two rules, each source variant gets to pick its own home
+    // in the target, which is the standard rule and the one every refinement
+    // needs: narrowing a union yields a sub-union of it.
     if let Kind::Either(variants) = actual {
         return variants
             .iter()
             .all(|variant| kind_is_assignable_to(variant, expected));
+    }
+    if let Kind::Either(variants) = expected {
+        return variants
+            .iter()
+            .any(|variant| kind_is_assignable_to(actual, variant));
     }
     // Structural object assignability: an object literal fits an
     // object-typed target when every property the target *requires* is
@@ -745,6 +755,74 @@ mod tests {
         ));
     }
 
+    /// A union source is assignable to any target that has room for every one
+    /// of its variants — the rule that was inverted by asking about an `Either`
+    /// TARGET first and returning from that branch, which demanded the whole
+    /// source fit inside ONE target variant.
+    #[test]
+    fn a_sub_union_is_assignable_to_its_superset() {
+        let sub = Kind::Either(vec![string_literal("b"), string_literal("c")]);
+        let sup = Kind::Either(vec![
+            string_literal("a"),
+            string_literal("b"),
+            string_literal("c"),
+        ]);
+        // Literal unions: `'b' | 'c'` into `'a' | 'b' | 'c'`.
+        assert!(kind_is_assignable_to(&sub, &sup));
+        // …and not the other way: an `'a'` has nowhere to go in `'b' | 'c'`.
+        assert!(!kind_is_assignable_to(&sup, &sub));
+        // A variant outside the superset is still a provable mismatch.
+        assert!(!kind_is_assignable_to(
+            &Kind::Either(vec![string_literal("b"), string_literal("z")]),
+            &sup
+        ));
+
+        // Non-literal unions behave the same.
+        let ints = Kind::Either(vec![Kind::Int, Kind::String]);
+        let wider = Kind::Either(vec![Kind::Int, Kind::String, Kind::Bool]);
+        assert!(kind_is_assignable_to(&ints, &wider));
+        assert!(!kind_is_assignable_to(&wider, &ints));
+        assert!(!kind_is_assignable_to(
+            &Kind::Either(vec![Kind::Int, Kind::Datetime]),
+            &wider
+        ));
+
+        // An `option<T>` is a union with `NONE`, so it fits `option<T | U>`.
+        assert!(kind_is_assignable_to(
+            &Kind::Either(vec![Kind::None, Kind::String]),
+            &Kind::Either(vec![Kind::None, Kind::String, Kind::Int])
+        ));
+        assert!(!kind_is_assignable_to(
+            &Kind::Either(vec![Kind::None, Kind::String, Kind::Int]),
+            &Kind::Either(vec![Kind::None, Kind::String])
+        ));
+
+        // Equal unions in either order — a union is a set, and its variant
+        // sequence is not part of what it admits.
+        let forward = Kind::Either(vec![Kind::Int, Kind::String]);
+        let reversed = Kind::Either(vec![Kind::String, Kind::Int]);
+        assert!(kind_is_assignable_to(&forward, &reversed));
+        assert!(kind_is_assignable_to(&reversed, &forward));
+
+        // A record's table set was always a superset check of its own; it must
+        // keep working now that unions are handled ahead of it.
+        assert!(kind_is_assignable_to(
+            &Kind::Record(vec![Table::from("a")]),
+            &Kind::Record(vec![Table::from("a"), Table::from("b")])
+        ));
+
+        // Collections are covariant, so a collection of a sub-union fits a
+        // collection of the superset.
+        assert!(kind_is_assignable_to(
+            &Kind::Array(Box::new(sub.clone()), None),
+            &Kind::Array(Box::new(sup.clone()), None)
+        ));
+        assert!(!kind_is_assignable_to(
+            &Kind::Array(Box::new(sup), None),
+            &Kind::Array(Box::new(sub), None)
+        ));
+    }
+
     /// The rendered codes a query produces end to end.
     fn codes(query: &str) -> Vec<String> {
         let mut workspace = crate::analysis::Workspace::default();
@@ -781,6 +859,64 @@ mod tests {
             "DEFINE FIELD st ON t TYPE 'active' | 'inactive';\nCREATE t SET st = 42;",
             "DEFINE FIELD st ON t TYPE 'active' | 'inactive';\nCREATE t CONTENT { st: 42 };",
             "DEFINE FIELD lvl ON t TYPE 1 | 2 | 3;\nCREATE t SET lvl = 'two';",
+        ] {
+            assert!(
+                codes(query).iter().any(|code| code == "E2001"),
+                "codes for {query:?}: {:?}",
+                codes(query)
+            );
+        }
+    }
+
+    #[test]
+    fn writing_a_sub_union_into_its_superset_field_is_not_a_type_error() {
+        // The value's kind is itself a union — a narrower one than the field's.
+        // Every value it admits is a value the field admits, so the write is
+        // valid and must be silent.
+        for query in [
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD f ON t TYPE 'a' | 'b' | 'c';\n\
+             DEFINE FUNCTION fn::narrow() -> 'b' | 'c' { RETURN 'b'; };\n\
+             CREATE t SET f = fn::narrow();",
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD f ON t TYPE int | string | bool;\n\
+             DEFINE FUNCTION fn::narrow() -> int | string { RETURN 1; };\n\
+             CREATE t SET f = fn::narrow();",
+            // An `option` is a union with NONE, so an option of the payload
+            // fits an option of a wider payload.
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD f ON t TYPE option<string | int>;\n\
+             DEFINE FUNCTION fn::narrow() -> option<string> { RETURN 'x'; };\n\
+             CREATE t SET f = fn::narrow();",
+        ] {
+            assert!(
+                !codes(query).iter().any(|code| code == "E2001"),
+                "codes for {query:?}: {:?}",
+                codes(query)
+            );
+        }
+    }
+
+    #[test]
+    fn writing_a_union_with_a_variant_the_field_rejects_still_fires() {
+        // The must-still-fire boundary of the rule above: one variant of the
+        // written union has no home in the field's type, so some value the
+        // expression can produce is one the field cannot hold.
+        for query in [
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD f ON t TYPE 'a' | 'b' | 'c';\n\
+             DEFINE FUNCTION fn::wrong() -> 'b' | 'z' { RETURN 'b'; };\n\
+             CREATE t SET f = fn::wrong();",
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD f ON t TYPE int | string;\n\
+             DEFINE FUNCTION fn::wrong() -> int | datetime { RETURN 1; };\n\
+             CREATE t SET f = fn::wrong();",
+            // A superset written into a sub-union: the extra variant is exactly
+            // the value the field rejects.
+            "DEFINE TABLE t SCHEMAFULL;\n\
+             DEFINE FIELD f ON t TYPE option<string>;\n\
+             DEFINE FUNCTION fn::wider() -> option<string | int> { RETURN 'x'; };\n\
+             CREATE t SET f = fn::wider();",
         ] {
             assert!(
                 codes(query).iter().any(|code| code == "E2001"),

@@ -183,10 +183,12 @@ pub(crate) fn meet(a: &Kind, b: &Kind) -> KindMeet {
 
     // 3. A union is a set of alternatives, so the meet distributes over it.
     //    When BOTH sides are unions the choice of which one to walk decides the
-    //    variant ORDER of the result, and `kind_is_assignable_to` compares
-    //    unions by exact sequence — two permutations of one set are not
-    //    assignable to each other. Picking the operand by a total order on the
-    //    rendered kind makes `meet(a, b)` and `meet(b, a)` walk the same one.
+    //    variant ORDER of the result. A `Kind` is compared structurally — by
+    //    `==`, which is sequence-sensitive — everywhere a consumer stores or
+    //    reports one, so two permutations of the same set are two different
+    //    answers and `meet` would not be commutative. Picking the operand by a
+    //    total order on the rendered kind makes `meet(a, b)` and `meet(b, a)`
+    //    walk the same one.
     match (a, b) {
         (Kind::Either(left), Kind::Either(right)) => {
             return if a.to_string() <= b.to_string() {
@@ -529,13 +531,15 @@ fn is_numeric(kind: &Kind) -> bool {
 /// A union built from the variants that survived, in the order they were
 /// walked.
 ///
-/// The order is load-bearing and must NOT be normalised away:
-/// `kind_is_assignable_to` compares two unions by exact sequence, so
-/// re-ordering the variants of `'a' | 'b' | 'c'` produces a kind that is not
-/// assignable to the one it came from — and `meet(k, any-supertype) == k` would
-/// stop holding. Walking a sub-sequence of one operand's variants keeps the
-/// result comparable to that operand; [`meet`] step 3 is what makes the choice
-/// of operand deterministic.
+/// The order is load-bearing and must NOT be normalised away. Assignability no
+/// longer cares about it — a union source is checked variant by variant, so
+/// `'c' | 'a' | 'b'` and `'a' | 'b' | 'c'` are mutually assignable — but a
+/// `Kind` is still *equal* only to the same sequence, and that is what a
+/// consumer stores, renders and compares. Re-ordering would make
+/// `meet(k, any-supertype) == k` fail on a kind that only permutes `k`.
+/// Walking a sub-sequence of one operand's variants keeps the result identical
+/// to that operand where nothing was removed; [`meet`] step 3 is what makes the
+/// choice of operand deterministic.
 ///
 /// `Kind::either` flattens, de-duplicates and collapses a singleton. It maps an
 /// EMPTY list to `Kind::None`, which would be a silent lie here, so every
@@ -666,25 +670,18 @@ mod tests {
         ]
     }
 
-    /// `a ⊑ b`, the order this module is built on.
+    /// `a ⊑ b`, the order this module is built on — a name for
+    /// `kind_is_assignable_to` so the properties below read as order theory.
     ///
-    /// `kind_is_assignable_to` with one gap closed. It tests an `Either`
-    /// *target* before an `Either` *source* and returns early from the first
-    /// branch, so a sub-union is not assignable to its own superset:
-    /// `'b' | 'c'` into `'a' | 'b' | 'c'` is `false` today, because it only ever
-    /// asks whether the whole left union fits inside ONE right variant. That is
-    /// a defect in the relation, not in the lattice — every refinement of a
-    /// union yields a sub-union, so the lattice would be unable to narrow a
-    /// literal-union field at all if the defect were treated as the truth.
-    ///
-    /// It is closed HERE rather than in `kinds.rs` on purpose: widening
-    /// assignability changes which writes report 2001, and this stage must not
-    /// change a single diagnostic. Fixing it belongs to the stage that gives
-    /// the lattice consumers.
+    /// This used to patch a gap in the relation: it tested an `Either` *target*
+    /// before an `Either` *source* and returned early from the first branch, so
+    /// a sub-union was not assignable to its own superset (`'b' | 'c'` into
+    /// `'a' | 'b' | 'c'` asked only whether the whole left union fitted inside
+    /// ONE right variant). Every refinement of a union yields a sub-union, so
+    /// the lattice could not have narrowed a literal-union field at all under
+    /// that reading. The relation itself now applies the source rule first and
+    /// at every depth, and the patch is gone.
     fn below(sub: &Kind, sup: &Kind) -> bool {
-        if let Kind::Either(variants) = sub {
-            return variants.iter().all(|variant| below(variant, sup));
-        }
         kind_is_assignable_to(sub, sup)
     }
 
