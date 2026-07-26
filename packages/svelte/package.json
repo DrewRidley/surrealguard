@@ -47,7 +47,8 @@
   },
   "peerDependencies": {
     "svelte": "^5",
-    "surrealdb": "^2.0.8"
+    "surrealdb": "^2.0.8",
+    "@sveltejs/kit": "^2"
   },
   "devDependencies": {
     "@sveltejs/package": "^2.5.8",
@@ -62,5 +63,10 @@
     "build": "svelte-package --input src --output dist",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run"
+  },
+  "peerDependenciesMeta": {
+    "@sveltejs/kit": {
+      "optional": true
+    }
   }
 }

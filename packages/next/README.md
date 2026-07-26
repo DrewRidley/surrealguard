@@ -190,7 +190,7 @@ await add.mutateAsync({ name: "ada", joined: new Date() });  // throws
 ## Streaming a slow query
 
 Pass an un-awaited promise from the server and `use()` it on the client — the
-App Router idiom:
+App Router idiom. (`use` is React 19; the rest of this package works on 18.)
 
 ```tsx
 // page.tsx (server)
