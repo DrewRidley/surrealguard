@@ -88,7 +88,7 @@ pub(crate) fn analyze_define_function(
             // not this.
             let actual =
                 returned_constant_kind(stmt).unwrap_or_else(|| body_kind.clone());
-            let contract = Contract::new(Position::FunctionReturn, declared.clone(), 2012);
+            let contract = Contract::new(Position::FunctionReturn, declared.clone());
             if contract.decide(&actual).is_violation() {
                 let span = surrealguard_syntax::span::SourceSpan::new(
                     ctx.source().clone(),
@@ -101,7 +101,7 @@ pub(crate) fn analyze_define_function(
                 ctx.emit(
                     surrealguard_diagnostics::catalog::finding(
                         span,
-                        2012,
+                        contract.code(),
                         format!(
                             "`{}` declares `-> {}` but its body returns `{}`",
                             stmt.name.node,

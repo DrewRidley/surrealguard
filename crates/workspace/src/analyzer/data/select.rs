@@ -377,7 +377,7 @@ fn check_split_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analy
             // SPLIT fans rows out over a collection field. Resolve across
             // record links so a linked collection field types precisely.
             if let Some(kind) = resolve_field_path(ctx.schema(), table, &segments) {
-                if Contract::possible(Position::Split, collection_kind(), 1024)
+                if Contract::possible(Position::Split, collection_kind())
                     .decide(&kind)
                     .is_violation()
                 {
@@ -524,7 +524,7 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
         if let Some(kind) = &fact.kind {
             // `number` is admitted alongside `int` because that is what an
             // arithmetic or `math::` result infers as, and the clause takes it.
-            if Contract::possible(position, Kind::either(vec![Kind::Int, Kind::Number]), 2018)
+            if Contract::possible(position, Kind::either(vec![Kind::Int, Kind::Number]))
                 .decide(kind)
                 .is_violation()
             {
@@ -558,7 +558,7 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
     if let Some(expr) = &stmt.timeout {
         let kind = infer_expression_fact(expr, ctx).kind;
         if let Some(kind) = kind {
-            if Contract::possible(Position::Timeout, Kind::Duration, 2019)
+            if Contract::possible(Position::Timeout, Kind::Duration)
                 .decide(&kind)
                 .is_violation()
             {

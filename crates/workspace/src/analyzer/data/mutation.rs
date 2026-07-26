@@ -608,7 +608,7 @@ fn check_assignment_value(
         ast::Expr::Object(entries) => constrained_object_literal_kind(ctx, entries, &field_kind),
         _ => None,
     };
-    let contract = Contract::new(Position::MutationSet, field_kind.clone(), 2001);
+    let contract = Contract::new(Position::MutationSet, field_kind.clone());
     let value_kind = match value_kind {
         Some(kind) => kind,
         None => {
@@ -800,14 +800,14 @@ pub fn check_payload_object_keys(
             // widened kind.
             let fact = infer_expression_fact(value, ctx);
             let term = crate::analyzer::facts::eval(&value.node, Bindings::NONE);
-            let contract = Contract::new(position, field_kind.clone(), 2001);
+            let contract = Contract::new(position, field_kind.clone());
             if let Some(value_kind) = contract.violation(&term, &fact) {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), value.span);
                 let path = segments.join(".");
                 let mut finding = surrealguard_diagnostics::catalog::finding(
                     span,
-                    2001,
+                    contract.code(),
                     format!(
                         "`{path}` is declared `{}`, but this value is `{}`",
                         crate::render_kind(&field_kind),

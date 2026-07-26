@@ -51,7 +51,7 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
         let Some(declared) = &declared else {
             continue;
         };
-        let contract = Contract::new(position, declared.clone(), 2001);
+        let contract = Contract::new(position, declared.clone());
         let term = crate::analyzer::facts::eval(&expr.node, Bindings::NONE);
         if let Some(kind) = contract.violation(&term, &fact) {
             let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
@@ -61,7 +61,7 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
             ctx.emit(
                 surrealguard_diagnostics::catalog::finding(
                     span,
-                    2001,
+                    contract.code(),
                     format!(
                         "`{field_name}`'s value is `{}`, but the field is declared `{}`",
                         crate::render::render_offending(&kind, Some(declared)),

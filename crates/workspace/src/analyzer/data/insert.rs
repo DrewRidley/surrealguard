@@ -110,11 +110,7 @@ fn check_insert_payload(
                     // One column, one value: the same contract a `SET` obeys,
                     // so a constant is compared as the literal it is.
                     let term = crate::analyzer::facts::eval(&value.node, Bindings::NONE);
-                    let contract = Contract::new(
-                        Position::InsertValues,
-                        column_kind.clone(),
-                        2001,
-                    );
+                    let contract = Contract::new(Position::InsertValues, column_kind.clone());
                     if let Some(value_kind) = contract.violation(&term, &fact) {
                         let span = surrealguard_syntax::span::SourceSpan::new(
                             ctx.source().clone(),
@@ -123,7 +119,7 @@ fn check_insert_payload(
                         let path = segments.join(".");
                         let mut finding = surrealguard_diagnostics::catalog::finding(
                             span,
-                            2001,
+                            contract.code(),
                             format!(
                                 "`{path}` is declared `{}`, but this value is `{}`",
                                 crate::render_kind(&column_kind),

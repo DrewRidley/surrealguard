@@ -42,8 +42,6 @@ struct Case {
 /// One position, as a schema/query template pair with `{ty}` and `{val}` holes.
 struct Site {
     position: Position,
-    /// The finding this position raises when its contract is violated.
-    code: u16,
     /// Appended to [`PRELUDE`]; analyzed as schema.
     schema: &'static str,
     /// Analyzed as a query against that schema.
@@ -165,161 +163,138 @@ const CASTABLE: &[Case] = &[Case {
 const SITES: &[Site] = &[
     Site {
         position: Position::MutationSet,
-        code: 2001,
         schema: "",
         query: "CREATE t SET f = {val};",
         cases: DECLARED,
     },
     Site {
         position: Position::MutationContent,
-        code: 2001,
         schema: "",
         query: "CREATE t CONTENT { f: {val} };",
         cases: DECLARED,
     },
     Site {
         position: Position::MutationMerge,
-        code: 2001,
         schema: "",
         query: "UPDATE t MERGE { f: {val} };",
         cases: DECLARED,
     },
     Site {
         position: Position::InsertValues,
-        code: 2001,
         schema: "",
         query: "INSERT INTO t (f) VALUES ({val});",
         cases: DECLARED,
     },
     Site {
         position: Position::FieldValue,
-        code: 2001,
         schema: "DEFINE FIELD g ON t TYPE {ty} VALUE {val};",
         query: "RETURN 1;",
         cases: DECLARED,
     },
     Site {
         position: Position::FieldDefault,
-        code: 2001,
         schema: "DEFINE FIELD g ON t TYPE {ty} DEFAULT {val};",
         query: "RETURN 1;",
         cases: DECLARED,
     },
     Site {
         position: Position::FieldComputed,
-        code: 2001,
         schema: "DEFINE FIELD g ON t TYPE {ty} COMPUTED {val};",
         query: "RETURN 1;",
         cases: DECLARED,
     },
     Site {
         position: Position::FieldAssert,
-        code: 2005,
         schema: "DEFINE FIELD g ON t TYPE any ASSERT {val};",
         query: "RETURN 1;",
         cases: CONDITION,
     },
     Site {
         position: Position::FunctionArg,
-        code: 5002,
         schema: "DEFINE FUNCTION fn::take($a: {ty}) { RETURN $a; };",
         query: "RETURN fn::take({val});",
         cases: DECLARED,
     },
     Site {
         position: Position::FunctionReturn,
-        code: 2012,
         schema: "DEFINE FUNCTION fn::give() -> {ty} { RETURN {val}; };",
         query: "RETURN 1;",
         cases: DECLARED,
     },
     Site {
         position: Position::ParamDefault,
-        code: 2001,
         schema: "DEFINE PARAM $q VALUE {val};",
         query: "RETURN 1;",
         cases: DECLARED,
     },
     Site {
         position: Position::Limit,
-        code: 2018,
         schema: "",
         query: "LET $n = {val};\nSELECT * FROM s LIMIT $n;",
         cases: INTEGER,
     },
     Site {
         position: Position::Start,
-        code: 2018,
         schema: "",
         query: "LET $n = {val};\nSELECT * FROM s START $n;",
         cases: INTEGER,
     },
     Site {
         position: Position::Timeout,
-        code: 2019,
         schema: "",
         query: "SELECT * FROM s TIMEOUT {val};",
         cases: DURATION,
     },
     Site {
         position: Position::Split,
-        code: 1024,
         schema: "",
         query: "SELECT * FROM s SPLIT {val};",
         cases: FIELD_SHAPE_COLLECTION,
     },
     Site {
         position: Position::Fetch,
-        code: 1023,
         schema: "",
         query: "SELECT * FROM s FETCH {val};",
         cases: FIELD_SHAPE_RECORD,
     },
     Site {
         position: Position::ForIterable,
-        code: 2022,
         schema: "",
         query: "LET $c = {val};\nFOR $i IN $c { RETURN $i; };",
         cases: ITERABLE,
     },
     Site {
         position: Position::Cast,
-        code: 2008,
         schema: "",
         query: "RETURN <int> {val};",
         cases: CASTABLE,
     },
     Site {
         position: Position::WhereSelect,
-        code: 2005,
         schema: "",
         query: "SELECT * FROM s WHERE {val};",
         cases: CONDITION,
     },
     Site {
         position: Position::WhereMutation,
-        code: 2005,
         schema: "",
         query: "UPDATE s SET label = 'a' WHERE {val};",
         cases: CONDITION,
     },
     Site {
         position: Position::IfCond,
-        code: 2005,
         schema: "",
         query: "IF {val} { RETURN 1; };",
         cases: CONDITION,
     },
     Site {
         position: Position::EventWhen,
-        code: 2005,
         schema: "DEFINE EVENT ev ON s WHEN {val} THEN { RETURN 1; };",
         query: "RETURN 1;",
         cases: CONDITION,
     },
     Site {
         position: Position::PermissionPredicate,
-        code: 2005,
         schema: "DEFINE TABLE p SCHEMAFULL PERMISSIONS FOR select WHERE {val};",
         query: "RETURN 1;",
         cases: CONDITION,
@@ -359,7 +334,7 @@ fn fires(site: &Site, case: &Case, value: &str) -> bool {
     analyze_workspace(&workspace)
         .diagnostics
         .iter()
-        .any(|finding| finding.code().number() == site.code)
+        .any(|finding| finding.code().number() == site.position.code())
 }
 
 /// Runs `property` at every (site, case) crossing and reports the whole map at
@@ -410,7 +385,7 @@ fn every_position_rejects_a_provably_wrong_value() {
         }
         Err(format!(
             "no E{:04} for `{}`",
-            site.code,
+            site.position.code(),
             fill(site.query, case.declared, case.bad).trim()
         ))
     });
@@ -422,7 +397,7 @@ fn every_position_accepts_a_valid_value() {
         if fires(site, case, case.ok) {
             return Err(format!(
                 "false E{:04} for `{}`",
-                site.code,
+                site.position.code(),
                 fill(site.query, case.declared, case.ok).trim()
             ));
         }
@@ -438,7 +413,7 @@ fn every_position_stays_silent_on_an_unprovable_one() {
         if fires(site, case, case.unprovable) {
             return Err(format!(
                 "false E{:04} for `{}`",
-                site.code,
+                site.position.code(),
                 fill(site.query, case.declared, case.unprovable).trim()
             ));
         }

@@ -13,7 +13,7 @@
 //!
 //! This module is the rule. [`Position`] enumerates every place in SurrealQL
 //! that demands a kind, [`Contract`] pairs the demand with the finding it
-//! raises, and [`check`] is the only decision.
+//! raises, and [`decide`] is the only decision.
 //!
 //! ## Prove or stay silent
 //!
@@ -30,8 +30,6 @@
 //! *accepted*: inference widens a written `'red'` to `string`, so the widened
 //! kind carries no evidence about which string it holds. The evidence lives in
 //! the *value*, and [`checked_kind`] is what recovers it.
-
-#![allow(dead_code)]
 
 use surrealdb_types::Kind;
 
@@ -135,6 +133,39 @@ impl Position {
         Position::PermissionPredicate,
     ];
 
+    /// The finding this position raises when its contract is violated.
+    ///
+    /// The mapping lives here rather than at each call site because it is
+    /// one-to-one and the harness needs it too: a position and the code it
+    /// raises are the same fact, and spelling it twice is how a check ends up
+    /// tested against a code it no longer emits.
+    pub fn code(self) -> u16 {
+        match self {
+            Position::MutationSet
+            | Position::MutationContent
+            | Position::MutationMerge
+            | Position::InsertValues
+            | Position::FieldValue
+            | Position::FieldDefault
+            | Position::FieldComputed
+            | Position::ParamDefault => 2001,
+            Position::FieldAssert
+            | Position::WhereSelect
+            | Position::WhereMutation
+            | Position::IfCond
+            | Position::EventWhen
+            | Position::PermissionPredicate => 2005,
+            Position::FunctionArg => 5002,
+            Position::FunctionReturn => 2012,
+            Position::Limit | Position::Start => 2018,
+            Position::Timeout => 2019,
+            Position::Split => 1024,
+            Position::Fetch => 1023,
+            Position::ForIterable => 2022,
+            Position::Cast => 2008,
+        }
+    }
+
     /// The position's name, for a harness failure message.
     pub fn name(self) -> &'static str {
         match self {
@@ -216,35 +247,32 @@ pub(crate) enum Strictness {
 /// not how to say it.
 #[derive(Clone, Debug)]
 pub(crate) struct Contract {
-    /// Which position this is. Carried for the harness and for debugging;
-    /// [`check`] does not branch on it, which is the point.
+    /// Which position this is. It supplies [`Contract::code`] and names the
+    /// row for a reader; [`decide`] does not branch on it, which is the point.
     pub position: Position,
     /// The kind the position admits.
     pub expects: Kind,
-    /// The finding raised when a value is proven not to inhabit it.
-    pub code: u16,
     /// How a partial overlap is folded.
     pub strictness: Strictness,
 }
 
 impl Contract {
-    /// A contract for `position` admitting `expects`, raising `code`. The
-    /// value must *inhabit* `expects`.
-    pub(crate) fn new(position: Position, expects: Kind, code: u16) -> Self {
+    /// A contract for `position` admitting `expects`. The value must
+    /// *inhabit* `expects`; the code comes from the position.
+    pub(crate) fn new(position: Position, expects: Kind) -> Self {
         Self {
             position,
             expects,
-            code,
             strictness: Strictness::Inhabits,
         }
     }
 
     /// A contract that reports only what it can prove disjoint — see
     /// [`Strictness::Possible`].
-    pub(crate) fn possible(position: Position, expects: Kind, code: u16) -> Self {
+    pub(crate) fn possible(position: Position, expects: Kind) -> Self {
         Self {
             strictness: Strictness::Possible,
-            ..Self::new(position, expects, code)
+            ..Self::new(position, expects)
         }
     }
 
@@ -259,8 +287,12 @@ impl Contract {
         Self::possible(
             position,
             Kind::Either(vec![Kind::Bool, Kind::None, Kind::Null]),
-            2005,
         )
+    }
+
+    /// The finding this contract raises, from its position.
+    pub(crate) fn code(&self) -> u16 {
+        self.position.code()
     }
 
     /// The verdict for a value already reduced to a kind — the Group C
@@ -268,15 +300,6 @@ impl Contract {
     /// a constant) and the whole-body comparisons.
     pub(crate) fn decide(&self, actual: &Kind) -> Verdict {
         decide(actual, &self.expects, self.strictness)
-    }
-
-    /// The verdict for an expression, checked at the kind its value proves it
-    /// to be.
-    pub(crate) fn check(&self, term: &Term, fact: &ExpressionFact) -> Verdict {
-        match checked_kind(term, fact) {
-            Some(actual) => self.decide(&actual),
-            None => Verdict::Unknown,
-        }
     }
 
     /// The kind a violation was decided at, or `None` when the contract holds

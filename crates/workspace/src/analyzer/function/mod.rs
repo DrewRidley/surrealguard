@@ -291,7 +291,7 @@ fn check_custom_call(
             ))
         });
         let actual = folded.unwrap_or_else(|| kind.clone());
-        let contract = Contract::new(Position::FunctionArg, expected.clone(), 5002);
+        let contract = Contract::new(Position::FunctionArg, expected.clone());
         if !contract.decide(&actual).is_violation() {
             continue;
         }
@@ -302,7 +302,7 @@ fn check_custom_call(
         ctx.emit(
             surrealguard_diagnostics::catalog::finding(
                 span,
-                5002,
+                contract.code(),
                 format!(
                     "argument {} to `{}` is a `{}`, but `${}` is declared `{}`",
                     index + 1,

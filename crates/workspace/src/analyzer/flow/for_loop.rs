@@ -51,7 +51,6 @@ pub(crate) fn analyze_for_loop_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::F
                 Kind::Object,
                 Kind::Range,
             ]),
-            2022,
         );
         if contract.decide(kind).is_violation() {
             let span = surrealguard_syntax::span::SourceSpan::new(
@@ -60,7 +59,7 @@ pub(crate) fn analyze_for_loop_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::F
             );
             ctx.emit(surrealguard_diagnostics::catalog::finding(
                 span,
-                2022,
+                contract.code(),
                 format!(
                     "FOR can't iterate a `{}` — it is not a collection",
                     crate::render::render_offending(kind, Some(&Kind::Array(Box::new(Kind::Any), None)))
