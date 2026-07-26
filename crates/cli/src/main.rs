@@ -10,13 +10,17 @@
 //!
 //! - `surrealguard init` — write a starter `surrealguard.toml` to the current
 //!   directory.
-//! - `surrealguard check [--json]` — discover sources via the config globs,
-//!   split them into the schema set (DEFINE/REMOVE catalog) and the query set,
-//!   run the analyzer, and print findings. Exits non-zero when any survive as
-//!   errors.
-//! - `surrealguard generate [--out PATH]` — emit the typed TypeScript client
-//!   and literal-keyed query registry (defaults to
+//! - `surrealguard check [--json] [--watch]` — discover sources via the config
+//!   globs, split them into the schema set (DEFINE/REMOVE catalog) and the
+//!   query set, run the analyzer, and print findings. Exits non-zero when any
+//!   survive as errors.
+//! - `surrealguard generate [--out PATH] [--watch]` — emit the typed TypeScript
+//!   client and literal-keyed query registry (defaults to
 //!   `surrealguard.generated.ts` at the workspace root).
+//!
+//! `--watch` turns either verb into a loop: run once, then re-run on every
+//! change to an input the analysis consumes (`.surql` sources, host files
+//! carrying embedded queries, and `surrealguard.toml`). See [`watch`].
 //!
 //! # `surrealguard.toml`
 //!
@@ -28,6 +32,7 @@
 //! commented example.
 
 mod render;
+mod watch;
 
 use clap::{Parser, Subcommand};
 use serde::Serialize;
@@ -60,6 +65,14 @@ enum Commands {
         /// Emit machine-readable JSON diagnostics
         #[arg(long)]
         json: bool,
+
+        /// Re-check on every change to a `.surql` source, a host file, or
+        /// `surrealguard.toml`. Runs once first, then blocks until interrupted.
+        ///
+        /// Mutually exclusive with `--json`: that flag is a one-run machine
+        /// contract (one document, one exit code), and a watch produces neither.
+        #[arg(long, conflicts_with = "json")]
+        watch: bool,
     },
 
     /// Generate the typed SurrealGuard client + query registry
@@ -69,6 +82,11 @@ enum Commands {
         /// runtime value, so the extension must be `.ts`, not `.d.ts`.
         #[arg(long)]
         out: Option<std::path::PathBuf>,
+
+        /// Regenerate on every change to a `.surql` source, a host file, or
+        /// `surrealguard.toml`. Runs once first, then blocks until interrupted.
+        #[arg(long)]
+        watch: bool,
     },
 }
 
@@ -352,6 +370,9 @@ struct CheckPassed {
 struct GenerateReport {
     path: std::path::PathBuf,
     warnings: Vec<String>,
+    /// How many embedded queries landed in the registry. `--watch` prints it so
+    /// a repeating line still shows the run did something.
+    queries: usize,
 }
 
 /// `generate` refused to write because an embedded query has an error-severity
@@ -514,12 +535,78 @@ fn run_generate(root: &Path, out: Option<&Path>) -> Result<GenerateReport, Box<d
         })
         .collect();
 
-    let out_path = out.map_or_else(|| root.join("surrealguard.generated.ts"), Path::to_path_buf);
+    let out_path = generated_registry_path(root, out);
     fs::write(&out_path, surrealguard_codegen::render_registry(&entries))?;
     Ok(GenerateReport {
         path: out_path,
         warnings: rendered_warnings,
+        queries: entries.len(),
     })
+}
+
+/// One watched `generate` run, reduced to the log line `--watch` prints.
+///
+/// A failure is reported and returned, never propagated: a transient error —
+/// the syntax error you are halfway through typing — must not end the watch.
+fn generate_outcome(root: &Path, out: Option<&Path>) -> watch::RunOutcome {
+    match run_generate(root, out) {
+        Ok(report) => watch::RunOutcome {
+            ok: true,
+            summary: format!(
+                "wrote {} ({} quer{})",
+                report
+                    .path
+                    .strip_prefix(root)
+                    .unwrap_or(&report.path)
+                    .display(),
+                report.queries,
+                if report.queries == 1 { "y" } else { "ies" }
+            ),
+            detail: report.warnings.concat(),
+        },
+        // The findings already say everything the trailing "generate failed:"
+        // line would, and the run line above carries the count — so print the
+        // blocks only, and keep the line short enough to scan when it repeats.
+        Err(error) => match error.downcast_ref::<GenerateFailed>() {
+            Some(failed) => watch::RunOutcome {
+                ok: false,
+                summary: format!("{} error(s), registry not written", failed.errors),
+                detail: failed.rendered.concat(),
+            },
+            // Not an analysis failure: an unreadable source, an unparseable
+            // config. Report it and keep watching — the fix is a save away.
+            None => watch::RunOutcome {
+                ok: false,
+                summary: "generate failed".into(),
+                detail: format!("{error}\n"),
+            },
+        },
+    }
+}
+
+/// One watched `check` run, reduced to the log line `--watch` prints. Warnings
+/// and hints are shown on a passing run too — that is what `check` reports, and
+/// a watch that hid them would disagree with the one-shot command.
+fn check_outcome(start_dir: &Path) -> watch::RunOutcome {
+    let (ok, summary, rendered) = match run_check(start_dir) {
+        Ok(passed) => (true, passed.summary, passed.rendered),
+        Err(failed) => (false, failed.summary, failed.rendered),
+    };
+    watch::RunOutcome {
+        ok,
+        summary: format!(
+            "{} source(s), {} diagnostic(s), {} error(s)",
+            summary.sources_checked, summary.diagnostics, summary.errors
+        ),
+        detail: rendered.join("\n"),
+    }
+}
+
+/// Where `generate` writes the registry. Shared with `--watch`, which must know
+/// the path *before* the first run in order to exclude it from the watched
+/// input set — a run that triggered itself would never stop.
+fn generated_registry_path(root: &Path, out: Option<&Path>) -> PathBuf {
+    out.map_or_else(|| root.join("surrealguard.generated.ts"), Path::to_path_buf)
 }
 
 /// Every host file (`.ts`/`.svelte`/…) under `root` that may carry embedded
@@ -534,15 +621,21 @@ fn discover_host_sources(root: &Path, config: &WorkspaceConfig) -> Vec<PathBuf> 
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
         .map(DirEntry::into_path)
-        .filter(|path| {
-            matches!(
-                path.extension().and_then(|e| e.to_str()),
-                Some("ts" | "tsx" | "js" | "jsx" | "svelte" | "vue" | "astro")
-            )
-        })
+        .filter(|path| is_host_source(path))
         .collect();
     paths.sort();
     paths
+}
+
+/// Whether `path` is a host file that may carry embedded SurrealQL. Shared with
+/// `--watch` so the watched set and the discovered set can never disagree —
+/// a file the watcher ignores but `generate` reads would go silently stale,
+/// which is the exact bug `--watch` exists to fix.
+fn is_host_source(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("ts" | "tsx" | "js" | "jsx" | "svelte" | "vue" | "astro")
+    )
 }
 
 fn render_check_json(
@@ -659,7 +752,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("Created surrealguard.toml");
             Ok(())
         }
-        Commands::Generate { out } => {
+        Commands::Generate { out, watch: true } => {
+            let root = find_workspace_root(&env::current_dir()?);
+            // Resolved, not merely computed: `--out` may be relative or may
+            // point inside a watched directory, and an exclusion that doesn't
+            // match the watcher's spelling of the path means `generate` sees
+            // its own write and re-runs forever.
+            let registry =
+                watch::resolve_output(&root, &generated_registry_path(&root, out.as_deref()));
+            let watch_root = root.clone();
+            watch::watch_loop(&root, Some(&registry), move || {
+                generate_outcome(&watch_root, out.as_deref())
+            })
+        }
+        Commands::Generate { out, watch: false } => {
             let root = find_workspace_root(&env::current_dir()?);
             match run_generate(&root, out.as_deref()) {
                 Ok(report) => {
@@ -677,7 +783,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
-        Commands::Check { json } => {
+        Commands::Check { watch: true, .. } => {
+            let cwd = env::current_dir()?;
+            let root = find_workspace_root(&cwd);
+            // `check` writes nothing, so nothing needs excluding.
+            watch::watch_loop(&root, None, move || check_outcome(&cwd))
+        }
+        Commands::Check { json, watch: false } => {
             if !json {
                 println!("Checking SurrealQL sources...");
             }
@@ -846,7 +958,10 @@ mod tests {
         let cli = Cli::try_parse_from(["surrealguard", "check", "--json"]).expect("cli parses");
 
         match cli.command {
-            Commands::Check { json } => assert!(json),
+            Commands::Check { json, watch } => {
+                assert!(json);
+                assert!(!watch);
+            }
             _ => panic!("expected check command"),
         }
     }
@@ -854,7 +969,76 @@ mod tests {
     #[test]
     fn codegen_commands_are_not_part_of_the_rewrite_cli() {
         assert!(Cli::try_parse_from(["surrealguard", "run"]).is_err());
+        // Still not a subcommand — and now deliberately so. Watching is a
+        // *mode* of the two verbs that read the workspace, not a third verb
+        // with its own semantics: `surrealguard watch` would have to answer
+        // "watch and do what?" and would duplicate every flag of whichever
+        // answer it picked. `check --watch` / `generate --watch` say it once.
         assert!(Cli::try_parse_from(["surrealguard", "watch"]).is_err());
+    }
+
+    #[test]
+    fn both_workspace_reading_verbs_accept_watch() {
+        let cli = Cli::try_parse_from(["surrealguard", "check", "--watch"]).expect("cli parses");
+        match cli.command {
+            Commands::Check { json, watch } => {
+                assert!(watch);
+                assert!(!json);
+            }
+            _ => panic!("expected check command"),
+        }
+
+        let cli = Cli::try_parse_from(["surrealguard", "generate", "--watch"]).expect("cli parses");
+        match cli.command {
+            Commands::Generate { out, watch } => {
+                assert!(watch);
+                assert!(out.is_none());
+            }
+            _ => panic!("expected generate command"),
+        }
+    }
+
+    #[test]
+    fn watch_composes_with_the_generate_output_path() {
+        let cli = Cli::try_parse_from(["surrealguard", "generate", "--watch", "--out", "gen.ts"])
+            .expect("cli parses");
+        match cli.command {
+            Commands::Generate { out, watch } => {
+                assert!(watch);
+                assert_eq!(out, Some(PathBuf::from("gen.ts")));
+            }
+            _ => panic!("expected generate command"),
+        }
+    }
+
+    #[test]
+    fn watch_and_json_are_mutually_exclusive() {
+        // `--json` promises one document and one exit code for one run. A watch
+        // stream is neither, so the pair is rejected at parse time rather than
+        // silently emitting something no consumer can parse.
+        assert!(Cli::try_parse_from(["surrealguard", "check", "--watch", "--json"]).is_err());
+    }
+
+    #[test]
+    fn the_watched_registry_path_is_the_one_generate_writes() {
+        // `--watch` must exclude the file `generate` writes, or every run
+        // triggers the next one. The two must resolve the same path, including
+        // the default.
+        let root = temp_project_dir("registry-path");
+        fs::write(root.join("surrealguard.toml"), "").expect("write config");
+        fs::write(root.join("q.surql"), "DEFINE TABLE t;").expect("write source");
+
+        let expected = generated_registry_path(&root, None);
+        let report = run_generate(&root, None).expect("clean workspace generates");
+        assert_eq!(report.path, expected);
+        assert_eq!(expected, root.join("surrealguard.generated.ts"));
+
+        let explicit = root.join("custom.ts");
+        assert_eq!(
+            generated_registry_path(&root, Some(&explicit)),
+            explicit,
+            "--out must be the excluded path when it is given"
+        );
     }
 
     #[test]
@@ -1021,8 +1205,7 @@ mod tests {
             "[sources]\nschema = [\"schema/**/*.surql\"]\n",
         )
         .expect("write config");
-        fs::write(root.join("schema/t.surql"), "DEFINE TABLE t SCHEMAFULL;")
-            .expect("write schema");
+        fs::write(root.join("schema/t.surql"), "DEFINE TABLE t SCHEMAFULL;").expect("write schema");
         fs::write(
             root.join("src/app.ts"),
             "const q = surql`SELECT * FROM nonexistent_table;`;",
@@ -1042,7 +1225,10 @@ mod tests {
                 .iter()
                 .any(|d| d.source.contains("app.ts") && !d.source.starts_with("embedded://")),
             "embedded findings must map to the host file: {:?}",
-            err.diagnostics.iter().map(|d| &d.source).collect::<Vec<_>>()
+            err.diagnostics
+                .iter()
+                .map(|d| &d.source)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1099,7 +1285,7 @@ mod tests {
         assert_eq!(value["diagnostics"][0]["severity"], "warning");
     }
 
-    fn temp_project_dir(name: &str) -> std::path::PathBuf {
+    pub(crate) fn temp_project_dir(name: &str) -> std::path::PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time is after epoch")

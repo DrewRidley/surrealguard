@@ -35,6 +35,12 @@ surrealguard-embed = { path = "../embed", version = "0.4.0" }
 surrealguard-syntax = { path = "../syntax", version = "0.4.0" }
 surrealguard-workspace = { path = "../workspace", version = "0.4.0" }
 clap = { version = "4", features = ["derive"]}
+# `--watch`. `notify-debouncer-full` is the `notify` project's own debouncer:
+# it merges the event storm one save produces and tracks renames by file id, so
+# the CLI does not hand-roll either. It re-exports `notify`, which keeps the two
+# on one version. Default features only (no crossbeam/flume/serde) — this pulls
+# in `notify`, `notify-types` and `file-id`, and nothing else new.
+notify-debouncer-full = "0.7.0"
 walkdir = "2.5.0"
 glob = "0.3"
 serde = { version = "1.0", features = ["derive"] }
