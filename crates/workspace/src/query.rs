@@ -10,7 +10,7 @@ use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analysis::{AnalysisOutput, NarrowingAnalysis};
-use crate::render::render_kind;
+use crate::render::{render, render_kind, KindContext};
 use crate::schema::SchemaIndex;
 
 /// A type hint for a `LET $x = <expr>` binding: where the bound `$x` token
@@ -24,9 +24,10 @@ pub struct TypeHint {
     pub label: String,
 }
 
-/// The character budget past which an inlay label's rendered kind is elided
-/// with `…`. Keeps a long object/union kind from dominating the line while
-/// still signalling its shape.
+/// The character budget an inlay label's rendered kind must fit in. Keeps a
+/// long object/union kind from dominating the line; the renderer spends the
+/// budget structurally ([`KindContext::Glance`]), so an over-long kind comes
+/// back as a shorter *type* rather than a cut string.
 const INLAY_LABEL_MAX: usize = 48;
 
 /// Inferred-type inlay hints for every `LET` binding (and `FOR` loop
@@ -63,7 +64,7 @@ pub fn let_binding_hints(output: &AnalysisOutput) -> Vec<TypeHint> {
                 // SurrealQL's own cast syntax `<T>` reads more naturally than a
                 // Rust-style `: T` for an inline type ghost.
                 name_span: binding.name_span.clone(),
-                label: format!("<{}>", elide_label(&render_kind(kind))),
+                label: format!("<{}>", glance_label(kind)),
             })
         })
         .collect()
@@ -115,7 +116,7 @@ pub fn function_return_hints(text: &str, source: &SourceId, schema: &SchemaIndex
         let label = if matches!(kind, Kind::None) {
             "-> none".to_string()
         } else {
-            format!("-> <{}>", elide_label(&render_kind(&kind)))
+            format!("-> <{}>", glance_label(&kind))
         };
         hints.push(TypeHint {
             name_span: SourceSpan::new(source.clone(), range),
@@ -125,15 +126,24 @@ pub fn function_return_hints(text: &str, source: &SourceId, schema: &SchemaIndex
     hints
 }
 
-/// Truncates a rendered kind to [`INLAY_LABEL_MAX`] characters, appending `…`
-/// when it overruns. Operates on chars so a multibyte boundary is never split.
-fn elide_label(rendered: &str) -> String {
-    if rendered.chars().count() <= INLAY_LABEL_MAX {
-        return rendered.to_string();
-    }
-    let mut out: String = rendered.chars().take(INLAY_LABEL_MAX).collect();
-    out.push('…');
-    out
+/// The inlay label for `kind`: its rendered type within [`INLAY_LABEL_MAX`]
+/// characters.
+///
+/// The budget belongs to the renderer, not to a string truncator. A truncator
+/// only knows where character 48 falls, which is how
+/// `option<string | int | datetime | uuid | decim…` reached the editor — not a
+/// type, not parseable, cut mid-name. [`KindContext::Glance`] spends the same
+/// budget on the kind instead, widening whole members and object bodies until
+/// the render fits, so the label is always a valid type that every value the
+/// binding can hold still satisfies.
+fn glance_label(kind: &Kind) -> String {
+    render(
+        kind,
+        KindContext::Glance {
+            budget: INLAY_LABEL_MAX,
+        },
+    )
+    .text
 }
 
 /// A resolved hover: the covered symbol's span and a markdown popover
@@ -2354,19 +2364,86 @@ mod tests {
         assert_eq!(target.span.range().start(), expected);
     }
 
+    /// Parses `label` back as a SurrealQL type, the way an editor's reader
+    /// would have to. `None` when it is not one.
+    fn parse_as_type(label: &str) -> Option<Kind> {
+        let text = format!("DEFINE FIELD f ON t TYPE {label};");
+        let parsed = parse_source(SourceId::new("label"), text.as_str()).ok()?;
+        let statements = surrealguard_syntax::lower::lower_statements(&parsed);
+        let ast::Statement::Define(ast::DefineStmt::Field(field)) = &statements.first()?.node else {
+            return None;
+        };
+        let parsed_kind = crate::schema::kind_from_type_expr(&field.ty.as_ref()?.node, &text);
+        parsed_kind.partial.is_empty().then_some(parsed_kind.kind)?
+    }
+
     #[test]
     fn inlay_label_elides_an_over_long_object_kind() {
-        // A wide literal-object kind is truncated with `…` so it never
-        // dominates the line.
+        // An over-long kind is elided *structurally*, so what reaches the
+        // editor is still a type: a character cut produced
+        // `{ field_number_0: string, field_number_1: string, fi…`, which no
+        // reader can parse and which stops mid-name.
         let wide = Kind::Literal(KindLiteral::Object(
             (0..12)
                 .map(|i| (format!("field_number_{i}"), Kind::String))
                 .collect(),
         ));
         assert!(render_kind(&wide).chars().count() > INLAY_LABEL_MAX);
-        let elided = elide_label(&render_kind(&wide));
-        assert!(elided.ends_with('…'), "got: {elided}");
-        assert!(elided.chars().count() <= INLAY_LABEL_MAX + 1);
+
+        let label = glance_label(&wide);
+        assert!(label.chars().count() <= INLAY_LABEL_MAX, "over budget: {label}");
+        assert!(!label.contains('…'), "the label is elided by kind, not by character: {label}");
+
+        // The label parses as a type, and every value the binding can hold
+        // still satisfies it — the elision widens, so the shorter label is
+        // never a claim the value can violate.
+        let reparsed = parse_as_type(&label).unwrap_or_else(|| panic!("`{label}` is not a type"));
+        assert!(
+            crate::kinds::kind_is_assignable_to(&wide, &reparsed),
+            "`{label}` must still admit the kind it labels"
+        );
+    }
+
+    #[test]
+    fn an_inlay_label_stays_a_type_for_every_shape_that_overruns() {
+        // The budget is spent on the kind, so each of these comes back a
+        // shorter *true* type rather than a prefix of a string.
+        let long_union = Kind::either(vec![
+            Kind::None,
+            Kind::String,
+            Kind::Int,
+            Kind::Datetime,
+            Kind::Uuid,
+            Kind::Decimal,
+            Kind::Duration,
+        ]);
+        let long_record = Kind::Record(
+            (0..8)
+                .map(|i| surrealdb_types::Table::from(format!("quite_long_table_{i}")))
+                .collect(),
+        );
+        let nested = Kind::Array(
+            Box::new(Kind::Literal(KindLiteral::Object(
+                (0..6)
+                    .map(|i| (format!("field_number_{i}"), Kind::String))
+                    .collect(),
+            ))),
+            None,
+        );
+        for kind in [long_union, long_record, nested] {
+            let label = glance_label(&kind);
+            assert!(
+                label.chars().count() <= INLAY_LABEL_MAX,
+                "over budget: {label}"
+            );
+            let reparsed =
+                parse_as_type(&label).unwrap_or_else(|| panic!("`{label}` is not a type"));
+            assert!(
+                crate::kinds::kind_is_assignable_to(&kind, &reparsed),
+                "`{label}` must still admit {}",
+                render_kind(&kind)
+            );
+        }
     }
 
     /// A RELATION-edge schema for the coverage tests: `has_subsidiary` links
