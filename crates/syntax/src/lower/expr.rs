@@ -386,10 +386,7 @@ impl Lowerer<'_> {
     fn block(&self, node: Node<'_>) -> Block {
         let mut statements = Vec::new();
         for child in named_children(node) {
-            if matches!(
-                child.kind(),
-                "BraceOpen" | "BraceClose" | "Comment" | "BlockComment"
-            ) {
+            if matches!(child.kind(), "BraceOpen" | "BraceClose") {
                 continue;
             }
             // Recover valid statements around a broken sibling: tree-sitter may
@@ -660,13 +657,29 @@ fn normalize_function_path(path: &str) -> String {
     path.trim().replace("::is::", "::is_")
 }
 
+/// The named children of `node`, minus comments.
+///
+/// `Comment`/`BlockComment` are grammar *extras*, so tree-sitter may insert
+/// one between any two tokens of any rule — including between an operand and
+/// its operator (`n\n-- why\n= 1` puts `Comment` between `Ident` and
+/// `Operator`). Every scan below picks operands positionally ("the child
+/// before the operator", "the last non-keyword child"), so a comment left in
+/// the list is silently selected as an operand and the real one is discarded.
+/// Dropping extras here makes all of them immune by construction; no lowering
+/// site ever wants a comment node.
 fn named_children<'tree>(node: Node<'tree>) -> Vec<Node<'tree>> {
     let mut cursor = node.walk();
     let children = node
         .children(&mut cursor)
-        .filter(tree_sitter::Node::is_named)
+        .filter(|child| child.is_named() && !is_comment(*child))
         .collect();
     children
+}
+
+/// Whether `node` is a comment extra. Not to be confused with `CommentClause`
+/// (`DEFINE … COMMENT "…"`), which is real syntax.
+fn is_comment(node: Node<'_>) -> bool {
+    matches!(node.kind(), "Comment" | "BlockComment")
 }
 
 fn single_named_child<'tree>(node: Node<'tree>) -> Option<Node<'tree>> {
@@ -681,9 +694,7 @@ fn single_named_child<'tree>(node: Node<'tree>) -> Option<Node<'tree>> {
 /// comments (`( /* why */ 1 )`). `None` for an empty or multi-child
 /// `SubQuery`, which has no inner expression to be transparent about.
 fn subquery_content<'tree>(node: Node<'tree>) -> Option<Node<'tree>> {
-    let mut children = named_children(node)
-        .into_iter()
-        .filter(|child| !matches!(child.kind(), "Comment" | "BlockComment"));
+    let mut children = named_children(node).into_iter();
     let first = children.next()?;
     children.next().is_none().then_some(first)
 }
@@ -1178,5 +1189,102 @@ mod tests {
             "a commented group is still its inner expression, got {:?}",
             lowered.node
         );
+    }
+
+    #[test]
+    fn a_comment_between_operands_does_not_swallow_an_operand() {
+        // Comments are grammar extras, so tree-sitter puts a `Comment` node
+        // *between* an operand and its operator. Selecting operands by
+        // position then picked the comment and discarded the real operand —
+        // dropping an arbitrarily large side of the expression, and with it
+        // every check that would have run on it.
+        for query in [
+            // before the operator
+            "SELECT * FROM t WHERE a = 1\n  -- why\n  AND b = 2;",
+            // after the operator
+            "SELECT * FROM t WHERE a = 1 AND\n  -- why\n  b = 2;",
+            // on both sides, both comment syntaxes
+            "SELECT * FROM t WHERE a = 1 /* one */ AND -- two\n b = 2;",
+            // inside grouping parentheses
+            "SELECT * FROM t WHERE (a = 1 -- why\n) AND b = 2;",
+            // a multi-line WHERE with a comment on every line
+            "SELECT * FROM t\nWHERE -- head\n  a = 1 -- first\n  AND -- mid\n  b = 2 -- tail\n;",
+        ] {
+            let parsed = parse(query);
+            let lowered = lower_first(&parsed, "BinaryExpression");
+            let Expr::Binary { lhs, op, rhs } = &lowered.node else {
+                panic!("expected a binary for {query:?}, got {:?}", lowered.node);
+            };
+            assert!(matches!(op.node, BinaryOp::And), "operator of {query:?}");
+            assert!(
+                matches!(lhs.node, Expr::Binary { .. }),
+                "left operand of {query:?} was discarded: {:?}",
+                lhs.node
+            );
+            assert!(
+                matches!(rhs.node, Expr::Binary { .. }),
+                "right operand of {query:?} was discarded: {:?}",
+                rhs.node
+            );
+        }
+
+        // The minimal shape: a comment between a bare field and its operator.
+        let parsed = parse("SELECT * FROM t WHERE n\n  -- why\n  = \"x\";");
+        let lowered = lower_first(&parsed, "BinaryExpression");
+        let Expr::Binary { lhs, .. } = &lowered.node else {
+            panic!("expected a binary, got {:?}", lowered.node);
+        };
+        assert!(
+            matches!(&lhs.node, Expr::Idiom(idiom) if idiom.parts.len() == 1),
+            "left operand should still be the field `n`, got {:?}",
+            lhs.node
+        );
+    }
+
+    #[test]
+    fn a_comment_after_a_prefix_operator_is_not_the_operand() {
+        let parsed = parse("SELECT * FROM t WHERE ! -- why\n active;");
+        let lowered = lower_first(&parsed, "PrefixExpression");
+        let Expr::Prefix { op, expr } = &lowered.node else {
+            panic!("expected a prefix, got {:?}", lowered.node);
+        };
+        assert!(matches!(op.node, PrefixOp::Not));
+        assert!(
+            matches!(expr.node, Expr::Idiom(_)),
+            "operand should be `active`, got {:?}",
+            expr.node
+        );
+    }
+
+    #[test]
+    fn comments_do_not_displace_operands_elsewhere() {
+        // Every other positional operand scan has the same exposure, so they
+        // are covered by the same filter: a cast's value, an array's
+        // elements, and a record id's id part.
+        let parsed = parse("SELECT * FROM t WHERE <int> /* why */ a;");
+        let lowered = lower_first(&parsed, "TypeCast");
+        let Expr::Cast { expr, .. } = &lowered.node else {
+            panic!("expected a cast, got {:?}", lowered.node);
+        };
+        assert!(
+            matches!(expr.node, Expr::Idiom(_)),
+            "cast value should be `a`, got {:?}",
+            expr.node
+        );
+
+        let parsed = parse("RETURN [1, /* why */ 2];");
+        let lowered = lower_first(&parsed, "Array");
+        let Expr::Array(items) = &lowered.node else {
+            panic!("expected an array, got {:?}", lowered.node);
+        };
+        assert_eq!(items.len(), 2, "a comment is not an element: {items:?}");
+
+        let parsed = parse("RETURN { k /* why */ : 1 };");
+        let lowered = lower_first(&parsed, "RecordId");
+        let Expr::RecordId { table, id, .. } = &lowered.node else {
+            panic!("expected a record id, got {:?}", lowered.node);
+        };
+        assert_eq!(table.node, "k");
+        assert_eq!(&parsed.text()[id.start() as usize..id.end() as usize], "1");
     }
 }

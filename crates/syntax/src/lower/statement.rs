@@ -454,11 +454,14 @@ fn lower_order(clause: Node<'_>, text: &str) -> OrderClause {
     OrderClause { keys }
 }
 
+/// The named children of `node`, minus comments — see the expression-side
+/// [`super::expr`] twin for why: comments are grammar extras that can land
+/// between any two tokens, and the scans below select operands positionally.
 fn named_children<'tree>(node: Node<'tree>) -> Vec<Node<'tree>> {
     let mut cursor = node.walk();
     let children = node
         .children(&mut cursor)
-        .filter(tree_sitter::Node::is_named)
+        .filter(|child| child.is_named() && !matches!(child.kind(), "Comment" | "BlockComment"))
         .collect();
     children
 }

@@ -11,7 +11,7 @@
 #
 # Regenerate with `scripts/oracle.py update` (existing verdicts are preserved).
 
-# total: 42 finding(s)
+# total: 45 finding(s)
 
 E1001  schema/apps/commerce/discount.surql
     `record<loyalty_tier>` targets a table that's never defined
@@ -84,6 +84,10 @@ E1001  schema/person/account.surql
 E1001  schema/suite/task/task.surql
     `task_comment` is not a defined table
     verdict: genuine — `COMPUTED <~task_comment` back-references a table that is never defined.
+
+E1002  schema/auth/entity_access.surql
+    `member_of` has no field `status`
+    verdict: genuine — `member_of` is SCHEMAFULL with only `role` / `joined_at` (+ in/out). `WHERE ... AND status = 'active'` therefore never matches, so both team-membership permission branches are dead.
 
 E1002  schema/auth/entity_access.surql
     `member_of` has no field `status`
@@ -165,8 +169,12 @@ E2034  schema/suite/project/project.surql
     `template` must be set when creating a `task_status`
     verdict: genuine — engine-verified: `template` is `TYPE record<task_status_template>` with no DEFAULT, so the CREATE fails with "Couldn't coerce value for field `template` ... Expected `record<task_status_template>` but found `NONE`". Same stale setup_statuses event as the E1002s above.
 
+E5002  schema/auth/entity_access.surql
+    argument 1 to `fn::entity::organization` is a `record<organization>`, but `$entity` is declared `record<project | calendar | outlet>`
+    verdict: genuine — entity_access.surql:44, inside `SELECT VALUE id FROM employee_of WHERE ... AND out = fn::entity::organization(out)`. The bare `out` binds to the *subquery's* row, and `employee_of` is `TYPE RELATION FROM account TO organization`, so it is a `record<organization>`; the author meant the outer `entity_access.out` (the entity). Engine-verified on 3.0.5 that this is a hard failure, not a coercion: `DEFINE FUNCTION fn::takes($e: record<proj>)` called with `org:x` gives "Incorrect arguments for function fn::takes(). Failed to coerce argument `$e`: Expected `record<proj>` but found `org:x`". The whole FOR CREATE/UPDATE/DELETE permission therefore throws. Surfaced only after the comment-lowering fix (docs/plans/2026-07-26-oracle-triage.md, BUG-2).
+
 E5002  schema/organization/billing/organization_billing.surql
-    argument 1 to `fn::stripe::customer::delete` is a `option<string>`, but `$stripe_id` is declared `string`
+    argument 1 to `fn::stripe::customer::delete` is a `none | string`, but `$stripe_id` is declared `string`
     verdict: genuine — engine-verified: `organization_billing.stripe` is `option<string>` and `fn::stripe::customer::delete($stripe_id: string)` rejects NONE ("Incorrect arguments ... Expected `string` but found `NONE`"). Deleting a billing row that never reached Stripe throws.
 
 W4023  schema/@functions.surql
@@ -180,3 +188,7 @@ W4023  schema/@functions.surql
 W7005  schema/@functions.surql
     `!=` between `record<organization_unit>` and `none` is always true
     verdict: genuine — `employee_of.unit` is declared `TYPE record<organization_unit>` (employee_of.surql:19-21), not `option<...>`, so `$grant.unit != NONE` at @functions.surql:23 is dead. Either the field should be optional or the guard should go.
+
+W7005  schema/auth/entity_access.surql
+    `!=` between `array<record<employee_of>, 1>` and `none` is always true
+    verdict: genuine — entity_access.surql:40-47, `(SELECT VALUE id FROM employee_of WHERE ... LIMIT 1) != NONE`. A non-ONLY SELECT always yields an array, never NONE. Engine-verified on 3.0.5: with no matching row the subquery is `[]` and `[] != NONE` is `true`. So the "require active employment in the entity's Organization" half of the guard never denies anything; it needs `FROM ONLY ... LIMIT 1` (or `array::len(...) > 0`). Surfaced only after the comment-lowering fix (docs/plans/2026-07-26-oracle-triage.md, BUG-2).
