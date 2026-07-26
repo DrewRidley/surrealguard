@@ -52,6 +52,21 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
     is frozen with a `# expected: <reason>` note in the baseline. Regenerate with
     `UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test any_ratchet`
     (regenerating preserves the `# expected:` notes).
+  - `scripts/oracle.py` — the **real-world corpus gate**, run against the
+    hand-edited workspace outside this repo (`../workshop/database`). It is a
+    *triage* gate, not a count: `tests/oracle_baseline.txt` records every finding
+    with a verdict, and the gate reports what is NEW (needs triage) and what is
+    GONE (a check stopped firing — usually a regression). Run
+    `scripts/oracle.py check`; after triaging, `scripts/oracle.py update`.
+
+    **Do not treat the finding count as the invariant.** That corpus is not
+    all-valid — it contains genuinely broken SurrealQL — so the count *should*
+    move when a diagnostic is added, corrected, or a real bug is caught. Holding
+    it flat actively suppresses correct work: gating aggregate promotion on a
+    `GROUP` clause was once declined purely because it would add +2 findings,
+    even though the engine rejects both of those queries outright. A bare count
+    also hides the worst case — one gained plus one lost reads as no change.
+
   - `crates/lsp/tests/stdio.rs` — spawns the **real** `surrealguard-lsp` binary
     and asserts on hover, inlay hints, completion and diagnostics at specific
     cursor positions. `crates/lsp/tests/backend.rs` drives the service in-process
