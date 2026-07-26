@@ -6,6 +6,8 @@
   "description": "TypeScript packages for SurrealGuard: typed client and framework adapters",
   "scripts": {
     "build": "pnpm -r --if-present run build",
+    "docs:diagnostics": "node scripts/gen-diagnostics-page.mjs",
+    "docs:diagnostics:check": "node scripts/gen-diagnostics-page.mjs --check && node scripts/gen-diagnostics-page.mjs --verify",
     "typecheck": "pnpm -r --if-present run typecheck",
     "test": "pnpm -r --if-present run test"
   },

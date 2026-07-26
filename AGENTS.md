@@ -84,7 +84,10 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
 
 - `crates/syntax` — tree-sitter parsing + typed span-carrying AST
 - `crates/workspace` — schema index, analyzers, inference (the engine)
-- `crates/diagnostics` — finding codes, severities, policy
+- `crates/diagnostics` — finding codes, severities, policy. `catalog.rs` is the
+  single source of truth for the code list; the published catalog page
+  (`web/public/docs/diagnostics.html`) is **generated** from it — add a code,
+  then run `pnpm docs:diagnostics`. CI fails if the page is stale.
 - `crates/macros` + `crates/rs` — the `query!` / `surql!` macros and runtime
 - `crates/codegen` + `crates/embed` — TypeScript generation + host-file extraction
 - `crates/cli` + `crates/lsp` — the `surrealguard` and `surrealguard-lsp` binaries
