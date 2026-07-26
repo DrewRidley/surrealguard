@@ -23,7 +23,7 @@ pub(crate) mod place;
 pub(crate) mod refine;
 pub(crate) mod term;
 
-pub(crate) use guard::guard_of;
+pub(crate) use guard::{guard_of, Guard};
 pub(crate) use place::{place_of, Place, PlaceRoot};
 pub(crate) use refine::{Facts, KindOracle, Refinement};
 pub(crate) use term::{eval, Bindings, ConstValue, DiscriminantKind, Term};

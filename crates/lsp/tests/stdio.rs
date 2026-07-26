@@ -442,6 +442,47 @@ RETURN $org;
     );
 }
 
+/// Parentheses are a semantic no-op in SurrealQL, so `IF ($org = NONE)` proves
+/// exactly what `IF $org = NONE` proves and the editor must say the same thing
+/// at the same occurrence. This is the surface half of the equivalence the
+/// expression-fact layer is built on: a guard is recognized by what it
+/// *denotes*, and a pair of parentheses changes nothing about that.
+///
+/// It is pinned at the editor surface because that is where it was observed
+/// broken — a parenthesized guard used to leave hover reporting the declared
+/// kind past a guard that had already ruled the `none` out.
+#[test]
+fn hover_past_a_parenthesized_guard_matches_the_unparenthesized_one() {
+    let plain = "\
+LET $org = (SELECT name, tier FROM ONLY organization LIMIT 1);
+IF $org = NONE THEN THROW 'no organization' END;
+RETURN $org;
+";
+    let parenthesized = "\
+LET $org = (SELECT name, tier FROM ONLY organization LIMIT 1);
+IF ($org = NONE) THEN THROW 'no organization' END;
+RETURN $org;
+";
+    // The third `$org` is the read past the diverging guard in both spellings.
+    let past_guard = |query: &str| {
+        let (mut lsp, _) = Lsp::with_schema(query);
+        lsp.hover_markdown(query, after(query, "$org", 3) - 1)
+            .expect("hover past the guard")
+    };
+
+    let plain_hover = past_guard(plain);
+    let parenthesized_hover = past_guard(parenthesized);
+
+    assert!(
+        !plain_hover.contains("none"),
+        "the guard throws on NONE, so nothing past it can be NONE; hover said: {plain_hover}"
+    );
+    assert_eq!(
+        plain_hover, parenthesized_hover,
+        "a pair of parentheses is not a fact; the editor must report one kind for both spellings"
+    );
+}
+
 /// A narrowed occurrence reports **which members survived**, not that the
 /// declaration was optional. `note` is `option<string | null>`; past a
 /// `= NULL` guard that throws, a `null` can no longer reach the read — but a

@@ -204,6 +204,26 @@ pub(crate) fn guard_facts(cond: &ast::Expr, polarity: bool, env: &StatementEnv) 
     guard_of(cond, polarity, Some(env)).facts(&EnvOracle(env))
 }
 
+/// The refinements proved in the region reached when **every** one of these
+/// conditions was false: an `ELSE`, or the fall-through past an `IF` whose
+/// every arm diverged.
+///
+/// The conjunction is explicit — one `Guard::All` of the negations, interpreted
+/// once — rather than a concatenation of per-branch effect lists applied in
+/// order. That matters where two branches claim about the same place: the
+/// interpreter composes the claims, where the list applied the second to the
+/// *declared* kind and overwrote the first.
+pub(crate) fn all_false_facts<'a>(
+    conds: impl IntoIterator<Item = &'a ast::Expr>,
+    env: &StatementEnv,
+) -> Facts {
+    let negations = conds
+        .into_iter()
+        .map(|cond| guard_of(cond, false, Some(env)))
+        .collect();
+    crate::analyzer::facts::Guard::All(negations).facts(&EnvOracle(env))
+}
+
 /// [`positive_effects`]/[`negative_effects`], answered by the fact layer.
 ///
 /// One guard, interpreted once, projected back into the `Vec<Effect>` shape the

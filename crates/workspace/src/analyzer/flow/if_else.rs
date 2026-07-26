@@ -90,18 +90,31 @@ pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::If
         match branch_reach {
             BranchReach::Reachable => {
                 // The THEN body runs only when the branch condition holds, so it
-                // sees the positive narrowing of that condition's guards.
-                let positive = crate::analyzer::flow::narrow::positive_effects(
-                    &branch.condition.node,
-                    ctx.env(),
-                );
-                // The refinement holds over the body and nothing else — the
-                // condition itself still reads the declared kind.
+                // sees what that condition proves. The refinement holds over the
+                // body and nothing else — the condition itself still reads the
+                // declared kind — so the region is recorded with it and that is
+                // what an editor hovers.
                 let region = block_span(&branch.body);
-                let flow = ctx.with_child_env(|ctx| {
-                    crate::analyzer::flow::narrow::apply_effects_over(ctx, &positive, region);
-                    analyze_block_flow(ctx, &branch.body)
-                });
+                let flow = if crate::analyzer::flow::narrow::use_fact_layer() {
+                    let facts = crate::analyzer::flow::narrow::guard_facts(
+                        &branch.condition.node,
+                        true,
+                        ctx.env(),
+                    );
+                    ctx.with_child_env(|ctx| {
+                        crate::analyzer::flow::narrow::apply_facts_over(ctx, &facts, region);
+                        analyze_block_flow(ctx, &branch.body)
+                    })
+                } else {
+                    let positive = crate::analyzer::flow::narrow::positive_effects(
+                        &branch.condition.node,
+                        ctx.env(),
+                    );
+                    ctx.with_child_env(|ctx| {
+                        crate::analyzer::flow::narrow::apply_effects_over(ctx, &positive, region);
+                        analyze_block_flow(ctx, &branch.body)
+                    })
+                };
                 returns.extend(flow.returns);
                 if !flow.diverges {
                     all_arms_diverge = false;
@@ -137,19 +150,30 @@ pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::If
         }
     } else if let Some(else_branch) = &stmt.else_branch {
         // The ELSE runs only when every preceding branch condition was false,
-        // so it sees the negation of each.
-        let mut negative = Vec::new();
-        for branch in &stmt.branches {
-            negative.extend(crate::analyzer::flow::narrow::negative_effects(
-                &branch.condition.node,
-                ctx.env(),
-            ));
-        }
+        // so it sees the negation of each — one conjunction, not a list.
         let region = block_span(else_branch);
-        let flow = ctx.with_child_env(|ctx| {
-            crate::analyzer::flow::narrow::apply_effects_over(ctx, &negative, region);
-            analyze_block_flow(ctx, else_branch)
-        });
+        let flow = if crate::analyzer::flow::narrow::use_fact_layer() {
+            let facts = crate::analyzer::flow::narrow::all_false_facts(
+                stmt.branches.iter().map(|branch| &branch.condition.node),
+                ctx.env(),
+            );
+            ctx.with_child_env(|ctx| {
+                crate::analyzer::flow::narrow::apply_facts_over(ctx, &facts, region);
+                analyze_block_flow(ctx, else_branch)
+            })
+        } else {
+            let mut negative = Vec::new();
+            for branch in &stmt.branches {
+                negative.extend(crate::analyzer::flow::narrow::negative_effects(
+                    &branch.condition.node,
+                    ctx.env(),
+                ));
+            }
+            ctx.with_child_env(|ctx| {
+                crate::analyzer::flow::narrow::apply_effects_over(ctx, &negative, region);
+                analyze_block_flow(ctx, else_branch)
+            })
+        };
         returns.extend(flow.returns);
         if !flow.diverges {
             all_arms_diverge = false;
@@ -495,6 +519,48 @@ mod tests {
         assert!(
             ctx.env().narrowed_path("x").is_none(),
             "no per-path narrowing should survive the IF-expression",
+        );
+    }
+
+    /// An `ELSE` is reached only when **every** branch condition failed, so the
+    /// negations are a conjunction and must be met, not listed.
+    ///
+    /// The list could not do it for a field path: each effect resolved the
+    /// path's kind through the schema from the *declared* kind, so the second
+    /// negation overwrote the first instead of composing with it, and the
+    /// `ELSE` saw a `none` the first branch had already ruled out.
+    #[test]
+    fn the_else_meets_every_branch_negation_on_one_field_path() {
+        use crate::analyzer::flow::narrow::with_fact_layer;
+        use surrealdb_types::KindLiteral;
+
+        let subject = Kind::Literal(KindLiteral::Object(std::collections::BTreeMap::from([(
+            "a".to_string(),
+            Kind::either(vec![Kind::None, Kind::Null, Kind::String]),
+        )])));
+        let source = "IF $x.a = NONE { RETURN 'n' } \
+                      ELSE IF $x.a = NULL { RETURN 'l' } \
+                      ELSE { RETURN $x.a };";
+        let else_value = |kind: Kind| match kind {
+            Kind::Either(variants) => variants
+                .into_iter()
+                .filter(|variant| {
+                    !matches!(variant, Kind::Literal(KindLiteral::String(text))
+                        if text == "n" || text == "l")
+                })
+                .collect::<Vec<_>>(),
+            other => vec![other],
+        };
+
+        // Both sentinels were ruled out by the two failed branches, and only
+        // one of them survived the overwrite.
+        assert_eq!(
+            else_value(with_fact_layer(false, || bound_if(subject.clone(), false, source).0)),
+            vec![Kind::String, Kind::None]
+        );
+        assert_eq!(
+            else_value(with_fact_layer(true, || bound_if(subject, false, source).0)),
+            vec![Kind::String]
         );
     }
 
