@@ -30,7 +30,7 @@ use crate::analyzer::const_eval::{BranchReach, Reachability};
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::facts::{
     eval, guard_of, Bindings, ConstValue, DiscriminantKind, Facts, KindOracle, Place, PlaceRoot,
-    Refinement, Term,
+    Term,
 };
 use crate::analyzer::facts::place_of;
 use crate::analyzer::expression::infer::narrow_out_none;
@@ -117,16 +117,6 @@ pub(crate) enum Narrowing {
     /// element kind (occurrence typing over `x IN <collection>`). The value is
     /// tightened to this kind on the positive branch only.
     Is(Kind),
-    /// A refinement computed by the [expression-fact layer](crate::analyzer::facts):
-    /// a composition of lattice meets and subtractions rather than one of the
-    /// fixed transforms above.
-    ///
-    /// This is the whole of the adapter. Every consumer keeps reading
-    /// `Narrowing` and applying it through [`narrow_kind`]; only where the
-    /// refinement *comes from* changes with the gate. When the consumers read
-    /// `Facts` directly (stage 4) the other variants go and this one stops
-    /// being a variant at all.
-    Refine(Refinement),
 }
 
 /// The target of a narrowing: a bare param (`$x`) or a param plus a short
@@ -177,19 +167,18 @@ pub(crate) struct Effect {
 /// The refinements that hold in the region where `cond` is TRUE (an `IF`'s
 /// THEN body). `env` resolves indirect discriminants (a `LET`-bound
 /// `type::table($x)`).
+///
+/// **Recognizer path only** — every consumer reads [`guard_facts`] when the
+/// gate is on.
 pub(crate) fn positive_effects(cond: &ast::Expr, env: &StatementEnv) -> Vec<Effect> {
-    if use_fact_layer() {
-        return fact_effects(cond, true, env);
-    }
     effects(cond, true, env)
 }
 
 /// The refinements that hold in the region where `cond` is FALSE (an `IF`'s
 /// ELSE body, or the fall-through after a diverging guard).
+///
+/// **Recognizer path only** — see [`positive_effects`].
 pub(crate) fn negative_effects(cond: &ast::Expr, env: &StatementEnv) -> Vec<Effect> {
-    if use_fact_layer() {
-        return fact_effects(cond, false, env);
-    }
     effects(cond, false, env)
 }
 
@@ -222,26 +211,6 @@ pub(crate) fn all_false_facts<'a>(
         .map(|cond| guard_of(cond, false, Some(env)))
         .collect();
     crate::analyzer::facts::Guard::All(negations).facts(&EnvOracle(env))
-}
-
-/// [`positive_effects`]/[`negative_effects`], answered by the fact layer.
-///
-/// One guard, interpreted once, projected back into the `Vec<Effect>` shape the
-/// consumers already read. Only param-rooted places survive the projection —
-/// an `Effect` is keyed by [`GuardPath`], and a bare row field is the `WHERE`
-/// side's business ([`where_effects`]), exactly as it was when the two sides
-/// were two recognizers.
-fn fact_effects(cond: &ast::Expr, positive: bool, env: &StatementEnv) -> Vec<Effect> {
-    guard_of(cond, positive, Some(env))
-        .facts(&EnvOracle(env))
-        .iter()
-        .filter_map(|(place, refinement)| {
-            Some(Effect {
-                path: param_path(place)?,
-                narrowing: Narrowing::Refine(refinement.clone()),
-            })
-        })
-        .collect()
 }
 
 /// The kinds the flow environment holds, as the fact layer reads them.
@@ -988,10 +957,6 @@ pub(crate) fn narrow_kind(kind: &Kind, narrowing: &Narrowing) -> Option<Kind> {
         Narrowing::Is(target) => {
             (*target != Kind::Any && target != kind).then(|| target.clone())
         }
-        // The fact layer answers this one itself: a `Refinement` already *is*
-        // the function from kind to narrowed kind, and it reports "no
-        // tightening" the same way every arm above does.
-        Narrowing::Refine(refinement) => refinement.apply(kind),
     }
 }
 

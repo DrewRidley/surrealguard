@@ -156,7 +156,8 @@ fn the_designs_remaining_cases_flip() {
         DEFINE FIELD name ON user TYPE string;\n\
         DEFINE FIELD email ON user TYPE option<string>;\n\
         DEFINE FIELD age ON user TYPE option<int>;\n\
-        DEFINE FIELD status ON user TYPE 'active' | 'inactive' | 'banned';\n";
+        DEFINE FIELD status ON user TYPE 'active' | 'inactive' | 'banned';\n\
+        DEFINE FIELD note ON user TYPE option<string | null>;\n";
 
     // (case, query, kind under the recognizers, kind under the fact layer)
     let cases = [
@@ -188,6 +189,20 @@ fn the_designs_remaining_cases_flip() {
             "LET $x = (SELECT name FROM ONLY user LIMIT 1);\n\
              LET $r = IF type::is_object($x) THEN $x.name ELSE 'x' END;",
             "any | string",
+            "string",
+        ),
+        (
+            // Not in the design's table: the fall-through past a multi-branch
+            // diverging guard is reached only when EVERY condition failed, so
+            // the negations are a conjunction. The recognizer path applied them
+            // as a list, each resolving the field path from its DECLARED kind,
+            // so the second overwrote the first and the `none` came back.
+            "FallThrough",
+            "LET $u = (SELECT note FROM ONLY user LIMIT 1);\n\
+             IF $u = NONE THEN THROW 'no user' END;\n\
+             IF $u.note = NONE THEN THROW 'unset' ELSE IF $u.note = NULL THEN THROW 'cleared' END;\n\
+             LET $r = $u.note;",
+            "option<string>",
             "string",
         ),
         (
