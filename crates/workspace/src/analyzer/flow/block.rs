@@ -198,25 +198,13 @@ pub(crate) fn apply_fall_through_narrowing(
     // statement sequence the guard sits in — the guard itself, and everything
     // before it, still reads the declared kind.
     let region = ByteRange::new(guard_span.end(), ctx.scope_end().max(guard_span.end())).ok();
-    if crate::analyzer::flow::narrow::use_fact_layer() {
-        // Reaching here means every branch condition was false, so the
-        // negations are one conjunction — the same guard the `ELSE` of the same
-        // `IF` would see, which is why the two cannot narrow differently.
-        let facts = crate::analyzer::flow::narrow::all_false_facts(
-            if_else.branches.iter().map(|branch| &branch.condition.node),
-            ctx.env(),
-        );
-        crate::analyzer::flow::narrow::apply_facts_over(ctx, &facts, region);
-        return;
-    }
-    let mut effects = Vec::new();
-    for branch in &if_else.branches {
-        effects.extend(crate::analyzer::flow::narrow::negative_effects(
-            &branch.condition.node,
-            ctx.env(),
-        ));
-    }
-    crate::analyzer::flow::narrow::apply_effects_over(ctx, &effects, region);
+    // Reaching here means every branch condition was false — the same region an
+    // `ELSE` on the same `IF` would name, read by the same function.
+    crate::analyzer::flow::narrow::narrow_where_all_false(
+        ctx,
+        if_else.branches.iter().map(|branch| &branch.condition.node),
+        region,
+    );
 }
 
 /// Whether control flow provably cannot continue past this statement:

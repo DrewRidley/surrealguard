@@ -95,26 +95,14 @@ pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::If
                 // declared kind — so the region is recorded with it and that is
                 // what an editor hovers.
                 let region = block_span(&branch.body);
-                let flow = if crate::analyzer::flow::narrow::use_fact_layer() {
-                    let facts = crate::analyzer::flow::narrow::guard_facts(
+                let flow = ctx.with_child_env(|ctx| {
+                    crate::analyzer::flow::narrow::narrow_where_true(
+                        ctx,
                         &branch.condition.node,
-                        true,
-                        ctx.env(),
+                        region,
                     );
-                    ctx.with_child_env(|ctx| {
-                        crate::analyzer::flow::narrow::apply_facts_over(ctx, &facts, region);
-                        analyze_block_flow(ctx, &branch.body)
-                    })
-                } else {
-                    let positive = crate::analyzer::flow::narrow::positive_effects(
-                        &branch.condition.node,
-                        ctx.env(),
-                    );
-                    ctx.with_child_env(|ctx| {
-                        crate::analyzer::flow::narrow::apply_effects_over(ctx, &positive, region);
-                        analyze_block_flow(ctx, &branch.body)
-                    })
-                };
+                    analyze_block_flow(ctx, &branch.body)
+                });
                 returns.extend(flow.returns);
                 if !flow.diverges {
                     all_arms_diverge = false;
@@ -152,28 +140,14 @@ pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::If
         // The ELSE runs only when every preceding branch condition was false,
         // so it sees the negation of each — one conjunction, not a list.
         let region = block_span(else_branch);
-        let flow = if crate::analyzer::flow::narrow::use_fact_layer() {
-            let facts = crate::analyzer::flow::narrow::all_false_facts(
+        let flow = ctx.with_child_env(|ctx| {
+            crate::analyzer::flow::narrow::narrow_where_all_false(
+                ctx,
                 stmt.branches.iter().map(|branch| &branch.condition.node),
-                ctx.env(),
+                region,
             );
-            ctx.with_child_env(|ctx| {
-                crate::analyzer::flow::narrow::apply_facts_over(ctx, &facts, region);
-                analyze_block_flow(ctx, else_branch)
-            })
-        } else {
-            let mut negative = Vec::new();
-            for branch in &stmt.branches {
-                negative.extend(crate::analyzer::flow::narrow::negative_effects(
-                    &branch.condition.node,
-                    ctx.env(),
-                ));
-            }
-            ctx.with_child_env(|ctx| {
-                crate::analyzer::flow::narrow::apply_effects_over(ctx, &negative, region);
-                analyze_block_flow(ctx, else_branch)
-            })
-        };
+            analyze_block_flow(ctx, else_branch)
+        });
         returns.extend(flow.returns);
         if !flow.diverges {
             all_arms_diverge = false;

@@ -856,6 +856,47 @@ pub(crate) fn apply_effects_over(
     }
 }
 
+/// Narrows the current scope by what `cond` proves in the region where it
+/// holds — an `IF`'s THEN body — recording `region` as the span the refinement
+/// covers so an editor can read it back.
+///
+/// Called *inside* the child scope the body is analyzed in, so the narrowing
+/// dies with the body.
+pub(crate) fn narrow_where_true(
+    ctx: &mut AnalysisContext<'_>,
+    cond: &ast::Expr,
+    region: Option<ByteRange>,
+) {
+    if use_fact_layer() {
+        let facts = guard_facts(cond, true, ctx.env());
+        apply_facts_over(ctx, &facts, region);
+        return;
+    }
+    let effects = positive_effects(cond, ctx.env());
+    apply_effects_over(ctx, &effects, region);
+}
+
+/// Narrows the current scope by the negation of **every** one of `conds`: an
+/// `ELSE`, or the fall-through past an `IF` whose every arm diverged. The two
+/// are the same region reached two ways, so they read the same function and
+/// cannot narrow differently.
+pub(crate) fn narrow_where_all_false<'a>(
+    ctx: &mut AnalysisContext<'_>,
+    conds: impl IntoIterator<Item = &'a ast::Expr>,
+    region: Option<ByteRange>,
+) {
+    if use_fact_layer() {
+        let facts = all_false_facts(conds, ctx.env());
+        apply_facts_over(ctx, &facts, region);
+        return;
+    }
+    let mut effects = Vec::new();
+    for cond in conds {
+        effects.extend(negative_effects(cond, ctx.env()));
+    }
+    apply_effects_over(ctx, &effects, region);
+}
+
 /// [`apply_effects`] for a consumer that reads [`Facts`].
 pub(crate) fn apply_facts(ctx: &mut AnalysisContext<'_>, facts: &Facts) {
     apply_facts_over(ctx, facts, None);
