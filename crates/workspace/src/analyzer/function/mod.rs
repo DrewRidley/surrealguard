@@ -293,7 +293,7 @@ fn check_custom_call(
                     "argument {} to `{}` is a `{}`, but `${}` is declared `{}`",
                     index + 1,
                     call.path.node,
-                    crate::render_kind(kind),
+                    crate::render::render_offending(kind, Some(expected)),
                     param.name,
                     crate::render_kind(expected),
                 ),
@@ -302,7 +302,7 @@ fn check_custom_call(
                 "pass a `{}`, or widen `${}` to accept `{}`",
                 crate::render_kind(expected),
                 param.name,
-                crate::render_kind(kind),
+                crate::render::render_offending(kind, Some(expected)),
             ))
             .with_related(
                 function.name_span.clone(),

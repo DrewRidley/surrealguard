@@ -532,7 +532,11 @@ fn check_assignment_value(
             let mut finding = surrealguard_diagnostics::catalog::finding(
                 span,
                 2004,
-                format!("`{op_text}` can't combine a `{}` and a `{}`", crate::render_kind(&field_kind), crate::render_kind(&value_kind)),
+                format!(
+                    "`{op_text}` can't combine a `{}` and a `{}`",
+                    crate::render_kind(&field_kind),
+                    crate::render::render_offending(&value_kind, Some(&field_kind))
+                ),
             )
             .with_help(format!(
                 "`{path}` is `{}`; `{op_text}` needs a right-hand value that combines with it",
@@ -592,23 +596,27 @@ fn check_assignment_value(
     let span =
         surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), assignment.value.span);
     let field = segments.join(".");
+    // The field's declared type is the contract the value failed, so it is
+    // both what the reader is pointed at and what decides which members of
+    // the value are worth naming.
+    let declared = crate::render_kind(&field_kind);
+    let actual = crate::render::render_offending(&value_kind, Some(&field_kind));
     // One contract: the value must inhabit the field's declared type. NONE
     // gets the actionable variant of the message, not its own code.
     let mut finding = if matches!(value_kind, Kind::None | Kind::Null) {
         surrealguard_diagnostics::catalog::finding(
             span,
             2001,
-            format!("`{field}` is not optional, so it can't be set to {}", crate::render_kind(&value_kind)),
+            format!("`{field}` is not optional, so it can't be set to {actual}"),
         )
         .with_help(format!(
-            "declare it `option<{}>`, or coalesce with `?? <value>`",
-            crate::render_kind(&field_kind)
+            "declare it `option<{declared}>`, or coalesce with `?? <value>`"
         ))
     } else {
         surrealguard_diagnostics::catalog::finding(
             span,
             2001,
-            format!("`{field}` is declared `{}`, but this value is `{}`", crate::render_kind(&field_kind), crate::render_kind(&value_kind)),
+            format!("`{field}` is declared `{declared}`, but this value is `{actual}`"),
         )
     };
     if let Some(def) = table.fields.get(&field) {
@@ -752,7 +760,7 @@ pub fn check_payload_object_keys(
                     format!(
                         "`{path}` is declared `{}`, but this value is `{}`",
                         crate::render_kind(&field_kind),
-                        crate::render_kind(&value_kind)
+                        crate::render::render_offending(&value_kind, Some(&field_kind))
                     ),
                 );
                 if let Some(def) = table.fields.get(&path) {

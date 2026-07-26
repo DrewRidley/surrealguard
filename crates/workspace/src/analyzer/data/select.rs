@@ -272,7 +272,10 @@ fn check_where_clause<'a>(
                 surrealguard_diagnostics::catalog::finding(
                     span,
                     2005,
-                    format!("this WHERE condition is a `{}`, not a `bool`", crate::render_kind(&kind)),
+                    format!(
+                        "this WHERE condition is a `{}`, not a `bool`",
+                        crate::render::render_offending(&kind, Some(&Kind::Bool))
+                    ),
                 )
                 .with_help("a WHERE filter keeps rows where the condition is true; it must be a bool"),
             );
@@ -321,7 +324,7 @@ fn check_fetch_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analy
                                     1023,
                                     format!(
                                         "FETCH `{alias_name}` does nothing — `{}` holds no records",
-                                        crate::render_kind(&kind)
+                                        crate::render::render_offending(&kind, Some(&Kind::Record(Vec::new())))
                                     ),
                                 )
                                 .with_help("FETCH only expands record links, not scalar values"),
@@ -517,7 +520,10 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
                     span,
                     2018,
-                    format!("{name} needs an integer, but this is a `{}`", crate::render_kind(kind)),
+                    format!(
+                        "{name} needs an integer, but this is a `{}`",
+                        crate::render::render_offending(kind, Some(&Kind::Int))
+                    ),
                 ));
                 continue;
             }
@@ -545,7 +551,10 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
                     span,
                     2019,
-                    format!("TIMEOUT needs a duration, but this is a `{}`", crate::render_kind(&kind)),
+                    format!(
+                        "TIMEOUT needs a duration, but this is a `{}`",
+                        crate::render::render_offending(&kind, Some(&Kind::Duration))
+                    ),
                 ));
             }
         }

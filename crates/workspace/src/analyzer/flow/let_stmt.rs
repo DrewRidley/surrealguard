@@ -72,7 +72,7 @@ pub(crate) fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) ->
                             "`${}` shadows a DEFINE PARAM of `{}` with an incompatible `{}`",
                             stmt.name.node,
                             crate::render_kind(&param_kind),
-                            crate::render_kind(let_kind),
+                            crate::render::render_offending(let_kind, Some(&param_kind)),
                         ),
                     )
                     .with_help(

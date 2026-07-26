@@ -65,7 +65,10 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
                             ctx,
                             expr.span,
                             2004,
-                            format!("`-` can't be applied to a `{}`", crate::render_kind(&kind)),
+                            format!(
+                                "`-` can't be applied to a `{}`",
+                                crate::render::render_offending(&kind, Some(&Kind::Number))
+                            ),
                         );
                     }
                 }
@@ -251,7 +254,11 @@ fn check_cast(
             ctx,
             whole.span,
             2008,
-            format!("a `{}` can't be cast to `{}`", crate::render_kind(&kind), crate::render_kind(&target)),
+            format!(
+                "a `{}` can't be cast to `{}`",
+                crate::render::render_offending(&kind, Some(&target)),
+                crate::render_kind(&target)
+            ),
         );
     }
 }
@@ -311,7 +318,10 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
                     ctx,
                     part.span,
                     2030,
-                    format!("a `{receiver}` can't be indexed or filtered — it is not a collection"),
+                    format!(
+                        "a `{}` can't be indexed or filtered — it is not a collection",
+                        crate::render::render_offending(&receiver, None)
+                    ),
                 );
                 return;
             }
@@ -331,7 +341,11 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
                         ctx,
                         name.span,
                         5001,
-                        format!("`{receiver}` has no method `{}`", name.node),
+                        format!(
+                            "`{}` has no method `{}`",
+                            crate::render::render_offending(&receiver, None),
+                            name.node
+                        ),
                     );
                     return;
                 }
@@ -394,8 +408,8 @@ fn check_binary(
             format!(
                 "`{}` between `{}` and `{}` is always {}",
                 op_text(op),
-                crate::render_kind(&left),
-                crate::render_kind(&right),
+                crate::render::render_offending(&left, Some(&right)),
+                crate::render::render_offending(&right, Some(&left)),
                 if matches!(op, Op::Eq) {
                     "false"
                 } else {
@@ -422,8 +436,8 @@ fn check_binary(
             format!(
                 "`{}` can't combine a `{}` and a `{}`",
                 op_text(op),
-                crate::render_kind(&left),
-                crate::render_kind(&right)
+                crate::render::render_offending(&left, Some(&right)),
+                crate::render::render_offending(&right, Some(&left))
             ),
         );
     }
@@ -601,7 +615,7 @@ fn check_none_arithmetic(
                     )
                     .with_help(format!(
                         "it is `{}`; coalesce with `?? <default>` or narrow before the operation",
-                        crate::render_kind(kind)
+                        crate::render::render_offending(kind, None)
                     )),
                 );
             }
@@ -775,7 +789,11 @@ fn check_membership_kind(
             ctx,
             whole.span,
             7006,
-            format!("membership of `{}` in a collection of `{}` is always false", crate::render_kind(element), crate::render_kind(elem)),
+            format!(
+                "membership of `{}` in a collection of `{}` is always false",
+                crate::render::render_offending(element, Some(elem)),
+                crate::render::render_offending(elem, Some(element))
+            ),
         );
     }
 }

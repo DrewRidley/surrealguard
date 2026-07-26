@@ -62,7 +62,7 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
                         2001,
                         format!(
                             "`{field_name}`'s value is `{}`, but the field is declared `{}`",
-                            crate::render_kind(&kind),
+                            crate::render::render_offending(&kind, Some(declared)),
                             crate::render_kind(declared),
                         ),
                     )
@@ -86,7 +86,10 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
                     span,
                     2005,
-                    format!("this ASSERT is a `{}`, not a `bool`", crate::render_kind(&kind)),
+                    format!(
+                        "this ASSERT is a `{}`, not a `bool`",
+                        crate::render::render_offending(&kind, Some(&Kind::Bool))
+                    ),
                 ));
             }
         }

@@ -116,6 +116,21 @@ pub fn render_kind(kind: &Kind) -> String {
     render(kind, KindContext::Declared).text
 }
 
+/// The **offending** side of a diagnostic: the kind a value actually has,
+/// where a position could not accept it.
+///
+/// `blame` is the contract it failed, when the position states one as a kind —
+/// the field's declared type, `bool` for a predicate, `int` for a `LIMIT`. It
+/// is what decides whether a `none` is the finding's subject (and must be
+/// named) or incidental (and may fold); see [`KindContext::Diagnostic`].
+///
+/// The *declared* side of the same message — the type the reader can go and
+/// look at in a `DEFINE` — stays [`render_kind`]. Which of the two a call site
+/// wants is never in doubt, and now it is written down.
+pub fn render_offending(kind: &Kind, blame: Option<&Kind>) -> String {
+    render(kind, KindContext::Diagnostic { blame }).text
+}
+
 /// The two spelling decisions the contexts differ on. Kept internal: a caller
 /// picks an audience, not a flag.
 #[derive(Clone, Copy)]

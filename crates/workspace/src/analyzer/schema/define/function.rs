@@ -76,7 +76,7 @@ pub(crate) fn analyze_define_function(
                             "`{}` declares `-> {}` but its body returns `{}`",
                             stmt.name.node,
                             crate::render_kind(&declared),
-                            crate::render_kind(&body_kind)
+                            crate::render::render_offending(&body_kind, Some(&declared))
                         ),
                     )
                     .with_related(

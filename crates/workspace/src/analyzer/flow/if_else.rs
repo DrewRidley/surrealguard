@@ -74,7 +74,10 @@ pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::If
                 surrealguard_diagnostics::catalog::finding(
                     span,
                     2005,
-                    format!("this IF condition is a `{}`, not a `bool`", crate::render_kind(&condition_kind)),
+                    format!(
+                        "this IF condition is a `{}`, not a `bool`",
+                        crate::render::render_offending(&condition_kind, Some(&Kind::Bool))
+                    ),
                 )
                 .with_help("an IF chooses a branch on a true/false test; the condition must be a bool"),
             );

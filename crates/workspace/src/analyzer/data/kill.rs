@@ -18,7 +18,10 @@ pub(crate) fn analyze_kill(ctx: &mut AnalysisContext<'_>, stmt: &ast::KillStmt) 
                 ctx.emit(surrealguard_diagnostics::catalog::finding(
                     span,
                     2020,
-                    format!("KILL needs a live-query uuid, but this is a `{}`", crate::render_kind(&kind)),
+                    format!(
+                        "KILL needs a live-query uuid, but this is a `{}`",
+                        crate::render::render_offending(&kind, Some(&Kind::Uuid))
+                    ),
                 ));
             }
         }

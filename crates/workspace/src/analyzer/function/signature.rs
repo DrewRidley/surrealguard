@@ -190,7 +190,7 @@ fn check_argument_kinds(
                 "argument {} to `{}` is a `{}`, but {} is required",
                 index + 1,
                 call.path.node,
-                crate::render_kind(kind),
+                crate::render::render_offending(kind, Some(&param_kind_to_kind(expected))),
                 param_label(expected),
             ),
         ));
