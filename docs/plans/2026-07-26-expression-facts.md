@@ -7,6 +7,8 @@ Supersedes: nothing. Replaces the recognizer set in `crates/workspace/src/analyz
 and the shape-matching in its sibling consumers.
 Depends on: the flow engine (`analyzer/flow/`), the quality harness
 (`crates/workspace/tests/precision_snapshot.rs`, `tests/any_ratchet.rs`).
+Related: `docs/plans/2026-07-26-ts-api-redesign.md` §3 (the SDK-decode corrections that land in
+the same function as §6.6's codegen rendering context, and must not be confused with it).
 
 ---
 
@@ -38,6 +40,24 @@ refinement of the `Kind` lattice*. Consumers stop matching AST shapes and start 
 layer. **~55 shape-matching functions across six files collapse to three functions
 (`place_of`, `eval`, `guard_of`) plus a data-only 11-variant `Atom` set and one
 `refine`/`decide` pair** (itemized in §2.7).
+
+Three sections cover the same defect on three other faces, and are sequenced into the same
+migration (§9) rather than proposed alongside it:
+
+- **§6 — rendering.** One `render_kind` serves five audiences with no argument distinguishing
+  them, so `Either([None, String])` ships as `option<string>`, `none | string`,
+  `undefined | string` and `nick?: string` from four independent code paths. The fix is a
+  `KindContext` the caller supplies — which every caller already knows and currently discards.
+- **§7 — contracts.** "This position requires kind `T`" is implemented ~25 times, five
+  different ways, and nine positions do not implement it at all. `DEFINE FIELD e TYPE
+  'red' | 'blue' VALUE 'green'` was silent while `CREATE t SET e = 'green'` reported, because
+  one site recovered the written constant and the other did not. Under §2.5 a contract *is* an
+  atom and checking it *is* `decide`, so the same missing `meet` that breaks `status =
+  'active'` narrowing breaks `VALUE 'green'` reporting — one bug, two symptoms.
+- **§8 — testing.** 917 green tests, and four of them assert exactly the rule that broke — at
+  one site. The suite tests soundness and never reachability, because every test lives next to
+  the code that motivated it and none quantifies over sites. The fix is a table of positions
+  the tests iterate, with a shrinking `KNOWN_GAPS` list in `any_ratchet`'s shape.
 
 ---
 
@@ -270,7 +290,7 @@ version. Two recognizers for one fact; one of them is wrong.
 
 Under the proposed design this cannot happen: `Atom::IsNotNone(p).refine(k)` is
 `subtract(k, Kind::None)`, once, and it is the same function whether `p` is a param or a row
-field. §7.3's property test would have caught it.
+field. §10.3's property test would have caught it.
 
 **The other duplicated pairs**, all confirmed by reading both sides:
 
@@ -613,7 +633,7 @@ mechanical statement of *prove-or-stay-silent*:
 > `{ v ∈ values(k) | a holds of v } = ∅`; `AlwaysTrue` implies it is all of
 > `values(k)`.
 
-This is a property test, not a comment (§7.3): both directions are checkable by enumerating
+This is a property test, not a comment (§10.3): both directions are checkable by enumerating
 a finite kind universe.
 
 The workhorse underneath is a genuine lattice meet on `Kind`:
@@ -771,7 +791,7 @@ Three concrete reasons it loses here:
    `/Users/drewridley/Documents/Projects/workshop/database`, including process start).
    Standing up a fact database per source, or one incrementally-maintained database for the
    workspace, is a new dependency and a new memory profile for a workload that currently
-   allocates a `Vec<Effect>` per guard. §6.5 estimates the proposed design at +5–8%; a
+   allocates a `Vec<Effect>` per guard. §10.4 estimates the proposed design at +5–8%; a
    Datalog engine is not in that budget.
 
 Datalog's *idea* survives: `Facts` is a fact set, and `Guard::All`/`Any` are conjunction and
@@ -791,7 +811,7 @@ This is the union of §2.2–§2.6, and it is what is being proposed, with one h
 qualification: **it is abstract interpretation in the sense of "a sound monotone
 interpretation of the program over an abstract domain", not in the sense of "iterate a
 transfer function to a fixpoint".** There is no widening operator and no loop iteration
-(§5.4). The domain is `Kind` ordered by subtyping, joined by `Kind::either` and met by
+(§5, item 2). The domain is `Kind` ordered by subtyping, joined by `Kind::either` and met by
 §2.5's `meet`; the transfer function is `Guard::facts`; the interpretation is the existing
 lexical walk.
 
@@ -822,7 +842,7 @@ one shared entry point, even when identical today.* Two rebuttals and one conces
   refinement in `row_order_effect` can only produce a wrong SELECT row type; it structurally
   cannot reach `guard_verdict` and grey a live branch. After this, one wrong `Atom::refine`
   is simultaneously a wrong result type, a wrong hover, a wrongly-greyed branch, and possibly
-  a false E5002. §7.1 names this the single biggest risk in the proposal, and §7.3 is the
+  a false E5002. §10.1 names this the single biggest risk in the proposal, and §10.3 is the
   mitigation (per-atom property tests of the two soundness invariants, plus consumer
   capability gating in Stage 4 so that, e.g., dead-branch folding only consults atoms
   explicitly marked decidable).
@@ -875,9 +895,33 @@ Every "today" column below is observed output from the release binary, not predi
 | F33 | hover on `$x` inside `$x != NONE AND f($x)` | declared kind (no region is recorded) | narrowed kind |
 | F34 | `RETURN $this.x;` at top level | `$this` demanded as a required host param | 6005, as `$value` already gets |
 
-F1–F8, F13–F16 and F28–F30 have been reproduced verbatim against the release binary; the
-remainder are direct consequences of the atom set and of the code paths cited, and each was
-confirmed *not* to work today by the same method.
+And from §6–§8, all reproduced against the same binary:
+
+| # | Case | Today (observed) | After |
+|---|---|---|---|
+| F35 | `DEFINE FIELD e ON t TYPE 'red' \| 'blue' VALUE 'green'` | **nothing** | `error[E2001]`, as `CREATE t SET e = 'green'` already gets |
+| F36 | same, `DEFAULT 'green'` | **nothing** | E2001 |
+| F37 | `CREATE t CONTENT { e: 'green' }` | **nothing** (only the wrong-*base* `{ e: 42 }` fires) | E2001 |
+| F38 | `INSERT INTO t (e) VALUES ('green')` | **nothing** | E2001 |
+| F39 | `DEFINE FUNCTION fn::f() -> 'a' \| 'b' { RETURN 'c'; }` | **nothing** | E2012, pointed at the `RETURN` rather than the body |
+| F40 | `DEFINE FIELD comp ON t TYPE int COMPUTED 'notanint'` | **nothing** — `COMPUTED` is absent from `field.rs`'s clause loop | E2001 |
+| F41 | `UPDATE t SET n = 1 WHERE 'notabool'` / `DELETE t WHERE 5` | **nothing**; the identical `SELECT … WHERE 'notabool'` warns W2005 | W2005, or SELECT's stops — but the two agree |
+| F42 | `DEFINE EVENT ev ON t WHEN 'notabool' THEN …` | **nothing** | W2005 |
+| F43 | `DEFINE PARAM $lim VALUE 'notanint'; SELECT … LIMIT $lim` | **`error[E6001]` on the `SELECT` line** — the definition is silent and the *use* is blamed | reported at the definition, with the use as a related span |
+| F44 | hover on `$n` past `IF $n = NONE THEN THROW` where `note: option<string \| null>` | `option<string \| null>` — the declared spelling, at a narrowed occurrence | `string \| null`, plus "narrowed by `$n != NONE` — `none` ruled out" |
+| F45 | `error[E2004]: '+' can't combine a 'option<string \| null>' and a 'int'` | the offending `none` arm is hidden inside `option<…>`, and a separate W2015 says it in prose | `none \| string \| null`, with the blamed member visible |
+| F46 | inlay hint on a `LET` bound to `option<string \| int \| datetime \| uuid \| decimal \| duration>` | `option<string \| int \| datetime \| uuid \| decim…` — cut mid-token, not a type | `option<string \| int \| … +4>` — shorter, and true |
+| F47 | generated `.d.ts` for a top-level `option<string>` response vs the same kind as an object property | `undefined \| string` in one, `nick?: string` in the other, decided by which caller ran `strip_none` | one policy, stated as an argument |
+
+F1–F8, F13–F16 and F28–F30 have been reproduced verbatim against the release binary, as have
+F35–F43 and the two spellings behind F45; the remainder are direct consequences of the atom set
+and of the code paths cited, and each was confirmed *not* to work today by the same method.
+
+**F35 is the case that justifies §7.** It is the same mistake as `CREATE t SET e = 'green'`,
+written one clause earlier, and the rule that catches the second was sitting in `kinds.rs` with
+a doc comment claiming both sites called it. (A point-fix for F35/F36 specifically landed as
+`41fcb41` while this was being written — see §7.1. F37–F43 are unaffected by it, which is the
+argument.)
 
 **F30 is the case that justifies the whole proposal.** It is not lost precision — it is a
 generated TypeScript type that the database can violate, produced because two hand-written
@@ -933,15 +977,730 @@ either undecidable, unsound to guess, or out of scope for a static analyzer with
 
 ---
 
-## 6. Staged migration
+## 6. Rendering: one function, five audiences
 
-This cannot land as one commit — it touches the type of every narrowing in the corpus. Six
+### 6.1 The observation
+
+`render_kind` (`crates/workspace/src/query.rs:523`) is the single spelling of a `Kind` for
+every editor and diagnostic surface, and it takes no argument but the kind. Its union arm
+(`render_either`, `:577`) folds `Kind::None` out of *any* union unconditionally:
+
+```rust
+if has_none { format!("option<{joined}>") } else { joined }
+```
+
+`option<T>` is the right answer exactly once: when the rendered text stands in for something
+the author **wrote**. `DEFINE FIELD email ON user TYPE option<string>` should hover as
+`option<string>`, because that is the source line. On a **narrowed occurrence** the same
+spelling is actively misleading — the fact worth showing there is *which members survived the
+guard*, and `option<string>` says "this is an optional field" where `none | string` says "the
+`none` is still live here". The two sentences are different, and the analyzer knows which one
+it means at every call site. It just discards that knowledge before rendering.
+
+### 6.2 Evidence: the same kind already has four spellings shipping today
+
+Verbatim from the release build of §1, over `DEFINE FIELD note ON user TYPE
+option<string | null>` and `DEFINE FIELD email ON user TYPE option<string>`:
+
+```
+error[E2004]: `+` can't combine a `option<string | null>` and a `int`
+error[E5001]: `none | string` has no method `len`
+```
+
+Same shape of kind, same crate, same diagnostic run, two spellings. E2004 goes through
+`render_kind`; E5001 interpolates the `Kind` directly (`expression/check.rs:334`,
+``format!("`{receiver}` has no method `{}`", …)``), so it gets `Kind`'s own `Display` and
+never folds. And the generated TypeScript adds two more:
+
+| Surface | `Either([None, String])` renders as | Where |
+|---|---|---|
+| hover / inlay / most diagnostics | `option<string>` | `query.rs:577` `render_either` |
+| E5001 (and any other `{kind}` interpolation) | `none \| string` | `Kind`'s `Display` |
+| generated `.d.ts`, standalone position | `undefined \| string` | `codegen/src/lib.rs:43` |
+| generated `.d.ts`, object property | `nick?: string` | `codegen/src/lib.rs:94` `strip_none` |
+
+Nobody chose those four. They are what four independent code paths happen to do.
+
+Two more facts that bear on the design:
+
+- **Truncation exists in exactly one place and it is a character cut.** `elide_label`
+  (`query.rs:129`) truncates to `INLAY_LABEL_MAX = 48` chars and appends `…`. It is applied to
+  precisely two surfaces — `LET`/`FOR` inlay hints (`:65`) and inferred function-return ghosts
+  (`:117`). Nothing in `crates/lsp/` truncates anything. So
+  `option<string | int | datetime | uuid | decimal | duration>` (58 chars) becomes
+  `option<string | int | datetime | uuid | decim…`, which is not a type, is not parseable, and
+  cuts in the middle of a member name. The budget is right; the *mechanism* is wrong, because a
+  string truncator cannot know that dropping the last three members and writing
+  `option<string | int | … +4>` would fit and would still be true. Only a renderer that owns
+  the budget can. (`TABLE_FIELD_CAP = 20` at `query.rs:434` is the counter-example done right:
+  it truncates by *field count* and says `-- +N more`.)
+- **The renderer is already load-bearing in the test suite.** `analysis.rs:1376` asserts
+  *inference* results by comparing `render_kind` output (`"string | null"` vs
+  `"option<string>"`), and `precision.snap` records every corpus site through `render_kind`.
+  A context-blind change to `render_either` therefore moves inference tests and the golden
+  snapshot. Any redesign here must keep the declared spelling byte-identical by default.
+
+And the one piece of good news: **`precision_snapshot.rs` already carries the distinction the
+rest of the codebase lacks.** Lines `:173-174` tag a function's return as `[declared]`
+(`return_kind`) or `[inferred]` (`inferred_return`). It is the only output in the tree that
+says which of the two it is showing. The proposal is to make that a type instead of a snapshot
+convention.
+
+### 6.3 The API
+
+Rendering is the *inverse* of `place_of`/`guard_of`. Those take many spellings of one fact and
+produce one normal form; this takes one normal form and produces the spelling a particular
+audience needs. Both are "the one function that touches syntax", at opposite ends of the
+pipeline, and neither belongs inside a consumer.
+
+```rust
+/// Why a kind is being shown. Every call site already knows this; today it is
+/// simply not a parameter.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum KindContext<'a> {
+    /// The text stands in for something the author wrote. Mirror their
+    /// spelling: `option<T>`, `record<a | b>`, `array<T, 3>`. This is
+    /// today's behaviour, and it is the default, so nothing moves until a
+    /// call site opts out.
+    Declared,
+    /// The kind at one occurrence, after flow narrowing. Optionality is
+    /// spelled out (`none | string`), because the fact being communicated is
+    /// *which members survived*, not that the declaration was optional.
+    /// `proved` is the atom that survived, when the analysis recorded one.
+    Occurrence { proved: Option<&'a Atom>, declared: Option<&'a Kind> },
+    /// A glanceable label with a hard budget. The ONLY context permitted to
+    /// drop information, and it drops it structurally (whole members, whole
+    /// object bodies) rather than by cutting the string.
+    Glance { budget: usize },
+    /// A diagnostic message. Never elides. Never folds the member the finding
+    /// is *about*: `blame` forces that member to be visible.
+    Diagnostic { blame: Option<&'a Kind> },
+}
+
+/// The rendered text, plus an optional provenance line the caller may or may
+/// not have room for.
+pub struct Rendered {
+    /// The type text.
+    pub text: String,
+    /// One line of "why this and not the declared kind", produced only for
+    /// `Occurrence` and only when `proved` is present:
+    /// "narrowed by `$x != NONE` — `none` ruled out".
+    pub note: Option<String>,
+}
+
+pub fn render(kind: &Kind, ctx: KindContext<'_>) -> Rendered;
+
+/// Preserved verbatim as `render(kind, Declared).text`, because it is `pub`
+/// (`lib.rs:30`) and the quality harness calls it.
+pub fn render_kind(kind: &Kind) -> String;
+```
+
+Four things fall out of the lattice that already has to exist for §2.5, at no extra cost:
+
+- `Occurrence`'s note writes "`none` ruled out" as `subtract(declared, narrowed)` — the members
+  the guard removed, computed rather than described.
+- `Diagnostic { blame }` renders the union with `blame` forced visible; the implementation is
+  "do not fold any member `m` where `meet(m, blame)` is non-bottom". So E2004 on an
+  `option<string | null>` operand renders `none | string | null` and the reader can see the
+  arm the operator cannot take, instead of `option<…>` and a separate W2015 telling them the
+  same thing in prose.
+- `Glance { budget }` truncates by dropping whole members and object entries, appending
+  `… +N`, so the label is always a *true, shorter* statement about the kind rather than a
+  prefix of a string.
+- A diagnostic that talks about **both** sides uses **both** contexts in one message. E2001
+  already wants this: `` `st` is declared `'a' | 'b'`, but this value is `'green'` `` — the
+  declared side is `Declared` (it mirrors the `DEFINE`, which the reader can go and read), and
+  the actual side is `Diagnostic { blame: Some(declared) }`. One message, two audiences, one
+  context-free function today.
+
+  Worth separating from the neighbouring §7 defect it superficially resembles: the two E2001
+  sites also *disagree about what they render*, with the DEFINE side saying
+  `` `g`'s value is `string` `` where the mutation side says `` `'green'` ``. That is not a
+  rendering bug — the DEFINE site had only a widened kind to render, because it compared a
+  widened kind (§7.1). Rendering surfaces the defect; it does not cause it. `Term` fixes it,
+  and `KindContext` makes the fix visible.
+
+### 6.4 Where the context comes from, per call site
+
+Every one of these already has the information; the change is to stop dropping it.
+
+| Call site | Today | Context | Where it comes from | Moves? |
+|---|---|---|---|---|
+| `query.rs:65` `LET`/`FOR` inlay | `elide_label(render_kind(k))` | `Glance { budget: 48 }` | the surface is an inlay hint | text changes only past 48 chars, and improves |
+| `query.rs:117` inferred return ghost | same | `Glance { budget: 48 }` | ditto | ditto |
+| `query.rs:223` `LET` binding hover | `symbol_markdown` | `Declared` | `binding.kind` at the *definition* site | no |
+| `query.rs:251` `$param` use hover | `symbol_markdown` | `Occurrence` | **already computed**: `narrowed_kind_at(&output.narrowings, …, offset).or(param.kind)` at `:247` — the call site literally branches on it and then throws the branch away | yes, and this is the point |
+| `query.rs:275` context param (`$value`, `$event`) | `symbol_markdown` | `Declared` | `context_params::context_param_map` | no |
+| `query.rs:908` `DEFINE FUNCTION` param | `symbol_markdown` | `Declared` | `FunctionDef::args[..].kind` — literally the author's text | no |
+| `query.rs:1032`, `:1065` `$var` occurrence | `var_kind` (`:657`) | `Occurrence` | `var_kind` tries `narrowed_kind()` first — same discarded branch | yes |
+| `query.rs:1130` `$x.f` field step | `narrowed_kind(path).or(field_kind(..))` | `Occurrence` | same | yes |
+| `query.rs:1171`, `:1234` schema field | `resolve_field_path` | `Declared` | a schema lookup; never narrowed | no |
+| `query.rs:494` literal-object entries | `render_kind` | `Declared` | inferred shape, but shown as a declaration-like listing | no |
+| `query.rs:514` `table_field_lines` | `render_kind` | `Declared` | `DEFINE FIELD` kinds | no |
+| `query.rs:1775`, `:1781` `fn::` popover | `render_kind` | `Declared` | `FunctionDef` | no |
+| `completion.rs:331`, `:359`, `:612`, `:618` | `render_kind` | `Declared` | schema | no |
+| `completion.rs:383`, `:834` | `render_kind` | `Occurrence` | *should* be — `in_scope_params` does not read `output.narrowings` today, so completion shows the declared kind at a narrowed cursor. A real, separate gap this API makes visible | later; needs the narrowing read first |
+| ~20 analyzer message texts | `render_kind` or `{kind}` interpolation | `Diagnostic { blame }` on the actual side, `Declared` on the declared side | the emitting contract knows which side is which | yes — see §6.5 |
+| `precision_snapshot.rs:154-242`, `support/mod.rs:133` | `render_kind` | `Declared` | already tagged `[declared]`/`[inferred]` at `:173-174` | no, deliberately: the golden file must not move |
+| `codegen/src/lib.rs:21` `ts_type` | its own renderer | a **different target language** — see §6.6 | | separately |
+
+Net: three surfaces change (`Occurrence` hovers, `Glance` labels, `Diagnostic` blame), the
+snapshot does not move, and `render_kind` keeps its signature.
+
+### 6.5 What `Diagnostic` costs on the analyzer side
+
+The ~20 message sites are not uniform, and turning them all into `Diagnostic` blindly would be
+wrong. The split is mechanical:
+
+- **The actual/offending side** — `mutation.rs:601`/`:611`, `field.rs`'s 2001, `insert.rs:120`,
+  `check.rs:68`/`:425`/`:426`/`:604`, `function/mod.rs:296`, `signature.rs:193`,
+  `select.rs:520`/`:548`/`:324`, `for_loop.rs:63`, `if_else.rs:77`, `let_stmt.rs:75` — takes
+  `Diagnostic { blame }`. Where the contract knows *why* it rejected (§7.4's `Verdict`), the
+  blame kind is exactly the member that failed the meet, so the renderer gets it for free.
+- **The declared/expected side** — `mutation.rs:605`/`:611`, `field.rs`'s `declared`,
+  `insert.rs:119`, `function/mod.rs:298`/`:303`, `signature.rs:243`, `let_stmt.rs:74`,
+  `function.rs:78`, `select.rs:353`/`:386`, `field.rs:292`, `graph.rs:58`,
+  `mutation.rs:136` — takes `Declared`. These mirror a `DEFINE` the reader can go read.
+- **`{kind}` interpolations** (`check.rs:314`, `:334`) become explicit `render(..)` calls, which
+  is also how they stop being the odd ones out.
+
+### 6.6 Codegen is a different target, not a different context
+
+`ts_type` (`crates/codegen/src/lib.rs:21`) is already a separate renderer in a separate crate,
+and it should stay one: TypeScript is a target language, not an audience. But it has the same
+structural defect — its optionality policy is decided by *where it happens to be called from*
+rather than by an argument:
+
+```rust
+Kind::Either(variants) => { … rendered.join(" | ") }        // `undefined | string`
+fn object_type(..) { let (kind, optional) = strip_none(kind); … }  // `nick?: string`
+```
+
+So the same `Either([None, String])` is `undefined | string` at the top level of a response and
+`nick?: string` one nesting level down. That is defensible as a TypeScript idiom, but it is not
+*expressed*; it is an artifact of `object_type` being the only caller that runs `strip_none`.
+The same treatment applies: `ts_type(kind, TsContext::Standalone | TsContext::Property)`, with
+`Property` returning `(text, optional_marker)` rather than deciding for its caller.
+
+Two things this is **not**:
+
+1. It is not the fix for the SDK-decode mismatch. `docs/plans/2026-07-26-ts-api-redesign.md`
+   §3 records that our emitted `RecordId<T>` (a branded string), `Date`, `string` for
+   duration/uuid, and `number` for decimal do not match what `surrealdb@2.0.8` actually
+   decodes — which are `RecordId`, `DateTime`, `Duration`, `Uuid` and `Decimal` **class
+   instances**. That is a change to *which* TypeScript type is correct, and it belongs to that
+   plan. It lands in the same function and should land in the same commit series, but it is a
+   different claim and must not be smuggled in under "rendering".
+2. It is not a shared renderer. `render` and `ts_type` share the `KindContext` *idea* and
+   nothing else; merging them would put SurrealQL spelling and TypeScript spelling behind one
+   match, which is precisely the mistake §6.2 documents.
+
+### 6.7 What this amends in §2
+
+`Occurrence { proved }` needs the atom that proved the refinement to reach the record, and
+today it cannot: `NarrowingAnalysis` (`analysis.rs:115`) has exactly three fields — `path`,
+`span`, `kind`. It records *where* and *what*, **not** *why*. So two amendments:
+
+- **§2.6.** `Facts` becomes `BTreeMap<Place, Refinement>` where
+  `Refinement { kind: Kind, by: Atom }`. The interpreter already knows the atom at the moment
+  it computes the kind; carrying it is a struct field, not new analysis. For an `All`, `by` is
+  the conjunction of the atoms that touched that place; for an `Any`, the disjunction.
+- **§2.7 row C10.** That row says positional narrowing is "unchanged". It is not, quite:
+  `NarrowingAnalysis` gains a fourth field (`by: Atom`, or its rendered form). `path`, `span`
+  and `kind` keep their wire format, so `Place::key()` and the LSP stay untouched; the row's
+  claim should be read as "unchanged *plus* one additive field".
+
+Both are cheap because the fact layer is the first design in which the "why" exists as a value
+at all. Under the current recognizers there is nothing to record: `Narrowing::StripNone` is an
+enum variant with no subject, and the guard expression is gone by the time `record_narrowing`
+is called.
+
+---
+
+## 7. One contract, checked at every position
+
+### 7.1 The motivating bug, verified
+
+Against a release build of `HEAD`, with `DEFINE TABLE t SCHEMAFULL`:
+
+```surql
+DEFINE FIELD e  ON t TYPE 'red' | 'blue' VALUE 'green';   -- silent
+DEFINE FIELD e2 ON t TYPE 'red' | 'blue';
+CREATE t SET e2 = 'green';
+-- error[E2001]: `e2` is declared `'red' | 'blue'`, but this value is `'green'`
+```
+
+The DEFINE site is not missing a check. `DEFINE FIELD g ON t TYPE int VALUE 'notanint'` fires
+E2001 correctly. What differs is the *rule*: `mutation.rs:590` recovers the written constant's
+exact literal kind before comparing (`constrains_scalar_literals` → `scalar_value_literal_kind`
+→ `checked_value_kind`, `kinds.rs:215`), and `field.rs` discarded `fact.value` and compared the
+*widened* `Kind::String`. `kind_is_assignable_to`'s prove-or-silent branch (`kinds.rs:87-95`)
+then correctly declines to reject a bare `string` against a string-literal union, and the
+mistake ships.
+
+The tell is in the code: `checked_value_kind`'s own doc comment says it is
+
+> the one rule behind every 2001, shared by the two sites that ask it: a value written to a
+> field (`SET st = 'bogus'`) and a value declared for one (`DEFINE FIELD st ... VALUE 'bogus'`).
+
+— and until this week only one of those two sites called it. A comment asserted the invariant;
+nothing enforced it.
+
+**A point-fix for this exact case landed as `41fcb41` while this section was being written**
+(`field.rs` now routes both `DEFAULT` and `VALUE` through `checked_value_kind`; the transcript
+above is from a build of its parent). It is the right fix and it confirms the diagnosis. It
+also demonstrates the problem, because it ships with a test of exactly the shape that missed
+the bug in the first place — a list of `DEFINE FIELD` queries, existentially quantified — and
+the *other* positions that implement the same rule differently are untouched. §7.2 lists them;
+each was verified silent by the same method, against the same build.
+
+### 7.2 The inventory: who enforces "this position requires kind `T`", and how
+
+Every row below was read in the source. The "verified" column is a run of the release binary of
+`1c9d046` over a scratch project; ✗ means the mistake produced **no finding at all**.
+
+**Group A — positions that call `kind_is_assignable_to`.** One predicate, and five different
+things handed to it.
+
+| Position | Site | Exact-literal recovery? | Verified: `'green'` into `'red' \| 'blue'` |
+|---|---|---|---|
+| `CREATE`/`UPDATE`/`UPSERT`/`RELATE` `SET f = v` | `data/mutation.rs:599` | **yes** — `checked_value_kind` | ✓ E2001 |
+| `DEFINE FIELD … VALUE` / `… DEFAULT` | `schema/define/field.rs:46` | **no** — fixed by `41fcb41`, which is what this section is about | ✗ silent (the motivating bug) |
+| `CONTENT` / `MERGE` / `REPLACE` object keys | `data/mutation.rs:754` | **no** — bare `infer_expression_fact(..).kind` | ✗ silent (`CREATE t CONTENT { st: 'bogus' }`) |
+| `INSERT INTO t (cols) VALUES (…)` | `data/insert.rs:107` | **no** | ✗ silent |
+| `DEFINE FUNCTION … -> T { body }` | `schema/define/function.rs:61` | **no**, and it compares the *whole body kind* once rather than each `RETURN` | ✗ silent (`-> 'a' \| 'b' { RETURN 'c'; }`) |
+| user-defined `fn::` argument *n* | `analyzer/function/mod.rs:281` | **no** | ✗ silent |
+| builtin function argument *n* | `analyzer/function/signature.rs:220` via `param_matches` | **no**, and `param_matches` distributes `Either` for `Exact` but uses a bare `matches!` for `Numeric`/`Array`/`Object` | ✗ silent |
+| `LET $x` shadowing a `DEFINE PARAM $x` | `flow/let_stmt.rs:113` | n/a — bidirectional, both-`Any` bail | E6002 |
+| completion ranking | `completion.rs:1097` | n/a — no diagnostic | — |
+
+**Group B — bool-ness positions.** A different helper (`definitely_not_bool`,
+`flow/if_else.rs:195`), a different code (2005), and an inconsistent set of positions.
+
+| Position | Site | Verified |
+|---|---|---|
+| `SELECT … WHERE` | `data/select.rs:269` | ✓ W2005 |
+| `IF <cond>` | `flow/if_else.rs:68` | ✓ |
+| `DEFINE FIELD … ASSERT` | `schema/define/field.rs:78` | ✓ |
+| `PERMISSIONS FOR … WHERE` | `schema/define/permissions.rs:67` | ✓ |
+| `UPDATE`/`UPSERT`/`DELETE … WHERE` | — **no check exists** (`mutation.rs:45-50` infers and walks, never asks) | ✗ `UPDATE t SET n = 1 WHERE 'notabool'` is silent; `DELETE t WHERE 5` is silent |
+| `DEFINE EVENT … WHEN` | — **no check exists** (`schema/define/event.rs` does reference checks only) | ✗ silent |
+
+**Group C — positions with a hand-rolled `matches!` instead of a contract.** Each re-derives a
+fragment of assignability: `literal_base_kind` then a variant list. None distributes `Either`
+uniformly; none is expressible as "this position requires kind `T`" even though every one of
+them is exactly that.
+
+| Position | Site | Rule | Code |
+|---|---|---|---|
+| `LIMIT` / `START` | `select.rs:519` | `literal_base_kind` + `matches!(Int \| Number \| Any)` | E2018 |
+| `TIMEOUT` | `select.rs:547` | bare `matches!(Duration \| Any)` — no literal reduction, no `Either` | E2019 |
+| `SPLIT` | `select.rs:382` | `literal_base_kind` + `matches!(Array \| Set \| Any)` | E1024 |
+| `FETCH` | `select.rs:321` | `kind_may_hold_record` | E1023 |
+| `FOR $x IN e` | `for_loop.rs:41` | `literal_base_kind` + a scalar *blocklist* | E2022 |
+| `<cast>` operand | `check.rs:221`, `:253` | value-proven parse, then a per-target `matches!` table | E2008 |
+| comparison operands | `check.rs:421` via `comparable` (`:783`) | `Record` vs `Record` is **always true**; `Either` is *any*-variant | E7005 |
+| `IN`/`CONTAINS` element | `check.rs` `comparable_element` (`:721`) | same idea, but `Record` pairs use `tables_disjoint` | E7006 |
+| `KILL` | `data/kill.rs:20` | uuid-ness | E2020 |
+
+**Group D — positions with no kind contract at all.** Verified silent:
+
+| Position | Note |
+|---|---|
+| `DEFINE FIELD … COMPUTED` | absent from `field.rs`'s clause loop entirely; `TYPE int COMPUTED 'notanint'` is silent |
+| `DEFINE PARAM … VALUE` | `schema/define/param.rs` records the default fact and checks nothing. `DEFINE PARAM $lim VALUE 'notanint'` is silent — and the bad kind then propagates, so `SELECT … LIMIT $lim` reports **E6001** at the *use* site, blaming the wrong line |
+| `DEFINE INDEX … FIELDS` | existence only (`index.rs:65` → E1002); no kind contract |
+| `DEFINE TABLE … AS SELECT` | no handling anywhere |
+| `GROUP BY`, `OMIT` | field-path existence at best |
+
+**Where they disagree, summarised.** Five independent axes, no two positions agreeing on all
+five:
+
+1. *Exact-literal recovery* — 1 of 7 assignability positions does it.
+2. *`Either` distribution* — `kind_is_assignable_to` does it; `param_matches`'s non-`Exact`
+   arms, `definitely_not_bool`, and every Group C `matches!` do not, or do it differently.
+3. *The `Any` short-circuit* — spelled at each site, sometimes on the actual (`kind != Any`),
+   sometimes on the expected, sometimes both, sometimes neither.
+4. *Unbound-`$param` handling* — `mutation.rs:558` and `function/mod.rs:269` route a bare param
+   into `constrain_param` instead of checking it; `field.rs`, `insert.rs` and every Group C
+   position do not, so a param in those positions is neither checked nor constrained.
+5. *Whether the position is checked at all* — Group D.
+
+This is the same defect the rest of this document describes, on the other side of the mirror.
+§1 is about *recognition* fragmenting across 189 shape-match sites; §7 is about *obligation*
+fragmenting across ~25 contract sites. The recurring examples the author cites are one class:
+`= NONE` narrowing in three places with three behaviours (§1.5); `record<T>` existence checked
+against the incremental catalog in one place and the global one in another; `<~t` back-reference
+resolution with two independent paths that had to be fixed together (`9c20487`). Each was found
+by someone hitting it, not by anything in the build.
+
+### 7.3 The abstraction: a contract is an atom, and checking it is `decide`
+
+The doc already has the vocabulary. A position that requires a kind is exactly the assertion
+`Atom::HasKind(place, T)` made *at* that position, and checking it is `Atom::decide` (§2.5):
+
+```rust
+/// A position that demands a kind. Constructed once per position kind, never
+/// per call site.
+pub struct Contract {
+    /// Where the value lands, in §2.2's vocabulary. A field write is
+    /// `Place { root: RowField, path: [Field("st")] }`; a function argument
+    /// is `Place { root: Param("s"), path: [] }` in the callee's scope; a
+    /// `DEFINE FIELD VALUE` is the *same place* as the field write, which is
+    /// the whole point.
+    pub place: Place,
+    /// The kind the position admits.
+    pub expects: Kind,
+    /// The finding raised when a value is proven not to inhabit it.
+    pub code: u16,
+}
+
+/// The one decision. Every position calls this; no position re-implements it.
+///
+/// - `AlwaysTrue`  — the value inhabits the contract. Silent.
+/// - `AlwaysFalse` — the value is *proven* not to. Emit `code`.
+/// - `Unknown`     — not provable either way. Silent, and this is the
+///                   prove-or-stay-silent policy, not a fallback.
+pub fn check(term: &Term, contract: &Contract, schema: &SchemaIndex) -> Verdict;
+```
+
+Three consequences, each of which removes a hand-written special case:
+
+1. **The exact-literal problem disappears.** `Term` (§2.3) is the value side of the layer, and
+   `Term::Const(v)` carries the *value*, not the widened kind. `kind_of(Term::Const("green"))`
+   is `Kind::Literal(String("green"))`, so the decision is
+   `meet(Literal("green"), Either([Lit"red", Lit"blue"])) = ⊥` → `AlwaysFalse`. No
+   `constrains_scalar_literals` gate, no `scalar_value_literal_kind` recovery, no
+   `checked_value_kind` — those three functions exist only because the value was thrown away
+   before the comparison, and `Term` is precisely the fix for throwing it away.
+   **This is the same missing `meet` as §1.3.** `status = 'active'` failing to narrow and
+   `VALUE 'green'` failing to report are one bug with two symptoms: an equality test where a
+   lattice operation belongs.
+2. **`kind_is_assignable_to` is two-valued where the policy is three-valued.** It answers
+   "assignable?", so it must fold "provably wrong" and "not proven right" into one `false`/`true`
+   — and the prove-or-silent hack at `kinds.rs:87-95` exists to bias that fold toward silence
+   for scalar-literal targets specifically. Under `meet`, the distinction is structural:
+   `meet` returning `Some(⊥)` is *provably disjoint*, `None` is *not representable*, and the
+   caller emits only on the former. The hack becomes the general rule and the special case for
+   scalar literals goes away.
+3. **`decide`'s soundness invariant (§2.5) becomes the contract check's soundness invariant**,
+   for free and without a second proof. `AlwaysFalse ⟹ no value of the kind satisfies the atom`
+   is exactly "we never report a write that could have been legal".
+
+Group B and Group C are the same shape. `ASSERT`/`WHERE`/`IF` bool-ness is
+`Contract { expects: Kind::Bool, code: 2005 }` and `definitely_not_bool` is
+`decide(..) == AlwaysFalse` with the `Any`/`None` cases falling out of `meet` instead of being
+listed. `LIMIT` is `expects: Kind::Int`; `TIMEOUT` is `expects: Kind::Duration`; `FOR` is
+`expects: array<any> | set<any> | range | object`. Each stops being a `matches!` and becomes a
+row in a table — which is the object §8 tests.
+
+### 7.4 Compositional checking: inner obligations and the outer result
+
+The author's framing: *mandate that the invariants within a subquery in a block are upheld,
+while at the parent level ensure the returned type is compliant with the block requirements or
+its own params.* Two obligations per construct, and the codebase currently guarantees neither
+uniformly:
+
+- **Internal.** Every position *inside* the construct is checked against its own contract, in
+  the construct's own environment.
+- **External.** The construct's *result* is checked against the contract of the position it
+  occupies, in the enclosing environment.
+
+§1.1 is this rule being violated in the most literal way available: `check_value_expression`
+(`expression/check.rs:19-98`) has a `_ => {}` at `:97` that swallows `Expr::Subquery` and
+`Expr::Closure`, while inference happily descends into both. So a nested construct's result is
+typed and its internal obligations are **skipped** — `SELECT VALUE (email + 1) FROM user`
+reports nothing, and no closure body is ever checked, at all. Compositional checking is not a
+new feature request; it is the rule whose absence §1.1 measured.
+
+The shape:
+
+```rust
+/// Check `expr` and return what it denotes. `expects` is the enclosing
+/// position's contract, pushed down; the returned `Term` is pushed back up.
+/// Both halves happen at every nesting depth, with no variant exempt.
+fn check_in(
+    expr: &ast::Expr,
+    expects: Option<&Contract>,
+    env: &StatementEnv,
+    ctx: &mut AnalysisContext<'_>,
+) -> Term;
+```
+
+That is bidirectional checking, and it makes the composition explicit:
+
+- A **block** `{ LET $x = …; RETURN … }` in a `DEFINE FIELD … VALUE` position: `check_in`
+  forks a child scope (`fork_child_scope`), checks each statement's own contracts there, and
+  checks the block's exit-set `Term` against the field's `Contract` in the *parent* env. The
+  `LET`'s contract is resolved inside; the result's contract is resolved outside. One function,
+  two environments, and the boundary is exactly where a `Place` rooted in the child scope must
+  not escape.
+- A **subquery** `SET f = (SELECT … FROM t WHERE …)`: the `WHERE`'s bool contract and the
+  `LIMIT`'s int contract are internal and checked against the subquery's row scope; the result
+  kind is external and checked against `f`'s contract. Today the internal half runs only
+  because SELECT analysis happens to be reached by a different path, and the parenthesised
+  form of the same query reaches neither (§1.1 P6').
+- A **function body** against `-> T`: today one comparison of the whole body kind
+  (`function.rs:61`). Under the rule, each `RETURN` is a position with contract `T`, so E2012
+  points at the offending `RETURN` instead of at the body, and a body with three `RETURN`s of
+  which one is wrong reports once, precisely.
+- A **closure** `|$r| $r.email != NONE` passed to `.filter()`: the parameter is a
+  `PlaceRoot::Param` in a child scope, the body is checked there (it is not checked *at all*
+  today), and the body's `Term` is checked against the closure's expected result contract
+  (`bool` for `filter`), which is how F23 gets its narrowing and how
+  `.filter(|$r| $r.email.lenn() > 0)` finally gets its E5001.
+
+The rule is one sentence: **a construct is checked against its own contracts in its own
+environment, and its result against the enclosing contract in the enclosing environment, and
+there is no expression form exempt from either half.** The `_ => {}` at `check.rs:97` is the
+one line that makes it false today.
+
+### 7.5 Scoping: what `StatementEnv` already gives us, honestly
+
+The question was whether params are "already scoped so we can narrow or widen types in a scope,
+rename them". The answer is **partly, and inconsistently** — not "no", and it matters which
+parts are real.
+
+**Already there, and good:**
+
+| Capability | Where | Notes |
+|---|---|---|
+| Real lexical child scopes | `statement_env.rs:59` `fork_child_scope` | inherits `lets`, `param_defaults`, `table_discriminants`, `narrowed_paths`, `narrowed_params`; collects its own param uses |
+| Shadowing detection | `:20` `inherited` + `:154` `would_shadow` | drives 6002 |
+| Scope-exit merge | `:246` `merge_param_uses_from` | unifies param kinds, unions `required`, drains editor facts upward |
+| Narrowing a bare param in a scope | `:159` `define_let` (rebinding) | the guard rebinds the `LET` fact |
+| Narrowing a *field path* in a scope | `:112` `set_narrowed_path` / `:117` `narrowed_path`, written via `AnalysisContext::define_narrowed_path` (`analyzer/context.rs:249`) | keyed on the exact `param.field.field` string |
+| "was this tightened by flow, or is it just its declared kind?" | `:40` `narrowed_params` / `:123` `mark_param_narrowed` | the gate that keeps dead-branch folding off base bindings |
+| Positional regions, for the editor | `analysis.rs:115` `NarrowingAnalysis` + `:91` `record_narrowing` | `(path, span, kind)`, explicitly never read by a diagnostic |
+| Two distinct unification policies | `:288` `constrain_param` (`unify_kinds`) vs `:305` `constrain_param_comparable` (`unify_comparable`) | already the recognition that "consumed as `T`" and "compared against `T`" are different contracts |
+| Context-param binding/unbinding at a DEFINE boundary | `:169` `seed_session_params` / `:189` `unbind_session_params` | |
+
+**Not there, and needed:**
+
+1. **The narrowing key is a `String`, not a `Place`.** `narrowed_paths: BTreeMap<String, Kind>`
+   can only name `$param.field.field`. It cannot name a SELECT row field, a closure element,
+   `$x[0]`, or the `$this` of a `DEFINE FIELD` body — which is why `where_effects` had to grow
+   a *parallel* `Vec<String>`-keyed mechanism (§1.2 R2/R4) instead of reusing this one.
+   §2.2's `Place` is the replacement, and `Place::key()` preserves the wire format so
+   `NarrowingAnalysis` and the LSP do not move.
+2. **Three notions of "where a refinement holds" that do not agree.** `lets` (rebinding, whole
+   scope), `narrowed_paths` (exact key, whole scope, inherited by children), and `narrowings`
+   (byte-range regions, editor-only). A refinement recorded in one is invisible to the other
+   two. §1.6 is three instances of exactly this.
+3. **Checking does not consult narrowing at all** (§1.6 item 3). `KindOracle::kind_of` (§2.6)
+   is the fix, and it is what makes `check_in` correct rather than merely uniform: a contract
+   check inside a guarded region must see the guarded kind, or it produces the F31 false
+   positive.
+4. **Prefix lookup.** `narrowed_path` matches the exact key, so narrowing `$x.f` does not help
+   `$x.f.g` (§1.6 item 2). Needs whole-segment longest-prefix, with the sibling-safety caveat
+   in §10.2.
+5. **No widening / no join.** There is no scope-exit union of two branches' refinements. §5(3)
+   states this as a deliberate limitation and it stays one.
+6. **No renaming, and none needed.** There is no alpha-conversion and no fresh-name generation.
+   Two occurrences of `$x` in different scopes produce the *same* `Place`; they are
+   distinguished by *which environment answers `kind_of`*, not by the key. That is sound for a
+   lexical walk and would not be for a CFG — one more reason §3.1 declines the CFG. It does
+   mean `Place` equality is only meaningful *relative to an env*, which must be stated in
+   `Place`'s doc comment or someone will eventually cache a `Facts` map across scopes.
+
+So: the scaffolding exists, was built for one consumer at a time, and has never been made to
+agree with itself. That is the same sentence as §1.5, about a different structure.
+
+---
+
+## 8. Testing the contract: why 917 green tests missed it
+
+### 8.1 The diagnosis
+
+`cargo test --workspace` on `1c9d046` runs **917 tests across 23 binaries** (999 `#[test]`
+attributes in the tree; 828 of the passing ones are in `surrealguard-workspace`'s lib target).
+All green, and none of them could have caught `VALUE 'green'`.
+
+The reason is not that the invariant was untested. **It was tested, four times, at one site.**
+`crates/workspace/src/kinds.rs` carries:
+
+- `a_base_kind_fits_a_literal_union_but_a_wrong_literal_or_base_does_not` (`:715`) — unit-level,
+  on `kind_is_assignable_to` directly, and it asserts precisely the right thing:
+  `!kind_is_assignable_to(&string_literal("bogus"), &status)`.
+- `writes_to_a_literal_union_field_are_not_false_type_errors` (`:759`)
+- `a_wrong_typed_write_to_a_literal_union_field_still_fires` (`:777`)
+- `a_wrong_literal_written_to_a_literal_union_field_fires` (`:794`)
+
+The last three go end to end through `codes(query)` (`:749`) — and every query in all three
+lists is a `CREATE`/`UPDATE`. The rule was proven sound, and proven to be *reached from the
+mutation path*. Nothing asserted it was reached from anywhere else, because assertions are
+written next to the code that motivated them, and the code that motivated them was `SET`.
+
+That is the general shape, and the test distribution shows it: `select.rs` 122 tests,
+`narrow.rs` 48, `syntax/lower/statement.rs` 34, `check.rs` 27, `if_else.rs` 23. Every test
+lives with a site. **A test that lives with a site can only assert what that site does.** There
+is not one test in the tree that quantifies over sites.
+
+Stated as a slogan, because it is the actionable form: **the suite tests soundness, not
+reachability.** §10.3's per-atom property tests are soundness — *is the rule right?* What is
+missing is the orthogonal half — *is the rule reached?* Neither implies the other, and the
+VALUE/DEFAULT hole is a pure reachability failure: the rule was correct, was correct at the
+moment it was written, and was simply not invoked.
+
+The fix confirms it. `41fcb41` closed the hole and added
+`a_wrong_literal_declared_in_a_field_clause_fires` — six more queries, all `DEFINE FIELD`, all
+existentially quantified. It is a good test and it is the *fifth* instance of the shape that
+missed the bug. Nothing about it would catch `CREATE t CONTENT { e: 'green' }`, which is still
+silent (F37). The suite grew by six assertions and by zero invariants.
+
+### 8.2 What the quality harness covers, and what it structurally cannot
+
+| Harness | Asserts | Direction | Can it see a missing contract check? |
+|---|---|---|---|
+| `precision_snapshot.rs` | every inferred type in the 14-file corpus, against a golden file | any change fails | **No.** `corpus_is_free_of_error_findings` (`:73`) makes the corpus **all-valid by construction**, so it can never contain the input that ought to fire |
+| `any_ratchet.rs` | `Kind::Any` leaves per site, against a baseline | may fall, may not rise | **No.** It measures imprecision on valid input |
+| the workshop oracle | finding count over `workshop/database`, which is all-valid | may fall, may not rise | **No**, and worse: it rewards *fewer* findings, so a check that silently stops firing looks like a win |
+
+All three are monotone in the "fewer findings is better" direction. That is the correct
+direction for a false-positive campaign, and it is exactly backwards for a missing check. **A
+silently-absent contract is the one defect none of the three harnesses can express**, and
+adding corpus rows does not change that — a new row in `31_narrowing_spellings.surql` is still
+valid input.
+
+### 8.3 The proposal: quantify over positions
+
+The contract inventory of §7.2 is a table. Make it an executable one, in production code, and
+iterate it in the test:
+
+```rust
+// crates/workspace/src/analyzer/contract.rs — production, not test code.
+/// Every position in SurrealQL that requires a kind. Exhaustive on purpose:
+/// adding a variant without adding a row to `POSITIONS` is a compile error,
+/// exactly as adding a `Statement` variant is today (`analyzer/statement.rs`).
+pub enum Position {
+    MutationSet, MutationContent, MutationMerge, InsertValues,
+    FieldValue, FieldDefault, FieldComputed, FieldAssert,
+    FunctionArg, FunctionReturn, ParamDefault,
+    Limit, Start, Timeout, Split, Fetch, ForIterable, Cast,
+    WhereSelect, WhereMutation, IfCond, EventWhen, PermissionPredicate,
+}
+```
+
+```rust
+// crates/workspace/tests/contract_positions.rs
+/// One position, as a query template with `{ty}` and `{val}` holes.
+struct Site { position: Position, schema: &'static str, query: &'static str, code: &'static str }
+
+/// One invariant, as (declared kind, a value that inhabits it, a value that
+/// provably does not, a value that cannot be proven either way).
+struct Case { declared: &'static str, ok: &'static str, bad: &'static str, unprovable: &'static str }
+
+const CASES: &[Case] = &[
+    Case { declared: "'red' | 'blue'", ok: "'red'",    bad: "'green'",   unprovable: "$p" },
+    Case { declared: "int",            ok: "1",        bad: "'x'",       unprovable: "$p" },
+    Case { declared: "option<int>",    ok: "NONE",     bad: "'x'",       unprovable: "$p" },
+    Case { declared: "record<user>",   ok: "user:1",   bad: "team:1",    unprovable: "$p" },
+    Case { declared: "array<int>",     ok: "[1]",      bad: "['x']",     unprovable: "$p" },
+];
+
+/// The positions that do not honour a case yet. This list may only SHRINK.
+/// It is the §7.2 inventory, executable — and it is why this test is green
+/// today rather than a wall of failures nobody can land against.
+const KNOWN_GAPS: &[(Position, &str)] = &[
+    (Position::MutationContent, "'red' | 'blue'"),  // CREATE t CONTENT { e: 'green' }
+    (Position::MutationMerge,   "'red' | 'blue'"),  // UPDATE t MERGE   { e: 'green' }
+    (Position::InsertValues,    "'red' | 'blue'"),
+    (Position::FunctionArg,     "'red' | 'blue'"),
+    (Position::FunctionReturn,  "'red' | 'blue'"),
+    (Position::FieldComputed,   "*"),               // no contract at all
+    (Position::ParamDefault,    "*"),               // no declared type to check against
+    (Position::WhereMutation,   "*"),               // no bool-ness check
+    (Position::EventWhen,       "*"),               // no bool-ness check
+];
+
+#[test] fn every_position_rejects_a_provably_wrong_value()   { /* bad → code fires */ }
+#[test] fn every_position_accepts_a_valid_value()            { /* ok  → no finding */ }
+#[test] fn every_position_stays_silent_on_an_unprovable_one(){ /* $p  → no finding */ }
+#[test] fn known_gaps_are_still_gaps()                       { /* a fixed gap must be deleted from the list */ }
+```
+
+Three properties × ~23 positions × 5 cases = ~345 assertions from ~50 lines of table, and the
+failure message is a map rather than a single `assert_eq`:
+
+```
+contract `'red' | 'blue'` must reject `'green'` — 4 positions do not:
+
+  ✓ MutationSet        CREATE t SET e = 'green'
+  ✓ FieldValue         DEFINE FIELD e ON t TYPE {ty} VALUE 'green'
+  ✗ MutationContent    CREATE t CONTENT { e: 'green' }              no finding
+  ✗ InsertValues       INSERT INTO t (e) VALUES ('green')           no finding
+  ✗ FunctionArg        RETURN fn::take('green')                     no finding
+  ✗ FunctionReturn     DEFINE FUNCTION fn::f() -> {ty} { RETURN 'green'; }  no finding
+```
+
+Four design points, each deliberate:
+
+1. **`KNOWN_GAPS` follows the house pattern.** It is `any_baseline.txt`'s shape: a debt list
+   that may shrink and may not grow, with the failure message telling you to delete a line.
+   That makes the test landable *today*, green, against code that has nine holes — and it
+   makes the nine holes a committed, countable artifact instead of a paragraph in a plan.
+   `known_gaps_are_still_gaps` is the ratchet: fixing a position without deleting its line
+   fails, so the list cannot go stale in the other direction either.
+2. **The `unprovable` axis is the one that matters most, and it is the half a point-fix
+   forgets.** `contract_first_diagnostics` and the FP-wave milestone both say the same thing:
+   a check that fires on `$p` is worse than a check that does not fire on `'green'`, because a
+   false E2001 aborts `generate` for the whole workspace. Verifying the *acceptance* half at 23
+   positions is what makes closing the gaps safe.
+3. **`Position` lives in production code and the test iterates it.** A new position that
+   forgets its contract is then a compile error in the test's exhaustive match, which is the
+   only mechanism in this repo that has ever actually held (`analyzer/statement.rs` is cited in
+   §1.7 for exactly this reason). A table that lives only in the test file goes stale in a
+   quarter.
+4. **The same table serves §7 and §10.3, at different levels.** §10.3's per-atom property tests
+   ask *is `refine`/`decide` sound?*; this asks *is it reached from every position?* Soundness ×
+   reachability. The VALUE/DEFAULT bug is a reachability failure that no amount of soundness
+   testing could have found, and the §1.5 NULL bug (F30) is a soundness failure that no amount
+   of reachability testing could have found. Both harnesses are needed and neither is redundant.
+
+### 8.4 The one new golden file
+
+Everything above is a `#[test]`, no new harness. One genuine addition is still needed, and it
+is small: a **negative corpus**, `crates/workspace/tests/corpus/invalid/`, with a golden file
+recording `(source, line, code)` for every finding it raises — the mirror of
+`precision.snap` for input that *must* report.
+
+Kept deliberately minimal, because an all-invalid corpus is a churn magnet: it records **codes
+and positions only, never message text** (message text is §6's business and will move), and it
+exists to answer one question the other three harnesses cannot — "did a check stop firing?".
+Its ratchet direction is the opposite of the oracle's: a finding disappearing is a failure.
+
+### 8.5 The spelling-equivalence test, restated
+
+Stage 0 already proposes a `(canonical, [equivalent spellings])` table asserting identical
+response kinds (§9, Stage 0). It is the same construction as §8.3 on the *recognition* axis
+rather than the *obligation* axis: quantify over spellings instead of over positions, assert
+one property instead of one behaviour. Written together, the two tables are the whole
+mechanical case that this refactor did not lose anything — and the reason to write them in
+Stage 0, before a line of the layer exists, is that both are statements about the *language*,
+not about the implementation, so they remain true across every subsequent stage.
+
+---
+
+## 9. Staged migration
+
+This cannot land as one commit — it touches the type of every narrowing in the corpus. Nine
 stages, each independently revertible, each with an explicit "proven not to lose precision"
 criterion.
 
 The governing rule for every stage: **`precision.snap` and `any_baseline.txt` must be
 regenerated only with a human-read diff, and the diff must be all-improvement.** The harness
 was built (commits `b9a0b70`, `8321c4a`) for exactly this refactor.
+
+**Where §6–§8 sit.** They are not a second project bolted on. Each depends on a specific piece
+of the layer and is sequenced immediately after it:
+
+| Work | Stage | Depends on | Why there |
+|---|---|---|---|
+| §8 contract-position table (green, with `KNOWN_GAPS`) | **0** | nothing | it is a statement about the language, not the implementation; written first it is true for every later stage, and the nine holes become a committed artifact rather than a paragraph |
+| §6 `KindContext` | **1.5** | `subtract` (Stage 1), for "which members were ruled out" | must land before Stage 4's C2/C3 hover cut-over, so hover changes once, not twice |
+| §7 one `check` | **2.5** | `Term` (Stage 2), for exact-literal recovery | does **not** need `Guard`; blocking it on Stage 3 would delay the highest-value user-visible fix in the plan for no reason |
+| §7.4 compositional `check_in` | **4c** | `KindOracle` (Stage 4b) | a contract check inside a guarded region must see the guarded kind, or it produces F31 |
+| §6.6 `ts_type` context + §8.4 negative corpus | **5** | nothing structural | satellite cleanup, same class as the rest of Stage 5 |
 
 ### Stage 0 — extend the corpus first (no production code)
 
@@ -971,13 +1730,23 @@ answer, then flip in later stages — which is the point):
 - Add three `sale`-shaped aggregate rows to `50_aggregates.surql` covering `(math::sum(x))*2`,
   `[math::sum(x)]`, `{ s: math::sum(x) }`.
 
-Also add to `crates/workspace/tests/` a **spelling-equivalence test**: a table of
-`(canonical, [equivalent spellings])` asserting that all spellings produce the *identical*
-response kind. This is the test that would have caught every bug in §1.1 and §1.4, and it is
-worth writing even if the rest of this proposal is deferred.
+Also add to `crates/workspace/tests/` **two tables that quantify rather than exemplify**:
+
+- the **spelling-equivalence test** — `(canonical, [equivalent spellings])` asserting all
+  spellings produce the *identical* response kind. This is the test that would have caught
+  every bug in §1.1 and §1.4;
+- the **contract-position table** of §8.3 — `Position` × `Case` × {rejects, accepts, silent},
+  landing green against today's code by way of the `KNOWN_GAPS` list. This is the test that
+  would have caught §7.1, and it converts the §7.2 inventory from prose into a committed,
+  countable debt list.
+
+Both are worth writing even if the rest of this proposal is deferred, and both are statements
+about the *language* rather than the implementation, so they survive every later stage
+unchanged. `Position` itself lands here as a production enum with no behaviour attached — a
+name for each site — so that Stage 2.5 has something to make exhaustive.
 
 *Exit criterion:* snapshot grows; no existing line changes; `cargo test -p surrealguard-workspace`
-green; oracle count unchanged.
+green; oracle count unchanged; `KNOWN_GAPS` has exactly the nine entries §7.2 measured.
 
 ### Stage 0.5 — fix the parenthesis lowering (10 lines, independently valuable)
 
@@ -1007,7 +1776,7 @@ Land §2.5's lattice in `crates/workspace/src/kinds.rs` with property tests, the
 changes.
 
 Resolve the NULL divergence of §1.5 here too, since `subtract` makes the two paths one
-function whether the decision goes toward `strip_variant` or `narrow_out_none` — see §8(3).
+function whether the decision goes toward `strip_variant` or `narrow_out_none` — see §11(3).
 
 *Exit criterion:* `precision.snap` diff contains only the §1.3 literal-union improvements
 (F16, F19) and the F30 correction, read and accepted line by line. `any_baseline.txt` may
@@ -1016,6 +1785,35 @@ first because it is the one change with no syntactic component — it isolates t
 change from the spelling-side change so a later regression can be attributed. **Note that
 F30's fix registers as a *widening* in the snapshot**, which is normally the signature of a
 regression; say so in the commit message.
+
+### Stage 1.5 — `KindContext`, additive
+
+Land §6.3: `render(kind, ctx) -> Rendered`, with `render_kind(k)` preserved as
+`render(k, Declared).text`. `Declared` reproduces today's bytes exactly, so **`precision.snap`
+must not move at all in this stage** — that is the exit criterion, and it is what makes the
+change safe to land ahead of everything it will later serve.
+
+Then cut over, in this order, one commit each:
+
+1. `Glance { budget }` on the two inlay surfaces (`query.rs:65`, `:117`). Replaces the
+   character cut with structural elision; ships with the existing
+   `inlay_label_elides_an_over_long_object_kind` test rewritten to assert the label is still a
+   *parseable* type.
+2. `Diagnostic { blame }` on the ~20 analyzer message sites (§6.5), including the two `{kind}`
+   interpolations at `check.rs:314`/`:334` that currently bypass the renderer entirely. This is
+   the one commit that changes diagnostic *text* across the board; it changes no code, no
+   severity and no span, so the negative corpus of §8.4 (codes and positions only) is
+   unaffected by construction — which is why §8.4 records codes rather than messages.
+3. `Occurrence` on the four hover sites (`query.rs:251`, `:1032`, `:1065`, `:1130`), **without**
+   the `proved` note — the kind spelling only. The note needs `Atom`, so it waits for Stage 3.
+
+*Exit criterion:* `precision.snap` byte-identical; the three in-crate tests that assert through
+`render_kind` (`analysis.rs:1303`, `:1332`, `:1376`) still pass unmodified; the LSP
+editor-surface tests (`03a87a3`) extended with one narrowed-hover assertion showing
+`none | string` where the declaration says `option<string | null>`.
+
+*Deferred to Stage 3:* `Occurrence { proved }`'s provenance note and the fourth
+`NarrowingAnalysis` field (§6.7), because the atom does not exist until then.
 
 ### Stage 2 — `place_of`, `eval`, `Term`, behind the existing API
 
@@ -1032,6 +1830,43 @@ is correct whether or not Stage 0.5 landed.
 
 *Exit criterion:* nothing moves that Stage 0.5 did not already move, except `LIMIT 1 + 0`-style
 folds. The corpus additions from Stage 0 make this a targeted diff rather than a wall.
+
+### Stage 2.5 — one `check`, and the gap list starts shrinking
+
+Land §7.3's `Contract` + `check`, and route the Group A positions through it. This needs
+`Term` (Stage 2) and nothing else — in particular it does **not** need `Guard`, which is why it
+comes here rather than after Stage 3: it is the highest-value user-visible fix in the plan and
+there is no reason to hold it behind the narrowing work.
+
+Order within the stage, **one position per commit**, because each one can raise the oracle:
+
+1. Reimplement `kind_is_assignable_to` in terms of `meet`, three-valued. `Some(⊥)` is
+   *provably disjoint*; `None` is *not representable*; only the former emits. Delete the
+   scalar-literal prove-or-silent branch (`kinds.rs:87-95`) — it becomes the general rule.
+   `checked_value_kind`, `scalar_value_literal_kind` and `constrains_scalar_literals` go with
+   it, since `Term::Const` carries the value the whole dance existed to recover.
+2. `MutationSet` / `FieldValue` / `FieldDefault` — already correct; move them onto `check`
+   with no behaviour change, so the next four commits have a proven callee.
+3. `MutationContent` / `MutationMerge`, then `InsertValues`, then `FunctionArg`, then
+   `FunctionReturn`. Each deletes one `KNOWN_GAPS` line and must be adjudicated against the
+   workshop oracle before landing.
+4. Group B: one `Contract { expects: Bool, code: 2005 }` replacing `definitely_not_bool`, then
+   add the two missing positions (`WhereMutation`, `EventWhen`). These are the two most likely
+   to raise the oracle, because a mutation `WHERE` that is genuinely a non-bool is idiomatic in
+   some SurrealQL — adjudicate before, not after.
+5. Group C: `LIMIT`/`START`/`TIMEOUT`/`SPLIT`/`FETCH`/`FOR`/cast become `Contract` rows.
+   Behaviour-preserving by construction if `expects` is transcribed from the existing
+   `matches!`; the win is that they stop being nine independent `Either` policies.
+
+*Exit criterion per commit:* the `KNOWN_GAPS` line for that position is deleted and
+`known_gaps_are_still_gaps` passes; `every_position_stays_silent_on_an_unprovable_one` passes
+for **all** positions (the acceptance half is what keeps this from becoming an FP wave); oracle
+count over the workshop adjudicated, with every new finding either a real bug in the workshop
+or a blocker.
+
+*Not in this stage:* Group D's `FieldComputed` and `ParamDefault`. They need a contract that
+does not exist yet (`COMPUTED` is not in `field.rs`'s clause loop at all, and `DEFINE PARAM`
+has no declared type to check against), so they stay in `KNOWN_GAPS` until Stage 5.
 
 ### Stage 3 — `Guard` + `Atom` + `Facts`, with `narrow.rs` as an adapter
 
@@ -1077,6 +1912,15 @@ most evidence behind it:
    is the one place where a wrong `Place` equality would suppress a **true** finding, so it
    ships with negative tests asserting that `IF $a.y != NONE { RETURN $b.y.len(); }` still
    reports.
+4c. **Compositional checking** (§7.4) — replace `check_value_expression`'s `_ => {}`
+   (`check.rs:97`) with `check_in(expr, expects, env, ctx)`, pushing the enclosing contract down
+   and the `Term` back up at every nesting depth. It comes here, after 4b, because a contract
+   check inside a guarded region must read through `KindOracle::kind_of` or it produces F31 at
+   scale rather than once. Three sub-commits: (a) subqueries and parenthesised expressions —
+   this alone re-enables the twelve diagnostic codes §1.1 lists as parenthesis-silenced;
+   (b) blocks, with the child-scope boundary explicit; (c) closures, whose bodies have never
+   been checked at all. Each is a *net-new* finding source on previously-silent code, so each
+   is oracle-gated exactly like Stage 2.5's.
 5. **C1/C9** (dead-branch verdicts) — **last**, because it is the only consumer that can
    produce a *new diagnostic on valid code* (greying a live branch is a real false positive;
    `narrow.rs:838-842` says so). It ships with the `34_guard_verdicts.surql` corpus file and
@@ -1105,10 +1949,25 @@ the same class of defect and the layer makes them one-liners:
   the last statement, and teach `statement_diverges` about a `Statement::Expr` wrapping a
   diverging block;
 - give the top-level statement loop (`pipeline.rs:398-468`) a `Flow`, so top-level `RETURN`s
-  contribute an exit-set type and 4006 fires after a top-level `THROW`.
+  contribute an exit-set type and 4006 fires after a top-level `THROW`;
+- `Occurrence { proved }`'s provenance note plus `NarrowingAnalysis`'s fourth field (§6.7), and
+  the `completion.rs:834` narrowing read that makes completion agree with hover;
+- `ts_type(kind, TsContext)` (§6.6), which removes the `undefined | string` / `nick?: string`
+  split. Land it in the same series as — but a **separate commit from** — the SDK-decode
+  corrections in `docs/plans/2026-07-26-ts-api-redesign.md` §3, so a `.d.ts` diff can be read
+  as "spelling moved" or "type changed" and never both;
+- the two Group D positions §7.2 found with no contract at all: give `DEFINE FIELD … COMPUTED`
+  a row in `field.rs`'s clause loop, and give `DEFINE PARAM` an optional declared type so
+  `VALUE` has something to be checked against. Both delete their `KNOWN_GAPS` lines. The
+  `DEFINE PARAM` one is worth doing for a second reason: today a bad default is silent at the
+  definition and surfaces as an **E6001 at the use site**, blaming a line that is correct;
+- the negative corpus of §8.4, once there is something new for it to pin.
 
-Each is a separate commit with its own corpus rows. These are pure wins with no coexistence
-problem, because they are *adding* a call to a proven layer rather than replacing one.
+Each is a separate commit with its own corpus rows. Most are pure wins with no coexistence
+problem, because they are *adding* a call to a proven layer rather than replacing one — the two
+exceptions are the Group D positions, which are new findings and carry Stage 2.5's oracle gate.
+
+*Exit criterion for the stage:* `KNOWN_GAPS` is empty.
 
 ### Stage 6 — delete
 
@@ -1119,22 +1978,36 @@ they are policy, not recognition.
 
 ---
 
-## 7. Risk
+## 10. Risk
 
-### 7.1 Ranked
+### 10.1 Ranked
+
+§6–§8 move the shape of this table. Before them, every risk here was a *soundness* risk with a
+low-to-medium likelihood: something the layer might get wrong. §7's work adds a class that is
+different in kind — **certain**, not probable, because closing a contract hole *means* new
+findings on code that compiled yesterday. The two are ranked together below, but they need
+different mitigations: soundness risks are mitigated by property tests, and certainty risks are
+mitigated by commit granularity and adjudication. The single biggest *soundness* risk is still
+the first row; the single biggest *scheduling* risk is now the sixth.
 
 | Risk | Likelihood | Blast radius | Mitigation |
 |---|---|---|---|
-| **A wrong `Atom::refine` is now wrong in every consumer at once** (the §3.5 concession) — *this is the single biggest risk in the proposal* | medium | **highest** — a bad refinement is simultaneously a wrong generated TS type, a wrong hover, a wrongly-greyed branch, and potentially a false E2001/E5002. Today the same bug in `row_order_effect` structurally cannot reach `guard_verdict` | §7.3's per-atom property tests are the *primary* mitigation and are non-optional; plus consumer capability gating in Stage 4, C1 cut over last, and the dual-path subtype assertion of Stage 3. Note the counter-evidence: §1.5's F30 is a soundness bug that exists *because* the recognizers are separate — separation is not safety, it is only unaudited blast radius |
+| **A wrong `Atom::refine` is now wrong in every consumer at once** (the §3.5 concession) — *this is the single biggest risk in the proposal* | medium | **highest** — a bad refinement is simultaneously a wrong generated TS type, a wrong hover, a wrongly-greyed branch, and potentially a false E2001/E5002. Today the same bug in `row_order_effect` structurally cannot reach `guard_verdict` | §10.3's per-atom property tests are the *primary* mitigation and are non-optional; plus consumer capability gating in Stage 4, C1 cut over last, and the dual-path subtype assertion of Stage 3. Note the counter-evidence: §1.5's F30 is a soundness bug that exists *because* the recognizers are separate — separation is not safety, it is only unaudited blast radius |
 | **Newly-narrowed types surface diagnostics that were previously suppressed by imprecision** | **high** — this is expected, not hypothetical | medium: e.g. once `WHERE status = 'active'` narrows to `"active"`, a downstream `kind_is_assignable_to` against `string` may fire; TI-2's note records exactly this pattern for link traversal | Stage 4 commits are one-consumer-at-a-time and gated on the workshop oracle count; a rise in oracle count blocks the commit until each new finding is adjudicated |
 | **Precision *increase* breaks downstream TS consumers** | medium | medium — `email: string` where users' code handled `string \| undefined` is a compile change in their repo | narrowing only ever *removes* cases from a union, which is a safe direction for a consumer that already handled the wider type; note it in the changelog, it is not preventable |
 | **`meet` is wrong for an exotic `Kind`** (nested `Either` of `Literal(Array)`, `Geometry` variants, `Kind::Function`) | medium | high — silently narrows to something the runtime can exceed | `meet` returns `None` (caller keeps the input) for every pair it does not have an explicit rule for. Default is *no refinement*, never *guessed refinement* |
 | **`place_of` over-normalizes and merges two distinct locations** | low | **highest** — a refinement applied to the wrong place is unsound in a way no widening can rescue | `Place` is `Ord + Hash` and its equality is structural; `place_of` refuses anything it cannot prove is a fixed location (no method calls, no non-constant indices, no `Optional` parts, no graph steps). Aliasing resolution follows only syntactic `LET $y = $x` chains and stops at the first non-place RHS |
-| **Performance regression** | low–medium | medium | §7.4 |
+| **Closing the §7.2 contract holes fires real findings on real code** | **certain** — that is what closing a hole means | **highest of the new work**: unlike a precision change, a new *error*-severity finding aborts `generate` for the whole workspace, and `MutationContent`/`InsertValues` are the two most-written positions in any real schema | one position per commit (Stage 2.5), each oracle-gated; and the `unprovable` axis of §8.3 run at **all** positions on every commit, since prove-or-stay-silent is what keeps a fix from becoming an FP wave. The honest expectation is that some of these findings are correct and the workshop is wrong, which is a product decision per position, taken before the commit |
+| **Compositional checking (4c) un-silences twelve diagnostic codes at once** | **certain** | high — every parenthesised expression in every workspace becomes checkable simultaneously, and closure bodies have *never* been checked | it is split into three sub-commits (subquery / block / closure) precisely so the blast can be attributed; and the two error-severity **false positives** it also fixes (P3', P4') pull in the opposite direction, so the net oracle movement is genuinely unknown until measured. Do not land it in the same commit as anything else |
+| **`Diagnostic { blame }` changes ~20 message texts at once** | certain | low–medium — no code, severity or span moves, but every downstream expectation on message *text* breaks | §8.4's negative corpus records **codes and positions only**, deliberately, so it is immune; the exposure is the in-crate assertions and any user tooling grepping messages. Landing it as one commit (Stage 1.5) makes it one reviewable diff rather than a drip |
+| **`Occurrence` rendering is read as a regression** | medium | low — cosmetic, but confusing: `none \| string` where the reader expected `option<string>` looks like the analyzer forgot the declaration | it is only used at *occurrence* sites, never at declaration sites, and the `proved` note (Stage 5) says why. Until the note lands, the spelling change ships alone and must be called out in the release notes, not just the commit |
+| **`KNOWN_GAPS` goes stale in the permissive direction** — a position gets a contract and nobody deletes its line | low | medium — the debt list stops being a measurement | `known_gaps_are_still_gaps` asserts each listed gap *is still a gap*, so a silent fix fails the build. This is the mirror of `any_ratchet`'s "regenerate to bank the win" |
+| **A `Position` variant is added without a table row** | low | medium — the exact failure mode §8 exists to prevent, reintroduced | `Position` lives in production code and the test matches it exhaustively, so an unhandled variant is a compile error (`analyzer/statement.rs` is the precedent, §1.7) |
+| **Performance regression** | low–medium | medium | §10.4 |
 | **Positional narrowing (`NarrowingAnalysis`) breaks or shifts ranges** | low | medium — a visible editor regression on every hover | `Place::key()` is byte-identical to `GuardPath::key()`; the `region` computation in `if_else.rs`/`block.rs` is not touched; the LSP editor-surface tests (`03a87a3`) are the gate |
 | **Stage 3's dual-path CI doubles corpus test time** | certain | low | temporary; ~0.4 s → ~0.8 s per corpus run |
 
-### 7.2 What specifically could regress, concretely
+### 10.2 What specifically could regress, concretely
 
 - **`Verdict::AlwaysTrue` on a guard the const path used to leave `Unknown`.** `guard_of`
   lowers `IF 1 = 1` to `Guard::True`, but it *also* now lowers `IF (1 = 1) AND $x != NONE`
@@ -1170,10 +2043,30 @@ they are policy, not recognition.
   load-bearing for one real workshop file (`organization/organization_unit.surql:44`). A
   correct AST-based replacement may classify it differently and raise the oracle by one. That
   is a product decision, not a refactor decision, and must be taken before the commit lands.
+- **Deleting the scalar-literal prove-or-silent branch (`kinds.rs:87-95`) in Stage 2.5.** It is
+  currently the *only* thing standing between a literal-union field and a false E2001 on every
+  valid write, and four committed tests exist to say so
+  (`writes_to_a_literal_union_field_are_not_false_type_errors` and friends). The three-valued
+  `meet` reproduces its behaviour by construction — `meet(String, Either([Lit"a", Lit"b"]))` is
+  not representable, so `None`, so silence — but "by construction" is a claim, and those four
+  tests plus §8.3's `unprovable` axis are what turn it into a check. Do not delete the branch
+  in the same commit that adds the meet.
+- **`WhereMutation` bool-ness is a new finding on an idiom, not a bug.** `UPDATE t SET … WHERE
+  <non-bool>` is silent today (§7.2 Group B). SurrealDB's own truthiness rules make a
+  non-bool `WHERE` meaningful, so making it a W2005 is a *policy* choice that happens to be
+  consistent with SELECT's. It is the most likely single source of new workshop findings in
+  Stage 2.5 and should be adjudicated on its own, before the commit.
+- **Compositional checking finds things in code nobody has looked at.** Closure bodies have
+  never been checked by `check_value_expression` — not once, in any version. Turning that on
+  (4c sub-commit c) is not "re-enabling" anything; it is a first pass over a category of code.
+  Budget for the findings to be real and for some of them to be old.
 
-### 7.3 The mechanical safety argument
+### 10.3 The mechanical safety argument
 
-Three layers, in increasing generality:
+Five layers, in increasing generality. The first three prove the rules are **right**; the last
+two prove they are **reached**, and §8.1 is the argument that the second half is not optional —
+917 green tests proved the literal-union rule sound and said nothing about whether anything
+called it.
 
 1. **Per-atom property tests of the two invariants in §2.5.** For a fixed finite universe of
    kinds (the ~40 that appear in the corpus, plus constructed `Either`/`Record`/`Literal`
@@ -1186,14 +2079,23 @@ Three layers, in increasing generality:
 3. **The dual-path corpus assertion** (Stage 3). New kind at every site is a subtype of, or
    equal to, the old kind. Mechanically enforces "no precision lost" across the whole
    migration rather than per-commit eyeballing.
+4. **The contract-position table** (§8.3, Stage 0). `Position` × `Case` × {rejects, accepts,
+   stays silent}, with `KNOWN_GAPS` as the shrinking debt list. This is the *reachability*
+   half: it asserts that a rule proven sound in (1) is actually invoked at every position that
+   owes it. Layer (1) could not have found §7.1 and layer (4) could not have found F30 — they
+   are orthogonal, and the two bugs are one of each.
+5. **The negative corpus** (§8.4, Stage 5). Codes and positions for input that *must* report.
+   The only harness in the tree whose failure direction is "a finding disappeared".
 
 Plus the two existing harnesses used as designed: `precision_snapshot.rs` catches any type
 that moves; `any_ratchet.rs` catches any site that becomes imprecise. Both are additive-only
 and both fail loudly, which is exactly the property a refactor of this size needs. Neither is
 sufficient alone — `precision.snap` only covers the 14-file corpus, which is why Stage 0
-comes first.
+comes first — and neither can see a missing check at all, because both (and the workshop
+oracle) are monotone in the "fewer findings is better" direction (§8.2). That is the gap
+layers (4) and (5) exist to close.
 
-### 7.4 Performance
+### 10.4 Performance
 
 Baseline, measured on this machine: the release binary over the 149-source workshop
 (`/Users/drewridley/Documents/Projects/workshop/database`) takes **0.42–0.45 s wall**
@@ -1229,7 +2131,7 @@ construction already removes.
 
 ---
 
-## 8. Open questions for the author
+## 11. Open questions for the author
 
 1. **`Atom::Truthy`.** Turning `WHERE email` into a narrowing is engine-correct but changes
    every bare-field `WHERE` in every consumer's codebase at once. Ship it, or leave it
@@ -1252,5 +2154,34 @@ construction already removes.
    trait, but forces the SELECT row post-pass and the closure-element scope to construct a
    `StatementEnv`, which they currently do not. The trait is proposed because those two
    consumers are the point of the exercise — but it is a judgement call, not a requirement.
-</content>
-</invoke>
+6. **How aggressive should `Occurrence` rendering be?** `none | string` at a narrowed
+   occurrence is more informative than `option<string>` and also less familiar. Three options:
+   spell it always; spell it only when the occurrence kind *differs* from the declared kind
+   (so an unnarrowed occurrence still reads `option<string>`); or spell it only alongside the
+   `proved` note, so the reader always gets the "why" with the "what". The middle one is the
+   smallest visible change and the last is the most useful; §6.3 assumes the middle and defers.
+7. **Does `Diagnostic { blame }` go far enough, or should the message itself name the member?**
+   Rendering `none | string | null` makes the offending arm visible, but the reader still has
+   to work out which one the operator rejected. The contract knows — it failed a specific meet.
+   A message like ``'+' can't combine a 'none | string | null' and an 'int' (the `none` arm)``
+   is strictly more informative and strictly more verbose. LSP diagnostics are plain text
+   (`MEMORY.md`'s hover-polish note says rich formatting belongs in the hover), so there is no
+   markup lever — it is a length decision.
+8. **`WhereMutation` bool-ness: policy call.** SELECT's `WHERE` warns on a non-bool (W2005) and
+   UPDATE/UPSERT/DELETE's does not. One of the two is wrong. Making them agree is a one-line
+   change either way; which direction is a product decision and it is the largest single source
+   of new findings in Stage 2.5.
+9. **Should `DEFINE PARAM` gain a declared type?** It has no `TYPE` clause in SurrealQL, so
+   there is nothing for a `VALUE` to be checked against, and today a bad default is silent at
+   the definition and reported as an E6001 at an innocent *use* site. The options are: leave
+   it (and accept the misplaced blame), infer the param's kind from the default and report the
+   conflict at the definition with the use as a related span, or invent a SurrealGuard-only
+   annotation. The middle one is the only one that does not extend the language.
+10. **Where does `check_in` live?** `MEMORY.md`'s `per_statement_analyzers_own_logic` applies
+    here with more force than it does to §2: `check_in` really is a single entry point that
+    several statement kinds would route through. The §3.5 rebuttal ("different axis — this is
+    expression denotation, not statement semantics") still holds for the *expression* half, but
+    the block/subquery half touches statements. The proposal is that `check_in` owns only the
+    *boundary* (push contract down, check `Term` up) and delegates the body to the existing
+    per-statement analyzer, which keeps the rule intact — but that boundary needs the author's
+    agreement before Stage 4c, not after.
