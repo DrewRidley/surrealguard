@@ -43,24 +43,15 @@ cmd_check() {
   cargo test 2>&1 | grep -E 'test result: (ok|FAILED)' \
     | awk '{s+=$4; f+=$6} END {print "   passed:", s, " failed:", f; if (f>0) exit 1}'
 
-  # The corpus is NOT entirely valid — it contains genuinely wrong SurrealQL
-  # (undefined tables like `passkey`, for instance). So a growing count is not
-  # itself a failure: what matters is that every finding is genuine. Compare
-  # against the previous release and triage anything new before publishing.
-  echo "== oracle (real-world corpus: triage any NEW finding, don't just count) =="
-  local ws=/Users/drewridley/Documents/Projects/workshop/database
-  local bin="$PWD/target/release/surrealguard"
-  if [ -d "$ws" ]; then
-    # `check` exits non-zero whenever any finding is error-severity, which the
-    # corpus has by design — so the exit code is not a failure signal here and
-    # must not take down the script (`set -e` + `pipefail`). The count is.
-    ( cd "$ws" && "$bin" check --json 2>/dev/null || true ) \
-      | python3 -c "import sys,json,collections
-d=json.load(sys.stdin); c=collections.Counter(x['code'] for x in d['diagnostics'])
-print('   total:', sum(c.values()), dict(c))"
-  else
-    echo "   (corpus not present — skipped)"
-  fi
+  # Not a count — a triage gate. The corpus contains genuinely broken SurrealQL,
+  # so findings may legitimately grow; what must hold is that every finding is
+  # accounted for, and that none silently STOPPED firing (a count hides that:
+  # one gained plus one lost looks like no change at all).
+  echo "== oracle (triage gate) =="
+  python3 scripts/oracle.py check || {
+    echo "   triage the findings above, then: scripts/oracle.py update"
+    exit 1
+  }
 
   # `--no-verify` on purpose: verification builds the tarball against the
   # *registry*, so any crate using an API added in this same release fails until

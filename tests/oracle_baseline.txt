@@ -1,0 +1,182 @@
+# Oracle baseline — every finding the real-world corpus produces, with a verdict.
+#
+# The corpus is NOT all-valid; it contains genuinely broken SurrealQL. A growing
+# count is therefore not a failure. An UNTRIAGED finding is, and so is one that
+# silently disappears.
+#
+# Verdicts:
+#   genuine  — the corpus SurrealQL really is wrong (say how it was verified)
+#   expected — correct behaviour on input we accept as-is
+#   BUG      — a false positive. Any line with this verdict is a TODO on us.
+#
+# Regenerate with `scripts/oracle.py update` (existing verdicts are preserved).
+
+# total: 42 finding(s)
+
+E1001  schema/apps/commerce/discount.surql
+    `record<loyalty_tier>` targets a table that's never defined
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/apps/commerce/loyalty/loyalty_reward.surql
+    `record<loyalty_program>` targets a table that's never defined
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/apps/commerce/loyalty/loyalty_reward.surql
+    `record<loyalty_tier>` targets a table that's never defined
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/apps/commerce/loyalty/loyalty_tier.surql
+    `record<loyalty_program>` targets a table that's never defined
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/apps/commerce/loyalty/loyalty_transaction.surql
+    `record<loyalty_program>` targets a table that's never defined
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/apps/commerce/loyalty/loyalty_transaction.surql
+    `record<loyalty_reward>` targets a table that's never defined
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/apps/commerce/loyalty/loyalty_transaction.surql
+    `record<loyalty_tier>` targets a table that's never defined
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/apps/commerce/order/has_line_item.surql
+    `record<kitchen_station>` targets a table that's never defined
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/apps/commerce/pos/kitchen/pos_kitchen_ticket.surql
+    `record<kitchen_station>` targets a table that's never defined
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/apps/commerce/products/service.surql
+    `record<product_kind>` targets a table that's never defined
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/apps/crm/customer.surql
+    `record<loyalty_program>` targets a table that's never defined
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/apps/crm/customer.surql
+    `record<loyalty_tier>` targets a table that's never defined
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/communication/email_address.surql
+    `mailbox_folder` is not a defined table
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/organization/@functions.surql
+    `has_billing_module` is not a defined table
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/organization/@functions.surql
+    `organization_billing_limit` is not a defined table
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/organization/organization_delegation_grant.surql
+    `record<user>` targets a table that's never defined
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/person/account.surql
+    `passkey` is not a defined table
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1001  schema/suite/task/task.surql
+    `task_comment` is not a defined table
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1002  schema/auth/entity_access.surql
+    `member_of` has no field `status`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1002  schema/organization/organization.surql
+    `organization_unit` has no field `random`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1002  schema/person/@function.surql
+    `organization` has no field `slug`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1002  schema/suite/project/project.surql
+    `task_status` has no field `category`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1002  schema/suite/project/project.surql
+    `task_status` has no field `category`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1002  schema/suite/project/project.surql
+    `task_status` has no field `category`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1002  schema/suite/project/project.surql
+    `task_status` has no field `category`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1002  schema/suite/project/project.surql
+    `task_status` has no field `category`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1002  schema/suite/project/project.surql
+    `task_status` has no field `project`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1002  schema/suite/project/project.surql
+    `task_status` has no field `project`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1002  schema/suite/project/project.surql
+    `task_status` has no field `project`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1002  schema/suite/project/project.surql
+    `task_status` has no field `project`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E1002  schema/suite/project/project.surql
+    `task_status` has no field `project`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E2004  schema/organization/@functions.surql
+    `=` can't combine a `array<bool>` and a `bool`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E2004  schema/organization/employee_of.surql
+    `=` can't combine a `array<{ count: int }>` and a `int`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E2034  schema/suite/project/project.surql
+    `template` must be set when creating a `task_status`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E2034  schema/suite/project/project.surql
+    `template` must be set when creating a `task_status`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E2034  schema/suite/project/project.surql
+    `template` must be set when creating a `task_status`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E2034  schema/suite/project/project.surql
+    `template` must be set when creating a `task_status`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E2034  schema/suite/project/project.surql
+    `template` must be set when creating a `task_status`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+E5002  schema/organization/billing/organization_billing.surql
+    argument 1 to `fn::stripe::customer::delete` is a `option<string>`, but `$stripe_id` is declared `string`
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+W4023  schema/@functions.surql
+    count() without GROUP BY yields 1 per row, not a total; add GROUP ALL for a total
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+W4023  schema/@functions.surql
+    count() without GROUP BY yields 1 per row, not a total; add GROUP ALL for a total
+    verdict: TRIAGE ME — genuine / expected / BUG?
+
+W7005  schema/@functions.surql
+    `!=` between `record<organization_unit>` and `none` is always true
+    verdict: TRIAGE ME — genuine / expected / BUG?
