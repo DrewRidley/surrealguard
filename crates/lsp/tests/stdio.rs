@@ -29,6 +29,7 @@ DEFINE FIELD email ON account TYPE string;
 DEFINE TABLE organization SCHEMAFULL;
 DEFINE FIELD name ON organization TYPE string;
 DEFINE FIELD tier ON organization TYPE 'free' | 'pro';
+DEFINE FIELD note ON organization TYPE option<string | null>;
 DEFINE FIELD owner ON organization TYPE record<account>;
 
 DEFINE TABLE organization_unit SCHEMAFULL;
@@ -377,21 +378,25 @@ RETURN $org.name;
         .hover_markdown(query, after(query, "$org", 3) - 1)
         .expect("hover after the guard");
 
-    // The declared kind at and before the guard: the guard's own subject is
-    // still optional where it is tested, or the test would be pointless.
+    // The binding site mirrors the binding as written, so it keeps the
+    // author's `option<…>` spelling.
     assert!(
         at_binding.contains("option<"),
         "`FROM ONLY … LIMIT 1` yields an option; hover said: {at_binding}"
     );
+    // An occurrence answers a different question — what can this be *here* —
+    // so it names the members that are live rather than folding them into a
+    // wrapper that says the declaration was optional. At the guard the `none`
+    // is one of them, or the test would be pointless.
     assert!(
-        at_guard.contains("option<"),
-        "at the guard the binding is still optional; hover said: {at_guard}"
+        at_guard.contains("none"),
+        "at the guard the binding can still be NONE; hover said: {at_guard}"
     );
 
     // Past the diverging guard the binding cannot be NONE, and hover says so.
     assert!(
-        !after_guard.contains("option<"),
-        "the guard removed NONE, so hover past it must not report an option; \
+        !after_guard.contains("none"),
+        "the guard removed NONE, so hover past it must not report it as live; \
          hover said: {after_guard}"
     );
     // The narrowing takes away the option marker and nothing else.
@@ -426,14 +431,47 @@ RETURN $org;
         .expect("hover after the IF");
 
     assert!(
-        !in_body.contains("option<"),
-        "inside the body the condition holds, so the binding is not optional; \
+        !in_body.contains("none"),
+        "inside the body the condition holds, so the binding cannot be NONE; \
          hover said: {in_body}"
     );
     assert!(
-        after_if.contains("option<"),
+        after_if.contains("none"),
         "the IF has no ELSE and does not divert, so nothing is proven after it; \
          hover said: {after_if}"
+    );
+}
+
+/// A narrowed occurrence reports **which members survived**, not that the
+/// declaration was optional. `note` is `option<string | null>`; past a
+/// `= NULL` guard that throws, a `null` can no longer reach the read — but a
+/// `none` still can, because `NULL = NONE` is FALSE on the engine. The one
+/// spelling that says all of that is `none | string`. `option<string>` — the
+/// declared spelling of the same kind — says "this was declared optional",
+/// which is a different sentence and is not the one the reader needs here.
+#[test]
+fn hover_at_a_narrowed_occurrence_names_the_surviving_members() {
+    let query = "\
+LET $note = (SELECT VALUE note FROM ONLY organization LIMIT 1);
+IF $note = NULL THEN THROW 'null note' END;
+RETURN $note;
+";
+    let (mut lsp, _) = Lsp::with_schema(query);
+
+    let at_binding = lsp
+        .hover_markdown(query, after(query, "$note", 1) - 1)
+        .expect("hover on the binding site");
+    let after_guard = lsp
+        .hover_markdown(query, after(query, "$note", 3) - 1)
+        .expect("hover after the guard");
+
+    assert!(
+        at_binding.contains("option<string | null>"),
+        "the definition site mirrors the declaration; hover said: {at_binding}"
+    );
+    assert!(
+        after_guard.contains("none | string"),
+        "the guard removed the `null` and left the `none`; hover said: {after_guard}"
     );
 }
 

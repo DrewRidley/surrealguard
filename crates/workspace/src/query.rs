@@ -235,6 +235,7 @@ pub fn hover_at(
                 Some(&format!("local `${}`", binding.name)),
                 &format!("${}", binding.name),
                 binding.kind.as_ref(),
+                KindContext::Declared,
                 schema,
             ),
         );
@@ -263,6 +264,7 @@ pub fn hover_at(
                     Some(&format!("parameter `${}`", param.name)),
                     &format!("${}", param.name),
                     here,
+                    KindContext::Occurrence,
                     schema,
                 ),
             );
@@ -287,6 +289,7 @@ pub fn hover_at(
                         Some(&format!("context `${name}`")),
                         &format!("${name}"),
                         Some(kind),
+                        KindContext::Declared,
                         schema,
                     ),
                 );
@@ -408,13 +411,20 @@ pub fn definition_at(
 /// line (already-formatted markdown, e.g. ``local `$direct` ``) above a fenced
 /// `surql` type line the editor syntax-highlights. Records and literal objects
 /// additionally get their field shape as an indented `surql` block.
+///
+/// `ctx` is what the popover is answering. A definition site mirrors the
+/// binding as written ([`KindContext::Declared`]); an *occurrence* reports the
+/// kind in force at the cursor and names the members that are live there —
+/// "what can this be here" is a different question from "what was this
+/// declared as", and `option<string>` answers the second one.
 fn symbol_markdown(
     caption: Option<&str>,
     name: &str,
     kind: Option<&Kind>,
+    ctx: KindContext<'_>,
     schema: &SchemaIndex,
 ) -> String {
-    let rendered = kind.map_or_else(|| "unknown".to_string(), render_kind);
+    let rendered = kind.map_or_else(|| "unknown".to_string(), |kind| render(kind, ctx).text);
     let mut markdown = String::new();
     if let Some(caption) = caption {
         markdown.push_str(&format!("**{caption}**\n"));
@@ -823,6 +833,7 @@ impl SchemaHovers<'_> {
                                     Some(&format!("parameter `${}`", name.node)),
                                     &format!("${}", name.node),
                                     Some(&kind),
+                                    KindContext::Declared,
                                     self.schema,
                                 ),
                             ));
@@ -943,7 +954,13 @@ impl SchemaHovers<'_> {
             let source_span = SourceSpan::new(self.source.clone(), span);
             self.out.push((
                 source_span,
-                symbol_markdown(Some(&self.var_caption(name)), &format!("${name}"), Some(&kind), self.schema),
+                symbol_markdown(
+                    Some(&self.var_caption(name)),
+                    &format!("${name}"),
+                    Some(&kind),
+                    KindContext::Occurrence,
+                    self.schema,
+                ),
             ));
         }
     }
@@ -976,7 +993,13 @@ impl SchemaHovers<'_> {
             let span = SourceSpan::new(self.source.clone(), name_span);
             self.out.push((
                 span,
-                symbol_markdown(Some(&self.var_caption(name)), &format!("${name}"), Some(&root_kind), self.schema),
+                symbol_markdown(
+                    Some(&self.var_caption(name)),
+                    &format!("${name}"),
+                    Some(&root_kind),
+                    KindContext::Occurrence,
+                    self.schema,
+                ),
             ));
         }
         // `current` is a value kind; once traversal crosses a `record<>` link
@@ -1045,6 +1068,7 @@ impl SchemaHovers<'_> {
                                     Some(&format!("field `{field}`")),
                                     field,
                                     Some(next),
+                                    KindContext::Occurrence,
                                     self.schema,
                                 ),
                             ));
@@ -1086,6 +1110,7 @@ impl SchemaHovers<'_> {
                         Some(&format!("field `{field}` on `{table}`")),
                         field,
                         Some(kind),
+                        KindContext::Declared,
                         self.schema,
                     ),
                 ));
@@ -1149,6 +1174,7 @@ impl SchemaHovers<'_> {
                                     Some(&format!("field `{name}` on `{current}`")),
                                     name,
                                     Some(kind),
+                                    KindContext::Declared,
                                     self.schema,
                                 ),
                             ));
@@ -1793,7 +1819,9 @@ mod tests {
     fn hover_keeps_the_declared_kind_at_and_before_a_guard() {
         // NEW-11: hover is per occurrence. At the binding and at the guard that
         // tests it, the binding is still what it was declared/inferred to be —
-        // narrowing must not reach backwards.
+        // narrowing must not reach backwards. The binding site mirrors the
+        // binding as written (`option<…>`); the occurrence at the guard names
+        // the `none` that is still live there.
         let text = format!(
             "{NARROWING_SCHEMA}\
              LET $x = (SELECT label FROM ONLY unit LIMIT 1);\n\
@@ -1807,7 +1835,7 @@ mod tests {
             hover_kind_at_occurrence(&text, 1)
         );
         assert!(
-            hover_kind_at_occurrence(&text, 2).contains("option<"),
+            hover_kind_at_occurrence(&text, 2).contains("none |"),
             "at the guard: {}",
             hover_kind_at_occurrence(&text, 2)
         );
@@ -1824,7 +1852,7 @@ mod tests {
 
         let after = hover_kind_at_occurrence(&text, 3);
         assert!(
-            !after.contains("option<") && after.contains("label"),
+            !after.contains("none") && after.contains("label"),
             "past the guard the binding cannot be NONE: {after}"
         );
     }
@@ -1842,12 +1870,12 @@ mod tests {
         );
 
         assert!(
-            !hover_kind_at_occurrence(&text, 3).contains("option<"),
+            !hover_kind_at_occurrence(&text, 3).contains("none"),
             "inside the block, past the guard: {}",
             hover_kind_at_occurrence(&text, 3)
         );
         assert!(
-            hover_kind_at_occurrence(&text, 4).contains("option<"),
+            hover_kind_at_occurrence(&text, 4).contains("none |"),
             "after the block the guard proves nothing: {}",
             hover_kind_at_occurrence(&text, 4)
         );
@@ -1873,8 +1901,8 @@ mod tests {
         let past_hover = hover_at(&output, &schema, &source, &text, past_guard as u32)
             .expect("hover past the guard");
         assert!(
-            guard_hover.markdown.contains("option<record<unit>>"),
-            "at its own guard the path is still optional: {}",
+            guard_hover.markdown.contains("parent: none | record<unit>"),
+            "at its own guard the path can still be NONE: {}",
             guard_hover.markdown
         );
         assert!(
