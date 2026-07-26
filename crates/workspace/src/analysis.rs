@@ -2979,7 +2979,7 @@ INSERT INTO person { name: 'Ada' };
             "expected compact optional rendering, got: {message}"
         );
         assert!(
-            message.contains("is a `int`"),
+            message.contains("is a `1`"),
             "expected the passed kind, got: {message}"
         );
         assert!(!message.contains("none |"), "raw union leaked: {message}");
@@ -5110,7 +5110,7 @@ INSERT INTO person { name: 'Ada' };
             ),
             (
                 "E5002",
-                "argument 1 to `fn::greet` is a `int`, but `$who` is declared `string`",
+                "argument 1 to `fn::greet` is a `1`, but `$who` is declared `string`",
             ),
             ("E5002", "`fn::greet` takes 1 argument, but this call passes 0"),
             ("E4005", "BREAK here does nothing — it is outside any FOR loop"),

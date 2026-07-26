@@ -9,6 +9,8 @@ use surrealguard_syntax::ast;
 use surrealguard_syntax::span::SourceSpan;
 
 use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::contract::{Contract, Position};
+use crate::analyzer::facts::Bindings;
 
 pub mod api;
 pub mod array;
@@ -278,7 +280,19 @@ fn check_custom_call(
                 }
             }
         }
-        if *kind == Kind::Any || crate::kinds::kind_is_assignable_to(kind, expected) {
+        // A declared parameter is a contract like any other, so a written
+        // constant is compared as the literal it is: `fn::take('green')`
+        // against `$a: 'red' | 'blue'` is a provable mismatch, where the kind
+        // inference widened it to (`string`) never could be.
+        let folded = call.args.get(index).and_then(|arg| {
+            crate::analyzer::contract::term_kind(&crate::analyzer::facts::eval(
+                &arg.node,
+                Bindings::NONE,
+            ))
+        });
+        let actual = folded.unwrap_or_else(|| kind.clone());
+        let contract = Contract::new(Position::FunctionArg, expected.clone(), 5002);
+        if !contract.decide(&actual).is_violation() {
             continue;
         }
         let Some(arg_expr) = call.args.get(index) else {
@@ -293,7 +307,7 @@ fn check_custom_call(
                     "argument {} to `{}` is a `{}`, but `${}` is declared `{}`",
                     index + 1,
                     call.path.node,
-                    crate::render::render_offending(kind, Some(expected)),
+                    crate::render::render_offending(&actual, Some(expected)),
                     param.name,
                     crate::render_kind(expected),
                 ),

@@ -289,8 +289,8 @@ pub(crate) fn decide(actual: &Kind, expects: &Kind) -> Verdict {
 /// widens anything: when nothing proved a value, the inferred kind is returned
 /// unchanged and the position stays as precise as it was.
 pub(crate) fn checked_kind(term: &Term, fact: &ExpressionFact) -> Option<Kind> {
-    if let Term::Const(value) = term {
-        return Some(const_kind(value));
+    if let Some(folded) = term_kind(term) {
+        return Some(folded);
     }
     if let Some(exact) = fact
         .value
@@ -300,6 +300,16 @@ pub(crate) fn checked_kind(term: &Term, fact: &ExpressionFact) -> Option<Kind> {
         return Some(exact);
     }
     fact.kind.clone()
+}
+
+/// The singleton kind the folder proved, when it proved one. The half of
+/// [`checked_kind`] available to a position that holds the expression but not
+/// its fact.
+pub(crate) fn term_kind(term: &Term) -> Option<Kind> {
+    match term {
+        Term::Const(value) => Some(const_kind(value)),
+        _ => None,
+    }
 }
 
 /// The singleton kind a folded constant inhabits. The sentinels are their own
