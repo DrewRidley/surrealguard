@@ -6,17 +6,22 @@
     <title>SurrealGuard Playground</title>
     <style>
       :root {
-        color-scheme: light dark;
+        /* Dark only, deliberately — see web/public/styles.css. */
+        color-scheme: dark;
         --bg: #0f1115;
         --panel: #171a21;
+        --input: #0a0c10;
         --border: #2a2f3a;
+        --border-soft: #22262f;
         --text: #e6e8ee;
         --muted: #8b93a7;
-        --error: #ff6b6b;
-        --warning: #ffcc66;
-        --hint: #66b3ff;
+        --faint: #6b7280;
+        --red: #ff6b6b;
+        --amber: #ffcc66;
+        --accent-2: #66b3ff;
         --accent: #a78bfa;
-        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+        font-family: var(--mono);
       }
       * { box-sizing: border-box; }
       body {
@@ -27,7 +32,7 @@
         padding: 24px;
       }
       h1 { font-size: 18px; margin: 0 0 4px; }
-      p.sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+      p.sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; max-width: 78ch; line-height: 1.6; }
       .grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -36,19 +41,6 @@
       }
       @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
       label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-      textarea {
-        width: 100%;
-        min-height: 140px;
-        background: var(--panel);
-        color: var(--text);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 12px;
-        font: inherit;
-        font-size: 13px;
-        resize: vertical;
-      }
-      textarea:focus { outline: none; border-color: var(--accent); }
       .results {
         max-width: 1100px;
         margin-top: 16px;
@@ -64,23 +56,74 @@
         display: flex;
         gap: 10px;
         align-items: baseline;
-        padding: 6px 0;
+        padding: 6px 4px;
         border-bottom: 1px solid var(--border);
+        cursor: pointer;
+        border-radius: 6px;
       }
+      .diag:hover, .diag:focus-visible { background: #1d212a; outline: none; }
       .diag:last-child { border-bottom: none; }
-      .code { font-weight: 700; }
-      .code.error { color: var(--error); }
-      .code.warning { color: var(--warning); }
-      .code.hint { color: var(--hint); }
-      .span { color: var(--muted); font-size: 11px; white-space: nowrap; }
+      .code { font-weight: 700; flex: none; }
+      .code.error { color: var(--red); }
+      .code.warning { color: var(--amber); }
+      .code.hint { color: var(--accent-2); }
+      .pane { color: var(--faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; flex: none; }
+      .span { color: var(--muted); font-size: 11px; white-space: nowrap; margin-left: auto; }
       .ok { color: #58d68d; }
+
+      /* --- the editor surface: a mirror <pre> exactly behind the textarea,
+             carrying the squiggles; the textarea keeps native editing --- */
+      .sg-editor { position: relative; width: 100%; }
+      .sg-editor > textarea,
+      .sg-editor > .sg-hl-pre {
+        font-family: var(--mono); font-size: 13px; line-height: 1.65;
+        padding: 12px; border: 1px solid var(--border); border-radius: 8px;
+        box-sizing: border-box; tab-size: 2; margin: 0; width: 100%;
+        white-space: pre-wrap; word-break: break-word; overflow-wrap: break-word;
+      }
+      .sg-editor > .sg-hl-pre {
+        position: absolute; inset: 0; z-index: 1; overflow: hidden;
+        border-color: transparent; background: var(--input); color: var(--text);
+        pointer-events: none;
+      }
+      .sg-editor > .sg-hl-pre code { font: inherit; color: inherit; }
+      .sg-editor > textarea {
+        position: relative; z-index: 2; min-height: 150px; resize: vertical;
+        background: transparent; color: transparent;
+        -webkit-text-fill-color: transparent; caret-color: var(--text);
+        outline: none;
+      }
+      .sg-editor > textarea:focus { border-color: var(--accent); }
+      .sg-editor > textarea::selection { background: rgba(167,139,250,.35); }
+
+      .squiggle { text-decoration: underline; text-decoration-style: wavy; text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+      .squiggle.err { text-decoration-color: var(--red); }
+      .squiggle.warn { text-decoration-color: var(--amber); }
+      .squiggle.hint { text-decoration-color: var(--accent-2); }
+
+      .sg-tip {
+        position: fixed; z-index: 999; max-width: min(460px, calc(100vw - 24px));
+        background: #12141a; border: 1px solid var(--border); border-radius: 8px;
+        padding: 8px 11px; box-shadow: 0 10px 30px rgba(0,0,0,.55);
+        font-size: 12.5px; line-height: 1.5; color: var(--text); pointer-events: none;
+      }
+      .sg-tip[hidden] { display: none; }
+      .sg-tip-row { display: flex; gap: 9px; align-items: baseline; }
+      .sg-tip-row + .sg-tip-row { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border-soft); }
+      .sg-tip-code { font-family: var(--mono); font-size: 11.5px; font-weight: 700; flex: none; }
+      .sg-tip-code.err { color: var(--red); }
+      .sg-tip-code.warn { color: var(--amber); }
+      .sg-tip-code.hint { color: var(--accent-2); }
+      .sg-tip-msg code { font-family: var(--mono); font-size: 0.92em; color: #e7c3ff; }
     </style>
   </head>
   <body>
     <h1>SurrealGuard Playground</h1>
     <p class="sub">
       The analyzer compiled to WebAssembly (wasm32-wasip1), running entirely
-      in your browser. Edit the schema or query for live diagnostics.
+      in your browser. Edit the schema or query for live diagnostics — findings
+      are underlined where they happen; hover a squiggle for the message, or
+      click a row below to jump to its span.
     </p>
 
     <div class="grid">
@@ -102,33 +145,21 @@ DEFINE FIELD email ON user TYPE string;</textarea>
 
     <script type="module">
       import { createAnalyzer } from "./sg-analyzer.mjs";
+      import { attachSquiggleEditor, analyzePanes } from "./editor.mjs";
 
       const results = document.getElementById("results");
       const schemaEl = document.getElementById("schema");
       const queryEl = document.getElementById("query");
 
+      const editors = {
+        schema: attachSquiggleEditor(schemaEl),
+        query: attachSquiggleEditor(queryEl),
+      };
+
       let analyzer;
 
-      function render(diagnostics) {
-        if (!diagnostics.length) {
-          results.innerHTML =
-            '<span class="ok">No diagnostics — the query type-checks.</span>';
-          return;
-        }
-        results.innerHTML = diagnostics
-          .map(
-            (d) => `
-            <div class="diag">
-              <span class="code ${d.severity}">${d.code}</span>
-              <span>${escapeHtml(d.message)}</span>
-              <span class="span">[${d.start}..${d.end}]</span>
-            </div>`
-          )
-          .join("");
-      }
-
       function escapeHtml(s) {
-        return s.replace(
+        return String(s).replace(
           /[&<>"']/g,
           (c) =>
             ({
@@ -141,15 +172,54 @@ DEFINE FIELD email ON user TYPE string;</textarea>
         );
       }
 
-      function run() {
-        if (!analyzer) return;
-        try {
-          render(analyzer.analyze(schemaEl.value, queryEl.value));
-        } catch (err) {
-          results.innerHTML = `<span class="code error">wasm error</span> ${escapeHtml(
-            String(err)
-          )}`;
+      function render(diagnostics) {
+        if (!diagnostics.length) {
+          results.innerHTML =
+            '<span class="ok">No diagnostics — the query type-checks.</span>';
+          return;
         }
+        results.innerHTML = diagnostics
+          .map(
+            (d, i) => `
+            <div class="diag" data-i="${i}" role="button" tabindex="0">
+              <span class="code ${d.severity}">${escapeHtml(d.code)}</span>
+              ${d.pane === "schema" ? '<span class="pane">schema</span>' : ""}
+              <span>${escapeHtml(d.message)}</span>
+              <span class="span">[${d.start}..${d.end}]</span>
+            </div>`
+          )
+          .join("");
+        results.querySelectorAll(".diag[data-i]").forEach((row) => {
+          const jump = () => {
+            const d = diagnostics[Number(row.dataset.i)];
+            editors[d.pane]?.reveal(d.start, d.end);
+          };
+          row.addEventListener("click", jump);
+          row.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              jump();
+            }
+          });
+        });
+      }
+
+      let timer;
+      function run(delay = 120) {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          if (!analyzer) return;
+          try {
+            const panes = analyzePanes(analyzer, schemaEl.value, queryEl.value);
+            editors.schema.setDiagnostics(panes.schema);
+            editors.query.setDiagnostics(panes.query);
+            render(panes.all);
+          } catch (err) {
+            results.innerHTML = `<span class="code error">wasm error</span> ${escapeHtml(
+              String(err)
+            )}`;
+          }
+        }, delay);
       }
 
       (async () => {
@@ -158,9 +228,9 @@ DEFINE FIELD email ON user TYPE string;</textarea>
             r.arrayBuffer()
           );
           analyzer = await createAnalyzer(bytes);
-          schemaEl.addEventListener("input", run);
-          queryEl.addEventListener("input", run);
-          run();
+          schemaEl.addEventListener("input", () => run());
+          queryEl.addEventListener("input", () => run());
+          run(0);
         } catch (err) {
           results.innerHTML = `<span class="code error">failed to load</span> ${escapeHtml(
             String(err)

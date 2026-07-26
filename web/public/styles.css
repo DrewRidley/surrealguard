@@ -421,6 +421,11 @@ svg.i { width: 1em; height: 1em; stroke: currentColor; fill: none; stroke-width:
 .diag.warning .code { color: var(--amber); }
 .diag.hint .code { color: var(--accent-2); }
 .diag .sev { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--faint); }
+/* which pane a finding landed in — only shown for the schema pane, since the
+   query pane is the default place to look */
+.diag-pane { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--faint); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; }
+.diag[role="button"] { cursor: pointer; }
+.diag[role="button"]:hover, .diag[role="button"]:focus-visible { background: var(--surface-2); border-radius: 7px; outline: none; }
 .diag .msg { font-size: 13.5px; line-height: 1.5; color: var(--text); word-break: break-word; }
 .diag .msg code { font-family: var(--mono); font-size: 0.92em; color: #e7c3ff; background: var(--surface); border-radius: 4px; padding: 1px 5px; }
 .demo-out .pass, .pg-ok { color: var(--accent-2); font-size: 14px; display: flex; gap: 9px; align-items: center; padding: 4px 2px; }
@@ -547,6 +552,26 @@ h1 .grad {
 .squiggle.err { text-decoration-color: var(--red); }
 .squiggle.warn { text-decoration-color: var(--amber); }
 .squiggle.hint { text-decoration-color: var(--accent-2); }
+
+/* --- hover tooltip for a squiggle -------------------------------------
+   The highlight overlay is pointer-events:none (it must be, or it would
+   swallow clicks meant for the textarea), so hover is hit-tested against
+   the squiggle's client rects and this tip is positioned in viewport
+   coordinates. */
+.sg-tip {
+  position: fixed; z-index: 999; max-width: min(460px, calc(100vw - 24px));
+  background: #12141a; border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 11px; box-shadow: 0 10px 30px rgba(0,0,0,.55);
+  font-size: 12.5px; line-height: 1.5; color: var(--text); pointer-events: none;
+}
+.sg-tip[hidden] { display: none; }
+.sg-tip-row { display: flex; gap: 9px; align-items: baseline; }
+.sg-tip-row + .sg-tip-row { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border-soft); }
+.sg-tip-code { font-family: var(--mono); font-size: 11.5px; font-weight: 700; flex: none; }
+.sg-tip-code.err { color: var(--red); }
+.sg-tip-code.warn { color: var(--amber); }
+.sg-tip-code.hint { color: var(--accent-2); }
+.sg-tip-msg code { font-family: var(--mono); font-size: 0.92em; color: #e7c3ff; }
 
 .guard-diag { position: relative; margin-top: 15px; min-height: 18px; }
 .guard-diag::before {

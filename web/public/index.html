@@ -668,83 +668,85 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
   })();
 
   // =====================================================================
-  //  Interactive playground — editable schema + query, real diagnostics,
-  //  with a syntax-highlighted overlay behind each textarea.
+  //  Interactive playground — editable schema + query, real diagnostics
+  //  drawn as squiggles on a highlighted overlay behind each textarea.
   // =====================================================================
-  (function () {
+  (async function () {
     const SCHEMA = "DEFINE TABLE user SCHEMAFULL;\nDEFINE FIELD name ON user TYPE string;\nDEFINE FIELD age ON user TYPE int;";
     const PRESETS = [
       { label: "Unknown field", schema: SCHEMA, query: "SELECT name, ssn FROM user;" },
       { label: "Type mismatch", schema: SCHEMA, query: "UPDATE user SET age = 'old';" },
       { label: "Bad comparison", schema: SCHEMA, query: "SELECT age > name FROM user;" },
+      { label: "Syntax error", schema: SCHEMA, query: "SELECT name FROM user WHERE (age > 18;" },
       { label: "Valid", schema: SCHEMA, query: "SELECT name, age FROM user WHERE age > 18;" },
     ];
     const tabs = document.getElementById("demoTabs"), status = document.getElementById("demoStatus"),
           schemaIn = document.getElementById("schemaIn"), queryIn = document.getElementById("queryIn"),
           diag = document.getElementById("demoDiag");
+    if (!schemaIn || !queryIn) return;
     let analyzer = null;
 
-    // Wrap a plain textarea with a highlighted <pre> overlay (caret stays
-    // visible; text is transparent so the highlight shows through). Returns a
-    // refresh() to call whenever the value is set programmatically.
-    function attachOverlay(ta) {
-      const wrap = document.createElement("div");
-      wrap.className = "sg-editor";
-      ta.parentNode.insertBefore(wrap, ta);
-      const pre = document.createElement("pre");
-      pre.className = "sg-hl-pre"; pre.setAttribute("aria-hidden", "true");
-      const code = document.createElement("code");
-      pre.appendChild(code); wrap.appendChild(pre); wrap.appendChild(ta);
-      const sync = () => { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; };
-      const refresh = () => {
-        // trailing newline needs a filler so the last line renders in the <pre>
-        code.innerHTML = sgHighlight(ta.value) + (ta.value.endsWith("\n") ? "\n" : "");
-        sync();
-      };
-      ta.addEventListener("input", refresh);
-      ta.addEventListener("scroll", sync);
-      refresh();
-      return refresh;
-    }
-    const refreshSchema = attachOverlay(schemaIn), refreshQuery = attachOverlay(queryIn);
+    // Fill the panes before anything async, so the section never paints empty.
+    schemaIn.value = PRESETS[0].schema;
+    queryIn.value = PRESETS[0].query;
+
+    const { attachSquiggleEditor, analyzePanes } = await import("/playground/editor.mjs");
+    const schemaEd = attachSquiggleEditor(schemaIn, { highlight: sgHighlight });
+    const queryEd = attachSquiggleEditor(queryIn, { highlight: sgHighlight });
+    const editors = { schema: schemaEd, query: queryEd };
 
     PRESETS.forEach((p) => {
       const b = document.createElement("button"); b.className = "demo-preset"; b.textContent = p.label;
       b.addEventListener("click", () => {
         schemaIn.value = p.schema; queryIn.value = p.query;
-        refreshSchema(); refreshQuery(); run();
+        schemaEd.refresh(); queryEd.refresh(); run(0);
       });
       tabs.insertBefore(b, status);
     });
-    schemaIn.value = PRESETS[0].schema; queryIn.value = PRESETS[0].query;
-    refreshSchema(); refreshQuery();
 
     function render(list) {
       if (!Array.isArray(list) || list.length === 0) {
         diag.innerHTML = `<div class="pg-ok"><svg class="i" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg><span>No problems — query is valid.</span></div>`;
         return;
       }
-      diag.innerHTML = list.map((d) => {
+      diag.innerHTML = list.map((d, i) => {
         const sev = d.severity || "error";
         const glyph = sev === "warning" ? "!" : sev === "hint" ? "i" : "×";
-        return `<div class="diag ${sev}">`
+        const where = d.pane === "schema" ? `<span class="diag-pane">schema</span>` : "";
+        return `<div class="diag ${sev}" data-i="${i}" role="button" tabindex="0" title="jump to this span">`
           + `<span class="diag-icon" aria-hidden="true">${glyph}</span>`
           + `<div class="diag-body">`
-          + `<div class="diag-head"><span class="code">${sgEsc(d.code || "")}</span><span class="sev">${sev}</span></div>`
+          + `<div class="diag-head"><span class="code">${sgEsc(d.code || "")}</span><span class="sev">${sev}</span>${where}</div>`
           + `<div class="msg">${sgMsg(d.message)}</div>`
           + `</div></div>`;
       }).join("");
+      // Clicking a finding selects its span — the keyboard-reachable path to
+      // the same information the squiggle hover gives.
+      diag.querySelectorAll(".diag[data-i]").forEach((row) => {
+        const jump = () => {
+          const d = list[Number(row.dataset.i)];
+          editors[d.pane]?.reveal(d.start, d.end);
+        };
+        row.addEventListener("click", jump);
+        row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); jump(); } });
+      });
     }
-    let t; function run() { clearTimeout(t); t = setTimeout(() => {
+
+    let t; function run(delay = 220) { clearTimeout(t); t = setTimeout(() => {
       if (!analyzer) return;
-      try { render(analyzer.analyze(schemaIn.value, queryIn.value)); }
+      try {
+        const panes = analyzePanes(analyzer, schemaIn.value, queryIn.value);
+        schemaEd.setDiagnostics(panes.schema);
+        queryEd.setDiagnostics(panes.query);
+        render(panes.all);
+      }
       catch (e) { diag.innerHTML = `<div class="diag error"><div class="msg">analysis error</div></div>`; }
-    }, 220); }
-    schemaIn.addEventListener("input", run); queryIn.addEventListener("input", run);
+    }, delay); }
+    schemaIn.addEventListener("input", () => run()); queryIn.addEventListener("input", () => run());
 
     async function load() {
       if (analyzer) return;
-      try { analyzer = await getAnalyzer(); status.innerHTML = "wasm ready"; run(); }
+      try { analyzer = await getAnalyzer(); status.innerHTML = "wasm ready"; run(0); }
       catch (e) { status.textContent = "engine failed to load"; }
     }
     // lazy-load the ~4MB engine only when the playground scrolls into view
