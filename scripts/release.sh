@@ -180,8 +180,13 @@ cmd_publish() {
     echo "== npm skipped — tag v$v first, then: pnpm -r publish --access public =="
     exit 0
   fi
+  # `pnpm -r` covers whatever pnpm-workspace.yaml lists. The CLI shim lives in
+  # npm/, which was missing from that list — so this used to publish 4 of the 5
+  # packages and silently leave `npx surrealguard` on an old version.
   echo "== npm =="
   pnpm -r publish --access public --no-git-checks
+  echo "   published:"
+  pnpm -r list --depth -1 2>/dev/null | grep -E '^(surrealguard|@surrealguard/)' | sed 's/^/     /' 
 }
 
 case "${1:-check}" in
