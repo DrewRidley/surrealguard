@@ -140,3 +140,104 @@ fn the_fact_layer_raises_no_finding_the_recognizers_did_not() {
         added
     );
 }
+
+/// The cases from the design's table that the vendored corpus does not carry —
+/// each written as `(query, old answer, new answer)` so the flip is a committed
+/// fact rather than a claim in a commit message.
+///
+/// The corpus covers the rest: the three table-discriminant spellings, the
+/// three membership spellings, the De Morgan pairs, `!(x = NONE)`,
+/// `type::is_none`, a bare truthiness guard on a param, and a literal-union
+/// field compared to one of its members.
+#[test]
+fn the_designs_remaining_cases_flip() {
+    const SCHEMA: &str = "\
+        DEFINE TABLE user SCHEMAFULL;\n\
+        DEFINE FIELD name ON user TYPE string;\n\
+        DEFINE FIELD email ON user TYPE option<string>;\n\
+        DEFINE FIELD age ON user TYPE option<int>;\n\
+        DEFINE FIELD status ON user TYPE 'active' | 'inactive' | 'banned';\n";
+
+    // (case, query, kind under the recognizers, kind under the fact layer)
+    let cases = [
+        (
+            // F13 — a bare field as a `WHERE` is a truthiness guard.
+            "F13",
+            "SELECT email FROM user WHERE email;",
+            "array<{ email: option<string> }>",
+            "array<{ email: string }>",
+        ),
+        (
+            // F15 — a kind predicate over a row field.
+            "F15",
+            "SELECT email FROM user WHERE type::is_string(email);",
+            "array<{ email: option<string> }>",
+            "array<{ email: string }>",
+        ),
+        (
+            // F19 — `!=` against one member of a literal union subtracts it.
+            "F19",
+            "SELECT status FROM user WHERE status != 'banned';",
+            "array<{ status: 'active' | 'inactive' | 'banned' }>",
+            "array<{ status: 'active' | 'inactive' }>",
+        ),
+        (
+            // F11 — a kind predicate on a param, read through a field access
+            // in the guarded branch.
+            "F11",
+            "LET $x = (SELECT name FROM ONLY user LIMIT 1);\n\
+             LET $r = IF type::is_object($x) THEN $x.name ELSE 'x' END;",
+            "any | string",
+            "string",
+        ),
+        (
+            // Not in the design's table: an ordering guard narrowed the row
+            // side and not the param side, because only the row recognizer had
+            // one. One atom, both sides.
+            "Ord",
+            "LET $x = (SELECT VALUE age FROM ONLY user LIMIT 1);\n\
+             LET $r = IF $x > 18 THEN $x ELSE 0 END;",
+            "option<int>",
+            "int",
+        ),
+    ];
+
+    for (case, query, old, new) in cases {
+        assert_eq!(
+            (case, response_kind(SCHEMA, query, false).as_str()),
+            (case, old),
+            "{case}: the recognizer path"
+        );
+        assert_eq!(
+            (case, response_kind(SCHEMA, query, true).as_str()),
+            (case, new),
+            "{case}: the fact layer"
+        );
+    }
+}
+
+/// The rendered kind of the last statement (or last `LET` binding) of `query`,
+/// analyzed against `schema`.
+fn response_kind(schema: &str, query: &str, fact_layer: bool) -> String {
+    use surrealguard_workspace::{analyze_workspace, render_kind, Workspace};
+
+    with_fact_layer(fact_layer, || {
+        let mut workspace = Workspace::default();
+        workspace.add_virtual_source("schema".into(), schema.into());
+        let source = workspace.add_virtual_source("query".into(), query.into());
+        let analysis = analyze_workspace(&workspace);
+        let output = analysis.sources.get(&source).expect("the query source");
+        let kind = output
+            .let_bindings
+            .last()
+            .and_then(|binding| binding.kind.clone())
+            .or_else(|| {
+                output
+                    .statements
+                    .iter()
+                    .rev()
+                    .find_map(|statement| statement.response_kind.clone())
+            });
+        kind.map_or_else(|| "unknown".to_string(), |kind| render_kind(&kind))
+    })
+}
