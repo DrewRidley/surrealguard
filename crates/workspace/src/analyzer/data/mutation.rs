@@ -77,14 +77,16 @@ pub(crate) fn analyze_expression_positions_for(
                     }
                 }
             }
-            Some(
-                ast::DataClause::Content(expr)
-                | ast::DataClause::Merge(expr)
-                | ast::DataClause::Replace(expr),
-            ) => {
+            Some(clause @ (ast::DataClause::Content(expr)
+            | ast::DataClause::Merge(expr)
+            | ast::DataClause::Replace(expr))) => {
                 infer_expression_fact(expr, ctx);
                 if let Some(table) = row_table {
-                    check_payload_object_keys(ctx, table, expr);
+                    let position = match clause {
+                        ast::DataClause::Merge(_) => Position::MutationMerge,
+                        _ => Position::MutationContent,
+                    };
+                    check_payload_object_keys(ctx, position, table, expr);
                 }
             }
             Some(ast::DataClause::Patch(expr)) => {
@@ -710,11 +712,13 @@ fn check_assignment_target(
 /// objects check their dotted paths.
 pub fn check_payload_object_keys(
     ctx: &mut AnalysisContext<'_>,
+    position: Position,
     table: &TableDef,
     expr: &ast::Spanned<ast::Expr>,
 ) {
     fn walk(
         ctx: &mut AnalysisContext<'_>,
+        position: Position,
         table: &TableDef,
         expr: &ast::Spanned<ast::Expr>,
         prefix: &[String],
@@ -735,7 +739,7 @@ pub fn check_payload_object_keys(
             };
             if matches!(value.node, surrealguard_syntax::ast::Expr::Object(_)) {
                 // The path resolves; descend for nested keys under it.
-                walk(ctx, table, value, &segments);
+                walk(ctx, position, table, value, &segments);
                 continue;
             }
             if let surrealguard_syntax::ast::Expr::Param(param) = &value.node {
@@ -748,12 +752,15 @@ pub fn check_payload_object_keys(
                     continue;
                 }
             }
-            let Some(value_kind) = infer_expression_fact(value, ctx).kind else {
-                continue;
-            };
-            if value_kind != Kind::Any
-                && !crate::kinds::kind_is_assignable_to(&value_kind, &field_kind)
-            {
+            // The same contract a `SET` obeys. Written key-by-key, a payload
+            // object *is* a list of field writes; the only thing that made
+            // `CONTENT { e: 'green' }` silent against a `'red' | 'blue'` field
+            // where `SET e = 'green'` reported was that this site compared the
+            // widened kind.
+            let fact = infer_expression_fact(value, ctx);
+            let term = crate::analyzer::facts::eval(&value.node, Bindings::NONE);
+            let contract = Contract::new(position, field_kind.clone(), 2001);
+            if let Some(value_kind) = contract.violation(&term, &fact) {
                 let span =
                     surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), value.span);
                 let path = segments.join(".");
@@ -774,7 +781,7 @@ pub fn check_payload_object_keys(
             }
         }
     }
-    walk(ctx, table, expr, &[]);
+    walk(ctx, position, table, expr, &[]);
 }
 
 /// Builds the response type for a mutation once its target `table` is

@@ -330,8 +330,6 @@ const SITES: &[Site] = &[
 /// with `"*"` meaning every case. **This list may only shrink.** A line here is
 /// a committed, countable hole rather than a paragraph in a design document.
 const KNOWN_GAPS: &[(Position, &str)] = &[
-    (Position::MutationContent, "'red' | 'blue'"), // CREATE t CONTENT { f: 'green' }
-    (Position::MutationMerge, "'red' | 'blue'"),   // UPDATE t MERGE   { f: 'green' }
     (Position::InsertValues, "'red' | 'blue'"),
     (Position::FunctionArg, "'red' | 'blue'"),
     (Position::FunctionReturn, "'red' | 'blue'"),

@@ -52,7 +52,12 @@ fn check_insert_payload(
                     // `INSERT INTO t [{…}, {…}]` — each element is a row, and
                     // each row's keys are checked against the table.
                     for row in mutation::insert_payload_rows(value) {
-                        mutation::check_payload_object_keys(ctx, table, row);
+                        mutation::check_payload_object_keys(
+                            ctx,
+                            crate::analyzer::contract::Position::MutationContent,
+                            table,
+                            row,
+                        );
                     }
                 }
             }

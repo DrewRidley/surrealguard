@@ -3786,8 +3786,8 @@ INSERT INTO person { name: 'Ada' };
             messages,
             vec![
                 "`age` is declared `int`, but this value is `'old'`",
-                "`age` is declared `int`, but this value is `string`",
-                "`age` is declared `int`, but this value is `string`",
+                "`age` is declared `int`, but this value is `'old'`",
+                "`age` is declared `int`, but this value is `'old'`",
                 "`age` is declared `int`, but this value is `string`",
             ]
         );
@@ -3830,8 +3830,8 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(
             messages,
             vec![
-                "`profile.email` is declared `string`, but this value is `int`",
-                "`created_at` is declared `datetime`, but this value is `string`",
+                "`profile.email` is declared `string`, but this value is `10`",
+                "`created_at` is declared `datetime`, but this value is `'yesterday'`",
             ]
         );
     }
