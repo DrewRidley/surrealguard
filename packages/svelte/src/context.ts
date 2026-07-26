@@ -3,14 +3,22 @@
  * `+layout.svelte` — and every {@link liveQuery} below it resolves that client
  * from context, so components never thread `db` through props.
  *
+ * The generated module is written by `surrealguard generate --out
+ * src/lib/surrealguard.generated.ts`, which is what makes `$lib` resolve it —
+ * the default output path is the workspace root, outside `$lib`.
+ *
  * ```svelte
- * <!-- +layout.svelte -->
- * <script>
+ * <!-- src/routes/+layout.svelte -->
+ * <script lang="ts">
  *   import { setClient } from "@surrealguard/svelte";
  *   import { SurrealGuardClient } from "$lib/surrealguard.generated";
+ *
  *   setClient(new SurrealGuardClient());
+ *
+ *   let { children } = $props();
  * </script>
- * <slot />
+ *
+ * {@render children()}
  * ```
  */
 
