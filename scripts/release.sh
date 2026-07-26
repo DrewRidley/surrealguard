@@ -118,13 +118,17 @@ cmd_bump() {
 
   # npm packages that are published (private/example packages are skipped).
 
-  # npm packages that are published (private/example packages are skipped).
-  for p in $(find packages -name package.json -not -path '*/node_modules/*' 2>/dev/null); do
+  # Every publishable npm package. NOTE the search covers more than packages/:
+  # the `surrealguard` CLI shim lives in npm/ and was silently skipped when this
+  # only looked at packages/ and only matched the @surrealguard/ scope — so
+  # `npx surrealguard` kept installing an old version.
+  for p in $(find packages npm -name package.json -not -path '*/node_modules/*' 2>/dev/null); do
     python3 - "$p" "$v" <<'PY'
 import json, sys
 path, ver = sys.argv[1], sys.argv[2]
 d = json.load(open(path))
-if d.get("private") or not d.get("name", "").startswith("@surrealguard/"):
+name = d.get("name", "")
+if d.get("private") or not (name == "surrealguard" or name.startswith("@surrealguard/")):
     raise SystemExit
 d["version"] = ver
 for field in ("dependencies", "devDependencies", "peerDependencies"):
@@ -145,6 +149,26 @@ cmd_publish() {
   local v; v=$(grep -m1 -A2 '\[workspace.package\]' Cargo.toml | grep -m1 '^version' | cut -d'"' -f2)
   [ "$confirm" = "$v" ] || { echo "aborted (expected $v)"; exit 1; }
 
+  # The `surrealguard` npm shim and the Zed extension both download a prebuilt
+  # binary from the GitHub Release for their version. Publishing either before
+  # that release exists gives users a 404 instead of a stale version — strictly
+  # worse. The `v*` tag is what triggers .github/workflows/release.yml to build
+  # and upload those assets, so it must land first.
+  if ! git rev-parse "v$v" >/dev/null 2>&1; then
+    echo
+    echo "No tag v$v yet. The GitHub Release assets (CLI + LSP, 5 targets) are"
+    echo "built by pushing it:"
+    echo
+    echo "    git tag v$v && git push origin v$v"
+    echo
+    echo "Wait for .github/workflows/release.yml to finish, confirm the assets at"
+    echo "    https://github.com/DrewRidley/surrealguard/releases/tag/v$v"
+    echo "then re-run this. crates.io does not depend on the tag; npm does."
+    read -r -p "Publish crates.io now and do npm later? [y/N] " go
+    [ "$go" = "y" ] || exit 1
+    local skip_npm=1
+  fi
+
   for c in "${CRATES[@]}"; do
     echo "== publishing $c =="
     cargo publish -p "$c" || { echo "FAILED at $c — fix, then resume from here"; exit 1; }
@@ -152,6 +176,10 @@ cmd_publish() {
     sleep 20
   done
 
+  if [ "${skip_npm:-0}" = "1" ]; then
+    echo "== npm skipped — tag v$v first, then: pnpm -r publish --access public =="
+    exit 0
+  fi
   echo "== npm =="
   pnpm -r publish --access public --no-git-checks
 }
