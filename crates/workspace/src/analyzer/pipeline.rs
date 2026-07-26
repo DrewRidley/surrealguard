@@ -857,10 +857,7 @@ fn select_modifiers(source: &SourceId, stmt: &ast::SelectStmt) -> Vec<SelectModi
         }
     }
     if let Some(limit) = &stmt.limit {
-        let max_len = match &limit.node {
-            ast::Expr::Literal(ast::Literal::Int(value)) => u64::try_from(*value).ok(),
-            _ => None,
-        };
+        let max_len = crate::analyzer::data::select::constant_row_limit(&limit.node);
         out.push(modifier("limit", limit.span, true, max_len));
     }
     if let Some(start) = &stmt.start {

@@ -1,221 +1,34 @@
-//! A small, **pure** constant folder over the expression AST, plus the
-//! branch-reachability analysis it powers.
+//! Branch reachability: which arms of an `IF`/`ELSE` chain can run.
 //!
-//! The folder answers one question: *does this expression provably reduce to a
-//! single constant value?* It sees only the syntax — no context, no schema, no
-//! diagnostics — so it can be reused anywhere a purely-syntactic constant is
-//! useful (guard folding, `DEFINE FIELD` DEFAULT-vs-ASSERT, …).
+//! The folding this rests on lives in [`crate::analyzer::facts::term`] — one
+//! folder for the whole analyzer, rather than the four that used to disagree
+//! about what a constant is. What stays here is the *policy*: how a folded
+//! guard turns into a reachability verdict, which is a statement about
+//! control flow rather than about expressions.
 //!
-//! Its contract is **soundness over completeness**: it folds only literals and
-//! operations over already-folded operands, and returns `None` ("unknown") the
-//! instant an operand is anything runtime-dependent — a param, a field idiom, a
-//! function call. It never guesses. Callers that grey code or drop a type
-//! contribution on the strength of a fold therefore never act on uncertainty.
+//! The folder's contract still governs everything below: it folds only what it
+//! can prove and answers `None` the instant an operand is runtime-dependent,
+//! so greying a branch never rests on a guess.
 
 use surrealguard_syntax::ast;
 
-/// A value the constant folder can reason about. Anything the folder cannot
-/// prove is a constant of one of these shapes is represented as `None` by the
-/// folding functions, never as a `ConstValue` — the folder bails rather than
-/// guess.
-#[derive(Clone, Debug, PartialEq)]
-pub enum ConstValue {
-    /// An integer constant.
-    Int(i64),
-    /// A floating-point constant.
-    Float(f64),
-    /// A string constant.
-    Str(String),
-    /// A boolean constant.
-    Bool(bool),
-    /// The `NONE` sentinel.
-    None,
-    /// The `NULL` sentinel.
-    Null,
-}
+use crate::analyzer::facts::term::{fold, fold_bool, Bindings};
+
+pub use crate::analyzer::facts::term::ConstValue;
 
 /// Folds `expr` to a [`ConstValue`], or `None` when it is not provably a
-/// constant. Pure: no context, no side effects.
+/// constant.
 ///
-/// Folds literals; unary `-`/`+`/`!`; the comparison operators
-/// (`==`,`!=`,`<`,`<=`,`>`,`>=`); boolean `AND`/`OR` (with short-circuit, so a
-/// single provable side can decide the result); and simple `+`/`-`/`*`
-/// arithmetic over numeric constants. Any non-constant operand collapses the
-/// whole expression to `None`.
+/// A thin reading of [`crate::analyzer::facts::eval`]: "the term is a
+/// constant" is the only part of a denotation this module's callers want.
 pub fn const_eval(expr: &ast::Expr) -> Option<ConstValue> {
-    match expr {
-        ast::Expr::Literal(literal) => literal_const(literal),
-        ast::Expr::Prefix { op, expr } => prefix_const(&op.node, &expr.node),
-        ast::Expr::Binary { lhs, op, rhs } => binary_const(&op.node, &lhs.node, &rhs.node),
-        // `(1 == 1)` needs no arm here: grouping parentheses lower to the
-        // inner expression, so the folder sees the `Binary` directly. A
-        // surviving `Expr::Subquery` wraps a real statement, which is not a
-        // constant.
-        _ => None,
-    }
+    fold(expr, Bindings::NONE)
 }
 
-/// Convenience: folds `expr` to a boolean constant, or `None` when it does not
-/// provably reduce to a `bool`. This is what guard-reachability tests.
+/// Folds `expr` to a boolean constant, or `None` when it does not provably
+/// reduce to a `bool`. This is what guard reachability tests.
 pub fn const_eval_bool(expr: &ast::Expr) -> Option<bool> {
-    match const_eval(expr)? {
-        ConstValue::Bool(value) => Some(value),
-        _ => None,
-    }
-}
-
-fn literal_const(literal: &ast::Literal) -> Option<ConstValue> {
-    match literal {
-        ast::Literal::Int(value) => Some(ConstValue::Int(*value)),
-        ast::Literal::Float(value) => Some(ConstValue::Float(*value)),
-        ast::Literal::String(value) => Some(ConstValue::Str(value.clone())),
-        ast::Literal::Bool(value) => Some(ConstValue::Bool(*value)),
-        ast::Literal::None => Some(ConstValue::None),
-        ast::Literal::Null => Some(ConstValue::Null),
-        _ => None,
-    }
-}
-
-fn prefix_const(op: &ast::PrefixOp, expr: &ast::Expr) -> Option<ConstValue> {
-    match op {
-        ast::PrefixOp::Neg => match const_eval(expr)? {
-            ConstValue::Int(value) => Some(ConstValue::Int(value.checked_neg()?)),
-            ConstValue::Float(value) => Some(ConstValue::Float(-value)),
-            _ => None,
-        },
-        ast::PrefixOp::Pos => const_eval(expr),
-        ast::PrefixOp::Not => match const_eval(expr)? {
-            ConstValue::Bool(value) => Some(ConstValue::Bool(!value)),
-            _ => None,
-        },
-        ast::PrefixOp::Other(_) => None,
-    }
-}
-
-fn binary_const(op: &ast::BinaryOp, lhs: &ast::Expr, rhs: &ast::Expr) -> Option<ConstValue> {
-    use ast::BinaryOp;
-    match op {
-        // `AND`/`OR` short-circuit: one provable side can decide the whole even
-        // when the other cannot fold (`false AND $x` is provably false).
-        BinaryOp::And => {
-            let left = const_eval_bool(lhs);
-            let right = const_eval_bool(rhs);
-            if left == Some(false) || right == Some(false) {
-                Some(ConstValue::Bool(false))
-            } else if left == Some(true) && right == Some(true) {
-                Some(ConstValue::Bool(true))
-            } else {
-                None
-            }
-        }
-        BinaryOp::Or => {
-            let left = const_eval_bool(lhs);
-            let right = const_eval_bool(rhs);
-            if left == Some(true) || right == Some(true) {
-                Some(ConstValue::Bool(true))
-            } else if left == Some(false) && right == Some(false) {
-                Some(ConstValue::Bool(false))
-            } else {
-                None
-            }
-        }
-        BinaryOp::Eq => const_eq(&const_eval(lhs)?, &const_eval(rhs)?).map(ConstValue::Bool),
-        BinaryOp::NotEq => {
-            const_eq(&const_eval(lhs)?, &const_eval(rhs)?).map(|equal| ConstValue::Bool(!equal))
-        }
-        BinaryOp::Lt => {
-            const_order(lhs, rhs).map(|o| ConstValue::Bool(o == std::cmp::Ordering::Less))
-        }
-        BinaryOp::LtEq => {
-            const_order(lhs, rhs).map(|o| ConstValue::Bool(o != std::cmp::Ordering::Greater))
-        }
-        BinaryOp::Gt => {
-            const_order(lhs, rhs).map(|o| ConstValue::Bool(o == std::cmp::Ordering::Greater))
-        }
-        BinaryOp::GtEq => {
-            const_order(lhs, rhs).map(|o| ConstValue::Bool(o != std::cmp::Ordering::Less))
-        }
-        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul => arithmetic(op, lhs, rhs),
-        _ => None,
-    }
-}
-
-/// Simple numeric arithmetic. Division is intentionally omitted: SurrealDB's
-/// exact numeric/rounding semantics for `/` are subtle enough that folding it
-/// risks disagreeing with runtime, which would make a fold-driven grey unsound.
-/// Integer operations use checked arithmetic and bail on overflow.
-fn arithmetic(op: &ast::BinaryOp, lhs: &ast::Expr, rhs: &ast::Expr) -> Option<ConstValue> {
-    use ast::BinaryOp;
-    let a = const_eval(lhs)?;
-    let b = const_eval(rhs)?;
-    match (&a, &b) {
-        (ConstValue::Int(x), ConstValue::Int(y)) => {
-            let value = match op {
-                BinaryOp::Add => x.checked_add(*y)?,
-                BinaryOp::Sub => x.checked_sub(*y)?,
-                BinaryOp::Mul => x.checked_mul(*y)?,
-                _ => return None,
-            };
-            Some(ConstValue::Int(value))
-        }
-        _ => {
-            let x = const_as_f64(&a)?;
-            let y = const_as_f64(&b)?;
-            let value = match op {
-                BinaryOp::Add => x + y,
-                BinaryOp::Sub => x - y,
-                BinaryOp::Mul => x * y,
-                _ => return None,
-            };
-            Some(ConstValue::Float(value))
-        }
-    }
-}
-
-/// Constant equality. `None` when the two values are not comparable under a
-/// shape the folder proves (bail rather than assume unequal). Numeric kinds
-/// compare across `int`/`float`.
-fn const_eq(a: &ConstValue, b: &ConstValue) -> Option<bool> {
-    match (a, b) {
-        (ConstValue::Int(x), ConstValue::Int(y)) => Some(x == y),
-        (ConstValue::Float(x), ConstValue::Float(y)) => Some(x == y),
-        (ConstValue::Int(x), ConstValue::Float(y)) | (ConstValue::Float(y), ConstValue::Int(x)) => {
-            Some(*x as f64 == *y)
-        }
-        (ConstValue::Str(x), ConstValue::Str(y)) => Some(x == y),
-        (ConstValue::Bool(x), ConstValue::Bool(y)) => Some(x == y),
-        (ConstValue::None, ConstValue::None) => Some(true),
-        (ConstValue::Null, ConstValue::Null) => Some(true),
-        // Distinct sentinels / distinct scalar kinds never compare equal.
-        (ConstValue::None | ConstValue::Null, _) | (_, ConstValue::None | ConstValue::Null) => {
-            Some(false)
-        }
-        _ => None,
-    }
-}
-
-/// Orders two operands numerically (or lexically for strings). `None` for any
-/// pairing the folder cannot compare.
-fn const_order(lhs: &ast::Expr, rhs: &ast::Expr) -> Option<std::cmp::Ordering> {
-    let a = const_eval(lhs)?;
-    let b = const_eval(rhs)?;
-    match (&a, &b) {
-        (ConstValue::Int(x), ConstValue::Int(y)) => Some(x.cmp(y)),
-        (ConstValue::Str(x), ConstValue::Str(y)) => Some(x.cmp(y)),
-        _ => {
-            let x = const_as_f64(&a)?;
-            let y = const_as_f64(&b)?;
-            x.partial_cmp(&y)
-        }
-    }
-}
-
-fn const_as_f64(value: &ConstValue) -> Option<f64> {
-    match value {
-        ConstValue::Int(v) => Some(*v as f64),
-        ConstValue::Float(v) => Some(*v),
-        _ => None,
-    }
+    fold_bool(expr, Bindings::NONE)
 }
 
 /// Whether one `IF`/`ELSE IF` arm can be reached at runtime, and — when it

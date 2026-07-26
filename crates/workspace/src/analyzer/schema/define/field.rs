@@ -420,35 +420,27 @@ fn check_computed_calls(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::
     }
 }
 
-/// A value the constant-folder can reason about. Anything else (function
-/// calls, param references other than `$value`, records, durations, …) is
-/// not represented — folding bails rather than guessing.
-#[derive(Clone, Debug, PartialEq)]
-enum ConstVal {
-    Int(i64),
-    Float(f64),
-    Str(String),
-    Bool(bool),
-    None,
-    Null,
-}
-
 /// D1 — a `DEFAULT` that provably violates the field's own `ASSERT` (2037).
 /// When a field carries BOTH clauses, SurrealDB substitutes the DEFAULT and
 /// then enforces the ASSERT on that same value at write time, so a DEFAULT
 /// outside the ASSERT's allowed set turns every field-omitting CREATE into a
 /// hard runtime error. We fold the DEFAULT to a constant, bind it as
-/// `$value`, and evaluate the ASSERT with a small folder — emitting only when
+/// `$value`, and evaluate the ASSERT under that binding — emitting only when
 /// the ASSERT folds to a definite `false`, and BAILing on anything we cannot
 /// fold so we never guess.
+///
+/// The folder is the analyzer's one folder ([`crate::analyzer::facts::eval`]);
+/// binding `$value` is the whole of what used to be a second copy of it.
 fn check_default_satisfies_assert(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineField) {
+    use crate::analyzer::facts::term::{fold, fold_bool, Bindings};
+
     let (Some(default), Some(assert)) = (&stmt.default, &stmt.assert) else {
         return;
     };
-    let Some(value) = fold_const(&default.node) else {
+    let Some(value) = fold(&default.node, Bindings::NONE) else {
         return;
     };
-    if eval_assert(&assert.node, &value) == Some(false) {
+    if fold_bool(&assert.node, Bindings::value(&value)) == Some(false) {
         let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), default.span);
         ctx.emit(surrealguard_diagnostics::catalog::finding(
             span,
@@ -458,185 +450,6 @@ fn check_default_satisfies_assert(ctx: &mut AnalysisContext<'_>, stmt: &ast::Def
                 idiom_text(&stmt.path.node)
             ),
         ));
-    }
-}
-
-/// Folds an expression to a [`ConstVal`], or `None` when it is not a literal
-/// constant the folder understands.
-fn fold_const(expr: &ast::Expr) -> Option<ConstVal> {
-    match expr {
-        ast::Expr::Literal(literal) => match literal {
-            ast::Literal::Int(value) => Some(ConstVal::Int(*value)),
-            ast::Literal::Float(value) => Some(ConstVal::Float(*value)),
-            ast::Literal::String(value) => Some(ConstVal::Str(value.clone())),
-            ast::Literal::Bool(value) => Some(ConstVal::Bool(*value)),
-            ast::Literal::None => Some(ConstVal::None),
-            ast::Literal::Null => Some(ConstVal::Null),
-            _ => None,
-        },
-        ast::Expr::Prefix { op, expr } => match op.node {
-            ast::PrefixOp::Neg => match fold_const(&expr.node)? {
-                ConstVal::Int(value) => Some(ConstVal::Int(-value)),
-                ConstVal::Float(value) => Some(ConstVal::Float(-value)),
-                _ => None,
-            },
-            ast::PrefixOp::Pos => fold_const(&expr.node),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// Evaluates an ASSERT expression with `$value` bound to `value`. Returns
-/// `Some(bool)` only when the whole expression folds to a definite constant;
-/// `None` means "cannot fold — bail, never guess".
-fn eval_assert(expr: &ast::Expr, value: &ConstVal) -> Option<bool> {
-    match expr {
-        ast::Expr::Literal(ast::Literal::Bool(literal)) => Some(*literal),
-        ast::Expr::Prefix { op, expr } if op.node == ast::PrefixOp::Not => {
-            eval_assert(&expr.node, value).map(|folded| !folded)
-        }
-        ast::Expr::Binary { lhs, op, rhs } => eval_binary(&op.node, &lhs.node, &rhs.node, value),
-        _ => None,
-    }
-}
-
-/// Evaluates a binary ASSERT term. `AND`/`OR` short-circuit so one provable
-/// side can decide the result even when the other cannot fold; comparisons
-/// and membership require both sides to fold.
-fn eval_binary(
-    op: &ast::BinaryOp,
-    lhs: &ast::Expr,
-    rhs: &ast::Expr,
-    value: &ConstVal,
-) -> Option<bool> {
-    use ast::BinaryOp;
-    match op {
-        BinaryOp::And => {
-            let left = eval_assert(lhs, value);
-            let right = eval_assert(rhs, value);
-            if left == Some(false) || right == Some(false) {
-                Some(false)
-            } else if left == Some(true) && right == Some(true) {
-                Some(true)
-            } else {
-                None
-            }
-        }
-        BinaryOp::Or => {
-            let left = eval_assert(lhs, value);
-            let right = eval_assert(rhs, value);
-            if left == Some(true) || right == Some(true) {
-                Some(true)
-            } else if left == Some(false) && right == Some(false) {
-                Some(false)
-            } else {
-                None
-            }
-        }
-        BinaryOp::Eq => operand_val(lhs, value)
-            .zip(operand_val(rhs, value))
-            .and_then(|(a, b)| const_eq(&a, &b)),
-        BinaryOp::NotEq => operand_val(lhs, value)
-            .zip(operand_val(rhs, value))
-            .and_then(|(a, b)| const_eq(&a, &b).map(|equal| !equal)),
-        BinaryOp::Lt => const_order(lhs, rhs, value).map(|o| o == std::cmp::Ordering::Less),
-        BinaryOp::LtEq => {
-            const_order(lhs, rhs, value).map(|o| o != std::cmp::Ordering::Greater)
-        }
-        BinaryOp::Gt => const_order(lhs, rhs, value).map(|o| o == std::cmp::Ordering::Greater),
-        BinaryOp::GtEq => const_order(lhs, rhs, value).map(|o| o != std::cmp::Ordering::Less),
-        BinaryOp::Other(name)
-            if matches!(name.to_ascii_uppercase().as_str(), "IN" | "INSIDE") =>
-        {
-            eval_membership(lhs, rhs, value)
-        }
-        BinaryOp::Other(name) if name.eq_ignore_ascii_case("contains") => {
-            eval_membership(rhs, lhs, value)
-        }
-        _ => None,
-    }
-}
-
-/// `$value IN [a, b, ...]`: `element` is the tested value, `collection` an
-/// array literal of constants. Returns `Some(true)` when the element equals a
-/// folded member, `Some(false)` when every member folds and none match, and
-/// `None` when a member cannot fold (so a non-match can't be proven).
-fn eval_membership(element: &ast::Expr, collection: &ast::Expr, value: &ConstVal) -> Option<bool> {
-    let element = operand_val(element, value)?;
-    let ast::Expr::Array(members) = collection else {
-        return None;
-    };
-    let mut all_folded = true;
-    for member in members {
-        match fold_const(&member.node) {
-            Some(member) => {
-                if const_eq(&element, &member) == Some(true) {
-                    return Some(true);
-                }
-            }
-            None => all_folded = false,
-        }
-    }
-    if all_folded {
-        Some(false)
-    } else {
-        None
-    }
-}
-
-/// Folds an operand, resolving the bound `$value` reference to `value`.
-fn operand_val(expr: &ast::Expr, value: &ConstVal) -> Option<ConstVal> {
-    match expr {
-        ast::Expr::Param(name) if name == "value" => Some(value.clone()),
-        _ => fold_const(expr),
-    }
-}
-
-/// Constant equality. `None` when the two values are not comparable under a
-/// shape the folder proves (bail rather than assume unequal).
-fn const_eq(a: &ConstVal, b: &ConstVal) -> Option<bool> {
-    match (a, b) {
-        (ConstVal::Int(x), ConstVal::Int(y)) => Some(x == y),
-        (ConstVal::Float(x), ConstVal::Float(y)) => Some(x == y),
-        (ConstVal::Int(x), ConstVal::Float(y)) | (ConstVal::Float(y), ConstVal::Int(x)) => {
-            Some(*x as f64 == *y)
-        }
-        (ConstVal::Str(x), ConstVal::Str(y)) => Some(x == y),
-        (ConstVal::Bool(x), ConstVal::Bool(y)) => Some(x == y),
-        (ConstVal::None, ConstVal::None) => Some(true),
-        (ConstVal::Null, ConstVal::Null) => Some(true),
-        // Distinct sentinels / distinct scalar kinds never compare equal.
-        (ConstVal::None | ConstVal::Null, _) | (_, ConstVal::None | ConstVal::Null) => Some(false),
-        _ => None,
-    }
-}
-
-/// Orders two operands numerically (or lexically for strings). `None` for any
-/// pairing the folder cannot compare.
-fn const_order(
-    lhs: &ast::Expr,
-    rhs: &ast::Expr,
-    value: &ConstVal,
-) -> Option<std::cmp::Ordering> {
-    let a = operand_val(lhs, value)?;
-    let b = operand_val(rhs, value)?;
-    match (&a, &b) {
-        (ConstVal::Int(x), ConstVal::Int(y)) => Some(x.cmp(y)),
-        (ConstVal::Str(x), ConstVal::Str(y)) => Some(x.cmp(y)),
-        _ => {
-            let x = const_as_f64(&a)?;
-            let y = const_as_f64(&b)?;
-            x.partial_cmp(&y)
-        }
-    }
-}
-
-fn const_as_f64(value: &ConstVal) -> Option<f64> {
-    match value {
-        ConstVal::Int(v) => Some(*v as f64),
-        ConstVal::Float(v) => Some(*v),
-        _ => None,
     }
 }
 

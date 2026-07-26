@@ -2343,10 +2343,18 @@ fn scalarized_kind_for_split(kind: Kind) -> Kind {
 
 fn literal_limit(stmt: &ast::SelectStmt) -> Option<u64> {
     let limit = stmt.limit.as_ref()?;
-    let ast::Expr::Literal(ast::Literal::Int(value)) = &limit.node else {
-        return None;
-    };
-    u64::try_from(*value).ok()
+    constant_row_limit(&limit.node)
+}
+
+/// The row cap a `LIMIT` expression provably imposes, folded rather than
+/// matched: `LIMIT (1)` and `LIMIT 1 + 0` are the same limit as `LIMIT 1`, and
+/// a literal match saw only the last of the three.
+pub(crate) fn constant_row_limit(expr: &ast::Expr) -> Option<u64> {
+    use crate::analyzer::facts::term::{fold, Bindings};
+    match fold(expr, Bindings::NONE)? {
+        crate::analyzer::facts::ConstValue::Int(value) => u64::try_from(value).ok(),
+        _ => None,
+    }
 }
 
 fn slice(text: &str, range: surrealguard_syntax::span::ByteRange) -> &str {
