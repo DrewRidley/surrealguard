@@ -12,7 +12,7 @@ categories.workspace = true
 description = "Runtime for compile-time-checked SurrealQL — the query! macro and typed results"
 
 [dependencies]
-surrealguard-macros = { path = "../macros", version = "0.3.0" }
+surrealguard-macros = { path = "../macros", version = "0.4.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }

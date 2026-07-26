@@ -68,19 +68,55 @@ print('   total:', sum(c.values()), dict(c))"
   # resolves itself as `publish` walks the dependency order. What is worth
   # checking ahead of time is metadata and file inclusion, which this does.
   echo "== packaging dry-run (metadata + file inclusion) =="
+  local pending=0
   for c in "${CRATES[@]}"; do
     printf '   %-38s ' "$c"
-    if cargo package -p "$c" --allow-dirty --no-verify --quiet >/dev/null 2>&1; then echo ok
-    else echo "FAILED — run: cargo package -p $c --no-verify"; fi
+    local out
+    out=$(cargo package -p "$c" --allow-dirty --no-verify --quiet 2>&1) && { echo ok; continue; }
+    # A sibling at the new version isn't on the registry yet — unavoidable in a
+    # coordinated bump, and it resolves as `publish` walks dependency order.
+    # Only a failure with some OTHER cause is a real problem.
+    if grep -q "candidate versions found which didn't match" <<<"$out"; then
+      echo "pending (a sibling crate isn't published at this version yet)"
+      pending=$((pending + 1))
+    else
+      echo "FAILED"
+      sed 's/^/       /' <<<"$out" | head -4
+    fi
   done
+  if [ "$pending" -gt 0 ]; then
+    echo "   note: $pending crate(s) pending. Expected after a version bump — the"
+    echo "         registry has no sibling at this version until publish runs."
+    echo "         To validate packaging properly, run \`check\` BEFORE bumping."
+  fi
 }
 
 cmd_bump() {
   local v="${1:?usage: release.sh bump <version>}"
   echo "bumping workspace -> $v"
-  # Only the [workspace.package] version; crates inherit via version.workspace.
+  # The [workspace.package] version; crates inherit it via version.workspace.
   perl -0pi -e "s/(\[workspace\.package\][^\[]*?\nversion = )\"[^\"]+\"/\${1}\"$v\"/s" Cargo.toml
   grep -m1 -A1 '\[workspace.package\]' Cargo.toml | grep version
+
+  # Intra-workspace dependencies pin a version alongside their path (cargo
+  # requires it to publish). Those are NOT covered by version.workspace and must
+  # move in lockstep, or the workspace stops resolving the moment it is bumped.
+  echo "   intra-workspace dependency pins:"
+  local count=0
+  for manifest in Cargo.toml crates/*/Cargo.toml; do
+    local n
+    n=$(perl -0pi -e "BEGIN{\$c=0} \$c += s/((?:^|\n)\s*(?:[a-z-]+ *= *\{[^}]*?)?path = \"[^\"]*(?:crates\/)?[^\"]*\"[^}]*?version = )\"[^\"]+\"/\${1}\"$v\"/g; END{print STDERR \$c}" "$manifest" 2>&1 >/dev/null || true)
+    if [ -n "$n" ] && [ "$n" != "0" ]; then
+      printf '     %-34s %s pin(s)\n' "$manifest" "$n"
+      count=$((count + n))
+    fi
+  done
+  echo "     ($count total)"
+  if grep -rqE 'path = "[^"]*", version = "(?!'"${v//./\\.}"')' Cargo.toml crates/*/Cargo.toml 2>/dev/null; then
+    echo "   WARNING: some path dependencies still pin an older version"
+  fi
+
+  # npm packages that are published (private/example packages are skipped).
 
   # npm packages that are published (private/example packages are skipped).
   for p in $(find packages -name package.json -not -path '*/node_modules/*' 2>/dev/null); do
