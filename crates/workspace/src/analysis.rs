@@ -1421,6 +1421,80 @@ INSERT INTO person { name: 'Ada' };
         assert!(findings.is_empty(), "unexpected findings: {findings:?}");
     }
 
+    /// The two halves of a mutual record reference. `PROJECT` traverses
+    /// `<~task`; `TASK` carries the `record<project> REFERENCE` field that is
+    /// the only thing making that traversal provable. Neither half can be
+    /// written "first" in any meaningful sense — the relationship is a cycle.
+    const BACKREF_PROJECT: &str = "DEFINE TABLE project SCHEMAFULL;\n\
+                                   DEFINE FIELD tasks ON project COMPUTED <~task;";
+    const BACKREF_TASK: &str = "DEFINE TABLE task SCHEMAFULL;\n\
+                                DEFINE FIELD project ON task TYPE record<project> REFERENCE;";
+
+    /// Everything `project.tasks` resolves to, for a workspace whose two schema
+    /// sources are registered in `order`: the kind recorded in the run-wide
+    /// **schema index**, the kind a **query** projects, and every 1001 message.
+    /// All three are order-independent facts, so the tuple must not vary.
+    fn back_reference_facts(order: [&str; 2]) -> (String, String, Vec<String>) {
+        let mut workspace = Workspace::default();
+        for (n, text) in order.iter().enumerate() {
+            workspace.add_virtual_source(format!("schema_{n}"), (*text).into());
+        }
+        let query =
+            workspace.add_virtual_source("query".into(), "SELECT tasks FROM project;".into());
+        let output = analyze_workspace(&workspace);
+
+        let indexed = output
+            .schema
+            .table("project")
+            .and_then(|table| table.fields.get("tasks"))
+            .and_then(|field| field.kind.as_ref())
+            .map_or_else(|| "unknown".to_string(), crate::render_kind);
+        let projected = output.sources[&query]
+            .response_kind
+            .as_ref()
+            .map_or_else(|| "unknown".to_string(), crate::render_kind);
+        let findings = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code().number() == 1001)
+            .map(|finding| finding.message().to_string())
+            .collect();
+        (indexed, projected, findings)
+    }
+
+    #[test]
+    fn a_back_reference_resolves_in_either_declaration_order() {
+        // The invariant, not the value: the same schema written in the two
+        // possible file orders must produce the same answer. It did not — the
+        // resolution asked the incrementally-built catalog, which by
+        // construction holds only what precedes the statement, so `<~task`
+        // typed only when `task` happened to sort first.
+        let target_last = back_reference_facts([BACKREF_PROJECT, BACKREF_TASK]);
+        let target_first = back_reference_facts([BACKREF_TASK, BACKREF_PROJECT]);
+        assert_eq!(
+            target_last, target_first,
+            "renaming the schema files changed the analysis"
+        );
+
+        let (indexed, projected, findings) = target_last;
+        assert_eq!(indexed, "array<record<task>>");
+        // …and the schema index agrees with the query path. The run-wide
+        // catalog used to hold `unknown` for a field a SELECT typed correctly,
+        // because a query source sees every OTHER source while the run-wide
+        // catalog only saw what preceded it.
+        assert_eq!(projected, format!("array<{{ tasks: {indexed} }}>"));
+        assert!(findings.is_empty(), "unexpected findings: {findings:?}");
+    }
+
+    #[test]
+    fn a_back_reference_target_defined_later_in_the_same_source_is_not_unknown() {
+        // The within-source order of the same pair. `<~task` above `DEFINE
+        // TABLE task` raised a false 1001 whose own help text contradicted it
+        // ("no `DEFINE TABLE task` exists in the workspace" — it does).
+        let findings = unknown_table_findings(&format!("{BACKREF_PROJECT}\n{BACKREF_TASK}"));
+        assert!(findings.is_empty(), "unexpected findings: {findings:?}");
+    }
+
     #[test]
     fn if_expression_in_value_position_types_as_the_branch_union() {
         // An IF used as a value (`RETURN IF …`, which lowers to a subquery)
@@ -6318,3 +6392,4 @@ mod symbol_incremental_tests {
         );
     }
 }
+

@@ -1152,6 +1152,12 @@ fn relation_accepts_source(
 /// defined table carrying a `record<self_table>` `REFERENCE` field. Every
 /// other shape yields `None`: the field stays untyped rather than inventing a
 /// type we cannot prove from the schema.
+///
+/// `schema` must be a catalog that can *see* the target: a back-reference is
+/// mutual, so `<~task` is proved by a `record<Self> REFERENCE` field on `task`
+/// which is as often declared after this field as before it. The sole caller
+/// ([`crate::schema::infer_field_value_kind`]) passes the whole-workspace
+/// catalog for exactly that reason. What counts as a proof is unchanged.
 pub(crate) fn reference_back_traversal_kind(
     self_table: &str,
     idiom: &ast::Idiom,

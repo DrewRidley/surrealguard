@@ -102,7 +102,8 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
 }
 
 /// A record-reference back-traversal clause (`COMPUTED <~passkey`) must name a
-/// table that exists (1001).
+/// table that exists *somewhere in the workspace* (1001) — the target of a
+/// mutual reference is as often declared after the traversal as before it.
 ///
 /// Without this a typo'd target silently produced `unknown` and no finding:
 /// [`reference_back_traversal_kind`] returns `None` both for "the table does
@@ -124,7 +125,9 @@ fn check_reference_back_target(ctx: &mut AnalysisContext<'_>, stmt: &ast::Define
         let Some((target, _)) = crate::analyzer::data::select::reference_back_target(idiom) else {
             continue;
         };
-        crate::analyzer::data::check_table_reference(ctx, &target.node, target.span);
+        // Order-independent: a back-reference is mutual, so its target is
+        // routinely declared after the field that traverses it.
+        crate::analyzer::data::check_table_defined_anywhere(ctx, &target.node, target.span);
     }
 }
 

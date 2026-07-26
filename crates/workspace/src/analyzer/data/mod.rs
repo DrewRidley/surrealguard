@@ -36,6 +36,38 @@ pub(crate) fn check_table_reference(
     false
 }
 
+/// [`check_table_reference`] for a *reference target* rather than a read: 1001
+/// fires only when `name` is defined nowhere in the workspace, before or after.
+///
+/// A `DEFINE FIELD tasks ON project COMPUTED <~task` names the far side of a
+/// mutual reference — `task` must itself carry a `record<project> REFERENCE`
+/// field — so one of the two tables is always written "later" than the other.
+/// Asking the incrementally-built catalog made the finding depend on which file
+/// happened to sort first, contradicting its own help text ("no `DEFINE TABLE
+/// task` exists in the workspace"). Same reasoning as the declared-`record<T>`
+/// target check in `schema::define::field::check_record_targets`.
+pub(crate) fn check_table_defined_anywhere(
+    ctx: &mut crate::analyzer::context::AnalysisContext<'_>,
+    name: &str,
+    span: surrealguard_syntax::span::ByteRange,
+) -> bool {
+    if ctx.table_defined_anywhere(name) {
+        return true;
+    }
+    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
+    let mut finding = surrealguard_diagnostics::catalog::finding(
+        span,
+        1001,
+        format!("`{name}` is not a defined table"),
+    );
+    finding = match crate::suggest::closest(name, ctx.known_table_names().into_iter()) {
+        Some(nearest) => finding.with_help(format!("did you mean `{nearest}`?")),
+        None => finding.with_help(format!("no `DEFINE TABLE {name}` exists in the workspace")),
+    };
+    ctx.emit(finding);
+    false
+}
+
 /// Appends the standard 1001 "did you mean `<closest>`?" help to a finding
 /// about an unknown table `name` — or, when no near name exists, the
 /// "no `DEFINE TABLE <name>` exists" note. Shared so every emit site that

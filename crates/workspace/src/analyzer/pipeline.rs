@@ -117,18 +117,24 @@ pub fn build_global_catalog<P: std::borrow::Borrow<ParsedSource>>(
     build_global_catalog_from_lowered(&sources)
 }
 
-fn build_global_catalog_from_lowered(sources: &[LoweredSource<'_>]) -> GlobalCatalog {
-    // PRE-PASS 1 — the global additive catalog. A namespace is global: a
-    // `DEFINE` in any source is a legitimate target for a reference in every
-    // other source, regardless of file sort order. Only additive `DEFINE`
-    // effects apply here; `REMOVE` and the order-sensitive contracts (4007,
-    // 6004, duplicate definition) stay in the ordered walk below.
+/// PRE-PASS 1 — the global additive catalog. A namespace is global: a
+/// `DEFINE` in any source is a legitimate target for a reference in every
+/// other source, regardless of file sort order. Only additive `DEFINE`
+/// effects apply here; `REMOVE` and the order-sensitive contracts (4007,
+/// 6004, duplicate definition) stay in the ordered walk. No inference runs,
+/// so this is cheap enough for the schema-only rebuild path too.
+fn build_global_defined(sources: &[LoweredSource<'_>]) -> SchemaIndex {
     let mut global_defined = SchemaIndex::default();
     for (parsed, statements) in sources {
         for stmt in statements {
             apply_additive_define(stmt, parsed.source_id(), parsed.text(), &mut global_defined);
         }
     }
+    global_defined
+}
+
+fn build_global_catalog_from_lowered(sources: &[LoweredSource<'_>]) -> GlobalCatalog {
+    let mut global_defined = build_global_defined(sources);
 
     // PRE-PASS 1b — global function return types. `apply_additive_define`
     // (above) built each function's body against an empty catalog, so a body
@@ -199,11 +205,14 @@ fn build_global_catalog_from_lowered(sources: &[LoweredSource<'_>]) -> GlobalCat
                 Some(field) if field.kind.as_ref().map_or(true, crate::schema::kind_contains_any) => {}
                 _ => continue,
             }
+            // No separate workspace catalog: `global_defined` already IS the
+            // whole-workspace, order-independent one.
             if let Some(kind) = crate::schema::infer_field_value_kind(
                 def,
                 parsed.source_id(),
                 parsed.text(),
                 Some(&global_defined),
+                None,
             ) {
                 if let Some(field) = global_defined
                     .tables
@@ -456,6 +465,7 @@ fn analyze_source_against(
             parsed.source_id(),
             parsed.text(),
             &mut working,
+            Some(&global.global_defined),
         );
         if let Some(schema) = schema_sink.as_deref_mut() {
             crate::schema::apply_schema_statement_effects(
@@ -463,6 +473,7 @@ fn analyze_source_against(
                 parsed.source_id(),
                 parsed.text(),
                 schema,
+                Some(&global.global_defined),
             );
         }
     }
@@ -668,6 +679,12 @@ pub(crate) fn build_run_schema<P: std::borrow::Borrow<ParsedSource>>(
     parsed_sources: &[P],
 ) -> SchemaIndex {
     let sources = lower_all(parsed_sources);
+    // PRE-PASS 1 only (the additive union — no inference), so the order-
+    // independent lookups inside `apply_schema_statement_effects` see the same
+    // whole-workspace catalog the full pass gives them. Skipping it here would
+    // make this rebuild disagree with `analyze_workspace`'s `schema` for a
+    // `COMPUTED <~t` whose target is declared later.
+    let workspace = build_global_defined(&sources);
     let mut schema = SchemaIndex::default();
     for (parsed, statements) in &sources {
         for stmt in statements {
@@ -676,6 +693,7 @@ pub(crate) fn build_run_schema<P: std::borrow::Borrow<ParsedSource>>(
                 parsed.source_id(),
                 parsed.text(),
                 &mut schema,
+                Some(&workspace),
             );
         }
     }

@@ -24,11 +24,14 @@ table employee_of  [schemafull, relation account -> organization]
   field status                       : 'invited' | 'active' | 'suspended'  [default]
   field title                        : option<string>
   field unit                         : record<organization_unit>
+table milestone  [schemafull]
+  field label                        : string
+  field project                      : record<project>  [reference]
 table organization  [schemafull]
   field address                      : { city: string, country: string, line1: string, line2: option<string> }
   field contacts                     : array<{ email: string, label: string, primary: bool }>  [default]
   field created_at                   : datetime  [default]
-  field employees                    : unknown  [computed, default]
+  field employees                    : array<record<employee_of>>  [computed, default]
   field legal_name                   : string
   field logo                         : option<string>
   field name                         : string
@@ -59,8 +62,16 @@ table person  [schemafull]
   field full_name                    : string  [computed, default]
   field last_name                    : string
   field middle_name                  : option<string>
+table project  [schemafull]
+  field milestones                   : array<record<milestone>>  [computed, default]
+  field name                         : string
+  field tasks                        : array<record<task>>  [computed, default]
+  field unlinked                     : unknown  [computed, default]
 table sector  [schemafull]
   field name                         : string
+table task  [schemafull]
+  field project                      : record<project>  [reference]
+  field title                        : string
 table webhook_event  [schemafull]
   field headers                      : object
   field payload                      : any
@@ -166,6 +177,21 @@ table webhook_event  [schemafull]
   stmt     10:1 define_field     : (no response)
   stmt     13:1 define_field     : (no response)
   stmt     16:1 define_field     : (no response)
+
+== source: schema/06_references_early.surql ==
+  stmt     15:1 define_table     : (no response)
+  stmt     17:1 define_field     : (no response)
+  stmt     20:1 define_field     : (no response)
+  stmt     22:1 define_table     : (no response)
+  stmt     24:1 define_field     : (no response)
+  stmt     26:1 define_field     : (no response)
+  stmt     32:1 define_field     : (no response)
+
+== source: schema/07_references_late.surql ==
+  stmt      4:1 define_table     : (no response)
+  stmt      6:1 define_field     : (no response)
+  stmt      9:1 define_field     : (no response)
+  stmt     13:1 define_field     : (no response)
 
 == source: queries/10_select.surql ==
   stmt      4:1 select           : array<{ created_at: datetime, name: string, tier: 'free' | 'pro' | 'enterprise' }>
@@ -433,3 +459,11 @@ table webhook_event  [schemafull]
   diag    14:55 I7014     Hint
   diag    22:25 I7014     Hint
   diag    27:40 I7014     Hint
+
+== source: queries/96_references.surql ==
+  stmt     13:1 select           : array<{ tasks: array<record<task>> }>
+  stmt     16:1 select           : array<{ milestones: array<record<milestone>> }>
+  stmt     19:1 select           : array<{ milestones: array<record<milestone>>, name: string, tasks: array<record<task>> }>
+  diag    13:19 I7014     Hint
+  diag    16:24 I7014     Hint
+  diag    19:37 I7014     Hint

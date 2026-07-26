@@ -17,5 +17,5 @@
 1  queries/90_opaque.surql/let/$payload@6:5  # expected: binds `webhook_event.payload`, which is declared `any`
 1  queries/90_opaque.surql/stmt/return@10:1  # expected: returns the `any`-declared payload
 1  queries/90_opaque.surql/stmt/select@4:1  # expected: projects `webhook_event.payload`, which is declared `any`
-1  schema/field/organization.employees
+1  schema/field/project.unlinked  # expected: `<~sector` names a real table that carries no `record<project> REFERENCE` field, so the back-link is unprovable from the schema — untyped is the honest answer, and reporting it would be a false positive
 1  schema/field/webhook_event.payload  # expected: declared `TYPE any` — a third-party webhook body the author deliberately did not model

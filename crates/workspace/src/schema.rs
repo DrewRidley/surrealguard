@@ -545,11 +545,21 @@ impl TableDef {
 /// Applies one lowered statement's catalog effect: definitions are inserted,
 /// removals drop their targets. The contract checks that reference these
 /// definitions belong to the statement analyzers, so extraction never emits.
+///
+/// `schema` accumulates in statement order, which is what the order-sensitive
+/// effects (`REMOVE`, `OVERWRITE`) require. `workspace` is the order-independent
+/// whole-workspace catalog, threaded through for the one thing here that is not
+/// an ordering question: an untyped field's stored-value kind (see
+/// [`infer_field_value_kind`]). Without it the run-wide catalog disagreed with
+/// the per-source one, which sees every *other* source's definitions — the same
+/// `COMPUTED <~edge` field read `unknown` from the schema index and
+/// `array<record<edge>>` from a query. `None` for callers with no workspace.
 pub(crate) fn apply_schema_statement_effects(
     stmt: &ast::Spanned<ast::Statement>,
     source: &SourceId,
     text: &str,
     schema: &mut SchemaIndex,
+    workspace: Option<&SchemaIndex>,
 ) {
     match &stmt.node {
         ast::Statement::Define(def) => match def {
@@ -567,7 +577,9 @@ pub(crate) fn apply_schema_statement_effects(
                 // `infer_field_value_kind` returns `None` for a pure-`Any` result,
                 // so this only ever upgrades to a proven kind — never downgrades.
                 if field.kind.as_ref().map_or(true, kind_contains_any) {
-                    if let Some(kind) = infer_field_value_kind(def, source, text, Some(&*schema)) {
+                    if let Some(kind) =
+                        infer_field_value_kind(def, source, text, Some(&*schema), workspace)
+                    {
                         field.kind = Some(kind);
                         field.partial.clear();
                     }
@@ -827,7 +839,7 @@ pub(crate) fn field_def_from_ast(
         // `time::now()`); a value reading tables/fields degrades to `None` here
         // and is upgraded by the schema-aware pass in `pipeline`. When a kind is
         // proven, the field is no longer partial; otherwise it stays unresolved.
-        None => match infer_field_value_kind(def, source, text, None) {
+        None => match infer_field_value_kind(def, source, text, None, None) {
             Some(kind) => (Some(kind), Vec::new(), None),
             None => (None, vec![PartialReason::Unresolved], None),
         },
@@ -1034,15 +1046,31 @@ pub(crate) fn infer_untyped_return(
 /// expression is analyzed here only to read its type — a scratch diagnostics
 /// sink is discarded, so this never emits (the walk's `DEFINE FIELD` analyzer
 /// owns the clause's real diagnostics).
+///
+/// `workspace` is the order-independent whole-workspace catalog and, when
+/// supplied, **replaces** `schema` as the catalog the value expression is
+/// resolved against. An untyped field's stored-value kind is a *global* property
+/// of the schema — the clause runs at query time, when every `DEFINE` in the
+/// workspace has been applied — so it is not an ordering question and must not
+/// depend on which file sorts first. `COMPUTED <~task` is the sharp case: a
+/// back-reference is mutual, so one of the two tables is *always* declared after
+/// the field that traverses it, and against an incrementally-built catalog the
+/// same schema resolves or does not purely by filename. This is the same
+/// reasoning that routes `record<T>` target existence through the workspace
+/// catalog; nothing here emits a diagnostic, so no ordering contract is
+/// weakened. `None` for the standalone extraction pass and for callers whose
+/// `schema` already *is* the whole-workspace catalog.
 pub(crate) fn infer_field_value_kind(
     def: &ast::DefineField,
     source: &SourceId,
     text: &str,
     schema: Option<&SchemaIndex>,
+    workspace: Option<&SchemaIndex>,
 ) -> Option<Kind> {
     if def.ty.is_some() {
         return None;
     }
+    let schema = workspace.or(schema);
     // VALUE / COMPUTED define the stored/derived value; DEFAULT is only a
     // creation-time fallback.
     let expr = def
@@ -1054,8 +1082,8 @@ pub(crate) fn infer_field_value_kind(
     // A record-reference back-traversal (`COMPUTED <~team`) resolves to
     // `array<record<team>>`, but only when the schema proves the back-reference
     // (the target table carries a `record<Self>` REFERENCE field). This needs
-    // the owning table and the accumulated catalog, so it is attempted only in
-    // the schema-aware pass; otherwise it degrades to the scalar inference below
+    // the owning table and a catalog, so it is attempted only in the
+    // schema-aware pass; otherwise it degrades to the scalar inference below
     // and stays untyped rather than inventing a type.
     if let Some(schema) = schema {
         if let ast::Expr::Idiom(idiom) = &expr.node {
