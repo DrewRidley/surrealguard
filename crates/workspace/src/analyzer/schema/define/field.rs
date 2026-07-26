@@ -12,6 +12,8 @@ use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::contract::{Contract, Position};
+use crate::analyzer::facts::Bindings;
 use crate::expression::{ExpressionFact, ExpressionValueClass, PartialReason};
 
 pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineField) -> Kind {
@@ -29,7 +31,10 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
     check_record_targets(ctx, stmt, declared.as_ref());
     check_reference_back_target(ctx, stmt);
 
-    for clause in [&stmt.default, &stmt.value] {
+    for (position, clause) in [
+        (Position::FieldDefault, &stmt.default),
+        (Position::FieldValue, &stmt.value),
+    ] {
         let Some(expr) = clause else {
             continue;
         };
@@ -40,35 +45,31 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
         });
         check_computed_calls(ctx, expr);
         // A declared `VALUE`/`DEFAULT` inhabits the field's type under exactly
-        // the contract a *written* value does, so it is checked through the
-        // same [`crate::kinds::checked_value_kind`]: against a literal-union
-        // field a constant is compared as the literal it is, and a non-constant
-        // (call, param, subquery) keeps its widened kind and stays silent.
-        let kind = declared
-            .as_ref()
-            .and_then(|declared| crate::kinds::checked_value_kind(&fact, declared));
-        if let (Some(declared), Some(kind)) = (&declared, kind) {
-            if kind != Kind::Any && !crate::kinds::kind_is_assignable_to(&kind, declared) {
-                let span =
-                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
-                let field_name = idiom_text(&stmt.path.node);
-                let def_span = surrealguard_syntax::span::SourceSpan::new(
-                    ctx.source().clone(),
-                    stmt.path.span,
-                );
-                ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
-                        span,
-                        2001,
-                        format!(
-                            "`{field_name}`'s value is `{}`, but the field is declared `{}`",
-                            crate::render::render_offending(&kind, Some(declared)),
-                            crate::render_kind(declared),
-                        ),
-                    )
-                    .with_related(def_span, format!("`{field_name}` is defined here")),
-                );
-            }
+        // the contract a *written* value does, so it is the same contract: a
+        // constant is compared as the literal it is, and a non-constant (call,
+        // param, subquery) keeps its widened kind and stays silent.
+        let Some(declared) = &declared else {
+            continue;
+        };
+        let contract = Contract::new(position, declared.clone(), 2001);
+        let term = crate::analyzer::facts::eval(&expr.node, Bindings::NONE);
+        if let Some(kind) = contract.violation(&term, &fact) {
+            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
+            let field_name = idiom_text(&stmt.path.node);
+            let def_span =
+                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.path.span);
+            ctx.emit(
+                surrealguard_diagnostics::catalog::finding(
+                    span,
+                    2001,
+                    format!(
+                        "`{field_name}`'s value is `{}`, but the field is declared `{}`",
+                        crate::render::render_offending(&kind, Some(declared)),
+                        crate::render_kind(declared),
+                    ),
+                )
+                .with_related(def_span, format!("`{field_name}` is defined here")),
+            );
         }
     }
 

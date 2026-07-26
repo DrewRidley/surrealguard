@@ -2617,7 +2617,7 @@ INSERT INTO person { name: 'Ada' };
 
         assert_eq!(
             type_mismatches,
-            vec!["`name` is declared `int`, but this value is `string`".to_string()]
+            vec!["`name` is declared `int`, but this value is `'Grace'`".to_string()]
         );
         assert!(output
             .schema
@@ -2928,7 +2928,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2001" && message == "`age` is declared `int`, but this value is `string`"
+            code == "E2001" && message == "`age` is declared `int`, but this value is `'old'`"
         }));
     }
 
@@ -2948,7 +2948,7 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2001" && message == "`age` is declared `int`, but this value is `string`"
+            code == "E2001" && message == "`age` is declared `int`, but this value is `'old'`"
         }));
     }
 
@@ -3785,7 +3785,7 @@ INSERT INTO person { name: 'Ada' };
         assert_eq!(
             messages,
             vec![
-                "`age` is declared `int`, but this value is `string`",
+                "`age` is declared `int`, but this value is `'old'`",
                 "`age` is declared `int`, but this value is `string`",
                 "`age` is declared `int`, but this value is `string`",
                 "`age` is declared `int`, but this value is `string`",
@@ -5019,7 +5019,7 @@ INSERT INTO person { name: 'Ada' };
 
         for (code, message) in [
             // DEFAULT must inhabit the declared type.
-            ("E2001", "`age`'s value is `string`, but the field is declared `int`"),
+            ("E2001", "`age`'s value is `'young'`, but the field is declared `int`"),
             // ASSERT is a condition; `$value` carries the declared kind.
             ("E2005", "this ASSERT is a `int`, not a `bool`"),
             ("E2004", "`>` can't combine a `int` and a `string`"),

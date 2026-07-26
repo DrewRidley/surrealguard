@@ -172,10 +172,10 @@ pub(crate) fn scalar_literal_base_kind(kind: &Kind) -> Option<Kind> {
 /// `Kind::Literal("active")`), if the value is a representable scalar.
 ///
 /// Inference widens a written literal to its base (`'active'` reads as
-/// `string`), which is right for most positions but loses the one fact a
-/// scalar-literal target needs: *which* string it is. A caller that holds a
-/// const value can recover the exact kind here, so the equality branch of
-/// [`kind_is_assignable_to`] applies instead of the prove-or-silent widening.
+/// `string`), which is right for building a response type and wrong for
+/// checking a contract: it loses the one fact a literal target needs, *which*
+/// string it is. This is the value-to-kind half of
+/// [`crate::analyzer::contract::checked_kind`]; the other half is the folder.
 pub(crate) fn scalar_value_literal_kind(value: &surrealdb_types::Value) -> Option<Kind> {
     use surrealdb_types::{KindLiteral, Number, Value};
     let literal = match value {
@@ -190,50 +190,6 @@ pub(crate) fn scalar_value_literal_kind(value: &surrealdb_types::Value) -> Optio
         _ => return None,
     };
     Some(Kind::Literal(literal))
-}
-
-/// Whether `kind` constrains a value to specific scalar literals — either a
-/// bare `'active'` or a union like `'active' | 'inactive'`. This is the only
-/// shape for which knowing a written value's *exact* literal changes the
-/// assignability verdict, so callers use it to bound when they substitute
-/// [`scalar_value_literal_kind`] for the widened inferred kind.
-pub(crate) fn constrains_scalar_literals(kind: &Kind) -> bool {
-    match kind {
-        Kind::Literal(_) => scalar_literal_base_kind(kind).is_some(),
-        Kind::Either(variants) => variants.iter().any(constrains_scalar_literals),
-        _ => false,
-    }
-}
-
-/// The kind an expression must be *checked* as when its value has to inhabit
-/// `expected` — the one rule behind every 2001, shared by the two sites that
-/// ask it: a value written to a field (`SET st = 'bogus'`) and a value declared
-/// for one (`DEFINE FIELD st ... VALUE 'bogus'`).
-///
-/// Normally that is just the inferred kind. The exception is a
-/// literal-constrained target (`'active' | 'inactive'`, `1 | 2 | 3`): inference
-/// widens a written `'bogus'` to `string`, and a `string` can never be shown to
-/// fall outside a string-literal union, so the wrong value would slip through.
-/// When the expression has a statically known scalar value, its exact literal
-/// kind is recovered so the equality branch of [`kind_is_assignable_to`] applies
-/// instead of the prove-or-silent widening.
-///
-/// Bounded to literal-constrained targets: everywhere else a literal is
-/// assignable exactly where its base is, so substituting it changes nothing.
-/// Returns `None` when the expression has no inferred kind at all — the caller
-/// has nothing to check and must stay silent.
-pub(crate) fn checked_value_kind(
-    fact: &crate::expression::ExpressionFact,
-    expected: &Kind,
-) -> Option<Kind> {
-    let inferred = fact.kind.clone()?;
-    Some(
-        fact.value
-            .as_ref()
-            .filter(|_| constrains_scalar_literals(expected))
-            .and_then(scalar_value_literal_kind)
-            .unwrap_or(inferred),
-    )
 }
 
 /// The base kind a `Kind::Literal` value inhabits, if `kind` is one.

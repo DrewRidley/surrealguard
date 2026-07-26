@@ -215,12 +215,23 @@ impl Contract {
     }
 
     /// The verdict for an expression, checked at the kind its value proves it
-    /// to be. This is the one every write position calls.
+    /// to be.
     pub(crate) fn check(&self, term: &Term, fact: &ExpressionFact) -> Verdict {
         match checked_kind(term, fact) {
             Some(actual) => self.decide(&actual),
             None => Verdict::Unknown,
         }
+    }
+
+    /// The kind a violation was decided at, or `None` when the contract holds
+    /// or nothing could be proven either way.
+    ///
+    /// This is the shape every position actually wants: the check and the kind
+    /// its message has to name are one question, and returning them separately
+    /// is how a site ends up rendering something other than what it compared.
+    pub(crate) fn violation(&self, term: &Term, fact: &ExpressionFact) -> Option<Kind> {
+        let actual = checked_kind(term, fact)?;
+        self.decide(&actual).is_violation().then_some(actual)
     }
 }
 

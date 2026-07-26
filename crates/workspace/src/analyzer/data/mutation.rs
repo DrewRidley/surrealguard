@@ -14,7 +14,9 @@ use surrealguard_syntax::ast;
 use surrealguard_syntax::span::ByteRange;
 
 use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::contract::{Contract, Position};
 use crate::analyzer::expression::infer::{infer_expression_fact, plain_field_segments};
+use crate::analyzer::facts::Bindings;
 use crate::schema::TableDef;
 
 /// Walks the expression positions a statement carries beyond its response
@@ -577,20 +579,21 @@ fn check_assignment_value(
         ast::Expr::Object(entries) => constrained_object_literal_kind(ctx, entries, &field_kind),
         _ => None,
     };
+    let contract = Contract::new(Position::MutationSet, field_kind.clone(), 2001);
     let value_kind = match value_kind {
         Some(kind) => kind,
         None => {
-            // Shared with the `DEFINE FIELD ... VALUE/DEFAULT` site: a constant
-            // is checked as the literal it *is* against a literal-constrained
-            // field, so `'bogus'` cannot hide behind the widened `string`.
+            // The one rule: a value is checked as what it *is*, so `'bogus'`
+            // cannot hide behind the widened `string` a literal infers as.
             let value_fact = infer_expression_fact(&assignment.value, ctx);
-            match crate::kinds::checked_value_kind(&value_fact, &field_kind) {
+            let term = crate::analyzer::facts::eval(&assignment.value.node, Bindings::NONE);
+            match crate::analyzer::contract::checked_kind(&term, &value_fact) {
                 Some(value_kind) => value_kind,
                 None => return,
             }
         }
     };
-    if value_kind == Kind::Any || crate::kinds::kind_is_assignable_to(&value_kind, &field_kind) {
+    if !contract.decide(&value_kind).is_violation() {
         return;
     }
     let span =
