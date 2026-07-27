@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  // A language service plugin is `require`d by tsserver, so it is CommonJS —
+  // which also means `export =`, which `verbatimModuleSyntax` forbids.
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "verbatimModuleSyntax": false,
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "rootDir": ".",
+    "outDir": "dist"
+  },
+  "include": ["src", "test"]
+}
