@@ -29,11 +29,11 @@ bin-dir = "{ bin }{ binary-ext }"
 pkg-fmt = "zip"
 
 [dependencies]
-surrealguard-codegen = { path = "../codegen", version = "0.4.1" }
-surrealguard-diagnostics = { path = "../diagnostics", version = "0.4.1" }
-surrealguard-embed = { path = "../embed", version = "0.4.1" }
-surrealguard-syntax = { path = "../syntax", version = "0.4.1" }
-surrealguard-workspace = { path = "../workspace", version = "0.4.1" }
+surrealguard-codegen = { path = "../codegen", version = "0.5.0" }
+surrealguard-diagnostics = { path = "../diagnostics", version = "0.5.0" }
+surrealguard-embed = { path = "../embed", version = "0.5.0" }
+surrealguard-syntax = { path = "../syntax", version = "0.5.0" }
+surrealguard-workspace = { path = "../workspace", version = "0.5.0" }
 clap = { version = "4", features = ["derive"]}
 # `--watch`. `notify-debouncer-full` is the `notify` project's own debouncer:
 # it merges the event storm one save produces and tracks renames by file id, so

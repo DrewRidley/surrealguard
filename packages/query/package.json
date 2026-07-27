@@ -34,7 +34,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@surrealguard/client": "workspace:^"
+    "@surrealguard/client": "0.5.0"
   },
   "peerDependencies": {
     "surrealdb": "^2.0.8"

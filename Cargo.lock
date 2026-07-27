@@ -4167,7 +4167,7 @@ dependencies = [
 
 [[package]]
 name = "surrealguard"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "clap",
  "glob",
@@ -4184,7 +4184,7 @@ dependencies = [
 
 [[package]]
 name = "surrealguard-codegen"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "surrealdb-types",
  "surrealguard-workspace",
@@ -4192,7 +4192,7 @@ dependencies = [
 
 [[package]]
 name = "surrealguard-diagnostics"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "serde",
  "surrealguard-syntax",
@@ -4200,7 +4200,7 @@ dependencies = [
 
 [[package]]
 name = "surrealguard-embed"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "tree-sitter",
  "tree-sitter-typescript",
@@ -4208,7 +4208,7 @@ dependencies = [
 
 [[package]]
 name = "surrealguard-lsp"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "futures",
  "serde_json",
@@ -4224,7 +4224,7 @@ dependencies = [
 
 [[package]]
 name = "surrealguard-macros"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4236,7 +4236,7 @@ dependencies = [
 
 [[package]]
 name = "surrealguard-rs"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "surrealdb",
@@ -4248,7 +4248,7 @@ dependencies = [
 
 [[package]]
 name = "surrealguard-syntax"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "serde",
  "surrealguard-tree-sitter-surrealql",
@@ -4257,7 +4257,7 @@ dependencies = [
 
 [[package]]
 name = "surrealguard-tree-sitter-surrealql"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -4276,7 +4276,7 @@ dependencies = [
 
 [[package]]
 name = "surrealguard-workspace"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",

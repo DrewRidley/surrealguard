@@ -13,8 +13,8 @@ description = "SurrealGuard workspace, config, and source registry layer"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-surrealguard-diagnostics = { path = "../diagnostics", version = "0.4.1" }
-surrealguard-syntax = { path = "../syntax", version = "0.4.1" }
+surrealguard-diagnostics = { path = "../diagnostics", version = "0.5.0" }
+surrealguard-syntax = { path = "../syntax", version = "0.5.0" }
 surrealdb-types.workspace = true
 toml = "0.8"
 
