@@ -18,6 +18,17 @@ const stop = people.subscribe((state) => {
 For a single live subscription and nothing else, `db.watch(livePeople, render)`
 in `@surrealguard/client` is simpler and needs no cache.
 
+`db` and `livePeople` above come from the module SurrealGuard generates off your
+schema — `createClient` and the `defineQuery`/`defineLive` that carry a query's
+result type. If you have not generated it yet:
+
+```sh
+npx surrealguard generate
+```
+
+which writes `surrealguard.generated.ts` at the workspace root; `--out` puts it
+wherever your import alias expects instead.
+
 ## What it does
 
 - **Deduplicates.** N subscribers to the same query share one cache entry, one
