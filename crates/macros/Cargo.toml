@@ -19,8 +19,8 @@ proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
 surrealdb-types.workspace = true
-surrealguard-workspace = { path = "../workspace", version = "0.5.0" }
-surrealguard-diagnostics = { path = "../diagnostics", version = "0.5.0" }
+surrealguard-workspace = { path = "../workspace", version = "0.5.1" }
+surrealguard-diagnostics = { path = "../diagnostics", version = "0.5.1" }
 
 [lints]
 workspace = true
