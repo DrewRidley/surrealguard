@@ -5878,6 +5878,53 @@ INSERT INTO person { name: 'Ada' };
         }
     }
 
+    /// A source's top level is not a block, and must not be modelled as one.
+    ///
+    /// A block exits at its first `RETURN` and never reaches what follows, so
+    /// 4006 is right there. A source's statement sequence does not — every
+    /// top-level statement runs and responds independently. Engine-verified on
+    /// SurrealDB 3.0.5:
+    ///
+    /// ```text
+    /// RETURN { RETURN 1; RETURN 2; };                     -> [1]
+    /// RETURN 1; RETURN 2;                                 -> [1, 2]
+    /// CREATE onlytest:1; THROW 'boom'; CREATE onlytest:2;
+    ///   -> [[{id: onlytest:1}], "An error occurred: boom", [{id: onlytest:2}]]
+    /// ```
+    ///
+    /// So a top-level `Flow` — collecting `RETURN`s into one exit-set type, and
+    /// reporting 4006 after a top-level `THROW` — would be a false positive on
+    /// correct SurrealQL and a response type the engine does not produce. This
+    /// test is here so that stays decided.
+    #[test]
+    fn a_top_level_statement_after_a_throw_is_not_unreachable() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "THROW 'boom';
+RETURN 1;
+RETURN 2;".into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        assert!(
+            !output.sources[&source]
+                .diagnostics
+                .iter()
+                .any(|finding| finding.code().number() == 4006),
+            "top-level statements after a THROW do run: {:?}",
+            output.sources[&source].diagnostics
+        );
+        // …and each one responds for itself, rather than being folded into an
+        // exit set that would drop the second `RETURN`.
+        let responses: Vec<_> = output.sources[&source]
+            .statements
+            .iter()
+            .filter_map(|statement| statement.response_kind.clone())
+            .collect();
+        assert_eq!(responses.len(), 2, "each top-level RETURN responds");
+    }
+
     // ---- Incremental single-source analysis equivalence ----
     //
     // The whole risk of the incremental path is a stale/wrong result. These
