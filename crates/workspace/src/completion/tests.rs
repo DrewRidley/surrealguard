@@ -934,15 +934,13 @@ fn completion_sees_the_narrowing_hover_already_saw() {
     // candidate was still labelled `none | { ... }` while hovering the same
     // name one line up said `{ ... }`. One analysis, two answers.
     let detail = |query: &str| -> String {
-        crate::with_fact_layer(true, || {
-            let fixture = Fixture::new(query);
-            fixture
-                .complete()
-                .into_iter()
-                .find(|candidate| candidate.label == "$p")
-                .and_then(|candidate| candidate.detail)
-                .unwrap_or_default()
-        })
+        let fixture = Fixture::new(query);
+        fixture
+            .complete()
+            .into_iter()
+            .find(|candidate| candidate.label == "$p")
+            .and_then(|candidate| candidate.detail)
+            .unwrap_or_default()
     };
 
     let before = detail(

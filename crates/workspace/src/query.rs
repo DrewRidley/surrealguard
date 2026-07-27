@@ -1909,7 +1909,7 @@ mod tests {
             !at_guard.contains("narrowed by"),
             "at the guard nothing is narrowed yet: {at_guard}"
         );
-        let after = crate::with_fact_layer(true, || hover_kind_at_occurrence(&text, 3));
+        let after = hover_kind_at_occurrence(&text, 3);
         assert!(
             after.contains("narrowed by `$x != NONE`"),
             "past the guard the hover must say what proved it: {after}"

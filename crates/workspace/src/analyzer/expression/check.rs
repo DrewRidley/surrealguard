@@ -31,15 +31,11 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
             // narrowing never leaks past the operator. A child env is forked
             // only when the left proves something, so an ordinary operator
             // keeps checking in the parent env (no re-recorded spans).
-            let facts = if crate::analyzer::flow::narrow::use_fact_layer() {
-                crate::analyzer::expression::infer::short_circuit_facts(
-                    &op.node,
-                    &lhs.node,
-                    ctx.env(),
-                )
-            } else {
-                None
-            };
+            let facts = crate::analyzer::expression::infer::short_circuit_facts(
+                &op.node,
+                &lhs.node,
+                ctx.env(),
+            );
             if let Some(facts) = facts {
                 ctx.with_child_env(|ctx| {
                     crate::analyzer::flow::narrow::apply_facts(ctx, &facts);
@@ -48,35 +44,8 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
                 });
                 return;
             }
-            if crate::analyzer::flow::narrow::use_fact_layer() {
-                check_value_expression(ctx, rhs);
-                check_binary(ctx, expr, lhs, &op.node, rhs);
-                return;
-            }
-            // The recognizer path: `AND` only, through `Vec<Effect>`, with the
-            // legacy `= NONE OR` recognizer beside it.
-            let and_effects = if matches!(op.node, ast::BinaryOp::And) {
-                crate::analyzer::flow::narrow::positive_effects(&lhs.node, ctx.env())
-            } else {
-                Vec::new()
-            };
-            if !and_effects.is_empty() {
-                ctx.with_child_env(|ctx| {
-                    crate::analyzer::flow::narrow::apply_effects(ctx, &and_effects);
-                    check_value_expression(ctx, rhs);
-                    check_binary(ctx, expr, lhs, &op.node, rhs);
-                });
-            } else if let Some(effect) =
-                crate::analyzer::expression::infer::none_guarded_effect(&op.node, lhs)
-            {
-                crate::analyzer::expression::infer::with_guard_narrowed(&effect, ctx, |ctx| {
-                    check_value_expression(ctx, rhs);
-                    check_binary(ctx, expr, lhs, &op.node, rhs);
-                });
-            } else {
-                check_value_expression(ctx, rhs);
-                check_binary(ctx, expr, lhs, &op.node, rhs);
-            }
+            check_value_expression(ctx, rhs);
+            check_binary(ctx, expr, lhs, &op.node, rhs);
         }
         ast::Expr::Prefix { op, expr: inner } => {
             check_value_expression(ctx, inner);
@@ -1315,18 +1284,11 @@ mod tests {
             "$r: { nick: option<string> }",
             "IF $r.nick != NONE { RETURN $r.nick.len(); };",
         );
-        // The recognizer path still reports: it reads `narrowed_path` under the
-        // exact written key, and the *checking* walk never consults it at all.
-        crate::analyzer::flow::narrow::with_fact_layer(false, || {
-            assert!(fires(&query, "E5001"), "codes: {:?}", codes(&query));
-        });
-        crate::analyzer::flow::narrow::with_fact_layer(true, || {
-            assert!(
-                !fires(&query, "E5001"),
-                "the guard proved `$r.nick` is a `string`: {:?}",
-                codes(&query)
-            );
-        });
+        assert!(
+            !fires(&query, "E5001"),
+            "the guard proved `$r.nick` is a `string`: {:?}",
+            codes(&query)
+        );
     }
 
     #[test]
@@ -1352,13 +1314,11 @@ mod tests {
                 params,
                 &format!("IF {guard} != NONE {{ RETURN {read}.len(); }};"),
             );
-            crate::analyzer::flow::narrow::with_fact_layer(true, || {
-                assert!(
-                    fires(&query, "E5001"),
-                    "`{guard}` proves nothing about `{read}`: {:?}",
-                    codes(&query)
-                );
-            });
+            assert!(
+                fires(&query, "E5001"),
+                "`{guard}` proves nothing about `{read}`: {:?}",
+                codes(&query)
+            );
         }
     }
 
@@ -1372,18 +1332,11 @@ mod tests {
             "$r: { inner: option<{ nick: string }> }",
             "IF $r.inner != NONE { RETURN $r.inner.nick.nomethod(); };",
         );
-        // Unreachable on the recognizer path: nothing is known about the
-        // receiver, so nothing fires.
-        crate::analyzer::flow::narrow::with_fact_layer(false, || {
-            assert!(!fires(&query, "E5001"), "codes: {:?}", codes(&query));
-        });
-        crate::analyzer::flow::narrow::with_fact_layer(true, || {
-            assert!(
-                fires(&query, "E5001"),
-                "the guard makes `$r.inner.nick` a `string`: {:?}",
-                codes(&query)
-            );
-        });
+        assert!(
+            fires(&query, "E5001"),
+            "the guard makes `$r.inner.nick` a `string`: {:?}",
+            codes(&query)
+        );
     }
 
     // ---- sentinel guards eliminate only their own sentinel ----

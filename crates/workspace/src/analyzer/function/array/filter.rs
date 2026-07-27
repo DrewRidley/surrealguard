@@ -46,9 +46,6 @@ pub(crate) fn analyze_array_filter(
 /// the element unchanged: a predicate that is not a one-parameter closure, a
 /// guard that claims nothing, a claim about a place the element does not carry.
 fn filtered_element(ctx: &mut AnalysisContext<'_>, call: &ast::Call, element: Kind) -> Kind {
-    if !crate::analyzer::flow::narrow::use_fact_layer() {
-        return element;
-    }
     let Some(predicate) = call.args.get(1) else {
         return element;
     };

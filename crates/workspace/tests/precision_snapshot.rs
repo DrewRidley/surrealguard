@@ -18,16 +18,16 @@
 //! UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test precision_snapshot
 //! ```
 //!
-//! While the expression-fact migration runs two narrowing paths there are two
-//! snapshots — `precision.snap` for the recognizers, `precision.facts.snap` for
-//! the fact layer (`SG_FACT_LAYER=1`). See `support::golden_path`; the diff
-//! between them is exactly what the migration buys.
+//! The snapshot pins the *answers*. It does not pin the *relation* between one
+//! set of answers and the next, which is why `narrowing_floor.rs` exists beside
+//! it: regenerating this file accepts any diff a reader is willing to accept,
+//! including a widening, and the floor is what refuses that one.
 
 mod support;
 
 use std::fmt::Write as _;
 
-use support::{analyze_corpus, diff_lines, golden_path, updating, Corpus};
+use support::{analyze_corpus, diff_lines, snapshot_path, updating, Corpus};
 use surrealguard_workspace::render_kind;
 
 const SNAPSHOT: &str = "precision.snap";
@@ -46,7 +46,7 @@ const HEADER: &str = "\
 fn corpus_types_match_the_committed_snapshot() {
     let corpus = analyze_corpus();
     let actual = render_snapshot(&corpus);
-    let path = golden_path(SNAPSHOT);
+    let path = snapshot_path(SNAPSHOT);
 
     if updating() {
         std::fs::create_dir_all(path.parent().expect("snapshot dir")).expect("create snapshot dir");

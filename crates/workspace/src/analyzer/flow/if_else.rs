@@ -513,7 +513,6 @@ mod tests {
     /// `ELSE` saw a `none` the first branch had already ruled out.
     #[test]
     fn the_else_meets_every_branch_negation_on_one_field_path() {
-        use crate::analyzer::flow::narrow::with_fact_layer;
         use surrealdb_types::KindLiteral;
 
         let subject = Kind::Literal(KindLiteral::Object(std::collections::BTreeMap::from([(
@@ -534,14 +533,10 @@ mod tests {
             other => vec![other],
         };
 
-        // Both sentinels were ruled out by the two failed branches, and only
-        // one of them survived the overwrite.
+        // Both sentinels were ruled out by the two failed branches, so neither
+        // survives into the `ELSE`.
         assert_eq!(
-            else_value(with_fact_layer(false, || bound_if(subject.clone(), false, source).0)),
-            vec![Kind::String, Kind::None]
-        );
-        assert_eq!(
-            else_value(with_fact_layer(true, || bound_if(subject, false, source).0)),
+            else_value(bound_if(subject, false, source).0),
             vec![Kind::String]
         );
     }

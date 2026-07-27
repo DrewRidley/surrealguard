@@ -110,18 +110,18 @@ table webhook_event  [schemafull]
   fn::facts::guard_field_path($o: { name: option<string> }) -> string  [inferred]
   fn::facts::guard_is_none($v: option<string>) -> string  [inferred]
   fn::facts::guard_is_not_none($v: option<string>) -> string  [inferred]
-  fn::facts::guard_not($v: option<string>) -> option<string>  [inferred]
+  fn::facts::guard_not($v: option<string>) -> string  [inferred]
   fn::facts::guard_paren($v: option<string>) -> string  [inferred]
   fn::facts::guard_return($v: option<string>) -> string  [inferred]
   fn::facts::guard_throw_block($v: option<string>) -> string  [inferred]
   fn::facts::guard_throw_then($v: option<string>) -> string  [inferred]
-  fn::facts::guard_truthy($v: option<string>) -> option<string>  [inferred]
-  fn::facts::guard_type_is_none($v: option<string>) -> option<string>  [inferred]
-  fn::facts::guard_type_is_string($v: option<string>) -> option<string>  [inferred]
+  fn::facts::guard_truthy($v: option<string>) -> string  [inferred]
+  fn::facts::guard_type_is_none($v: option<string>) -> string  [inferred]
+  fn::facts::guard_type_is_string($v: option<string>) -> string  [inferred]
   fn::facts::is_none_guard($r: option<string | null>) -> string | null  [inferred]
   fn::facts::is_null_guard($r: option<string | null>) -> option<string>  [inferred]
-  fn::facts::not_ne_none_guard($r: option<string | null>) -> option<string | null>  [inferred]
-  fn::facts::not_ne_null_guard($r: option<string | null>) -> option<string | null>  [inferred]
+  fn::facts::not_ne_none_guard($r: option<string | null>) -> string | null  [inferred]
+  fn::facts::not_ne_null_guard($r: option<string | null>) -> option<string>  [inferred]
   fn::org::display_name($org: record<organization>) -> string  [declared]
   fn::org::headcount($org: record<organization>) -> int  [inferred]
   fn::org::is_pro($org: record<organization>) -> bool  [inferred]
@@ -362,7 +362,7 @@ table webhook_event  [schemafull]
   stmt     19:1 let              : (no response)
   stmt     21:1 let              : (no response)
   stmt     23:1 return           : { after_guard: string, unit_name: string, with_default: string }
-  let       5:5 $org             : option<{ name: string, parent: option<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  let       5:5 $org             : option<{ name: string, parent: option<record<organization>>, tier: 'pro' }>
   let       9:5 $after_guard     : string
   let      11:5 $maybe           : option<string>
   let      13:5 $with_default    : string
@@ -504,7 +504,7 @@ table webhook_event  [schemafull]
   stmt    109:1 let              : (no response)
   stmt    113:1 let              : (no response)
   stmt    117:1 let              : (no response)
-  stmt    119:1 return           : { dead_conjunction: int | string, dead_discriminant: string, dead_else: int, dead_literal_else: int | string, dead_then: string, live_after_none: int | string, live_base: int | string, live_declared: int | string, live_disjunction: int | string, live_kind_predicate: int | string, live_ordering: int | string }
+  stmt    119:1 return           : { dead_conjunction: string, dead_discriminant: string, dead_else: int, dead_literal_else: int, dead_then: string, live_after_none: int | string, live_base: int | string, live_declared: int | string, live_disjunction: int | string, live_kind_predicate: int | string, live_ordering: int | string }
   let      30:5 $r               : option<record<account | organization>>
   let      34:5 $dead_then       : string
   let      38:5 $r2              : option<record<account | organization>>
@@ -514,9 +514,9 @@ table webhook_event  [schemafull]
   let      55:5 $o               : option<record<account | organization>>
   let      59:5 $dead_discriminant : string
   let      69:5 $g               : option<'draft' | 'review' | 'published'>
-  let      73:5 $dead_literal_else : int | string
+  let      73:5 $dead_literal_else : int
   let      78:5 $c               : option<record<account | organization>>
-  let      82:5 $dead_conjunction : int | string
+  let      82:5 $dead_conjunction : string
   let      91:5 $base            : option<record<account | organization>>
   let      93:5 $live_base       : int | string
   let      97:5 $declared        : option<string>
@@ -528,6 +528,8 @@ table webhook_event  [schemafull]
   diag    34:36 W4024     Warning
   diag    42:44 W4024     Warning
   diag    59:67 W4024     Warning
+  diag    73:54 W4024     Warning
+  diag    82:75 W4024     Warning
 
 == source: queries/35_sentinels.surql ==
   stmt     11:1 select           : array<{ deactivated_reason: string | null }>
@@ -612,32 +614,32 @@ table webhook_event  [schemafull]
   stmt     52:1 let              : (no response)
   stmt     56:1 select           : array<{ name: 'acme' }>
        modifier where      row_preserving=true
-  stmt     61:1 select           : array<{ stage: 'draft' | 'review' | 'published' }>
+  stmt     61:1 select           : array<{ stage: 'draft' }>
        modifier where      row_preserving=true
-  stmt     63:1 select           : array<{ tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     63:1 select           : array<{ tier: 'pro' }>
        modifier where      row_preserving=true
-  stmt     66:1 select           : array<{ tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     66:1 select           : array<{ tier: 'pro' }>
        modifier where      row_preserving=true
-  stmt     68:1 select           : array<{ tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     68:1 select           : array<{ tier: 'pro' | 'enterprise' }>
        modifier where      row_preserving=true
   stmt     71:1 select           : array<{ owner: record<account> }>
        modifier where      row_preserving=true
-  stmt     73:1 select           : array<{ owner: record<account | organization> }>
+  stmt     73:1 select           : array<{ owner: record<account> }>
        modifier where      row_preserving=true
-  stmt     75:1 select           : array<{ owner: record<account | organization> }>
+  stmt     75:1 select           : array<{ owner: record<account> }>
        modifier where      row_preserving=true
-  stmt     77:1 return           : { is_record: option<record<account>>, mt: option<record<account | organization>>, rt: option<record<account | organization>>, stage_eq: 'draft' | 'review' | 'published' | string, stage_in: 'draft' | 'review' | 'published' | string, tt: option<record<account>>, tt_flipped: option<record<account>>, tt_negative: option<record<account>>, tt_paren: option<record<account>> }
+  stmt     77:1 return           : { is_record: option<record<account>>, mt: option<record<account>>, rt: option<record<account>>, stage_eq: 'draft' | string, stage_in: 'draft' | 'review' | string, tt: option<record<account>>, tt_flipped: option<record<account>>, tt_negative: option<record<account>>, tt_paren: option<record<account>> }
   let      18:5 $doc             : option<{ owner: record<account | organization>, reviewer: option<record<account | organization>>, stage: 'draft' | 'review' | 'published' }>
   let      23:5 $tt_positive     : option<record<account>>
-  let      26:5 $rt_positive     : option<record<account | organization>>
-  let      29:5 $mt_positive     : option<record<account | organization>>
+  let      26:5 $rt_positive     : option<record<account>>
+  let      29:5 $mt_positive     : option<record<account>>
   let      32:5 $tt_flipped      : option<record<account>>
   let      36:5 $tt_negative     : option<record<account>>
   let      39:5 $tt_paren        : option<record<account>>
   let      42:5 $is_record_positive : option<record<account>>
   let      45:5 $stage           : option<'draft' | 'review' | 'published'>
-  let      49:5 $stage_eq        : 'draft' | 'review' | 'published' | string
-  let      52:5 $stage_in        : 'draft' | 'review' | 'published' | string
+  let      49:5 $stage_eq        : 'draft' | string
+  let      52:5 $stage_in        : 'draft' | 'review' | string
 
 == source: queries/38_membership.surql ==
   stmt     12:1 let              : (no response)
@@ -653,30 +655,30 @@ table webhook_event  [schemafull]
   stmt     43:1 let              : (no response)
   stmt     48:1 let              : (no response)
   stmt     50:1 let              : (no response)
-  stmt     53:1 select           : array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     53:1 select           : array<{ name: string, tier: 'pro' | 'enterprise' }>
        modifier where      row_preserving=true
-  stmt     55:1 select           : array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     55:1 select           : array<{ name: string, tier: 'pro' | 'enterprise' }>
        modifier where      row_preserving=true
-  stmt     57:1 select           : array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     57:1 select           : array<{ name: string, tier: 'pro' | 'enterprise' }>
        modifier where      row_preserving=true
   stmt     60:1 select           : array<{ logo: option<string>, name: string }>
        modifier where      row_preserving=true
   stmt     62:1 select           : array<{ logo: option<string>, name: string }>
        modifier where      row_preserving=true
-  stmt     64:1 return           : { contains_param: option<string>, in_field: option<string>, in_literal: option<string>, in_param: string, in_paren: string, in_set: option<string>, in_subquery: option<string>, inside_param: option<string>, not_in: option<string> }
+  stmt     64:1 return           : { contains_param: string, in_field: option<string>, in_literal: 'acme' | 'globex' | string, in_param: string, in_paren: string, in_set: string, in_subquery: option<string>, inside_param: string, not_in: string }
   let      12:5 $names           : array<string>
   let      14:5 $maybe           : option<string>
   let      17:5 $in_param        : string
-  let      20:5 $inside_param    : option<string>
-  let      23:5 $contains_param  : option<string>
-  let      27:5 $in_literal      : option<string>
+  let      20:5 $inside_param    : string
+  let      23:5 $contains_param  : string
+  let      27:5 $in_literal      : 'acme' | 'globex' | string
   let      30:5 $in_subquery     : option<string>
   let      33:5 $holder          : { pool: array<string> }
   let      35:5 $in_field        : option<string>
   let      38:5 $in_paren        : string
-  let      43:5 $not_in          : option<string>
+  let      43:5 $not_in          : string
   let      48:5 $keywords        : option<set<string>>
-  let      50:5 $in_set          : option<string>
+  let      50:5 $in_set          : string
   diag    12:38 I7014     Hint
   diag    30:57 I7014     Hint
 
@@ -705,17 +707,17 @@ table webhook_event  [schemafull]
   stmt     79:1 let              : (no response)
   stmt     82:1 select           : array<{ logo: string, name: string, parent: record<organization> }>
        modifier where      row_preserving=true
-  stmt     84:1 select           : array<{ logo: option<string>, name: string, parent: option<record<organization>> }>
+  stmt     84:1 select           : array<{ logo: string, name: string, parent: record<organization> }>
        modifier where      row_preserving=true
   stmt     86:1 select           : array<{ logo: option<string>, name: string, parent: option<record<organization>> }>
        modifier where      row_preserving=true
-  stmt     88:1 select           : array<{ logo: option<string>, name: string }>
+  stmt     88:1 select           : array<{ logo: string, name: string }>
        modifier where      row_preserving=true
   stmt     90:1 select           : array<{ logo: string, name: string }>
        modifier where      row_preserving=true
   stmt     92:1 select           : array<{ logo: string, name: string }>
        modifier where      row_preserving=true
-  stmt     94:1 return           : { and_both: string, and_flipped: string, and_same_place: string, and_short_circuit: string, andand_both: string, demorgan_and: string, demorgan_not_and: option<string>, demorgan_not_or: option<string>, demorgan_or: string, not_eq: option<string>, not_ne: option<string>, not_not: option<string>, or_else: string, or_mixed: option<string>, or_same_fact: option<string>, oror_else: string, paren_conjunct: string, paren_leaf: string, paren_twice: string, paren_whole: string }
+  stmt     94:1 return           : { and_both: string, and_flipped: string, and_same_place: string, and_short_circuit: string, andand_both: string, demorgan_and: string, demorgan_not_and: string, demorgan_not_or: string, demorgan_or: string, not_eq: string, not_ne: string, not_not: string, or_else: string, or_mixed: option<string>, or_same_fact: string, oror_else: string, paren_conjunct: string, paren_leaf: string, paren_twice: string, paren_whole: string }
   let      15:5 $p               : option<string>
   let      17:5 $q               : option<string>
   let      20:5 $and_both        : string
@@ -725,15 +727,15 @@ table webhook_event  [schemafull]
   let      33:5 $and_short_circuit : string
   let      38:5 $or_mixed        : option<string>
   let      41:5 $or_else         : string
-  let      45:5 $or_same_fact    : option<string>
+  let      45:5 $or_same_fact    : string
   let      48:5 $oror_else       : string
-  let      52:5 $not_eq          : option<string>
-  let      55:5 $not_ne          : option<string>
-  let      58:5 $not_not         : option<string>
+  let      52:5 $not_eq          : string
+  let      55:5 $not_ne          : string
+  let      58:5 $not_not         : string
   let      62:5 $demorgan_and    : string
-  let      64:5 $demorgan_not_or : option<string>
+  let      64:5 $demorgan_not_or : string
   let      67:5 $demorgan_or     : string
-  let      69:5 $demorgan_not_and : option<string>
+  let      69:5 $demorgan_not_and : string
   let      73:5 $paren_leaf      : string
   let      75:5 $paren_twice     : string
   let      77:5 $paren_conjunct  : string
@@ -917,7 +919,7 @@ table webhook_event  [schemafull]
   diag    71:58 I7014     Hint
 
 == source: queries/44_closure_guards.surql ==
-  source response       : { kept: array<{ person: option<record<person>>, username: string }>, kept_and: array<{ person: option<record<person>>, username: string }>, kept_is_not: array<{ person: option<record<person>>, username: string }>, kept_method: array<{ person: option<record<person>>, username: string }>, kept_negated: array<{ person: option<record<person>>, username: string }>, kept_opaque: array<{ person: option<record<person>>, username: string }>, kept_paren: array<{ person: option<record<person>>, username: string }>, non_null_reasons: array<option<string | null>>, set_reasons: array<option<string | null>>, where_rows: array<{ person: record<person>, username: string }> }
+  source response       : { kept: array<{ person: record<person>, username: string }>, kept_and: array<{ person: record<person>, username: string }>, kept_is_not: array<{ person: record<person>, username: string }>, kept_method: array<{ person: record<person>, username: string }>, kept_negated: array<{ person: record<person>, username: string }>, kept_opaque: array<{ person: option<record<person>>, username: string }>, kept_paren: array<{ person: record<person>, username: string }>, non_null_reasons: array<option<string>>, set_reasons: array<string | null>, where_rows: array<{ person: record<person>, username: string }> }
   stmt     15:1 let              : (no response)
   stmt     18:1 let              : (no response)
   stmt     21:1 let              : (no response)
@@ -930,19 +932,19 @@ table webhook_event  [schemafull]
   stmt     44:1 let              : (no response)
   stmt     46:1 let              : (no response)
   stmt     50:1 let              : (no response)
-  stmt     52:1 return           : { kept: array<{ person: option<record<person>>, username: string }>, kept_and: array<{ person: option<record<person>>, username: string }>, kept_is_not: array<{ person: option<record<person>>, username: string }>, kept_method: array<{ person: option<record<person>>, username: string }>, kept_negated: array<{ person: option<record<person>>, username: string }>, kept_opaque: array<{ person: option<record<person>>, username: string }>, kept_paren: array<{ person: option<record<person>>, username: string }>, non_null_reasons: array<option<string | null>>, set_reasons: array<option<string | null>>, where_rows: array<{ person: record<person>, username: string }> }
+  stmt     52:1 return           : { kept: array<{ person: record<person>, username: string }>, kept_and: array<{ person: record<person>, username: string }>, kept_is_not: array<{ person: record<person>, username: string }>, kept_method: array<{ person: record<person>, username: string }>, kept_negated: array<{ person: record<person>, username: string }>, kept_opaque: array<{ person: option<record<person>>, username: string }>, kept_paren: array<{ person: record<person>, username: string }>, non_null_reasons: array<option<string>>, set_reasons: array<string | null>, where_rows: array<{ person: record<person>, username: string }> }
   let      15:5 $rows            : array<{ person: option<record<person>>, username: string }>
   let      18:5 $where_rows      : array<{ person: record<person>, username: string }>
-  let      21:5 $kept            : array<{ person: option<record<person>>, username: string }>
-  let      24:5 $kept_is_not     : array<{ person: option<record<person>>, username: string }>
-  let      27:5 $kept_negated    : array<{ person: option<record<person>>, username: string }>
-  let      30:5 $kept_paren      : array<{ person: option<record<person>>, username: string }>
-  let      33:5 $kept_and        : array<{ person: option<record<person>>, username: string }>
-  let      36:5 $kept_method     : array<{ person: option<record<person>>, username: string }>
+  let      21:5 $kept            : array<{ person: record<person>, username: string }>
+  let      24:5 $kept_is_not     : array<{ person: record<person>, username: string }>
+  let      27:5 $kept_negated    : array<{ person: record<person>, username: string }>
+  let      30:5 $kept_paren      : array<{ person: record<person>, username: string }>
+  let      33:5 $kept_and        : array<{ person: record<person>, username: string }>
+  let      36:5 $kept_method     : array<{ person: record<person>, username: string }>
   let      40:5 $kept_opaque     : array<{ person: option<record<person>>, username: string }>
   let      44:5 $reasons         : array<option<string | null>>
-  let      46:5 $set_reasons     : array<option<string | null>>
-  let      50:5 $non_null_reasons : array<option<string | null>>
+  let      46:5 $set_reasons     : array<string | null>
+  let      50:5 $non_null_reasons : array<option<string>>
   diag    15:43 I7014     Hint
   diag    44:54 I7014     Hint
 

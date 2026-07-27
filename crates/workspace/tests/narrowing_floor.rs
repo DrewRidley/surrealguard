@@ -57,7 +57,7 @@ use std::collections::BTreeMap;
 
 use surrealdb_types::Kind;
 use surrealguard_workspace::kinds::kind_is_assignable_to;
-use surrealguard_workspace::{render_kind, with_fact_layer};
+use surrealguard_workspace::render_kind;
 
 use support::{analyze_corpus, sites, snapshot_path, updating};
 
@@ -89,11 +89,7 @@ const HEADER: &str = "\
 
 #[test]
 fn narrowing_is_never_wider_than_the_recognizers_were() {
-    // The floor was recorded from the recognizer path; it is compared against
-    // the fact layer, which is about to become the only path. Until the gate
-    // comes down, ask for it explicitly — and regenerate with the gate OFF, or
-    // the upper bound is rewritten from the path it is supposed to bound.
-    let corpus = with_fact_layer(true, analyze_corpus);
+    let corpus = analyze_corpus();
     let observed: Vec<(String, Option<Kind>)> = sites(&corpus)
         .into_iter()
         .map(|site| (site.id, site.kind))

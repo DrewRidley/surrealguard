@@ -52,6 +52,15 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
     is frozen with a `# expected: <reason>` note in the baseline. Regenerate with
     `UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test any_ratchet`
     (regenerating preserves the `# expected:` notes).
+  - `crates/workspace/tests/narrowing_floor.rs` — an **upper bound** on every
+    corpus site's type: what the hand-written narrowing recognizers inferred on
+    the commit before they were deleted. Inference may infer anything narrower
+    and does; it may not infer anything wider, and may not lose a site that has
+    a type. Unlike the precision snapshot this is an inequality, so it does not
+    move when precision improves — which is what makes it still catch a widening
+    after someone has regenerated the snapshot to accept one. **Do not
+    regenerate it to make it pass**: it records a path that no longer exists, so
+    rewriting it from the current path turns the check into a tautology.
   - `scripts/oracle.py` — the **real-world corpus gate**, run against the
     hand-edited workspace outside this repo (`../workshop/database`). It is a
     *triage* gate, not a count: `tests/oracle_baseline.txt` records every finding

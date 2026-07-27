@@ -2276,21 +2276,7 @@ fn apply_where_narrowing(row_kind: Kind, stmt: &ast::SelectStmt) -> Kind {
         Some(ast::Expr::Table(_) | ast::Expr::RecordId { .. }) => {}
         _ => return row_kind,
     }
-    if crate::analyzer::flow::narrow::use_fact_layer() {
-        return narrow_row_by_facts(row_kind, stmt, &cond.node);
-    }
-    // The recognizer path, kept whole while the gate is up. It cannot key a
-    // `VALUE` projection or an alias, so both are boundary conditions here.
-    if stmt.value {
-        return row_kind;
-    }
-    let Kind::Literal(KindLiteral::Object(mut fields)) = row_kind else {
-        return row_kind;
-    };
-    for effect in crate::analyzer::flow::narrow::where_effects(&cond.node) {
-        narrow_kind_at_path(&mut fields, &effect.fields, &effect.narrowing);
-    }
-    object_literal(fields)
+    narrow_row_by_facts(row_kind, stmt, &cond.node)
 }
 
 /// [`apply_where_narrowing`] answered by the [expression-fact
@@ -2424,9 +2410,12 @@ fn kind_at_path<'a>(fields: &'a BTreeMap<String, Kind>, segments: &[String]) -> 
     }
 }
 
-/// [`narrow_kind_at_path`] for a fact-layer [`Refinement`]. Tighten-only, by
-/// the same contract: `Refinement::apply` yields `None` when the claim does not
-/// tighten the leaf, and an absent key is skipped.
+/// Applies a [`Refinement`] to the leaf at `segments` in a projected object
+/// literal, if that exact path is present. Tighten-only: `Refinement::apply`
+/// yields `None` when the claim does not tighten the leaf, and an absent key —
+/// a predicate on a field the projection does not carry — is skipped.
+///
+/// [`Refinement`]: crate::analyzer::facts::Refinement
 fn refine_kind_at_path(
     fields: &mut BTreeMap<String, Kind>,
     segments: &[String],
@@ -2446,32 +2435,6 @@ fn refine_kind_at_path(
     }
     if let Kind::Literal(KindLiteral::Object(child_fields)) = kind {
         refine_kind_at_path(child_fields, rest, refinement);
-    }
-}
-
-/// Tightens the leaf at `segments` in a projected object literal, if that exact
-/// path is present. Tighten-only: an absent key (a predicate on a non-projected
-/// or aliased field) is skipped, and a refinement that does not tighten the
-/// current leaf leaves it unchanged.
-fn narrow_kind_at_path(
-    fields: &mut BTreeMap<String, Kind>,
-    segments: &[String],
-    narrowing: &crate::analyzer::flow::narrow::Narrowing,
-) {
-    let Some((first, rest)) = segments.split_first() else {
-        return;
-    };
-    let Some(kind) = fields.get_mut(first) else {
-        return;
-    };
-    if rest.is_empty() {
-        if let Some(narrowed) = crate::analyzer::flow::narrow::narrow_kind(kind, narrowing) {
-            *kind = narrowed;
-        }
-        return;
-    }
-    if let Kind::Literal(KindLiteral::Object(child_fields)) = kind {
-        narrow_kind_at_path(child_fields, rest, narrowing);
     }
 }
 
@@ -5032,22 +4995,16 @@ mod tests {
 
     #[test]
     fn where_or_narrows_only_what_every_disjunct_proves() {
-        use crate::analyzer::flow::narrow::with_fact_layer;
         let schema = narrowing_schema();
         let query = "SELECT role FROM user WHERE role = 'admin' OR role = 'mod';";
         let role = |kind: Kind| object_fields(array_element(&kind))["role"].clone();
 
-        // The hand-written recognizer decomposes no `OR` at all.
-        assert_eq!(
-            role(with_fact_layer(false, || analyze(&schema, query))),
-            Kind::String
-        );
-        // The fact layer joins the disjuncts, because BOTH pin the same place:
-        // every surviving row has one of the two values. A disjunct about a
-        // different field would still prove nothing — that is
+        // The disjuncts join, because BOTH pin the same place: every surviving
+        // row has one of the two values. A disjunct about a different field
+        // would still prove nothing — that is
         // `a_disjunction_refines_only_what_every_arm_refines` in `facts::refine`.
         assert_eq!(
-            role(with_fact_layer(true, || analyze(&schema, query))),
+            role(analyze(&schema, query)),
             Kind::either(vec![
                 Kind::Literal(surrealdb_types::KindLiteral::String("admin".into())),
                 Kind::Literal(surrealdb_types::KindLiteral::String("mod".into())),
@@ -5067,56 +5024,39 @@ mod tests {
 
     #[test]
     fn a_value_projection_narrows_the_row_itself() {
-        use crate::analyzer::flow::narrow::with_fact_layer;
         let schema = narrowing_schema();
-        let query = "SELECT VALUE email FROM user WHERE email != NONE;";
-
-        // The recognizer path keys refinements by schema field path and has no
-        // object leaf to put one in, so the whole pass was disabled.
-        assert_eq!(
-            with_fact_layer(false, || analyze(&schema, query)),
-            Kind::Array(Box::new(option_string()), None)
-        );
         // A `Place` is not an output key: `VALUE email` says the row IS that
-        // place, so the refinement applies to the row kind.
+        // place, so the refinement applies to the row kind. Keying refinements
+        // by projected field path instead — as the recognizer this replaced
+        // did — left nowhere to put one, and disabled the pass outright.
         assert_eq!(
-            with_fact_layer(true, || analyze(&schema, query)),
+            analyze(&schema, "SELECT VALUE email FROM user WHERE email != NONE;"),
             Kind::Array(Box::new(Kind::String), None)
         );
     }
 
     #[test]
     fn an_aliased_projection_narrows_under_its_alias() {
-        use crate::analyzer::flow::narrow::with_fact_layer;
         let schema = narrowing_schema();
         let query = "SELECT email AS e FROM user WHERE email != NONE;";
         let aliased = |kind: Kind| object_fields(array_element(&kind))["e"].clone();
 
-        // `email AS e` did not match by identity: the refinement was keyed
-        // `["email"]` and the only projected key is `e`.
-        assert_eq!(
-            aliased(with_fact_layer(false, || analyze(&schema, query))),
-            option_string()
-        );
-        // The projection says where the place landed, so the fact reaches it.
-        assert_eq!(
-            aliased(with_fact_layer(true, || analyze(&schema, query))),
-            Kind::String
-        );
+        // The projection says where the place landed, so the fact reaches it
+        // under the alias. Matching by projected key alone — the refinement
+        // keyed `["email"]` against a row whose only key is `e` — reached
+        // nothing.
+        assert_eq!(aliased(analyze(&schema, query)), Kind::String);
     }
 
     #[test]
     fn a_field_projected_twice_narrows_under_both_names() {
-        use crate::analyzer::flow::narrow::with_fact_layer;
         let schema = narrowing_schema();
         // Both keys hold the same value of the same row, so one fact tightens
         // both — the alias route does not replace the plain one.
-        let kind = with_fact_layer(true, || {
-            analyze(
-                &schema,
-                "SELECT email, email AS e FROM user WHERE email != NONE;",
-            )
-        });
+        let kind = analyze(
+            &schema,
+            "SELECT email, email AS e FROM user WHERE email != NONE;",
+        );
         let fields = object_fields(array_element(&kind));
         assert_eq!(fields["email"], Kind::String);
         assert_eq!(fields["e"], Kind::String);
@@ -5124,17 +5064,14 @@ mod tests {
 
     #[test]
     fn a_computed_alias_is_not_the_place_the_guard_names() {
-        use crate::analyzer::flow::narrow::with_fact_layer;
         // `string::len(email) AS e` is a *function of* the guarded place, not
         // the place — narrowing it would claim something about a value the
         // guard says nothing about.
         let schema = narrowing_schema();
-        let kind = with_fact_layer(true, || {
-            analyze(
-                &schema,
-                "SELECT string::len(email) AS e FROM user WHERE email != NONE;",
-            )
-        });
+        let kind = analyze(
+            &schema,
+            "SELECT string::len(email) AS e FROM user WHERE email != NONE;",
+        );
         assert_ne!(object_fields(array_element(&kind))["e"], Kind::String);
     }
 

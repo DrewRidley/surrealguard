@@ -1976,6 +1976,16 @@ Remove `narrow.rs`'s recognizers, `RowEffect`, `Effect`, `Narrowing`, `GuardPath
 `SG_FACT_LAYER` switch. The `Verdict` enum and `Reachability`/`BranchReach` survive unchanged —
 they are policy, not recognition.
 
+> **Landed.** `SG_FACT_LAYER` no longer exists, so the two commands above no longer select
+> anything — there is one path. Two items on the list were already gone when the stage
+> started: `const_eval.rs`'s folder had been delegated to `facts::term` in Stage 1 (only two
+> unread wrapper functions were left to delete), and `field.rs`'s `ConstVal`/`fold_const`/
+> `const_eq` had gone with it. `tests/fact_layer.rs`'s never-widens property did **not** go
+> with the second path: the recognizers' last answers are pinned as an upper bound in
+> `tests/snapshots/narrowing_floor.txt`, and `tests/narrowing_floor.rs` asserts the same
+> subtype relation against the file. Inverting `IsNotNone`'s sentinel in `refine.rs` fails it
+> at the same 99 sites the both-ways test reported.
+
 ---
 
 ## 10. Risk
