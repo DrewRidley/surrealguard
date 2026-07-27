@@ -75,6 +75,17 @@ runs live diagnostics as you type. Serve `web/public` over HTTP and open
 - `sg_analyze(schema_ptr, schema_len, query_ptr, query_len) -> u64` — returns
   `(result_ptr << 32) | result_len`; the buffer holds UTF-8 JSON, owned by the
   caller.
+- `sg_analyze2(...) -> u64` — same signature and same ownership, richer JSON.
 
-The JSON is an array of `{ code, severity, message, start, end }`, one per
-diagnostic on the query, with byte offsets relative to the query text.
+`sg_analyze`'s JSON is an array of `{ code, severity, message, start, end }`,
+one per diagnostic on the query, with byte offsets relative to the query text.
+
+`sg_analyze2`'s JSON is `{ diagnostics, statements }` — the same diagnostics,
+plus one `{ kind, start, end, response }` per top-level query statement.
+`response` is the statement's inferred response kind, rendered the way an
+editor would show a value's type at a position, or `null` when the statement
+does not respond with one. It is a **second export rather than a wider
+`sg_analyze`** because the `.wasm` and the `.mjs` that drives it are separate
+files with separate cache lifetimes: a page can hold a script newer than its
+module, so hosts feature-detect (`typeof exports.sg_analyze2 === "function"`)
+and fall back to diagnostics-only rather than breaking.
