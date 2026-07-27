@@ -25,5 +25,5 @@ pub(crate) mod term;
 
 pub(crate) use guard::{guard_of, Guard};
 pub(crate) use place::{place_of, Place, PlaceRoot};
-pub(crate) use refine::{Facts, KindOracle, Refinement};
+pub(crate) use refine::{Facts, KindOracle, Refinement, Verdict};
 pub(crate) use term::{eval, Bindings, ConstValue, DiscriminantKind, Term};

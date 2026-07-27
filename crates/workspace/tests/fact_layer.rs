@@ -105,9 +105,20 @@ fn the_fact_layer_is_never_wider_than_the_recognizers() {
 }
 
 /// The corpus is all-valid by construction, so a *new* finding on the fact
-/// layer's path is a false positive it introduced. (The precision snapshot's
-/// `corpus_is_free_of_error_findings` asserts this for whichever path it runs
-/// under; this asserts the comparison across both in one process.)
+/// layer's path is a false positive it introduced — with one exception, and it
+/// is enumerated rather than waved through.
+///
+/// A dead-branch verdict is the one consumer whose *purpose* is to add a
+/// finding on valid code: saying that a branch provably cannot run is a correct
+/// thing to say about correct input, and the branch is dropped from the exit-set
+/// type either way. So 4024 may appear on the fact layer's path — but only at
+/// the positions listed in [`NEWLY_GREYED`], each of which is a case in
+/// `queries/34_guard_verdicts.surql` carrying a comment that says why it is
+/// dead. A greying anywhere else, and any other code anywhere, still fails.
+///
+/// (The precision snapshot's `corpus_is_free_of_error_findings` asserts the
+/// stronger property for whichever path it runs under; this asserts the
+/// comparison across both in one process.)
 #[test]
 fn the_fact_layer_raises_no_finding_the_recognizers_did_not() {
     let codes = |fact_layer: bool| {
@@ -120,7 +131,8 @@ fn the_fact_layer_raises_no_finding_the_recognizers_did_not() {
                 .flat_map(|output| output.diagnostics.iter())
                 .map(|finding| {
                     format!(
-                        "{} {:?}",
+                        "{} {} {}",
+                        finding.span().source().as_str(),
                         corpus.position(finding.span()),
                         surrealguard_diagnostics::render_code(finding.code(), finding.severity()),
                     )
@@ -133,13 +145,28 @@ fn the_fact_layer_raises_no_finding_the_recognizers_did_not() {
     let old = codes(false);
     let new: Vec<String> = codes(true);
     let added: Vec<&String> = new.iter().filter(|code| !old.contains(code)).collect();
-    assert!(
-        added.is_empty(),
-        "the fact layer raised {} finding(s) the recognizer path did not, on an all-valid corpus: {:?}",
-        added.len(),
-        added
+    assert_eq!(
+        added, NEWLY_GREYED,
+        "the fact layer's findings on an all-valid corpus changed. Every entry must be a \
+         dead-branch greying with a case in `queries/34_guard_verdicts.surql`; anything else is \
+         a false positive it introduced."
     );
 }
+
+/// Every finding the fact layer raises that the recognizers do not, in the
+/// order the comparison produces them. Each is a *correct* statement about
+/// valid input, which is why it is listed rather than fixed.
+static NEWLY_GREYED: &[&str] = &[
+    // `IF $g = 'draft'` after `IF $g != 'draft' THEN THROW` pinned `$g` to
+    // `'draft'`: the ELSE can never run. The recognizer path could not refine a
+    // literal union at all — the §1.3 `status = 'active'` hole — so it kept the
+    // branch.
+    "file://queries/34_guard_verdicts.surql 73:54 W4024",
+    // `IF $c = NONE AND …` after `IF $c = NONE THEN THROW`: one conjunct is
+    // proven false, so the conjunction is. The recognizer path settled single
+    // comparisons only and explicitly declined to decompose a compound guard.
+    "file://queries/34_guard_verdicts.surql 82:75 W4024",
+];
 
 /// The cases from the design's table that the vendored corpus does not carry —
 /// each written as `(query, old answer, new answer)` so the flip is a committed

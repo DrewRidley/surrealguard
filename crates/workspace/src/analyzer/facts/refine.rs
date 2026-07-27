@@ -50,6 +50,48 @@ use super::place::Place;
 pub(crate) trait KindOracle {
     /// The kind in force for `place`, or `None` when the oracle cannot say.
     fn kind_of(&self, place: &Place) -> Option<Kind>;
+
+    /// Whether a prior **flow** narrowing tightened this place, as opposed to
+    /// its kind simply being the one it was declared with.
+    ///
+    /// This is the gate that keeps dead-branch folding to *conditional-flow*
+    /// deadness. A verdict drawn from a declared kind would grey the idiomatic
+    /// defensive `IF $p = NONE` on a non-optional parameter — a live branch,
+    /// and a real false positive. Drawn from a kind an earlier guard actually
+    /// narrowed, the same verdict is a statement about this program point.
+    ///
+    /// Defaults to `false`: an oracle that cannot tell the difference must not
+    /// be allowed to grey anything.
+    fn is_flow_narrowed(&self, _place: &Place) -> bool {
+        false
+    }
+}
+
+/// Whether a claim's outcome is fixed by the kinds in force.
+///
+/// Three-valued because the policy is one-directional: a branch is greyed only
+/// on a definite verdict, so [`Verdict::Unknown`] is the answer whenever the
+/// kind leaves the claim open. Greying a live branch is a real false positive;
+/// missing a dead one is merely incomplete.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Verdict {
+    /// The claim holds for every value the place can now be.
+    AlwaysTrue,
+    /// The claim holds for no value the place can now be.
+    AlwaysFalse,
+    /// The outcome is not fixed — the branch must be kept.
+    Unknown,
+}
+
+impl Verdict {
+    /// The verdict of the negation of this claim.
+    pub(crate) fn negate(self) -> Verdict {
+        match self {
+            Verdict::AlwaysTrue => Verdict::AlwaysFalse,
+            Verdict::AlwaysFalse => Verdict::AlwaysTrue,
+            Verdict::Unknown => Verdict::Unknown,
+        }
+    }
 }
 
 /// A claim, as a function on kinds.
@@ -226,6 +268,131 @@ impl Guard {
             }
             Guard::True | Guard::False | Guard::Unknown => {}
         }
+    }
+}
+
+impl Guard {
+    /// Whether this guard's outcome is fixed by the kinds `oracle` holds.
+    ///
+    /// The composition is the only sound one: a conjunction is false as soon
+    /// as one conjunct is, and true only when every conjunct is; a disjunction
+    /// is true as soon as one disjunct is, and false only when every disjunct
+    /// is. An `Unknown` anywhere else stops the whole guard from deciding —
+    /// which is why a compound guard, which the recognizer this replaces
+    /// declined to decompose at all, can now settle when its parts do.
+    ///
+    /// A constant guard is not a special case: it lowered to
+    /// [`Guard::True`]/[`Guard::False`] in the IR.
+    pub(crate) fn verdict(&self, oracle: &dyn KindOracle) -> Verdict {
+        match self {
+            Guard::True => Verdict::AlwaysTrue,
+            Guard::False => Verdict::AlwaysFalse,
+            Guard::Unknown => Verdict::Unknown,
+            Guard::Atom(atom) => atom_verdict(atom, oracle),
+            Guard::All(parts) => {
+                combine(parts, oracle, Verdict::AlwaysFalse, Verdict::AlwaysTrue)
+            }
+            Guard::Any(parts) => {
+                combine(parts, oracle, Verdict::AlwaysTrue, Verdict::AlwaysFalse)
+            }
+        }
+    }
+}
+
+/// A conjunction/disjunction verdict: `absorbing` decides the whole guard the
+/// moment one part returns it, and `unanimous` decides it only when every part
+/// does. An empty list decides nothing — a guard with no parts is not a proof.
+fn combine(
+    parts: &[Guard],
+    oracle: &dyn KindOracle,
+    absorbing: Verdict,
+    unanimous: Verdict,
+) -> Verdict {
+    if parts.is_empty() {
+        return Verdict::Unknown;
+    }
+    let mut all_unanimous = true;
+    for part in parts {
+        let verdict = part.verdict(oracle);
+        if verdict == absorbing {
+            return absorbing;
+        }
+        all_unanimous &= verdict == unanimous;
+    }
+    if all_unanimous {
+        unanimous
+    } else {
+        Verdict::Unknown
+    }
+}
+
+/// One atom's verdict against the kinds in force.
+///
+/// Two gates before the atom is even asked. The place must have been tightened
+/// by a prior *flow* narrowing — a verdict drawn from a declared kind greys the
+/// defensive guard everyone writes — and the oracle must know its kind.
+fn atom_verdict(atom: &Atom, oracle: &dyn KindOracle) -> Verdict {
+    if !oracle.is_flow_narrowed(atom.place()) {
+        return Verdict::Unknown;
+    }
+    match oracle.kind_of(atom.place()) {
+        Some(kind) => atom.decide(&kind),
+        None => Verdict::Unknown,
+    }
+}
+
+impl Atom {
+    /// Whether `kind` alone settles this claim.
+    ///
+    /// The two directions are the two lattice operations, and nothing else:
+    /// the claim is impossible when its characteristic kind meets `kind` at
+    /// bottom, and inescapable when subtracting that characteristic kind
+    /// leaves nothing. Every hand-written `*_verdict` predicate this replaces
+    /// was one of those two written out by hand for one kind shape.
+    ///
+    /// **Only atoms whose decision has a corpus case behind it may decide.**
+    /// `Truthy`, `Ord`, `Member`, `HasKind` and `NotKind` return `Unknown` —
+    /// not because a rule cannot be written, but because each is a distinct
+    /// new source of a greyed branch and they are enabled one at a time, each
+    /// with the case that pins it. A dead-branch verdict is the only consumer
+    /// of this layer that can produce a *new diagnostic on valid code*.
+    pub(crate) fn decide(&self, kind: &Kind) -> Verdict {
+        match self {
+            Atom::IsNone(_) => sentinel_verdict(kind, &Kind::None),
+            Atom::IsNotNone(_) => sentinel_verdict(kind, &Kind::None).negate(),
+            Atom::IsNull(_) => sentinel_verdict(kind, &Kind::Null),
+            Atom::IsNotNull(_) => sentinel_verdict(kind, &Kind::Null).negate(),
+            Atom::InTables(_, tables) => sentinel_verdict(kind, &record_kind(tables)),
+            Atom::NotInTables(_, tables) => sentinel_verdict(kind, &record_kind(tables)).negate(),
+            Atom::Eq(_, value) => match value.singleton_kind() {
+                Some(exact) => sentinel_verdict(kind, &exact),
+                None => Verdict::Unknown,
+            },
+            Atom::NotEq(_, value) => match value.singleton_kind() {
+                Some(exact) => sentinel_verdict(kind, &exact).negate(),
+                None => Verdict::Unknown,
+            },
+            Atom::Truthy(_)
+            | Atom::Ord(_, _)
+            | Atom::HasKind(_, _)
+            | Atom::NotKind(_, _)
+            | Atom::Member(_, _) => Verdict::Unknown,
+        }
+    }
+}
+
+/// The verdict of "this value is one `claim` admits" against `kind`.
+///
+/// `AlwaysFalse` when no value inhabits both — the meet is bottom.
+/// `AlwaysTrue` when removing everything `claim` admits leaves nothing, so
+/// every value of `kind` is one. Anything in between is `Unknown`, and so is a
+/// meet that could not be computed: an unrepresentable meet is not a proof of
+/// anything, least of all of a dead branch.
+fn sentinel_verdict(kind: &Kind, claim: &Kind) -> Verdict {
+    match meet(kind, claim) {
+        KindMeet::Empty => Verdict::AlwaysFalse,
+        KindMeet::Exact(_) if subtract(kind, claim).is_none() => Verdict::AlwaysTrue,
+        KindMeet::Exact(_) | KindMeet::Unrepresentable => Verdict::Unknown,
     }
 }
 
@@ -544,6 +711,107 @@ mod tests {
         // …and the negation of a `>` guard is a `<=`, which likewise proves
         // nothing.
         assert_eq!(refine("$x > 18", false, optional), None);
+    }
+
+    /// The verdict `source` draws at `polarity` when `$x` holds `kind` and was
+    /// flow-narrowed to it.
+    fn verdict(source: &str, polarity: bool, kind: Kind) -> Verdict {
+        struct Narrowed(Kind);
+        impl KindOracle for Narrowed {
+            fn kind_of(&self, place: &Place) -> Option<Kind> {
+                (*place == Place::param("x")).then(|| self.0.clone())
+            }
+            fn is_flow_narrowed(&self, place: &Place) -> bool {
+                *place == Place::param("x")
+            }
+        }
+        guard_of(&cond(source), polarity, None).verdict(&Narrowed(kind))
+    }
+
+    #[test]
+    fn a_sentinel_guard_is_decided_by_what_the_kind_can_still_be() {
+        // Ruled out…
+        assert_eq!(verdict("$x = NONE", true, Kind::String), Verdict::AlwaysFalse);
+        // …ruled in…
+        assert_eq!(verdict("$x = NONE", true, Kind::None), Verdict::AlwaysTrue);
+        // …and still open.
+        assert_eq!(
+            verdict("$x = NONE", true, option(Kind::String)),
+            Verdict::Unknown
+        );
+        // The two sentinels decide independently: a `string | null` cannot be
+        // NONE, but may well be NULL.
+        let nullable = Kind::either(vec![Kind::Null, Kind::String]);
+        assert_eq!(
+            verdict("$x = NONE", true, nullable.clone()),
+            Verdict::AlwaysFalse
+        );
+        assert_eq!(verdict("$x IS NULL", true, nullable), Verdict::Unknown);
+        // `any` can be anything, so it decides nothing in either direction.
+        assert_eq!(verdict("$x = NONE", true, Kind::Any), Verdict::Unknown);
+    }
+
+    #[test]
+    fn a_compound_guard_is_decided_by_its_parts() {
+        // One false conjunct decides the conjunction — the case the recognizer
+        // this replaces explicitly declined to decompose.
+        assert_eq!(
+            verdict("$x = NONE AND fn::check($x)", true, Kind::String),
+            Verdict::AlwaysFalse
+        );
+        // A true conjunct beside an unknown one decides nothing.
+        assert_eq!(
+            verdict("$x != NONE AND fn::check($x)", true, Kind::String),
+            Verdict::Unknown
+        );
+        // One true disjunct decides the disjunction…
+        assert_eq!(
+            verdict("$x != NONE OR fn::check($x)", true, Kind::String),
+            Verdict::AlwaysTrue
+        );
+        // …and one false disjunct beside an unknown one does not.
+        assert_eq!(
+            verdict("$x = NONE OR fn::check($x)", true, Kind::String),
+            Verdict::Unknown
+        );
+    }
+
+    #[test]
+    fn only_the_enabled_atoms_decide() {
+        // Each of these is provably settled by the kind, and each returns
+        // `Unknown` on purpose: a dead-branch verdict is the one consumer that
+        // can put a new finding on valid code, so an atom decides only once it
+        // has a corpus case of its own.
+        assert_eq!(verdict("type::is_string($x)", true, Kind::Int), Verdict::Unknown);
+        assert_eq!(verdict("$x", true, Kind::None), Verdict::Unknown);
+        assert_eq!(verdict("$x > 0", true, Kind::None), Verdict::Unknown);
+        // …while the enabled ones do.
+        let union = Kind::Record(vec![Table::from("user"), Table::from("folder")]);
+        assert_eq!(
+            verdict("type::table($x) = 'other'", true, union),
+            Verdict::AlwaysFalse
+        );
+        assert_eq!(
+            verdict("$x = 'draft'", true, string_literal("draft")),
+            Verdict::AlwaysTrue
+        );
+    }
+
+    #[test]
+    fn a_place_no_guard_narrowed_decides_nothing() {
+        // The gate that keeps a defensive `IF $p = NONE` on a declared
+        // non-optional `$p` alive. The kind says the guard cannot hold; the
+        // *declared* kind is not evidence about this program point.
+        struct Declared;
+        impl KindOracle for Declared {
+            fn kind_of(&self, _place: &Place) -> Option<Kind> {
+                Some(Kind::String)
+            }
+        }
+        assert_eq!(
+            guard_of(&cond("$x = NONE"), true, None).verdict(&Declared),
+            Verdict::Unknown
+        );
     }
 
     #[test]

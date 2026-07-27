@@ -30,7 +30,7 @@ use crate::analyzer::const_eval::{BranchReach, Reachability};
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::facts::{
     eval, guard_of, Bindings, ConstValue, DiscriminantKind, Facts, KindOracle, Place, PlaceRoot,
-    Term,
+    Term, Verdict,
 };
 use crate::analyzer::facts::place_of;
 use crate::analyzer::expression::infer::narrow_out_none;
@@ -232,6 +232,23 @@ impl KindOracle for EnvOracle<'_> {
             return self.0.let_fact(name)?.kind.clone();
         }
         self.0.narrowed_path(&place.key()?).cloned()
+    }
+
+    /// A bare param counts as narrowed when its binding was *rebound* by a
+    /// guard rather than merely declared; a field path counts when a narrowing
+    /// override was recorded for it. That is exactly the pair `path_kind` gates
+    /// on today, and it is what keeps a defensive `IF $p = NONE` on a declared
+    /// non-optional `$p` from being greyed.
+    fn is_flow_narrowed(&self, place: &Place) -> bool {
+        let PlaceRoot::Param(name) = &place.root else {
+            return false;
+        };
+        if place.path.is_empty() {
+            return self.0.is_param_narrowed(name);
+        }
+        place
+            .key()
+            .is_some_and(|key| self.0.narrowed_path(&key).is_some())
     }
 }
 
@@ -1099,27 +1116,7 @@ fn narrow_record_without(kind: &Kind, table: &str) -> Option<Kind> {
 /// possible kind yields [`Verdict::Unknown`] and keeps the branch. Greying a
 /// live branch is a real false positive; missing a dead one is merely
 /// incomplete — so every recognizer bails toward `Unknown`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Verdict {
-    /// The guard holds for every value the subject can now be.
-    AlwaysTrue,
-    /// The guard holds for no value the subject can now be.
-    AlwaysFalse,
-    /// The guard's outcome is not fixed — the branch must be kept.
-    Unknown,
-}
-
-impl Verdict {
-    /// The verdict of the negation of this guard (`!=` vs `=`, ELSE of a THEN).
-    fn negate(self) -> Verdict {
-        match self {
-            Verdict::AlwaysTrue => Verdict::AlwaysFalse,
-            Verdict::AlwaysFalse => Verdict::AlwaysTrue,
-            Verdict::Unknown => Verdict::Unknown,
-        }
-    }
-}
-
+///
 /// The verdict of an `IF`/`ELSE IF` guard `cond` against the kinds `env`
 /// currently holds for its subject. Literal-constant guards fold first (the
 /// pure const path), so this preserves the constant-folding behavior exactly
@@ -1360,7 +1357,12 @@ pub(crate) fn branch_reachability_in_env(stmt: &ast::IfElseStmt, env: &Statement
             branches.push(BranchReach::DeadAfterTrue);
             continue;
         }
-        match guard_verdict(&branch.condition.node, env) {
+        let verdict = if use_fact_layer() {
+            guard_of(&branch.condition.node, true, Some(env)).verdict(&EnvOracle(env))
+        } else {
+            guard_verdict(&branch.condition.node, env)
+        };
+        match verdict {
             Verdict::AlwaysFalse => branches.push(BranchReach::DeadFalse),
             Verdict::AlwaysTrue => {
                 branches.push(BranchReach::Reachable);

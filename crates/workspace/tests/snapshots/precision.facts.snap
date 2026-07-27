@@ -454,6 +454,61 @@ table webhook_event  [schemafull]
   diag     68:6 W7001     Warning
   diag     74:6 W7001     Warning
 
+== source: queries/34_guard_verdicts.surql ==
+  stmt     30:1 let              : (no response)
+  stmt     32:1 if_else          : none
+  stmt     34:1 let              : (no response)
+  stmt     38:1 let              : (no response)
+  stmt     40:1 if_else          : none
+  stmt     42:1 let              : (no response)
+  stmt     47:1 let              : (no response)
+  stmt     49:1 if_else          : none
+  stmt     51:1 let              : (no response)
+  stmt     55:1 let              : (no response)
+  stmt     57:1 if_else          : none
+  stmt     59:1 let              : (no response)
+  stmt     69:1 let              : (no response)
+  stmt     71:1 if_else          : none
+  stmt     73:1 let              : (no response)
+  stmt     78:1 let              : (no response)
+  stmt     80:1 if_else          : none
+  stmt     82:1 let              : (no response)
+  stmt     91:1 let              : (no response)
+  stmt     93:1 let              : (no response)
+  stmt     97:1 let              : (no response)
+  stmt     99:1 let              : (no response)
+  stmt    105:1 let              : (no response)
+  stmt    107:1 if_else          : none
+  stmt    109:1 let              : (no response)
+  stmt    113:1 let              : (no response)
+  stmt    117:1 let              : (no response)
+  stmt    119:1 return           : { dead_conjunction: string, dead_discriminant: string, dead_else: int, dead_literal_else: int, dead_then: string, live_after_none: int | string, live_base: int | string, live_declared: int | string, live_disjunction: int | string, live_kind_predicate: int | string, live_ordering: int | string }
+  let      30:5 $r               : option<record<account | organization>>
+  let      34:5 $dead_then       : string
+  let      38:5 $r2              : option<record<account | organization>>
+  let      42:5 $dead_else       : int
+  let      47:5 $s               : option<string | null>
+  let      51:5 $live_after_none : int | string
+  let      55:5 $o               : option<record<account | organization>>
+  let      59:5 $dead_discriminant : string
+  let      69:5 $g               : option<'draft' | 'review' | 'published'>
+  let      73:5 $dead_literal_else : int
+  let      78:5 $c               : option<record<account | organization>>
+  let      82:5 $dead_conjunction : string
+  let      91:5 $base            : option<record<account | organization>>
+  let      93:5 $live_base       : int | string
+  let      97:5 $declared        : option<string>
+  let      99:5 $live_declared   : int | string
+  let     105:5 $w               : option<int>
+  let     109:5 $live_kind_predicate : int | string
+  let     113:5 $live_ordering   : int | string
+  let     117:5 $live_disjunction : int | string
+  diag    34:36 W4024     Warning
+  diag    42:44 W4024     Warning
+  diag    59:67 W4024     Warning
+  diag    73:54 W4024     Warning
+  diag    82:75 W4024     Warning
+
 == source: queries/35_sentinels.surql ==
   stmt     11:1 select           : array<{ deactivated_reason: string | null }>
        modifier where      row_preserving=true

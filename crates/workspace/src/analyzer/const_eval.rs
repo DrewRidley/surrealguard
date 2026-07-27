@@ -13,6 +13,19 @@
 use surrealguard_syntax::ast;
 
 use crate::analyzer::facts::term::{fold, fold_bool, Bindings};
+use crate::analyzer::facts::{KindOracle, Place, Verdict};
+
+/// An oracle that knows nothing, so no claim about a place can be decided
+/// through it. What makes [`branch_reachability`] constant-only a property of
+/// the environment it is given rather than of which shapes it happens to
+/// recognize.
+struct Nothing;
+
+impl KindOracle for Nothing {
+    fn kind_of(&self, _place: &Place) -> Option<surrealdb_types::Kind> {
+        None
+    }
+}
 
 pub use crate::analyzer::facts::term::ConstValue;
 
@@ -85,13 +98,19 @@ pub fn branch_reachability(stmt: &ast::IfElseStmt) -> Reachability {
             branches.push(BranchReach::DeadAfterTrue);
             continue;
         }
-        match const_eval_bool(&branch.condition.node) {
-            Some(false) => branches.push(BranchReach::DeadFalse),
-            Some(true) => {
+        // The guard IR, read with an oracle that knows nothing. A constant
+        // guard lowered to `Guard::True`/`Guard::False`, so the fold is not a
+        // special case here either; and because the oracle answers nothing,
+        // every non-constant claim is `Unknown` — which is what keeps this
+        // function const-only, by construction rather than by omission.
+        match crate::analyzer::facts::guard_of(&branch.condition.node, true, None).verdict(&Nothing)
+        {
+            Verdict::AlwaysFalse => branches.push(BranchReach::DeadFalse),
+            Verdict::AlwaysTrue => {
                 branches.push(BranchReach::Reachable);
                 taken = true;
             }
-            None => branches.push(BranchReach::Reachable),
+            Verdict::Unknown => branches.push(BranchReach::Reachable),
         }
     }
     Reachability {
