@@ -119,6 +119,44 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
         }
         ast::Expr::Idiom(idiom) => check_idiom_positions(ctx, idiom),
         ast::Expr::Literal(literal) => check_literal_content(ctx, expr, literal),
+        ast::Expr::Subquery(statement) => check_subquery(ctx, statement),
+        // A param, a table name, a record id and an unlowerable node carry no
+        // position of their own. Exhaustive rather than a catch-all: a new
+        // expression form must decide whether it has inner obligations, and
+        // the `_ => {}` that used to stand here is what made `(THROW …)`,
+        // `({ … })` and every closure body silently unchecked.
+        ast::Expr::Param(_)
+        | ast::Expr::Table(_)
+        | ast::Expr::RecordId { .. }
+        | ast::Expr::Block(_)
+        | ast::Expr::Closure(_)
+        | ast::Expr::Partial(_) => {}
+    }
+}
+
+/// The inner obligations of a statement used as a value — `(THROW …)`,
+/// `(RETURN …)`, a bare expression statement.
+///
+/// A construct is checked against its own contracts in its own environment,
+/// and its result against the enclosing contract; the second half is the
+/// caller's, and this is the first. The statement kinds whose own analyzer
+/// runs on the inference route (`statement_value_kind`) already do it —
+/// re-entering them here would analyze the same statement twice — so what is
+/// left is exactly the kinds that route reads with pure inference, which never
+/// checks anything.
+fn check_subquery(ctx: &mut AnalysisContext<'_>, statement: &ast::Spanned<ast::Statement>) {
+    match &statement.node {
+        ast::Statement::Return(stmt) => {
+            if let Some(value) = &stmt.value {
+                check_value_expression(ctx, value);
+            }
+        }
+        ast::Statement::Throw(stmt) => {
+            if let Some(value) = &stmt.value {
+                check_value_expression(ctx, value);
+            }
+        }
+        ast::Statement::Expr(inner) => check_value_expression(ctx, inner),
         _ => {}
     }
 }
@@ -1084,6 +1122,46 @@ mod tests {
         }
     }
 
+    // ---- a statement used as a value is checked inside, too ----
+
+    #[test]
+    fn a_statement_subquery_is_checked_inside() {
+        // Compositional checking, the internal half: `check_value_expression`
+        // had a `_ => {}` that swallowed every `Expr::Subquery`, while the
+        // inference route read the statement kinds below with pure inference —
+        // which never checks. So a value-position `THROW`/`RETURN` carried
+        // whatever it liked.
+        for query in [
+            "RETURN (THROW 1 + 'a');",
+            "RETURN (RETURN 1 + 'a');",
+            "RETURN 1 ?? (THROW 'a' + 1);",
+        ] {
+            assert!(
+                fires(query, "E2004"),
+                "{query:?} must report its operand mismatch: {:?}",
+                codes(query)
+            );
+        }
+    }
+
+    #[test]
+    fn a_statement_subquery_that_owns_its_analyzer_reports_once() {
+        // The other half of the rule: a statement kind whose own analyzer runs
+        // on the inference route must not be re-entered here, or every finding
+        // inside a subquery SELECT would be raised twice.
+        let query = concat!(
+            "DEFINE TABLE t SCHEMAFULL;\n",
+            "DEFINE FIELD name ON t TYPE string;\n",
+            "RETURN (SELECT VALUE name.nomethod() FROM t);\n",
+        );
+        assert_eq!(
+            codes(query).iter().filter(|code| *code == "E5001").count(),
+            1,
+            "codes: {:?}",
+            codes(query)
+        );
+    }
+
     // ---- a check inside a guarded region reads the guarded kind ----
 
     /// A function whose parameter is an object with one optional field. A
@@ -1509,4 +1587,5 @@ mod tests {
         assert!(!fires(query, "E1027"), "codes: {:?}", codes(query));
     }
 }
+
 
