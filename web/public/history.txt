@@ -1,0 +1,101 @@
+#V2
+DEFINE FIELD username ON account TYPE string;
+DEFINE FIELD email ON account TYPE string;
+DEFINE FIELD person ON account TYPE option<record<person>>;
+DEFINE FIELD active ON account TYPE bool DEFAULT true;
+-- `NONE` and `NULL` are distinct values: never set vs explicitly cleared. The
+-- engine agrees — `NULL = NONE` is FALSE, so a NULL row survives a `!= NONE`
+-- filter and a NONE row survives a `!= NULL` one. This field is what keeps the
+-- two apart in the snapshot.
+DEFINE FIELD deactivated_reason ON account TYPE option<string | null>;
+DEFINE FIELD settings ON account TYPE {	timezone: string,	locale: option<string>,	notify: bool} DEFAULT { timezone: 'UTC', locale: NONE, notify: true };
+DEFINE FIELD created_at ON account TYPE datetime DEFAULT time::now();
+DEFINE FIELD updated_at ON account TYPE datetime VALUE time::now();
+-- Organization side of the corpus: a nested object field, a refined
+-- `array<object>` (exercises `[*]` projection), `array<record<…>>` links, and
+-- `COMPUTED <~relation` reverse-reference fields.
+DEFINE TABLE sector SCHEMAFULL;
+DEFINE FIELD name ON sector TYPE string;
+DEFINE TABLE organization SCHEMAFULL;
+DEFINE FIELD name ON organization TYPE string;
+DEFINE FIELD legal_name ON organization TYPE string;
+DEFINE FIELD logo ON organization TYPE option<string>;
+DEFINE FIELD tier ON organization TYPE 'free' | 'pro' | 'enterprise' DEFAULT 'free';
+DEFINE FIELD parent ON organization TYPE option<record<organization>> REFERENCE;
+DEFINE FIELD owner ON organization TYPE record<account>;
+DEFINE FIELD sectors ON organization TYPE array<record<sector>> DEFAULT [];
+DEFINE FIELD contacts ON organization TYPE array<object> DEFAULT [];
+DEFINE FIELD contacts[*] ON organization TYPE {	label: string,	email: string,	primary: bool};
+DEFINE FIELD address ON organization TYPE {	line1: string,	line2: option<string>,	city: string,	country: string};
+DEFINE FIELD employees ON organization COMPUTED <~employee_of;
+DEFINE FIELD subsidiaries ON organization COMPUTED <~organization;
+DEFINE FIELD created_at ON organization TYPE datetime DEFAULT time::now();
+DEFINE TABLE organization_unit SCHEMAFULL;
+DEFINE FIELD name ON organization_unit TYPE string;
+DEFINE FIELD organization ON organization_unit TYPE record<organization>;
+DEFINE FIELD parent ON organization_unit TYPE option<record<organization_unit>>;
+DEFINE FIELD headcount ON organization_unit TYPE int DEFAULT 0;
+DEFINE TABLE organization_settings SCHEMAFULL;
+DEFINE FIELD organization ON organization_settings TYPE record<organization>;
+DEFINE FIELD security ON organization_settings TYPE {	byok: {		mode: 'lazy' | 'immediate',		status: 'not_started' | 'running' | 'completed' | 'failed',		progress: int,		kms_provider: option<string>	}};
+-- A field's own `DEFAULT`/`VALUE` is checked against its declared type under
+-- the same contract a *written* value is: a constant must be a member of the
+-- union (`DEFAULT 45` here is the same E2001 as `SET retention_days = 45`),
+-- while a value that is not statically known — this `string::lowercase` call —
+-- can never be proven to fall outside it and stays silent.
+DEFINE FIELD retention_days ON organization_settings TYPE 30 | 90 | 365 DEFAULT 30;
+DEFINE FIELD data_region ON organization_settings TYPE 'us' | 'eu' VALUE string::lowercase($value);
+DEFINE FIELD updated_at ON organization_settings TYPE datetime VALUE time::now();
+-- Relation tables. Graph traversal precision (`->edge->target`, `<-edge<-in`)
+-- is only as good as the IN/OUT sets recorded here, so the corpus keeps a
+-- disjoint pair of edges: nothing can accidentally type-check via the wrong one.
+DEFINE TABLE organization_permission SCHEMAFULL;
+DEFINE FIELD name ON organization_permission TYPE string;
+DEFINE TABLE organization_role SCHEMAFULL;
+DEFINE FIELD name ON organization_role TYPE string;
+DEFINE FIELD organization ON organization_role TYPE record<organization>;
+DEFINE FIELD permissions ON organization_role TYPE array<record<organization_permission>> DEFAULT [];
+DEFINE TABLE employee_of SCHEMAFULL TYPE RELATION FROM account TO organization;
+DEFINE FIELD role ON employee_of TYPE record<organization_role>;
+DEFINE FIELD unit ON employee_of TYPE record<organization_unit>;
+DEFINE FIELD title ON employee_of TYPE option<string>;
+DEFINE FIELD status ON employee_of TYPE 'invited' | 'active' | 'suspended' DEFAULT 'active';
+DEFINE FIELD joined_at ON employee_of TYPE datetime DEFAULT time::now();
+-- A second edge whose IN/OUT sets do NOT overlap `employee_of`: `assigned_to`
+-- goes unit -> role, so it must never be offered while traversing off an
+-- `account`.
+DEFINE TABLE assigned_to SCHEMAFULL TYPE RELATION FROM organization_unit TO organization_role;
+DEFINE FIELD weight ON assigned_to TYPE int DEFAULT 1;
+-- Functions, params and analyzers. Both the written-return and the
+-- inferred-return paths are represented, because the inferred one is the
+-- precision-sensitive half.
+DEFINE PARAM $default_tier VALUE 'free';
+DEFINE ANALYZER simple TOKENIZERS blank, class FILTERS lowercase, ascii;
+-- Written return type: the declared kind is the contract.
+DEFINE FUNCTION fn::org::display_name($org: record<organization>) -> string {	RETURN $org.name;};
+-- No written return type: the snapshot records what inference derived.
+DEFINE FUNCTION fn::org::owner($org: record<organization>) {	RETURN $org.owner;};
+DEFINE FUNCTION fn::org::headcount($org: record<organization>) {	RETURN (SELECT VALUE count() FROM employee_of WHERE out = $org GROUP ALL)[0] ?? 0;};
+DEFINE FUNCTION fn::person::initials($first: string, $last: string) {	LET $a = string::slice($first, 0, 1);	LET $b = string::slice($last, 0, 1);	RETURN string::uppercase(string::concat($a, $b));};
+DEFINE FUNCTION fn::org::is_pro($org: record<organization>) {	RETURN $org.tier = 'pro' OR $org.tier = 'enterprise';};
+-- Calls another `fn::` — exercises cross-function return propagation.
+DEFINE FUNCTION fn::org::label($org: record<organization>) {	RETURN string::concat(fn::org::display_name($org), ' (', $org.tier, ')');};
+-- Sentinel guards: each eliminates ONLY its own sentinel. `IF $r = NONE THEN
+-- THROW` leaves `null` reachable (a NULL passes the guard), and `IF $r = NULL
+-- THEN THROW` leaves `none` reachable. Collapsing either to "not none and not
+-- null" is a type the database can violate.
+DEFINE FUNCTION fn::account::reason_set($r: option<string | null>) {	IF $r = NONE THEN THROW 'never set' END;	RETURN $r;};
+DEFINE FUNCTION fn::account::reason_uncleared($r: option<string | null>) {	IF $r = NULL THEN THROW 'explicitly cleared' END;	RETURN $r;};
+-- `??` is not a guard: it falls through on BOTH sentinels, so the coalesced
+-- value really is a plain `string`.
+DEFINE FUNCTION fn::account::reason_or_default($r: option<string | null>) {	RETURN $r ?? 'none given';};
+-- Deliberately unknowable shapes. A third-party webhook payload has no schema
+-- the author can write down, so `any` here is CORRECT, not a precision loss.
+-- The `any` ratchet needs at least one such site so its "expected, with a
+-- reason" mechanism is exercised rather than merely documented.
+DEFINE TABLE webhook_event SCHEMAFULL;
+DEFINE FIELD provider ON webhook_event TYPE 'stripe' | 'github';
+DEFINE FIELD received_at ON webhook_event TYPE datetime DEFAULT time::now();
+-- Opaque by construction: the provider owns this shape.
+DEFINE FIELD payload ON webhook_event TYPE any;
+-- Shapeless but at least known to be an object.
