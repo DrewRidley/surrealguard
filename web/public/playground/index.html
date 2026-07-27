@@ -1,161 +1,66 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- Dark only, deliberately — see the note at the foot of /styles.css. The
+     inline background is not decoration: without it a light-OS visitor gets a
+     white flash (and, if the stylesheet is slow, a white page) before the
+     dark surfaces arrive. -->
 <meta name="color-scheme" content="dark" />
 <style>html{background:#0a0b0e}</style>
-    <title>SurrealGuard Playground</title>
-    <link rel="stylesheet" href="./types-panel.css" />
-    <style>
-      :root {
-        /* Dark only, deliberately — see web/public/styles.css. */
-        color-scheme: dark;
-        --bg: #0f1115;
-        --panel: #171a21;
-        --input: #0a0c10;
-        --border: #2a2f3a;
-        --border-soft: #22262f;
-        --text: #e6e8ee;
-        --muted: #8b93a7;
-        --faint: #6b7280;
-        --red: #ff6b6b;
-        --amber: #ffcc66;
-        --accent-2: #66b3ff;
-        --accent: #a78bfa;
-        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-        font-family: var(--mono);
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        background: var(--bg);
-        color: var(--text);
-        min-height: 100vh;
-        padding: 24px;
-      }
-      h1 { font-size: 18px; margin: 0 0 4px; }
-      p.sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; max-width: 78ch; line-height: 1.6; }
-      /* Panes stack rather than sit side by side: the query wants the whole
-         column, and the inferred type sits directly under it in a region of
-         its own (`.sg-types`, types-panel.css) that can take as many lines as
-         a type needs. */
-      /* `minmax(0, 1fr)`, never a bare `auto` track: an `auto` column is sized
-         by its content's max-content width, and the type region contains a
-         one-line `nowrap` echo of the statement. On a phone that echo would
-         widen the column past the viewport and give the whole page a
-         horizontal scrollbar. */
-      .grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; max-width: 1200px; }
-      label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-      .results {
-        max-width: 1200px;
-        margin-top: 16px;
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 12px;
-        min-height: 60px;
-        font-size: 13px;
-      }
-      .status { color: var(--muted); font-size: 12px; }
-      .diag {
-        display: flex;
-        gap: 10px;
-        align-items: baseline;
-        padding: 6px 4px;
-        border-bottom: 1px solid var(--border);
-        cursor: pointer;
-        border-radius: 6px;
-      }
-      .diag:hover, .diag:focus-visible { background: #1d212a; outline: none; }
-      .diag:last-child { border-bottom: none; }
-      .code { font-weight: 700; flex: none; }
-      .code.error { color: var(--red); }
-      .code.warning { color: var(--amber); }
-      .code.hint { color: var(--accent-2); }
-      .pane { color: var(--faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; flex: none; }
-      .span { color: var(--muted); font-size: 11px; white-space: nowrap; margin-left: auto; }
-      .ok { color: #58d68d; }
+<title>Playground — SurrealGuard</title>
+<meta name="description" content="Run the SurrealGuard analyzer in your browser. Edit a schema and a query for live diagnostics and the inferred response type of every statement — no install, no database." />
+<meta property="og:title" content="SurrealGuard Playground" />
+<meta property="og:description" content="The SurrealQL analyzer compiled to WebAssembly. Live diagnostics and inferred response types, entirely in your browser." />
+<meta property="og:type" content="website" />
+<meta name="theme-color" content="#0a0b0e" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
+<link rel="stylesheet" href="/styles.css" />
+<link rel="stylesheet" href="/playground/types-panel.css" />
+<link rel="stylesheet" href="/playground/playground.css" />
+</head>
+<body>
 
-      /* --- the editor surface: a mirror <pre> exactly behind the textarea,
-             carrying the squiggles; the textarea keeps native editing --- */
-      .sg-editor { position: relative; width: 100%; }
-      .sg-editor > textarea,
-      .sg-editor > .sg-hl-pre {
-        font-family: var(--mono); font-size: 13px; line-height: 1.65;
-        padding: 12px; border: 1px solid var(--border); border-radius: 8px;
-        box-sizing: border-box; tab-size: 2; margin: 0; width: 100%;
-        white-space: pre-wrap; word-break: break-word; overflow-wrap: break-word;
-      }
-      .sg-editor > .sg-hl-pre {
-        position: absolute; inset: 0; z-index: 1; overflow: hidden;
-        border-color: transparent; background: var(--input); color: var(--text);
-        pointer-events: none;
-      }
-      .sg-editor > .sg-hl-pre code { font: inherit; color: inherit; }
-      .sg-editor > textarea {
-        position: relative; z-index: 2; min-height: 150px; resize: vertical;
-        background: transparent; color: transparent;
-        -webkit-text-fill-color: transparent; caret-color: var(--text);
-        outline: none;
-      }
-      .sg-editor > textarea:focus { border-color: var(--accent); }
-      /* Tall enough for the whole preset schema; a half-shown DEFINE reads as
-         a rendering bug rather than a scrollable pane. */
-      #schema { min-height: 270px; }
-      .sg-editor > textarea::selection { background: rgba(167,139,250,.35); }
+<nav>
+  <div class="wrap">
+    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+    <div class="nav-links">
+      <a href="/docs/">Docs</a>
+      <a href="/playground/" aria-current="page">Playground</a>
+      <a href="/#install">Install</a>
+      <a class="nav-cta" href="https://github.com/DrewRidley/surrealguard">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
 
-      /* Layer three — the statement-number badges — and the type region below
-         the editor both live in types-panel.css, shared with the landing page. */
-
-      .presets { display: flex; flex-wrap: wrap; gap: 6px; max-width: 1200px; margin-bottom: 14px; }
-      .preset {
-        font-family: var(--mono); font-size: 12px; color: var(--muted);
-        background: transparent; border: 1px solid var(--border); border-radius: 7px;
-        padding: 5px 11px; cursor: pointer; white-space: nowrap;
-      }
-      .preset:hover, .preset:focus-visible { color: var(--text); border-color: var(--accent); outline: none; }
-
-      .squiggle { text-decoration: underline; text-decoration-style: wavy; text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
-      .squiggle.err { text-decoration-color: var(--red); }
-      .squiggle.warn { text-decoration-color: var(--amber); }
-      .squiggle.hint { text-decoration-color: var(--accent-2); }
-
-      .sg-tip {
-        position: fixed; z-index: 999; max-width: min(460px, calc(100vw - 24px));
-        background: #12141a; border: 1px solid var(--border); border-radius: 8px;
-        padding: 8px 11px; box-shadow: 0 10px 30px rgba(0,0,0,.55);
-        font-size: 12.5px; line-height: 1.5; color: var(--text); pointer-events: none;
-      }
-      .sg-tip[hidden] { display: none; }
-      .sg-tip-row { display: flex; gap: 9px; align-items: baseline; }
-      .sg-tip-row + .sg-tip-row { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border-soft); }
-      .sg-tip-code { font-family: var(--mono); font-size: 11.5px; font-weight: 700; flex: none; }
-      .sg-tip-code.err { color: var(--red); }
-      .sg-tip-code.warn { color: var(--amber); }
-      .sg-tip-code.hint { color: var(--accent-2); }
-      .sg-tip-msg code { font-family: var(--mono); font-size: 0.92em; color: #e7c3ff; }
-    </style>
-  </head>
-  <body>
-    <h1>SurrealGuard Playground</h1>
-    <p class="sub">
-      The analyzer compiled to WebAssembly (wasm32-wasip1), running entirely
-      in your browser. Edit the schema or query for live diagnostics — findings
-      are underlined where they happen; hover a squiggle for the message, or
-      click a row below to jump to its span. Every statement's inferred response
-      type is set out in full under the query, formatted across as many lines as
-      it takes.
+<section class="sec pg-head">
+  <div class="wrap pg-wrap">
+    <div class="eyebrow">// playground</div>
+    <h1>Run the analyzer <span class="grad">in your browser</span></h1>
+    <p class="lead">
+      The real SurrealGuard engine, compiled to WebAssembly — no install, no server,
+      no database. Edit the schema or the query for live diagnostics: findings are
+      underlined where they happen, hover a squiggle for the message, click a row to
+      jump to its span. Every statement's inferred response type is set out in full
+      below the query, across as many lines as it takes.
     </p>
+  </div>
+</section>
 
-    <div class="presets" id="presets"></div>
-
-    <div class="grid">
-      <div>
-        <label for="schema">Schema (.surql)</label>
-        <!-- First-paint contents only: presets.mjs is authoritative and
-             overwrites both panes as soon as it loads. -->
-        <textarea id="schema" spellcheck="false">DEFINE TABLE user SCHEMAFULL;
+<section class="sec pg-main" style="padding-top:0">
+  <div class="wrap pg-wrap">
+    <div class="demo pg-demo">
+      <div class="demo-tabs" id="presets">
+        <span class="strip-label">presets</span>
+        <span class="demo-status" id="status">loading engine…</span>
+      </div>
+      <div class="demo-body pg-body">
+        <div class="demo-inputs">
+          <!-- First-paint contents only: presets.mjs is authoritative and
+               overwrites both panes as soon as it loads. -->
+          <label class="io-label" for="schema">Schema (.surql)</label>
+          <textarea class="code-input schema-in" id="schema" spellcheck="false">DEFINE TABLE user SCHEMAFULL;
 DEFINE FIELD name ON user TYPE string;
 DEFINE FIELD age ON user TYPE int;
 DEFINE FIELD email ON user TYPE option&lt;string&gt;;
@@ -168,163 +73,190 @@ DEFINE TABLE follows TYPE RELATION IN user OUT user SCHEMAFULL;
 DEFINE FIELD since ON follows TYPE datetime;
 
 DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
-      </div>
-      <div>
-        <label for="query">Query (.surql)</label>
-        <textarea id="query" spellcheck="false">SELECT name, ssn FROM user WHERE age &gt; 18;</textarea>
-        <!-- Filled by types-panel.mjs: one row per statement, directly under
-             the query it describes. -->
-        <div id="queryTypes"></div>
+          <label class="io-label" for="query">Query (.surql)</label>
+          <textarea class="code-input query-in" id="query" spellcheck="false">SELECT name, ssn FROM user WHERE age &gt; 18;</textarea>
+          <!-- Filled by types-panel.mjs: one row per statement, directly under
+               the query it describes. -->
+          <div id="queryTypes"></div>
+        </div>
+        <div class="demo-out">
+          <div class="muted-h">Diagnostics · <span class="live-dot">live</span></div>
+          <div class="diag-list" id="results">
+            <div class="pg-note">Loading analyzer…</div>
+          </div>
+        </div>
       </div>
     </div>
-
-    <div class="results" id="results">
-      <span class="status">Loading analyzer…</span>
+    <div class="pg-foot">
+      <span>Everything runs locally — nothing you type leaves the page.</span>
+      <span class="sep">·</span>
+      <a href="/docs/diagnostics.html">Every diagnostic code</a>
+      <span class="sep">·</span>
+      <a href="/docs/getting-started.html">Run it on your own project</a>
     </div>
+  </div>
+</section>
 
-    <script type="module">
-      import { createAnalyzer } from "./sg-analyzer.mjs";
-      import { attachSquiggleEditor, analyzePanes } from "./editor.mjs";
-      import { createTypePanel } from "./types-panel.mjs";
-      import { PRESETS } from "./presets.mjs";
+<footer>
+  <div class="wrap pg-wrap">
+    <div>
+      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex">
+        <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span>
+        SurrealGuard
+      </a>
+      <div class="tiny">Static analysis &amp; type inference for SurrealQL.</div>
+    </div>
+    <div class="cols">
+      <a href="/docs/">Docs</a>
+      <a href="/llms.txt">llms.txt</a>
+      <a href="/AGENTS.md">AGENTS.md</a>
+      <a href="https://github.com/DrewRidley/surrealguard">GitHub</a>
+      <a href="https://crates.io/crates/surrealguard">crates.io</a>
+    </div>
+    <div class="tiny">MIT OR Apache-2.0</div>
+  </div>
+</footer>
 
-      const results = document.getElementById("results");
-      const schemaEl = document.getElementById("schema");
-      const queryEl = document.getElementById("query");
-      const presetBar = document.getElementById("presets");
+<script type="module">
+  import { createAnalyzer } from "./sg-analyzer.mjs";
+  import { attachSquiggleEditor, analyzePanes } from "./editor.mjs";
+  import { createTypePanel } from "./types-panel.mjs";
+  import { PRESETS } from "./presets.mjs";
+  // The same highlighter the landing page draws with, so the two surfaces
+  // colour identical SurrealQL identically.
+  import { sgHighlight, sgEsc, sgMsg } from "./highlight.mjs";
 
-      const editors = {
-        schema: attachSquiggleEditor(schemaEl),
-        query: attachSquiggleEditor(queryEl),
-      };
+  const results = document.getElementById("results");
+  const status = document.getElementById("status");
+  const schemaEl = document.getElementById("schema");
+  const queryEl = document.getElementById("query");
+  const presetBar = document.getElementById("presets");
 
-      // The type region under the query. Hovering a row lights that statement's
-      // badge in the editor; clicking one selects the statement itself.
-      const types = createTypePanel(document.getElementById("queryTypes"), {
-        onPick: (statement) => editors.query.reveal(statement.start, statement.end),
-        onHover: (i) => editors.query.setActiveMarker(i),
-      });
+  const editors = {
+    schema: attachSquiggleEditor(schemaEl, { highlight: sgHighlight }),
+    query: attachSquiggleEditor(queryEl, { highlight: sgHighlight }),
+  };
 
-      // The same curated list the landing page shows, asserted against the
-      // shipped bundle by `harness.mjs`.
-      for (const preset of PRESETS) {
-        const button = document.createElement("button");
-        button.className = "preset";
-        button.type = "button";
-        button.textContent = preset.label;
-        if (preset.note) button.title = preset.note;
-        button.addEventListener("click", () => {
-          schemaEl.value = preset.schema;
-          queryEl.value = preset.query;
-          editors.schema.refresh();
-          editors.query.refresh();
-          run(0);
-        });
-        presetBar.appendChild(button);
-      }
-      // The markup's first-paint text is a placeholder; the list is the truth.
-      schemaEl.value = PRESETS[0].schema;
-      queryEl.value = PRESETS[0].query;
+  // The type region under the query. Hovering a row lights that statement's
+  // badge in the editor; clicking one selects the statement itself.
+  const types = createTypePanel(document.getElementById("queryTypes"), {
+    highlight: sgHighlight,
+    onPick: (statement) => editors.query.reveal(statement.start, statement.end),
+    onHover: (i) => editors.query.setActiveMarker(i),
+  });
+
+  // The same curated list the landing page shows, asserted against the
+  // shipped bundle by `harness.mjs`.
+  for (const preset of PRESETS) {
+    const button = document.createElement("button");
+    button.className = "demo-preset";
+    button.type = "button";
+    button.textContent = preset.label;
+    if (preset.note) button.title = preset.note;
+    button.addEventListener("click", () => {
+      schemaEl.value = preset.schema;
+      queryEl.value = preset.query;
       editors.schema.refresh();
       editors.query.refresh();
+      run(0);
+    });
+    presetBar.insertBefore(button, status);
+  }
+  // The markup's first-paint text is a placeholder; the list is the truth.
+  schemaEl.value = PRESETS[0].schema;
+  queryEl.value = PRESETS[0].query;
+  editors.schema.refresh();
+  editors.query.refresh();
 
-      let analyzer;
+  let analyzer;
 
-      function escapeHtml(s) {
-        return String(s).replace(
-          /[&<>"']/g,
-          (c) =>
-            ({
-              "&": "&amp;",
-              "<": "&lt;",
-              ">": "&gt;",
-              '"': "&quot;",
-              "'": "&#39;",
-            })[c]
+  function render(diagnostics) {
+    if (!diagnostics.length) {
+      results.innerHTML =
+        '<div class="pg-ok"><svg class="i" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>' +
+        "<span>No problems — the query type-checks.</span></div>";
+      return;
+    }
+    // The site's problems-panel row: severity gutter, glyph, code badge, and
+    // the message with its backtick spans as code. The byte range is the one
+    // thing this page adds — see `.diag-loc` in playground.css.
+    results.innerHTML = diagnostics
+      .map((d, i) => {
+        const sev = d.severity || "error";
+        const glyph = sev === "warning" ? "!" : sev === "hint" ? "i" : "×";
+        const where = d.pane === "schema" ? '<span class="diag-pane">schema</span>' : "";
+        return (
+          `<div class="diag ${sev}" data-i="${i}" role="button" tabindex="0" title="jump to this span">` +
+          `<span class="diag-icon" aria-hidden="true">${glyph}</span>` +
+          `<div class="diag-body">` +
+          `<div class="diag-head"><span class="code">${sgEsc(d.code || "")}</span>` +
+          `<span class="sev">${sev}</span>${where}` +
+          `<span class="diag-loc">${d.start}..${d.end}</span></div>` +
+          `<div class="msg">${sgMsg(d.message)}</div>` +
+          `</div></div>`
         );
-      }
-
-      function render(diagnostics) {
-        if (!diagnostics.length) {
-          results.innerHTML =
-            '<span class="ok">No diagnostics — the query type-checks.</span>';
-          return;
+      })
+      .join("");
+    results.querySelectorAll(".diag[data-i]").forEach((row) => {
+      const jump = () => {
+        const d = diagnostics[Number(row.dataset.i)];
+        editors[d.pane]?.reveal(d.start, d.end);
+      };
+      row.addEventListener("click", jump);
+      row.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          jump();
         }
-        results.innerHTML = diagnostics
-          .map(
-            (d, i) => `
-            <div class="diag" data-i="${i}" role="button" tabindex="0">
-              <span class="code ${d.severity}">${escapeHtml(d.code)}</span>
-              ${d.pane === "schema" ? '<span class="pane">schema</span>' : ""}
-              <span>${escapeHtml(d.message)}</span>
-              <span class="span">[${d.start}..${d.end}]</span>
-            </div>`
-          )
-          .join("");
-        results.querySelectorAll(".diag[data-i]").forEach((row) => {
-          const jump = () => {
-            const d = diagnostics[Number(row.dataset.i)];
-            editors[d.pane]?.reveal(d.start, d.end);
-          };
-          row.addEventListener("click", jump);
-          row.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              jump();
-            }
-          });
-        });
-      }
-
-      // Moving the caret marks the row for the statement it sits in. This is
-      // how the mapping works on a touch device, where there is no hover but
-      // there is always a caret.
-      // Only while the query pane has focus. An active row on a page nobody
-      // has touched yet reads as a selection the reader did not make.
-      const markCaret = () =>
-        document.activeElement === queryEl ? types.setCaret(queryEl.selectionStart) : types.setActive(-1);
-      document.addEventListener("selectionchange", () => {
-        if (document.activeElement === queryEl) markCaret();
       });
+    });
+  }
 
-      let timer;
-      function run(delay = 120) {
-        clearTimeout(timer);
-        timer = setTimeout(() => {
-          if (!analyzer) return;
-          try {
-            const panes = analyzePanes(analyzer, schemaEl.value, queryEl.value);
-            editors.schema.setDiagnostics(panes.schema);
-            editors.query.setDiagnostics(panes.query);
-            // Empty on a module without `sg_analyze2`: no badges and an empty
-            // type region, everything else unchanged.
-            editors.query.setMarkers(panes.statements);
-            types.update(panes.statements, queryEl.value);
-            markCaret();
-            render(panes.all);
-          } catch (err) {
-            results.innerHTML = `<span class="code error">wasm error</span> ${escapeHtml(
-              String(err)
-            )}`;
-          }
-        }, delay);
+  // Moving the caret marks the row for the statement it sits in. This is
+  // how the mapping works on a touch device, where there is no hover but
+  // there is always a caret.
+  // Only while the query pane has focus. An active row on a page nobody
+  // has touched yet reads as a selection the reader did not make.
+  const markCaret = () =>
+    document.activeElement === queryEl ? types.setCaret(queryEl.selectionStart) : types.setActive(-1);
+  document.addEventListener("selectionchange", () => {
+    if (document.activeElement === queryEl) markCaret();
+  });
+
+  let timer;
+  function run(delay = 120) {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!analyzer) return;
+      try {
+        const panes = analyzePanes(analyzer, schemaEl.value, queryEl.value);
+        editors.schema.setDiagnostics(panes.schema);
+        editors.query.setDiagnostics(panes.query);
+        // Empty on a module without `sg_analyze2`: no badges and an empty
+        // type region, everything else unchanged.
+        editors.query.setMarkers(panes.statements);
+        types.update(panes.statements, queryEl.value);
+        markCaret();
+        render(panes.all);
+      } catch (err) {
+        results.innerHTML = `<div class="pg-note err">wasm error — ${sgEsc(String(err))}</div>`;
       }
+    }, delay);
+  }
 
-      (async () => {
-        try {
-          const bytes = await fetch("./surrealguard_wasm.wasm").then((r) =>
-            r.arrayBuffer()
-          );
-          analyzer = await createAnalyzer(bytes);
-          schemaEl.addEventListener("input", () => run());
-          queryEl.addEventListener("input", () => run());
-          run(0);
-        } catch (err) {
-          results.innerHTML = `<span class="code error">failed to load</span> ${escapeHtml(
-            String(err)
-          )}`;
-        }
-      })();
-    </script>
-  </body>
+  (async () => {
+    try {
+      const bytes = await fetch("./surrealguard_wasm.wasm").then((r) => r.arrayBuffer());
+      analyzer = await createAnalyzer(bytes);
+      status.textContent = "wasm ready";
+      schemaEl.addEventListener("input", () => run());
+      queryEl.addEventListener("input", () => run());
+      run(0);
+    } catch (err) {
+      status.textContent = "engine failed to load";
+      results.innerHTML = `<div class="pg-note err">failed to load the analyzer — ${sgEsc(String(err))}</div>`;
+    }
+  })();
+</script>
+</body>
 </html>

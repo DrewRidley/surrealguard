@@ -395,8 +395,10 @@ svg.i { width: 1em; height: 1em; stroke: currentColor; fill: none; stroke-width:
 .demo-out .muted-h { font-family: var(--mono); font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .08em; }
 /* playground diagnostics — a real editor "problems" panel, not chips:
    colored severity gutter + glyph, a subtle mono code badge, and a message
-   with backtick field/table names rendered as colored code spans. */
-#demoDiag { display: flex; flex-direction: column; gap: 8px; }
+   with backtick field/table names rendered as colored code spans.
+   `.diag-list` is the same component addressed by class, so /playground/ can
+   render the site's problems panel instead of growing a second one. */
+#demoDiag, .diag-list { display: flex; flex-direction: column; gap: 8px; }
 .diag {
   display: flex; gap: 11px; align-items: flex-start;
   border: 1px solid var(--border); border-left-width: 3px; border-radius: 8px;
@@ -517,6 +519,11 @@ h1 .grad {
 .sg-editor > .code-input {
   position: relative; z-index: 2; background: transparent;
   color: transparent; -webkit-text-fill-color: transparent; caret-color: #d6dae2;
+  /* `block`, not the default inline-block: an inline textarea sits on a text
+     baseline, so the wrapper came out ~8px taller than it and the mirror —
+     stretched to the wrapper by `inset: 0` — painted a sliver of editor
+     background below the textarea's own rounded border. */
+  display: block;
 }
 .sg-editor > .code-input::selection { background: rgba(139,124,255,0.35); }
 

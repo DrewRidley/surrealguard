@@ -1,0 +1,107 @@
+/* The standalone playground — the *page* around the editor, nothing else.
+ *
+ * Everything the playground draws with comes from /styles.css: the design
+ * tokens, the nav and footer, the `.demo` panel and its tab strip, `.io-label`,
+ * `.code-input`, the `.sg-editor` mirror + squiggles + `.sg-tip`, the `.diag`
+ * problems rows, `.pg-ok`. The inferred-type region and the statement badges
+ * come from types-panel.css, shared with the landing page. This file adds only
+ * what a destination page needs and a landing-page section does not: a wider
+ * column, a page header, taller editors, and the two small bits of chrome
+ * (`.diag-loc`, `.pg-note`) that exist nowhere else on the site.
+ *
+ * Nothing here may put `overflow`/`text-overflow` on `.sg-type` — see the note
+ * at the top of types-panel.css. A truncated type is the bug that region
+ * exists to fix.
+ */
+
+/* --- page shell -------------------------------------------------------- */
+
+/* Wider than the marketing column (--maxw 1080): this page is the tool, not a
+   section about the tool, and the two editor panes plus a diagnostics column
+   want the room. Still a fixed ceiling — a full-bleed 2560px editor is not
+   more readable, just wider. */
+.pg-wrap { max-width: 1240px; }
+
+.nav-links a[aria-current="page"] { color: var(--text); }
+
+.pg-head { padding: 46px 0 26px; }
+.pg-head h1 {
+  /* The docs' destination-page scale, not the landing hero's clamp(38,6vw,62). */
+  font-size: clamp(28px, 4vw, 40px);
+  line-height: 1.1;
+  margin-bottom: 14px;
+}
+.pg-head .lead { margin: 0; max-width: 68ch; font-size: 16.5px; }
+.pg-head .lead code {
+  font-family: var(--mono); font-size: 0.88em; background: var(--surface-2);
+  padding: 2px 6px; border-radius: 5px; color: var(--text);
+}
+
+.pg-main { padding-bottom: 26px; }
+
+/* --- the panel --------------------------------------------------------- */
+
+/* The same `.demo` panel the landing page uses, given the proportions of a
+   page rather than a section. `minmax(0, …)` on both tracks for the reason
+   spelled out in /styles.css: the type region under the query holds a
+   `nowrap` one-line echo of the statement, and an `auto` minimum would let it
+   widen the column past the viewport. */
+.pg-body { grid-template-columns: minmax(0, 1.28fr) minmax(0, 1fr); min-height: 420px; }
+.pg-demo .demo-inputs, .pg-demo .demo-out { padding: 22px 24px; gap: 9px; }
+/* Tall enough for a whole preset schema — every one of them is 13 lines, which
+   at 13.5px/1.65 plus the pane's padding is 314px. A half-shown DEFINE reads as
+   a rendering bug rather than a scrollable pane. */
+.pg-demo .code-input.schema-in { min-height: 320px; }
+.pg-demo .code-input.query-in { min-height: 132px; }
+
+/* The strip label ("presets") ahead of the buttons. */
+.demo-tabs .strip-label {
+  align-self: center; padding: 6px 4px 6px 2px;
+  font-family: var(--mono); font-size: 12px; color: var(--faint);
+}
+/* The tab strip is the page's control surface here, so it gets to wrap
+   instead of scrolling sideways — ten presets in one horizontal scroller is a
+   row of buttons nobody finds. */
+.pg-demo .demo-tabs { flex-wrap: wrap; overflow-x: visible; row-gap: 6px; }
+.pg-demo .demo-status { align-self: center; }
+
+/* --- diagnostics ------------------------------------------------------- */
+
+/* `.diag` rows themselves are the site's; the byte range is playground-only —
+   a detail worth showing where someone is poking at the analyzer, and noise on
+   the landing page. */
+.diag-loc {
+  font-family: var(--mono); font-size: 10.5px; color: var(--faint);
+  margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.diag-head { flex-wrap: wrap; }
+
+/* Engine status and failures, in the place the findings will appear. */
+.pg-note { font-size: 13.5px; color: var(--muted); padding: 4px 2px; }
+.pg-note.err { color: var(--red); }
+.pg-note code { font-family: var(--mono); font-size: 0.92em; color: #e7c3ff; }
+
+/* --- footnote under the panel ------------------------------------------ */
+.pg-foot {
+  display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: baseline;
+  margin-top: 16px; font-size: 13px; color: var(--faint);
+}
+.pg-foot a { color: var(--muted); }
+.pg-foot a:hover { color: var(--text); }
+.pg-foot .sep { color: var(--border); }
+
+@media (max-width: 820px) {
+  .pg-head { padding: 30px 0 20px; }
+  .pg-demo .demo-inputs, .pg-demo .demo-out { padding: 16px 16px; }
+  /* This has to be restated, not inherited: /styles.css collapses `.demo-body`
+     to one column at this width, but `.pg-body` above has equal specificity in
+     a later sheet and would keep the two-column split on a phone. */
+  .pg-body { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  .pg-demo .code-input.schema-in { min-height: 220px; }
+}
+
+@media (max-width: 560px) {
+  /* Stacked, without the mid-air separators a wrapped row leaves behind. */
+  .pg-foot { flex-direction: column; gap: 7px; }
+  .pg-foot .sep { display: none; }
+}

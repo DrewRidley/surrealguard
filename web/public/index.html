@@ -126,7 +126,7 @@ DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
         </div>
       </div>
     </div>
-    <p style="text-align:center;color:var(--faint);font-size:13px;margin-top:16px">The real SurrealGuard engine, compiled to WebAssembly, running in your browser — edit anything.</p>
+    <p style="text-align:center;color:var(--faint);font-size:13px;margin-top:16px">The real SurrealGuard engine, compiled to WebAssembly, running in your browser — edit anything. <a href="/playground/" style="color:var(--accent)">Open the full playground →</a></p>
   </div>
 </section>
 
@@ -362,7 +362,9 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
   </div>
 </footer>
 
-<script>
+<script type="module">
+  import { sgHighlight, sgEsc, sgMsg } from "/playground/highlight.mjs";
+
   // copy buttons
   document.querySelectorAll("[data-copy]").forEach((el) => {
     el.addEventListener("click", async () => {
@@ -437,64 +439,9 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
   }
 
   // ---- shared: SurrealQL syntax highlighter ---------------------------
-  // Keywords are matched case-sensitively as UPPERCASE and types as
-  // lowercase, so lowercase identifiers (table/field names like `user`,
-  // `age`) are never mis-coloured even when they spell a keyword (USER…).
-  const SG_KW = new Set((
-    "SELECT VALUE OMIT FROM WHERE SPLIT GROUP BY ORDER ASC DESC COLLATE NUMERIC LIMIT START FETCH " +
-    "TIMEOUT PARALLEL EXPLAIN WITH INDEX NOINDEX WITHINDEX UPDATE UPSERT CREATE INSERT INTO DELETE " +
-    "RELATE CONTENT SET MERGE PATCH REPLACE RETURN BEFORE AFTER DIFF NONE DEFINE REMOVE ALTER TABLE " +
-    "FIELD EVENT ANALYZER TOKENIZER FILTERS FUNCTION PARAM USER TOKEN SCOPE ACCESS NAMESPACE DATABASE " +
-    "SCHEMAFULL SCHEMALESS PERMISSIONS FLEXIBLE READONLY DEFAULT ASSERT TYPE COMMENT OVERWRITE IF NOT " +
-    "EXISTS DROP CHANGEFEED RELATION IN OUT ENFORCED UNIQUE SEARCH LET FOR END THEN ELSE BEGIN COMMIT " +
-    "CANCEL TRANSACTION LIVE KILL SHOW CHANGES SINCE AND OR IS CONTAINS CONTAINSNOT CONTAINSALL " +
-    "CONTAINSANY CONTAINSNONE INSIDE NOTINSIDE ALLINSIDE ANYINSIDE NONEINSIDE OUTSIDE INTERSECTS AS ON " +
-    "TRUE FALSE NULL FULL"
-  ).split(/\s+/));
-  const SG_TY = new Set((
-    "any bool bytes datetime decimal duration float int number object point string uuid record " +
-    "geometry array set option range future regex closure"
-  ).split(/\s+/));
-  const SG_RULES = [
-    [/\/\*[\s\S]*?\*\//y, "c"],
-    [/--[^\n]*/y, "c"],
-    [/\/\/[^\n]*/y, "c"],
-    [/'(?:[^'\\]|\\.)*'/y, "s"],
-    [/"(?:[^"\\]|\\.)*"/y, "s"],
-    [/`(?:[^`\\]|\\.)*`/y, "s"],
-    [/\$[A-Za-z_]\w*/y, "p"],
-    [/[A-Za-z_]\w*:[A-Za-z0-9_]+/y, "r"],
-    [/\d+(?:\.\d+)?(?:ns|us|ms|s|m|h|d|w|y)?\b/y, "n"],
-    [/[A-Za-z_]\w*(?=\s*\()/y, "fn"],
-    [/[A-Za-z_]\w*/y, "word"],
-  ];
-  function sgEsc(s) { return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
-  function sgHighlight(src) {
-    let out = "", i = 0;
-    const n = src.length;
-    outer: while (i < n) {
-      for (const [re, cls] of SG_RULES) {
-        re.lastIndex = i;
-        const m = re.exec(src);
-        if (m) {
-          const text = m[0];
-          if (!text.length) break;
-          let c = cls;
-          if (cls === "word") {
-            if (SG_KW.has(text)) c = "k";
-            else if (SG_TY.has(text)) c = "t";
-            else c = null;
-          }
-          out += c ? `<span class="${c}">${sgEsc(text)}</span>` : sgEsc(text);
-          i += text.length;
-          continue outer;
-        }
-      }
-      out += sgEsc(src[i]); i++;
-    }
-    return out;
-  }
-  function sgMsg(m) { return sgEsc(String(m)).replace(/`([^`]+)`/g, "<code>$1</code>"); }
+  // Lives in /playground/highlight.mjs so this page and the standalone
+  // playground colour SurrealQL identically — it used to be inline here, and
+  // /playground/ simply went without.
 
   // =====================================================================
   //  Live Guard hero — a curated stream of SurrealQL, analyzed for real.
