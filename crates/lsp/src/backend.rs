@@ -69,7 +69,7 @@ impl Backend {
             .publish_diagnostics(uri.clone(), lsp_diagnostics, None)
             .await;
 
-        self.refresh_semantic_tokens().await;
+        self.refresh_semantic_tokens();
     }
 
     /// Ask the client to re-request semantic tokens.
@@ -89,11 +89,22 @@ impl Backend {
     /// The request is workspace-wide because that is the only granularity the
     /// protocol offers, and it is cheap: it makes the client re-ask, and our
     /// answer for an unchanged document comes from the analysis cache.
-    async fn refresh_semantic_tokens(&self) {
-        // A client without the capability answers with an error; nothing about
-        // the document depends on the outcome, so a failure is not worth
-        // surfacing to the user.
-        let _ = self.client.semantic_tokens_refresh().await;
+    ///
+    /// It is spawned rather than awaited. This is a server→client *request*, so
+    /// awaiting it blocks the handler until the client replies — and a client
+    /// that never replies blocks it forever. That is not hypothetical: awaiting
+    /// here deadlocked every `crates/lsp/tests/backend.rs` case that publishes
+    /// diagnostics, because the harness drives the server directly and answers
+    /// no requests. A real editor would have replied, so the bug would have
+    /// reached a release looking like a hang under some other client.
+    fn refresh_semantic_tokens(&self) {
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            // A client without the capability answers with an error; nothing
+            // about the document depends on the outcome, so a failure is not
+            // worth surfacing to the user.
+            let _ = client.semantic_tokens_refresh().await;
+        });
     }
 
     /// Hover for a position inside a host file's embedded query: the cursor is
@@ -165,7 +176,7 @@ impl Backend {
         // One request for the whole sweep: this runs when the schema moved, so
         // every open document's tokens are suspect, and the protocol has no
         // per-document form anyway.
-        self.refresh_semantic_tokens().await;
+        self.refresh_semantic_tokens();
     }
 }
 
