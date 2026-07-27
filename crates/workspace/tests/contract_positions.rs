@@ -241,10 +241,16 @@ const SITES: &[Site] = &[
         query: "RETURN 1;",
         cases: DECLARED,
     },
+    // `DEFINE PARAM` has no `TYPE` clause — engine-verified on 3.0.5,
+    // `DEFINE PARAM $x TYPE int VALUE 5` is a parse error. So the kind this
+    // position is checked against is not declared beside it; it is whatever
+    // the param's *uses* require. The site therefore has to reach one, and
+    // this is the crossing: the definition supplies the value, the mutation
+    // supplies the contract, and the finding belongs on the definition.
     Site {
         position: Position::ParamDefault,
         schema: "DEFINE PARAM $q VALUE {val};",
-        query: "RETURN 1;",
+        query: "CREATE t SET f = $q;",
         cases: DECLARED,
     },
     Site {
@@ -324,9 +330,7 @@ const SITES: &[Site] = &[
 /// The positions that do not honour a contract yet, as `(position, declared)`
 /// with `"*"` meaning every case. **This list may only shrink.** A line here is
 /// a committed, countable hole rather than a paragraph in a design document.
-const KNOWN_GAPS: &[(Position, &str)] = &[
-    (Position::ParamDefault, "*"),  // no declared type to check against
-];
+const KNOWN_GAPS: &[(Position, &str)] = &[];
 
 /// Whether the gap list excuses this crossing.
 fn is_known_gap(position: Position, declared: &str) -> bool {

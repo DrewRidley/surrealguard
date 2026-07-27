@@ -335,14 +335,83 @@ impl<'a> AnalysisContext<'a> {
             self.env
                 .constrain_param(name.to_string(), span.clone(), kind, domain)
         {
-            self.emit(surrealguard_diagnostics::catalog::finding(
-                span,
-                6001,
-                format!(
-                    "`${name}` cannot satisfy this query: one use needs `{existing}`, this one needs `{new}`"
-                ),
-            ));
+            self.report_param_conflict(name, span, &existing, &new);
         }
+    }
+
+    /// Reports an irreconcilable parameter constraint, at whichever line is
+    /// actually wrong.
+    ///
+    /// A param carrying a `DEFINE PARAM` default is not two uses disagreeing.
+    /// The definition **fixed** the value; this position rejects it. So the
+    /// finding belongs at the definition, with the use as a related span — the
+    /// use is correct SurrealQL, and blaming it was 6001's most confusing
+    /// accusation:
+    ///
+    /// ```text
+    /// DEFINE PARAM $lim VALUE 'notanint';
+    /// SELECT * FROM t LIMIT $lim;
+    ///   error[E6001]: `$lim` cannot satisfy this query:
+    ///                 one use needs `string`, this one needs `int`
+    ///                 --> the SELECT line, which is correct
+    /// ```
+    ///
+    /// Calling the definition "one use" was the tell. A host param genuinely
+    /// has only uses, and for one of those 6001 is exactly right; a defined
+    /// param has a value, and a value that cannot inhabit a position it reaches
+    /// is [`Position::ParamDefault`]'s contract, checked by the same `decide`
+    /// as every other position.
+    fn report_param_conflict(
+        &mut self,
+        name: &str,
+        use_span: SourceSpan,
+        existing: &surrealdb_types::Kind,
+        required: &surrealdb_types::Kind,
+    ) {
+        if let Some(finding) = self.param_default_violation(name, &use_span, required) {
+            self.emit(finding);
+            return;
+        }
+        self.emit(surrealguard_diagnostics::catalog::finding(
+            use_span,
+            6001,
+            format!(
+                "`${name}` cannot satisfy this query: one use needs `{existing}`, this one needs `{required}`"
+            ),
+        ));
+    }
+
+    /// The finding a `DEFINE PARAM`'s value raises at a position that rejects
+    /// it, or `None` when there is no default or the value is not *proven*
+    /// wrong.
+    ///
+    /// The written constant is what is compared, not the widened kind, which is
+    /// why `VALUE 'red'` into a `'red' | 'blue'` position is silent while
+    /// `VALUE 'green'` reports — the same recovery every other constant-bearing
+    /// position makes.
+    fn param_default_violation(
+        &self,
+        name: &str,
+        use_span: &SourceSpan,
+        required: &surrealdb_types::Kind,
+    ) -> Option<Finding> {
+        use crate::analyzer::contract::{Contract, Position};
+
+        let fact = self.env.param_default_fact(name)?;
+        let contract = Contract::new(Position::ParamDefault, required.clone());
+        let actual = contract.violation(&crate::analyzer::facts::Term::Opaque, fact)?;
+        Some(
+            surrealguard_diagnostics::catalog::finding(
+                fact.span.clone(),
+                contract.code(),
+                format!(
+                    "`${name}`'s value is `{}`, but it is used where a `{}` is required",
+                    crate::render::render_offending(&actual, Some(required)),
+                    crate::render_kind(required),
+                ),
+            )
+            .with_related(use_span.clone(), format!("`${name}` is used here")),
+        )
     }
 
     /// Records a constraint on `name` derived from a *value comparison*
@@ -375,13 +444,7 @@ impl<'a> AnalysisContext<'a> {
             self.env
                 .constrain_param_comparable(name.to_string(), span.clone(), kind, domain)
         {
-            self.emit(surrealguard_diagnostics::catalog::finding(
-                span,
-                6001,
-                format!(
-                    "`${name}` cannot satisfy this query: one use needs `{existing}`, this one needs `{new}`"
-                ),
-            ));
+            self.report_param_conflict(name, span, &existing, &new);
         }
     }
 

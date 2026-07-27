@@ -88,7 +88,7 @@
     <div class="sec-head">
       <div class="kicker">// try it</div>
       <h2 class="reveal">See the analyzer think</h2>
-      <p class="reveal">Real diagnostics from the actual engine. Pick a query — SurrealGuard checks it against the schema.</p>
+      <p class="reveal">Real diagnostics from the actual engine. Pick a query — SurrealGuard checks it against the schema, and floats each statement's inferred response type beside it.</p>
     </div>
     <div class="demo reveal">
       <div class="demo-tabs" id="demoTabs">
@@ -97,10 +97,24 @@
       </div>
       <div class="demo-body">
         <div class="demo-inputs">
+          <!-- First-paint contents only: presets.mjs is authoritative and
+               overwrites both panes as soon as it loads. -->
           <label class="io-label" for="schemaIn">Schema</label>
-          <textarea class="code-input schema-in" id="schemaIn" spellcheck="false"></textarea>
+          <textarea class="code-input schema-in" id="schemaIn" spellcheck="false">DEFINE TABLE user SCHEMAFULL;
+DEFINE FIELD name ON user TYPE string;
+DEFINE FIELD age ON user TYPE int;
+DEFINE FIELD email ON user TYPE option&lt;string&gt;;
+
+DEFINE TABLE post SCHEMAFULL;
+DEFINE FIELD title ON post TYPE string;
+DEFINE FIELD author ON post TYPE record&lt;user&gt;;
+
+DEFINE TABLE follows TYPE RELATION IN user OUT user SCHEMAFULL;
+DEFINE FIELD since ON follows TYPE datetime;
+
+DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
           <label class="io-label" for="queryIn">Query</label>
-          <textarea class="code-input query-in" id="queryIn" spellcheck="false"></textarea>
+          <textarea class="code-input query-in" id="queryIn" spellcheck="false">SELECT name, ssn FROM user WHERE age &gt; 18;</textarea>
         </div>
         <div class="demo-out">
           <div class="muted-h">Diagnostics · <span class="live-dot">live</span></div>
@@ -674,37 +688,35 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
   //  drawn as squiggles on a highlighted overlay behind each textarea.
   // =====================================================================
   (async function () {
-    const SCHEMA = "DEFINE TABLE user SCHEMAFULL;\nDEFINE FIELD name ON user TYPE string;\nDEFINE FIELD age ON user TYPE int;";
-    const PRESETS = [
-      { label: "Unknown field", schema: SCHEMA, query: "SELECT name, ssn FROM user;" },
-      { label: "Type mismatch", schema: SCHEMA, query: "UPDATE user SET age = 'old';" },
-      { label: "Bad comparison", schema: SCHEMA, query: "SELECT age > name FROM user;" },
-      { label: "Syntax error", schema: SCHEMA, query: "SELECT name FROM user WHERE (age > 18;" },
-      { label: "Valid", schema: SCHEMA, query: "SELECT name, age FROM user WHERE age > 18;" },
-    ];
     const tabs = document.getElementById("demoTabs"), status = document.getElementById("demoStatus"),
           schemaIn = document.getElementById("schemaIn"), queryIn = document.getElementById("queryIn"),
           diag = document.getElementById("demoDiag");
     if (!schemaIn || !queryIn) return;
     let analyzer = null;
 
-    // Fill the panes before anything async, so the section never paints empty.
-    schemaIn.value = PRESETS[0].schema;
-    queryIn.value = PRESETS[0].query;
-
-    const { attachSquiggleEditor, analyzePanes } = await import("/playground/editor.mjs");
+    // The panes' first-paint contents are in the markup, so the section never
+    // paints empty; `presets.mjs` is authoritative and overwrites them on load.
+    // One list, shared with /playground/ and asserted by harness.mjs — a preset
+    // that lived only here would only ever be checked here.
+    const [{ attachSquiggleEditor, analyzePanes, typeAnnotations }, { PRESETS }] = await Promise.all([
+      import("/playground/editor.mjs"),
+      import("/playground/presets.mjs"),
+    ]);
     const schemaEd = attachSquiggleEditor(schemaIn, { highlight: sgHighlight });
     const queryEd = attachSquiggleEditor(queryIn, { highlight: sgHighlight });
     const editors = { schema: schemaEd, query: queryEd };
 
+    const load = (p) => {
+      schemaIn.value = p.schema; queryIn.value = p.query;
+      schemaEd.refresh(); queryEd.refresh(); run(0);
+    };
     PRESETS.forEach((p) => {
       const b = document.createElement("button"); b.className = "demo-preset"; b.textContent = p.label;
-      b.addEventListener("click", () => {
-        schemaIn.value = p.schema; queryIn.value = p.query;
-        schemaEd.refresh(); queryEd.refresh(); run(0);
-      });
+      b.title = p.note || "";
+      b.addEventListener("click", () => load(p));
       tabs.insertBefore(b, status);
     });
+    load(PRESETS[0]);
 
     function render(list) {
       if (!Array.isArray(list) || list.length === 0) {
@@ -740,6 +752,8 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
         const panes = analyzePanes(analyzer, schemaIn.value, queryIn.value);
         schemaEd.setDiagnostics(panes.schema);
         queryEd.setDiagnostics(panes.query);
+        // Empty on a bundle without `sg_analyze2`: no chips, nothing else changes.
+        queryEd.setAnnotations(typeAnnotations(panes.statements));
         render(panes.all);
       }
       catch (e) { diag.innerHTML = `<div class="diag error"><div class="msg">analysis error</div></div>`; }

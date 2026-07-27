@@ -114,6 +114,14 @@
       .type-readout { color: var(--accent-2); font-family: var(--mono); }
       .type-readout:empty { display: none; }
 
+      .presets { display: flex; flex-wrap: wrap; gap: 6px; max-width: 1100px; margin-bottom: 14px; }
+      .preset {
+        font-family: var(--mono); font-size: 12px; color: var(--muted);
+        background: transparent; border: 1px solid var(--border); border-radius: 7px;
+        padding: 5px 11px; cursor: pointer; white-space: nowrap;
+      }
+      .preset:hover, .preset:focus-visible { color: var(--text); border-color: var(--accent); outline: none; }
+
       .squiggle { text-decoration: underline; text-decoration-style: wavy; text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
       .squiggle.err { text-decoration-color: var(--red); }
       .squiggle.warn { text-decoration-color: var(--amber); }
@@ -141,19 +149,34 @@
       The analyzer compiled to WebAssembly (wasm32-wasip1), running entirely
       in your browser. Edit the schema or query for live diagnostics — findings
       are underlined where they happen; hover a squiggle for the message, or
-      click a row below to jump to its span.
+      click a row below to jump to its span. Each statement's inferred response
+      type floats after it, and the one under your caret is echoed above.
     </p>
+
+    <div class="presets" id="presets"></div>
 
     <div class="grid">
       <div>
         <label for="schema">Schema (.surql)</label>
+        <!-- First-paint contents only: presets.mjs is authoritative and
+             overwrites both panes as soon as it loads. -->
         <textarea id="schema" spellcheck="false">DEFINE TABLE user SCHEMAFULL;
 DEFINE FIELD name ON user TYPE string;
-DEFINE FIELD email ON user TYPE string;</textarea>
+DEFINE FIELD age ON user TYPE int;
+DEFINE FIELD email ON user TYPE option&lt;string&gt;;
+
+DEFINE TABLE post SCHEMAFULL;
+DEFINE FIELD title ON post TYPE string;
+DEFINE FIELD author ON post TYPE record&lt;user&gt;;
+
+DEFINE TABLE follows TYPE RELATION IN user OUT user SCHEMAFULL;
+DEFINE FIELD since ON follows TYPE datetime;
+
+DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
       </div>
       <div>
         <label for="query">Query (.surql) <span class="type-readout" id="caretType"></span></label>
-        <textarea id="query" spellcheck="false">SELECT ssn FROM user;</textarea>
+        <textarea id="query" spellcheck="false">SELECT name, ssn FROM user WHERE age &gt; 18;</textarea>
       </div>
     </div>
 
@@ -164,16 +187,41 @@ DEFINE FIELD email ON user TYPE string;</textarea>
     <script type="module">
       import { createAnalyzer } from "./sg-analyzer.mjs";
       import { attachSquiggleEditor, analyzePanes, typeAnnotations } from "./editor.mjs";
+      import { PRESETS } from "./presets.mjs";
 
       const results = document.getElementById("results");
       const schemaEl = document.getElementById("schema");
       const queryEl = document.getElementById("query");
       const caretType = document.getElementById("caretType");
+      const presetBar = document.getElementById("presets");
 
       const editors = {
         schema: attachSquiggleEditor(schemaEl),
         query: attachSquiggleEditor(queryEl),
       };
+
+      // The same curated list the landing page shows, asserted against the
+      // shipped bundle by `harness.mjs`.
+      for (const preset of PRESETS) {
+        const button = document.createElement("button");
+        button.className = "preset";
+        button.type = "button";
+        button.textContent = preset.label;
+        if (preset.note) button.title = preset.note;
+        button.addEventListener("click", () => {
+          schemaEl.value = preset.schema;
+          queryEl.value = preset.query;
+          editors.schema.refresh();
+          editors.query.refresh();
+          run(0);
+        });
+        presetBar.appendChild(button);
+      }
+      // The markup's first-paint text is a placeholder; the list is the truth.
+      schemaEl.value = PRESETS[0].schema;
+      queryEl.value = PRESETS[0].query;
+      editors.schema.refresh();
+      editors.query.refresh();
 
       let analyzer;
 

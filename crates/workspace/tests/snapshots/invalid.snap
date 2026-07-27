@@ -17,3 +17,7 @@
     15  E2001
     17  E2001
     19  E2001
+
+== invalid/20_param_default.surql ==
+     9  E2001
+    15  E5002
