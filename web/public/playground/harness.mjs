@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createAnalyzer } from "./sg-analyzer.mjs";
 import { PRESETS } from "./presets.mjs";
+import { formatKindText } from "./typefmt.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const wasmBytes = readFileSync(join(here, "surrealguard_wasm.wasm"));
@@ -40,7 +41,24 @@ const fail = (msg) => {
   }
 }
 
-// --- the type-chip ABI -------------------------------------------------------
+// The type region's promise is that it never truncates. That is a property of
+// the formatter, not of the CSS: setting a kind across several lines may only
+// insert whitespace, never drop a character. Asserted at every width from
+// generous to cruel, on every type the presets actually produce.
+const WIDTHS = [120, 72, 48, 30, 24];
+function assertNoLoss(label, kind) {
+  const bare = (s) => s.replace(/\s+/g, "");
+  for (const w of WIDTHS) {
+    const set = formatKindText(kind, w);
+    if (bare(set) !== bare(kind)) {
+      fail(`${label}: formatting at width ${w} changed the type\n    in:  ${kind}\n    out: ${set}`);
+      return false;
+    }
+  }
+  return true;
+}
+
+// --- the type-region ABI -----------------------------------------------------
 // Feature-detected in the browser, required here: this harness exists to prove
 // the shipped bundle is the new one.
 if (!analyzer.hasTypes) {
@@ -92,6 +110,14 @@ for (const preset of PRESETS) {
       continue;
     }
   }
+
+  let lossless = true;
+  for (const s of first.statements) {
+    if (typeof s.response === "string" && s.response.length) {
+      lossless = assertNoLoss(`preset "${preset.label}"`, s.response) && lossless;
+    }
+  }
+  if (!lossless) continue;
 
   const types = first.statements.map((s) => s.response).join("  ·  ");
   console.log(`ok  ${preset.label.padEnd(18)} [${got}]${types ? `  ${types}` : ""}`);

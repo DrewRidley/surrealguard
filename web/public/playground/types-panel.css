@@ -1,0 +1,113 @@
+/* The inferred-response-type region, and the statement badges that point at it.
+ *
+ * One file, linked by both surfaces (/ and /playground/), because the two pages
+ * keep their own copies of the editor CSS and this is exactly the kind of thing
+ * that drifts. It leans only on custom properties both pages define — --mono,
+ * --border, --border-soft, --faint, --muted, --text, --accent — and spells out
+ * the surface colours, which are the same #0a0c10 on both.
+ *
+ * The one rule this file must never grow: no `text-overflow: ellipsis` and no
+ * `overflow: hidden` on `.sg-type`. A truncated type is the bug this region
+ * was built to fix. (The one-line source echo in `.sg-type-src` does clip —
+ * that is a quotation of the query, not the type.)
+ */
+
+/* --- statement badges over the editor ---------------------------------- */
+.sg-markers { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
+.sg-marker {
+  position: absolute; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 17px; height: 17px; padding: 0 4px;
+  font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums;
+  color: #7f8ba1; background: rgba(125, 211, 252, 0.07);
+  border: 1px solid rgba(125, 211, 252, 0.2); border-radius: 5px;
+  transition: color .12s, background .12s, border-color .12s;
+}
+.sg-marker.is-hot {
+  color: var(--text); background: rgba(139, 124, 255, 0.18); border-color: var(--accent);
+}
+
+/* --- the region below the query ---------------------------------------- */
+.sg-types {
+  margin-top: 16px;
+  background: #0a0c10;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.sg-types-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px; border-bottom: 1px solid var(--border-soft);
+  font-family: var(--mono); font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: .09em; color: var(--faint);
+}
+.sg-types-count { margin-left: auto; text-transform: none; letter-spacing: .04em; }
+.sg-types-list { list-style: none; margin: 0; padding: 2px 4px 6px; position: relative; }
+.sg-types-probe {
+  position: absolute; visibility: hidden; white-space: pre; pointer-events: none;
+  font-family: var(--mono); font-size: 12.5px;
+}
+.sg-types-empty {
+  padding: 16px 10px; font-family: var(--mono); font-size: 12px; color: var(--faint);
+}
+
+/* Rows are separated by a hairline and by real vertical room — the point of
+   moving the type down here was that it stops being crammed. */
+.sg-type-row {
+  padding: 13px 10px 15px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .12s;
+}
+.sg-type-row + .sg-type-row { border-top: 1px solid var(--border-soft); border-radius: 0 0 6px 6px; }
+.sg-type-row:hover, .sg-type-row.is-hot { background: rgba(255, 255, 255, 0.022); }
+.sg-type-row.is-active { background: rgba(139, 124, 255, 0.06); }
+.sg-type-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.sg-type-row.is-void { opacity: .62; }
+
+.sg-type-meta {
+  display: flex; align-items: center; gap: 9px; margin-bottom: 9px; min-width: 0;
+  font-family: var(--mono);
+}
+.sg-type-idx {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 17px; height: 17px; padding: 0 4px; border-radius: 5px;
+  font-size: 10.5px; font-variant-numeric: tabular-nums; color: #7f8ba1;
+  background: rgba(125, 211, 252, 0.07); border: 1px solid rgba(125, 211, 252, 0.2);
+}
+.sg-type-row.is-active .sg-type-idx,
+.sg-type-row.is-hot .sg-type-idx {
+  color: var(--text); background: rgba(139, 124, 255, 0.18); border-color: var(--accent);
+}
+.sg-type-kind {
+  flex: none; font-size: 10px; letter-spacing: .09em; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px;
+}
+/* The statement's own opening words, so a row identifies itself among three
+   SELECTs without anyone counting badges. Clipped to one line on purpose. */
+.sg-type-src {
+  flex: 1; min-width: 0; font-size: 11.5px; color: #5f6878;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* The type itself. Wraps, never clips: `pre-wrap` keeps the formatter's line
+   breaks and indentation, `anywhere` is the backstop for a single token longer
+   than the column. */
+.sg-type {
+  margin: 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.65;
+  color: #cfd6e4; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2;
+}
+.sg-type code { font: inherit; color: inherit; }
+.sg-type-void { color: var(--faint); font-style: italic; }
+
+/* type tokens — the same palette the editor overlay uses for source */
+.sg-type .kt { color: #7dd3fc; }  /* builtin kind: string, int, datetime  */
+.sg-type .kn { color: #5eead4; }  /* a name from the schema: record<user> */
+.sg-type .kf { color: #d7dcea; }  /* field key                            */
+.sg-type .kl { color: #86efac; }  /* literal                              */
+.sg-type .kp { color: #6d7688; }  /* punctuation: < > { } , : |           */
+
+@media (max-width: 640px) {
+  .sg-types-head { padding: 8px 11px; }
+  .sg-types-list { padding: 2px 2px 5px; }
+  .sg-type-row { padding: 12px 8px 13px; }
+  .sg-type { font-size: 12px; }
+}

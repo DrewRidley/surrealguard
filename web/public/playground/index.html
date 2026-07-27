@@ -6,6 +6,7 @@
 <meta name="color-scheme" content="dark" />
 <style>html{background:#0a0b0e}</style>
     <title>SurrealGuard Playground</title>
+    <link rel="stylesheet" href="./types-panel.css" />
     <style>
       :root {
         /* Dark only, deliberately — see web/public/styles.css. */
@@ -35,12 +36,11 @@
       }
       h1 { font-size: 18px; margin: 0 0 4px; }
       p.sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; max-width: 78ch; line-height: 1.6; }
-      /* Panes stack rather than sit side by side: a type chip is drawn after
-         the statement it describes, and half a 1100px column is not enough
-         line for `array<{ id: record<follows>, in: record<user>, … }>` to fit
-         beside a 60-character RELATE. Full-width lines are what make the chip
-         readable instead of an ellipsis. */
-      .grid { display: grid; gap: 16px; max-width: 1200px; }
+      /* Panes stack rather than sit side by side: the query wants the whole
+         column, and the inferred type sits directly under it in a region of
+         its own (`.sg-types`, types-panel.css) that can take as many lines as
+         a type needs. */
+      .grid { display: grid; gap: 24px; max-width: 1200px; }
       label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
       .results {
         max-width: 1200px;
@@ -100,25 +100,8 @@
       #schema { min-height: 270px; }
       .sg-editor > textarea::selection { background: rgba(167,139,250,.35); }
 
-      /* --- layer three: inferred-type chips. Absolutely positioned over the
-             wrapper from live client rects, never inside the mirror — the
-             mirror must hold exactly the textarea's characters or the caret
-             stops lining up with what is drawn. --- */
-      .sg-chips { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
-      /* inline-block, not inline-flex: `text-overflow: ellipsis` has no effect
-         on a flex container, and a chip with no room must end in "…" rather
-         than be sliced mid-glyph. Vertical centring comes from a line-height
-         set to the measured line height. */
-      .sg-chip {
-        position: absolute; display: inline-block;
-        font-family: var(--mono); font-size: 11px;
-        color: #9db2d0; background: rgba(125,211,252,.09);
-        border: 1px solid rgba(125,211,252,.22); border-radius: 5px;
-        padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      }
-      .sg-chip::before { content: "\2192\00a0"; color: var(--faint); }
-      .type-readout { color: var(--accent-2); font-family: var(--mono); }
-      .type-readout:empty { display: none; }
+      /* Layer three — the statement-number badges — and the type region below
+         the editor both live in types-panel.css, shared with the landing page. */
 
       .presets { display: flex; flex-wrap: wrap; gap: 6px; max-width: 1200px; margin-bottom: 14px; }
       .preset {
@@ -155,8 +138,9 @@
       The analyzer compiled to WebAssembly (wasm32-wasip1), running entirely
       in your browser. Edit the schema or query for live diagnostics — findings
       are underlined where they happen; hover a squiggle for the message, or
-      click a row below to jump to its span. Each statement's inferred response
-      type floats after it, and the one under your caret is echoed above.
+      click a row below to jump to its span. Every statement's inferred response
+      type is set out in full under the query, formatted across as many lines as
+      it takes.
     </p>
 
     <div class="presets" id="presets"></div>
@@ -181,8 +165,11 @@ DEFINE FIELD since ON follows TYPE datetime;
 DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
       </div>
       <div>
-        <label for="query">Query (.surql) <span class="type-readout" id="caretType"></span></label>
+        <label for="query">Query (.surql)</label>
         <textarea id="query" spellcheck="false">SELECT name, ssn FROM user WHERE age &gt; 18;</textarea>
+        <!-- Filled by types-panel.mjs: one row per statement, directly under
+             the query it describes. -->
+        <div id="queryTypes"></div>
       </div>
     </div>
 
@@ -192,19 +179,26 @@ DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
 
     <script type="module">
       import { createAnalyzer } from "./sg-analyzer.mjs";
-      import { attachSquiggleEditor, analyzePanes, typeAnnotations } from "./editor.mjs";
+      import { attachSquiggleEditor, analyzePanes } from "./editor.mjs";
+      import { createTypePanel } from "./types-panel.mjs";
       import { PRESETS } from "./presets.mjs";
 
       const results = document.getElementById("results");
       const schemaEl = document.getElementById("schema");
       const queryEl = document.getElementById("query");
-      const caretType = document.getElementById("caretType");
       const presetBar = document.getElementById("presets");
 
       const editors = {
         schema: attachSquiggleEditor(schemaEl),
         query: attachSquiggleEditor(queryEl),
       };
+
+      // The type region under the query. Hovering a row lights that statement's
+      // badge in the editor; clicking one selects the statement itself.
+      const types = createTypePanel(document.getElementById("queryTypes"), {
+        onPick: (statement) => editors.query.reveal(statement.start, statement.end),
+        onHover: (i) => editors.query.setActiveMarker(i),
+      });
 
       // The same curated list the landing page shows, asserted against the
       // shipped bundle by `harness.mjs`.
@@ -277,15 +271,12 @@ DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
         });
       }
 
-      // The type of the statement the caret sits in, echoed into the pane's
-      // label. A chip can be scrolled out of view, and on a touch device there
-      // is no hover at all — the caret always has an answer.
-      function showCaretType() {
-        const ann = editors.query.annotationAtCaret();
-        caretType.textContent = ann ? `→ ${ann.text}` : "";
-      }
+      // Moving the caret marks the row for the statement it sits in. This is
+      // how the mapping works on a touch device, where there is no hover but
+      // there is always a caret.
+      const markCaret = () => types.setCaret(queryEl.selectionStart);
       document.addEventListener("selectionchange", () => {
-        if (document.activeElement === queryEl) showCaretType();
+        if (document.activeElement === queryEl) markCaret();
       });
 
       let timer;
@@ -297,10 +288,11 @@ DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
             const panes = analyzePanes(analyzer, schemaEl.value, queryEl.value);
             editors.schema.setDiagnostics(panes.schema);
             editors.query.setDiagnostics(panes.query);
-            // Empty on a module without `sg_analyze2`: no chips, everything
-            // else unchanged.
-            editors.query.setAnnotations(typeAnnotations(panes.statements));
-            showCaretType();
+            // Empty on a module without `sg_analyze2`: no badges and an empty
+            // type region, everything else unchanged.
+            editors.query.setMarkers(panes.statements);
+            types.update(panes.statements, queryEl.value);
+            markCaret();
             render(panes.all);
           } catch (err) {
             results.innerHTML = `<span class="code error">wasm error</span> ${escapeHtml(

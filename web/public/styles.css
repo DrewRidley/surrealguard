@@ -516,23 +516,12 @@ h1 .grad {
 }
 .sg-editor > .code-input::selection { background: rgba(139,124,255,0.35); }
 
-/* --- layer three: inferred-type chips ---------------------------------
+/* --- layer three: the statement-number badges -------------------------
    Absolutely positioned over the wrapper from live client rects, never
    inside the mirror: the mirror has to hold exactly the textarea's own
-   characters or the caret stops lining up with what is drawn. */
-.sg-chips { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
-/* inline-block, not inline-flex: `text-overflow: ellipsis` has no effect on a
-   flex container, and a chip with no room must end in "…" rather than be
-   sliced mid-glyph. Vertical centring comes from a line-height set to the
-   measured line height. */
-.sg-chip {
-  position: absolute; display: inline-block;
-  font-family: var(--mono); font-size: 11.5px;
-  color: #9db2d0; background: rgba(125,211,252,0.09);
-  border: 1px solid rgba(125,211,252,0.22); border-radius: 5px;
-  padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.sg-chip::before { content: "\2192\00a0"; color: #5b6472; }
+   characters or the caret stops lining up with what is drawn. The badges
+   and the type region they point at are styled in
+   /playground/types-panel.css, shared with the standalone playground. */
 
 /* --- the hero "live Guard" panel --- */
 .guard {

@@ -13,6 +13,7 @@
 <meta name="theme-color" content="#0a0b0e" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
 <link rel="stylesheet" href="/styles.css" />
+<link rel="stylesheet" href="/playground/types-panel.css" />
 </head>
 <body>
 
@@ -88,7 +89,7 @@
     <div class="sec-head">
       <div class="kicker">// try it</div>
       <h2 class="reveal">See the analyzer think</h2>
-      <p class="reveal">Real diagnostics from the actual engine. Pick a query — SurrealGuard checks it against the schema, and floats each statement's inferred response type beside it.</p>
+      <p class="reveal">Real diagnostics from the actual engine. Pick a query — SurrealGuard checks it against the schema and sets out each statement's inferred response type in full, below the query.</p>
     </div>
     <div class="demo reveal">
       <div class="demo-tabs" id="demoTabs">
@@ -115,6 +116,9 @@ DEFINE FIELD since ON follows TYPE datetime;
 DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
           <label class="io-label" for="queryIn">Query</label>
           <textarea class="code-input query-in" id="queryIn" spellcheck="false">SELECT name, ssn FROM user WHERE age &gt; 18;</textarea>
+          <!-- Filled by types-panel.mjs: one row per statement, directly under
+               the query it describes. -->
+          <div id="queryTypes"></div>
         </div>
         <div class="demo-out">
           <div class="muted-h">Diagnostics · <span class="live-dot">live</span></div>
@@ -709,13 +713,27 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
     // paints empty; `presets.mjs` is authoritative and overwrites them on load.
     // One list, shared with /playground/ and asserted by harness.mjs — a preset
     // that lived only here would only ever be checked here.
-    const [{ attachSquiggleEditor, analyzePanes, typeAnnotations }, { PRESETS }] = await Promise.all([
+    const [{ attachSquiggleEditor, analyzePanes }, { createTypePanel }, { PRESETS }] = await Promise.all([
       import("/playground/editor.mjs"),
+      import("/playground/types-panel.mjs"),
       import("/playground/presets.mjs"),
     ]);
     const schemaEd = attachSquiggleEditor(schemaIn, { highlight: sgHighlight });
     const queryEd = attachSquiggleEditor(queryIn, { highlight: sgHighlight });
     const editors = { schema: schemaEd, query: queryEd };
+
+    // The inferred type gets a region of its own under the query — it is the
+    // thing this section is demonstrating, and a chip at the end of the line
+    // could only ever show the short half of it.
+    const types = createTypePanel(document.getElementById("queryTypes"), {
+      highlight: sgHighlight,
+      onPick: (statement) => queryEd.reveal(statement.start, statement.end),
+      onHover: (i) => queryEd.setActiveMarker(i),
+    });
+    const markCaret = () => types.setCaret(queryIn.selectionStart);
+    document.addEventListener("selectionchange", () => {
+      if (document.activeElement === queryIn) markCaret();
+    });
 
     const showPreset = (p) => {
       schemaIn.value = p.schema; queryIn.value = p.query;
@@ -768,8 +786,11 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
         const panes = analyzePanes(analyzer, schemaIn.value, queryIn.value);
         schemaEd.setDiagnostics(panes.schema);
         queryEd.setDiagnostics(panes.query);
-        // Empty on a bundle without `sg_analyze2`: no chips, nothing else changes.
-        queryEd.setAnnotations(typeAnnotations(panes.statements));
+        // Empty on a bundle without `sg_analyze2`: no badges and an empty type
+        // region, nothing else changes.
+        queryEd.setMarkers(panes.statements);
+        types.update(panes.statements, queryIn.value);
+        markCaret();
         render(panes.all);
       }
       catch (e) { diag.innerHTML = `<div class="diag error"><div class="msg">analysis error</div></div>`; }
