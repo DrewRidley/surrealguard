@@ -1,24 +1,73 @@
 //! `array::filter` function analysis: `array::filter(array, closure) -> array`.
 //!
-//! The predicate closure isn't typed yet, but it doesn't need to be for the
-//! return type: filtering preserves the input array's type (the length
-//! bound is dropped — filtering may remove elements).
+//! Filtering preserves the input array's element kind and drops its length
+//! bound — and, when the predicate is a closure, *narrows* that element by
+//! whatever the predicate proves.
+//!
+//! That last part is the same fact a `WHERE` states about a SELECT's surviving
+//! rows, written one abstraction down: every surviving element satisfies the
+//! predicate, so the predicate is a positive guard over the element. The two
+//! spellings had different answers only because the row side had a recognizer
+//! and this side had nothing:
+//!
+//! ```text
+//! (SELECT name, email FROM user WHERE email != NONE)      -> array<{email: string, …}>
+//! (SELECT name, email FROM user).filter(|$r| $r.email != NONE)
+//!                                                          -> array<{email: option<string>, …}>
+//! ```
+//!
+//! Now both go through `guard_of` + `Facts`, so they agree — and so do the
+//! spellings of the predicate that no recognizer ever accepted
+//! (`!($r.email = NONE)`, `type::is_string($r.email)`, a parenthesized any of
+//! them).
 
 use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::facts::{guard_of, refined_under, PlaceRoot, RootedKind};
 
 pub(crate) fn analyze_array_filter(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     args: &[Kind],
 ) -> Kind {
-    let _ = (ctx, call);
-    match args {
-        [Kind::Array(element, _), ..] => Kind::Array(element.clone(), None),
-        _ => Kind::Any,
+    let [Kind::Array(element, _), ..] = args else {
+        return Kind::Any;
+    };
+    let element = filtered_element(ctx, call, element.as_ref().clone());
+    Kind::Array(Box::new(element), None)
+}
+
+/// The element kind of the surviving elements: the input element, refined by
+/// what a single-parameter predicate closure proves about its parameter.
+///
+/// Widening is the safe direction, so every step that cannot be proven returns
+/// the element unchanged: a predicate that is not a one-parameter closure, a
+/// guard that claims nothing, a claim about a place the element does not carry.
+fn filtered_element(ctx: &mut AnalysisContext<'_>, call: &ast::Call, element: Kind) -> Kind {
+    if !crate::analyzer::flow::narrow::use_fact_layer() {
+        return element;
     }
+    let Some(predicate) = call.args.get(1) else {
+        return element;
+    };
+    let ast::Expr::Closure(closure) = &predicate.node else {
+        return element;
+    };
+    // Exactly one parameter: `array::filter` calls the predicate with the
+    // element alone, and a second parameter would name something this scope
+    // does not bind.
+    let [(param, _)] = closure.params.as_slice() else {
+        return element;
+    };
+    let root = PlaceRoot::Param(param.node.clone());
+    let guard = guard_of(&closure.body.node, true, Some(ctx.env()));
+    let facts = guard.facts(&RootedKind {
+        root: root.clone(),
+        kind: &element,
+    });
+    refined_under(element, &root, &facts)
 }
 
 #[cfg(test)]

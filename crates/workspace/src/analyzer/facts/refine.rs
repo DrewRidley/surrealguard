@@ -39,7 +39,80 @@ use surrealdb_types::{Kind, KindLiteral};
 use crate::lattice::{meet, subtract, KindMeet};
 
 use super::guard::{Atom, Collection, Guard, OrdOp};
-use super::place::Place;
+use super::place::{Place, PlaceRoot};
+
+/// One place root standing for one kind: the whole environment a scope with a
+/// single subject has.
+///
+/// A closure's parameter is that scope — `|$r| $r.email != NONE` says
+/// everything it says about `$r`, and `$r`'s kind is the collection's element.
+/// So is a `DEFINE FIELD` clause's `$value`. The oracle is the same one the
+/// flow environment and the projected row implement; the only difference is
+/// how few places it can answer.
+pub(crate) struct RootedKind<'a> {
+    /// The root this scope binds.
+    pub(crate) root: PlaceRoot,
+    /// The kind bound to it.
+    pub(crate) kind: &'a Kind,
+}
+
+impl KindOracle for RootedKind<'_> {
+    fn kind_of(&self, place: &Place) -> Option<Kind> {
+        if place.root != self.root {
+            return None;
+        }
+        kind_at_path(self.kind, &place.field_path()?)
+    }
+}
+
+/// The kind at `path` inside `kind`, walking object literals.
+///
+/// Stops at anything that is not a literal object: a path that reads through
+/// an `option<{…}>` or a record link names a location this layer cannot step
+/// without the schema, and answering `None` there is the same
+/// prove-or-stay-silent rule the rest of the module keeps.
+pub(crate) fn kind_at_path(kind: &Kind, path: &[String]) -> Option<Kind> {
+    let Some((first, rest)) = path.split_first() else {
+        return Some(kind.clone());
+    };
+    let Kind::Literal(KindLiteral::Object(fields)) = kind else {
+        return None;
+    };
+    kind_at_path(fields.get(first)?, rest)
+}
+
+/// `kind` with every refinement `facts` proves about a place rooted at `root`
+/// applied at that place's field path.
+///
+/// Tighten-only, by [`Refinement::apply`]'s contract: a claim that does not
+/// tighten the leaf, or names a path the kind does not carry, changes nothing.
+pub(crate) fn refined_under(kind: Kind, root: &PlaceRoot, facts: &Facts) -> Kind {
+    let mut kind = kind;
+    for (place, refinement) in facts.iter() {
+        if place.root != *root {
+            continue;
+        }
+        let Some(path) = place.field_path() else {
+            continue;
+        };
+        kind = refine_at_path(kind, &path, refinement);
+    }
+    kind
+}
+
+/// `kind` with `refinement` applied at `path`.
+fn refine_at_path(kind: Kind, path: &[String], refinement: &Refinement) -> Kind {
+    let Some((first, rest)) = path.split_first() else {
+        return refinement.apply(&kind).unwrap_or(kind);
+    };
+    let Kind::Literal(KindLiteral::Object(mut fields)) = kind else {
+        return kind;
+    };
+    if let Some(child) = fields.remove(first) {
+        fields.insert(first.clone(), refine_at_path(child, rest, refinement));
+    }
+    Kind::Literal(KindLiteral::Object(fields))
+}
 
 /// How the interpreter looks up the kind currently in force for a place.
 ///

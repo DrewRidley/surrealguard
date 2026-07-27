@@ -890,6 +890,36 @@ table webhook_event  [schemafull]
   diag    69:36 I7014     Hint
   diag    71:58 I7014     Hint
 
+== source: queries/44_closure_guards.surql ==
+  source response       : { kept: array<{ person: option<record<person>>, username: string }>, kept_and: array<{ person: option<record<person>>, username: string }>, kept_is_not: array<{ person: option<record<person>>, username: string }>, kept_method: array<{ person: option<record<person>>, username: string }>, kept_negated: array<{ person: option<record<person>>, username: string }>, kept_opaque: array<{ person: option<record<person>>, username: string }>, kept_paren: array<{ person: option<record<person>>, username: string }>, non_null_reasons: array<option<string | null>>, set_reasons: array<option<string | null>>, where_rows: array<{ person: record<person>, username: string }> }
+  stmt     15:1 let              : (no response)
+  stmt     18:1 let              : (no response)
+  stmt     21:1 let              : (no response)
+  stmt     24:1 let              : (no response)
+  stmt     27:1 let              : (no response)
+  stmt     30:1 let              : (no response)
+  stmt     33:1 let              : (no response)
+  stmt     36:1 let              : (no response)
+  stmt     40:1 let              : (no response)
+  stmt     44:1 let              : (no response)
+  stmt     46:1 let              : (no response)
+  stmt     50:1 let              : (no response)
+  stmt     52:1 return           : { kept: array<{ person: option<record<person>>, username: string }>, kept_and: array<{ person: option<record<person>>, username: string }>, kept_is_not: array<{ person: option<record<person>>, username: string }>, kept_method: array<{ person: option<record<person>>, username: string }>, kept_negated: array<{ person: option<record<person>>, username: string }>, kept_opaque: array<{ person: option<record<person>>, username: string }>, kept_paren: array<{ person: option<record<person>>, username: string }>, non_null_reasons: array<option<string | null>>, set_reasons: array<option<string | null>>, where_rows: array<{ person: record<person>, username: string }> }
+  let      15:5 $rows            : array<{ person: option<record<person>>, username: string }>
+  let      18:5 $where_rows      : array<{ person: record<person>, username: string }>
+  let      21:5 $kept            : array<{ person: option<record<person>>, username: string }>
+  let      24:5 $kept_is_not     : array<{ person: option<record<person>>, username: string }>
+  let      27:5 $kept_negated    : array<{ person: option<record<person>>, username: string }>
+  let      30:5 $kept_paren      : array<{ person: option<record<person>>, username: string }>
+  let      33:5 $kept_and        : array<{ person: option<record<person>>, username: string }>
+  let      36:5 $kept_method     : array<{ person: option<record<person>>, username: string }>
+  let      40:5 $kept_opaque     : array<{ person: option<record<person>>, username: string }>
+  let      44:5 $reasons         : array<option<string | null>>
+  let      46:5 $set_reasons     : array<option<string | null>>
+  let      50:5 $non_null_reasons : array<option<string | null>>
+  diag    15:43 I7014     Hint
+  diag    44:54 I7014     Hint
+
 == source: queries/50_aggregates.surql ==
   stmt      4:1 select           : array<{ count: int }>
        modifier group      row_preserving=false
