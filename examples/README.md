@@ -5,39 +5,62 @@ Real, type-checked demos of the round-trip:
 **schema (`.surql`) → `surrealguard generate` → typed queries.**
 
 `surrealguard generate` scans your host files (`.ts`, `.tsx`, `.svelte`, …) for
-query text, analyzes each query against your `schema/*.surql`, and writes
-`surrealguard.generated.ts` — a module augmentation that keys every query by its
-exact text with its `{ result; params }` types. You import the entry points
-**from that generated file**, so the augmentation loads with them and everything
-is typed: the result rows, and the params argument (required exactly when the
-query reads params).
+query text — `db.query("…")`, `defineQuery("…")`, `defineLive("…")` — analyzes
+each against your `schema/*.surql`, and writes a module augmentation that keys
+every query by its exact text with its `{ result; params }` types. You import
+the entry points **from that generated file**, so the augmentation loads with
+them and everything is typed: the result rows, and the params argument (required
+exactly when the query reads params).
 
 ## Examples
 
 | Example | What it shows |
 | --- | --- |
-| [`basic/`](./basic) | Vanilla TypeScript: `createClient` + `defineQuery` + `db.run` / `db.watch`. |
-| [`sveltekit/`](./sveltekit) | Svelte 5 / SvelteKit: `preload` in `load`, `createLive` in the component, a shared query in a `.svelte.ts` module. |
+| [`basic/`](./basic) | Vanilla TypeScript. Starts with a bare `db.query("…")`; then `defineQuery` + `db.run` / `db.watch` for what a named query buys. |
+| [`sveltekit/`](./sveltekit) | Svelte 5 / SvelteKit. `/` is `db.query` in a component and nothing else; `/live` adds `preload` in `load` + `createLive` in the component, plus a shared query in a `.svelte.ts` module. |
 
 Both type-check as part of `pnpm -r run typecheck`.
 
-## A query is a value
+## Start with `db.query`
 
-Query text lives in exactly one file:
+There is no wrapper to learn. The plain literal form is fully typed:
+
+```ts
+const [people] = await db.query("SELECT id, name, age, team FROM person");
+//     ^? Array<{ age: number; id: RecordId<"person">; name: string; team: RecordId<"team"> }>
+```
+
+## Then `defineQuery`, when a name earns its keep
+
+`defineQuery` reads the same registry through the same conditional generic, so
+it adds no type safety. It adds a *value*, written in one file:
 
 ```ts
 // src/queries.ts
-import { defineQuery, defineLive } from "../surrealguard.generated";
+import { defineQuery, defineLive } from "./surrealguard.generated";
 
 export const allPeople  = defineQuery("SELECT id, name, age, team FROM person");
 export const peopleOf   = defineQuery("SELECT id, name FROM person WHERE team = $team");
 export const livePeople = defineLive("SELECT id, name, age, team FROM person");
 ```
 
-Everything else imports the *value*. That is what stops an SSR seed and the
+Everything else imports the value. That is what stops an SSR seed and the
 component that consumes it from drifting apart byte-for-byte and silently
 missing the cache — the failure the SvelteKit example used to have built in,
-with the same `SELECT` written out in both `+page.ts` and `+page.svelte`.
+with the same `SELECT` written out in both `+page.ts` and `+page.svelte`. It is
+also what `db.run` (which unwraps a single-statement result), `db.watch` and
+`db.invalidate` take.
+
+## Where the generated file goes
+
+`generate` with no `--out` writes to the **workspace root**, which is not where
+either example imports it from. Each project pins the path in `package.json`, so
+there is one command and one location:
+
+| Example | `--out` | Imported as |
+| --- | --- | --- |
+| `basic/` | `src/surrealguard.generated.ts` | `./surrealguard.generated` |
+| `sveltekit/` | `src/lib/surrealguard.generated.ts` | `$lib/surrealguard.generated` |
 
 ## Run the round-trip
 
@@ -51,14 +74,16 @@ CARGO_TARGET_DIR=/tmp/sg cargo build --release -p surrealguard
 
 # 2. Generate the typed registry from the schema + the project's queries.
 cd examples/basic
-/tmp/sg/release/surrealguard generate --out surrealguard.generated.ts
+/tmp/sg/release/surrealguard generate --out src/surrealguard.generated.ts
 
 # 3. Type-check — the generated types make everything typed.
 cd ../..
 pnpm --filter @surrealguard-example/basic run typecheck
 ```
 
-Both examples' committed `surrealguard.generated.ts` files are byte-identical to
+(For `examples/sveltekit` the flag is `--out src/lib/surrealguard.generated.ts`.)
+
+Both examples' committed generated files are byte-identical to
 what step 2 produces, so you can verify the round-trip by running it and
 checking `git diff` is empty.
 
@@ -87,7 +112,7 @@ nothing — and the compiler was happy. Both examples now construct the paramete
 properly:
 
 ```ts
-import { RecordId } from "../surrealguard.generated";
+import { RecordId } from "./surrealguard.generated";
 await db.run(peopleOf, { team: new RecordId("team", "red") });
 ```
 
@@ -114,6 +139,13 @@ which degrades to `unknown[]` — never `any`.
 ## Type-checking
 
 `examples/basic` runs `tsc`. `examples/sveltekit` runs `svelte-check`, so its
-`.svelte` components are checked too — including that `people.data` really is
-`Array<{ id: \`person:${string}\`; name: string; age: number }>` inside the
-`{#each}`.
+`.svelte` components are checked too — including that a bare `db.query("…")` in
+`src/routes/+page.svelte` really resolves the row type inside the `{#each}`, and
+that `people.data` in `src/routes/live/+page.svelte` really is
+`Array<{ age: number; id: \`person:${string}\`; name: string; team: \`team:${string}\` }>`.
+
+A `.svelte` claim has to be checked by `svelte-check`; `tsc` on a `.ts` file
+proves nothing about it. In particular a `<script>` **without** `lang="ts"` is
+not typechecked at all — `svelte-check` reports zero errors on
+`people[0].nope.definitely.not.a.field` — which is why every snippet in these
+docs carries `lang="ts"`.

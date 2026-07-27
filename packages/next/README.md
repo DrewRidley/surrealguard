@@ -1,56 +1,62 @@
 # @surrealguard/next
 
-Next.js / React bindings for SurrealGuard. Typed queries as hooks, with the
-query text written exactly once.
+Next.js / React bindings for SurrealGuard.
+
+**You may not need this package.** The default App Router pattern — await the
+query in a Server Component, ship zero client JS — is the typed client on its
+own:
 
 ```tsx
-"use client";
-import { useLive } from "@surrealguard/next";
-import { livePeople } from "@/lib/queries";
+// app/people/page.tsx
+import { getDb } from "@/lib/db.server";
 
-export function People() {
-  const people = useLive(livePeople);
-  return <ul>{people.data.map((p) => <li key={p.id}>{p.name}</li>)}</ul>;
+export default async function Page() {
+  const [people] = await getDb().query("SELECT id, name, age FROM person");
+  return <ul>{people.map((p) => <li key={String(p.id)}>{p.name}</li>)}</ul>;
 }
 ```
 
-`people.data` is ``Array<{ id: `person:${string}`; name: string; age: number }>``,
-inferred from your schema.
+`p.name` is a `string` and `p.nope` is a compile error, inferred from your
+schema. No provider, no hook, no wrapper around the string.
 
-## Install
-
-```sh
-npm install @surrealguard/next @surrealguard/client surrealdb
-```
-
-## Generate
-
-SurrealGuard reads your schema and writes one module holding the typed client
-and the query registry. Write it where your `@/` alias points — `src/` in a
-`create-next-app` project with a `src` directory, the project root without one
-(check `paths` in `tsconfig.json`):
-
-```sh
-npx surrealguard generate --out src/surrealguard.generated.ts
-```
-
-Re-run it whenever the schema or a query changes, or leave `--watch` running.
-Commit the generated module: it is what makes a fresh checkout type-check
-without a build step.
+What this package adds is *client-side reactive* state: a live query that
+re-renders as rows change, and a way to seed one from the server without naming
+the query twice. Reach for it when you want that.
 
 ## Setup
 
-```ts
-// lib/queries.ts — the one place query text lives
-import { defineQuery, defineLive } from "@/surrealguard.generated";
+Three steps, and skipping any of them yields `any` with no error on your own
+code — see [When everything is `any`](#when-everything-is-any).
 
-export const allPeople  = defineQuery("SELECT id, name, age FROM person");
-export const addPerson  = defineQuery("CREATE person SET name = $name, joined = $joined");
-export const livePeople = defineLive("SELECT id, name, age FROM person");
-export const liveTeam   = defineLive("SELECT id, name FROM person WHERE team = $team");
+**1. Install.** All three, including `@surrealguard/client`: the generated file
+augments that module *by name*, and if the name does not resolve the whole
+registry is silently dropped.
+
+```sh
+npm install @surrealguard/next @surrealguard/client surrealdb
+npm install -D surrealguard
 ```
 
-### The server client must be per-request
+**2. Generate where your `@/` alias points.** Bare `generate` writes to the
+workspace root; check `paths` in `tsconfig.json` and match it. A
+`create-next-app` project with a `src` directory maps `@/*` to `./src/*`:
+
+```sh
+npx surrealguard generate --out src/surrealguard.generated.ts   # with src/
+npx surrealguard generate --out surrealguard.generated.ts       # without src/
+```
+
+Put it in `package.json` so the path is written once:
+
+```json
+{ "scripts": { "generate": "surrealguard generate --out src/surrealguard.generated.ts" } }
+```
+
+Commit the generated module — it is what makes a fresh checkout type-check
+without a build step.
+
+**3. Create the clients.** Next needs two, and this is the one piece of genuine
+ceremony in the setup.
 
 ```ts
 // lib/db.server.ts
@@ -71,10 +77,8 @@ into the server runtime, so one connection — one auth session, one cache — w
 be shared by every concurrent request and every user, and any `signin()` would
 mutate global state for everyone. React's `cache()` scopes it to a request.
 
-### The browser client
-
 ```tsx
-// app/providers.tsx
+// app/providers.tsx — only if you use the hooks below
 "use client";
 import { SurrealGuardProvider } from "@surrealguard/next";
 import { createClient } from "@/surrealguard.generated";
@@ -87,29 +91,56 @@ export function Providers({ children }: { children: React.ReactNode }) {
 ```
 
 A module-level client is correct here: the browser is one user, one session.
+`SurrealGuardProvider` is how `useLive` / `useQuery` / `useMutation` find a
+client; each also takes `{ client }` directly if you would rather not use
+context.
 
-## Reading data in a Server Component
+Import `createClient` **from the generated file** in both. That import is what
+loads the registry augmentation; importing from `@surrealguard/client` compiles
+fine and gives you `unknown[]` forever.
 
-The default App Router pattern — await it in an RSC, ship zero client JS —
-needs nothing from this package:
+## Reading data on the server
+
+`query` resolves the per-statement tuple, exactly as SurrealDB returns it:
 
 ```tsx
-// app/people/page.tsx
-import { getDb } from "@/lib/db.server";
-import { allPeople } from "@/lib/queries";
-
-export default async function Page() {
-  const people = await getDb().runJson(allPeople);
-  return <ul>{people.map((p) => <li key={p.id}>{p.name}</li>)}</ul>;
-}
+const [people] = await getDb().query("SELECT id, name, age FROM person");
+const [red] = await getDb().query("SELECT id, name FROM person WHERE team = $team", {
+  team: new RecordId("team", "red"),
+});
 ```
 
-Use `runJson`, not `run`, for anything you pass to a client component. An RSC
-boundary accepts only plain values and offers no transport hook, so a `RecordId`
-instance crossing it throws *"Only plain objects can be passed to Client
-Components"*. `runJson` gives you `` `person:${string}` `` and ISO strings.
+Anything you pass **to a client component** must go through `runJson` (or a
+named query and `runJson`), not `run`/`query`. An RSC boundary accepts only
+plain values and offers no transport hook, so a `RecordId` instance crossing it
+throws *"Only plain objects can be passed to Client Components"*. `runJson`
+gives you `` `person:${string}` `` and ISO strings:
+
+```tsx
+const people = await getDb().runJson(allPeople);
+//    ^? Array<{ id: `person:${string}`; name: string; joined: string }>
+```
+
+## Naming queries — for when two places must agree
+
+`defineQuery` / `defineLive` read the same registry through the same conditional
+generic as `db.query`, so they add no type safety. They add a *value*: written
+once, imported by both the Server Component that seeds a query and the client
+component that subscribes to it, so the two cannot drift apart.
+
+```ts
+// lib/queries.ts
+import { defineQuery, defineLive } from "@/surrealguard.generated";
+
+export const allPeople  = defineQuery("SELECT id, name, joined FROM person");
+export const addPerson  = defineQuery("CREATE person SET name = $name, joined = $joined");
+export const livePeople = defineLive("SELECT id, name, joined FROM person");
+export const liveTeam   = defineLive("SELECT id, name FROM person WHERE team = $team");
+```
 
 ## Seeding a live client component — `preload`
+
+This is the case that genuinely needs the package.
 
 ```tsx
 // app/people/page.tsx  (Server Component)
@@ -129,8 +160,9 @@ export default async function Page() {
 "use client";
 import { useLive, useMutation, type Preloaded, type Json } from "@surrealguard/next";
 import { addPerson, allPeople, livePeople } from "@/lib/queries";
+import type { RecordId } from "@/surrealguard.generated";
 
-type Person = Json<{ id: string; name: string; age: number }>;
+type Person = Json<{ id: RecordId<"person">; name: string; joined: Date }>;
 
 export function PeopleList({ preloaded }: { preloaded: Preloaded<Person[]> }) {
   const people = useLive(preloaded);        // hydrates, then upgrades to live
@@ -149,12 +181,9 @@ export function PeopleList({ preloaded }: { preloaded: Preloaded<Person[]> }) {
 
 The payload carries its own key, text and params, so the client component
 subscribes to *exactly* the query the server ran — the text appears in the
-client component nowhere.
-
-This is the flaw the package was rebuilt around. Before, the RSC and the client
-component each spelled the query out; change one and the key stopped matching,
-so the seed was silently discarded and the page refetched, with no error and no
-type failure.
+client component nowhere. Write it out in both files instead and a one-byte
+drift silently discards the seed: no error, no warning, no type failure. That is
+the flaw this package was rebuilt around.
 
 ## Hooks
 
@@ -198,7 +227,7 @@ const forTeam = useLive(session ? liveTeam.with({ team }) : "skip");
 
 ```tsx
 const add = useMutation(addPerson, { invalidates: [allPeople, livePeople] });
-add.mutate({ name: "ada", joined: new Date() });      // errors land on .error
+add.mutate({ name: "ada", joined: new Date() });             // errors land on .error
 await add.mutateAsync({ name: "ada", joined: new Date() });  // throws
 ```
 
@@ -224,20 +253,35 @@ export function Report({ rows }: { rows: Promise<Row[]> }) {
 }
 ```
 
+## When everything is `any`
+
+Four ways to get `any` with no error on your own code:
+
+1. **`@surrealguard/client` is not installed.** The generated file says
+   `declare module "@surrealguard/client"`. If the specifier does not resolve,
+   TypeScript reports `TS2664` **inside the generated file** — which you would
+   never open — and drops the entire registry.
+2. **The generated file is somewhere else.** Bare `generate` writes to the
+   workspace root, which may not be where `@/` points. If your import and the
+   file disagree, you end up with two generated files and they will drift.
+3. **You imported `createClient` / `defineQuery` from `@surrealguard/client`**
+   rather than from the generated file. The augmentation loads with the import.
+4. **The file is `.jsx`, or `checkJs` is off.** TypeScript does not check it.
+
 ## Values are JSON in the hooks
 
 The reactive layer is `Json<T>`-shaped: a `RecordId` arrives as
 `` `person:${string}` ``, a `datetime` as an ISO string. That is not a
 preference — it is what an RSC boundary accepts at all.
 
-`getDb().run(allPeople)` gives the SDK's real values (`RecordId`, `Date`) for
-server-only use.
+`getDb().query(…)` and `getDb().run(…)` give the SDK's real values (`RecordId`,
+`Date`) for server-only use.
 
 ## API
 
 | Export | Entry | |
 | --- | --- | --- |
-| `SurrealGuardProvider` / `useClient` | `.` | context |
+| `SurrealGuardProvider` / `useClient` | `.` | context, for the hooks below |
 | `useLive(source, options?)` | `.` | live query; `data` is always an array |
 | `useQuery(source, options?)` | `.` | one-shot; `data` is `T \| undefined` |
 | `useMutation(query, options?)` | `.` | write + invalidation |

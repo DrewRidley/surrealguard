@@ -4,6 +4,18 @@ The framework-agnostic reactive core behind `@surrealguard/svelte` and
 `@surrealguard/next`. Use it directly if you are writing your own binding, or
 want a cache without a framework.
 
+**Most people do not need this package.** For typed rows, `db.query("…")` in
+`@surrealguard/client` is the whole API:
+
+```ts
+const [people] = await db.query("SELECT id, name, age FROM person");
+//     ^? Array<{ id: RecordId<"person">; name: string; age: number }>
+```
+
+For a single live subscription and nothing else, `db.watch(livePeople, render)`
+is simpler than anything here and needs no cache. What this package adds is
+**deduplication, caching and invalidation** across many subscribers.
+
 ```ts
 import { getQueryClient } from "@surrealguard/query";
 import { db } from "./db";
@@ -15,19 +27,35 @@ const stop = people.subscribe((state) => {
 });
 ```
 
-For a single live subscription and nothing else, `db.watch(livePeople, render)`
-in `@surrealguard/client` is simpler and needs no cache.
+## Getting `db` and `livePeople`
 
-`db` and `livePeople` above come from the module SurrealGuard generates off your
-schema — `createClient` and the `defineQuery`/`defineLive` that carry a query's
-result type. If you have not generated it yet:
+Both come from the module SurrealGuard generates off your schema. Install the
+client (the generated file augments it *by name*, so it must resolve) and
+generate with an `--out` that matches how you import it — bare `generate` writes
+to the workspace root, which is usually not where your import points:
 
 ```sh
-npx surrealguard generate
+npm install @surrealguard/query @surrealguard/client surrealdb
+npm install -D surrealguard
+npx surrealguard generate --out src/surrealguard.generated.ts
 ```
 
-which writes `surrealguard.generated.ts` at the workspace root; `--out` puts it
-wherever your import alias expects instead.
+```ts
+// src/db.ts
+import { createClient } from "./surrealguard.generated";
+export const db = createClient({ url: "ws://localhost:8000/rpc" });
+```
+
+```ts
+// src/queries.ts
+import { defineLive } from "./surrealguard.generated";
+export const livePeople = defineLive("SELECT id, name, age FROM person");
+```
+
+Import `createClient` and `defineLive` **from the generated file** — that is
+what loads the registry augmentation. If results come back `any` rather than
+typed, see [When everything is `any`](../client/README.md#when-everything-is-any)
+in the client README.
 
 ## What it does
 
@@ -84,7 +112,7 @@ qc.fetch(allPeople)                       // run once, outside the reactive laye
 qc.prime(livePeople)                      // run a live query's SELECT once (SSR seed)
 
 qc.getData(allPeople.key)                 // types itself from the branded key
-qc.setData(allPeople, (prev) => [...])    // optimistic write
+qc.setData(allPeople, (prev) => prev ?? []) // optimistic write
 qc.refetch(allPeople)
 qc.invalidate(allPeople)                  // every binding of that query
 qc.invalidate(peopleOf.with({ team }))    // exactly that binding

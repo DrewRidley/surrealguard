@@ -16,5 +16,5 @@
       "$lib/*": ["./src/lib/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.svelte", "surrealguard.generated.ts"]
+  "include": ["src/**/*.ts", "src/**/*.svelte"]
 }

@@ -5,7 +5,7 @@
 // This file is never executed.
 
 import { createLive, createMutation, createQuery, preload } from "@surrealguard/svelte";
-import { RecordId, defineQuery } from "../../surrealguard.generated";
+import { RecordId, defineQuery } from "$lib/surrealguard.generated";
 import { db } from "./db";
 import { addPerson, allPeople, liveTeam, livePeople, peopleOf } from "./queries";
 
@@ -40,6 +40,22 @@ export function reactive() {
 }
 
 export async function guarantees() {
+  // ---- db.query, with nothing wrapped around it ---------------------------
+  // The form a reader already knows is checked exactly as hard as the named
+  // one. `src/routes/+page.svelte` proves the same thing inside a `.svelte`
+  // file, which is where it actually has to hold.
+
+  // @ts-expect-error `nope` is not in the generated result shape.
+  (await db.query("SELECT id, name, age, team FROM person"))[0][0]!.nope;
+
+  // @ts-expect-error a required param cannot be omitted.
+  await db.query("SELECT id, name FROM person WHERE team = $team");
+
+  // @ts-expect-error a plain string is not a RecordId<"team">.
+  await db.query("SELECT id, name FROM person WHERE team = $team", { team: "team:red" });
+
+  // ---- the same guarantees through a named query --------------------------
+
   // @ts-expect-error a required param cannot be omitted.
   await db.run(peopleOf);
 

@@ -12,5 +12,5 @@
     "noEmit": true,
     "types": []
   },
-  "include": ["src", "surrealguard.generated.ts"]
+  "include": ["src"]
 }

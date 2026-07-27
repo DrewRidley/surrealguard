@@ -5,7 +5,7 @@
   "type": "module",
   "description": "SvelteKit / Svelte 5 SurrealGuard example: typed createLive + preload.",
   "scripts": {
-    "generate": "surrealguard generate --out surrealguard.generated.ts",
+    "generate": "surrealguard generate --out src/lib/surrealguard.generated.ts",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {

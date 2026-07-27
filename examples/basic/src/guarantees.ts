@@ -4,13 +4,27 @@
 //
 // This file is never executed.
 
-import { createClient, defineQuery, RecordId } from "../surrealguard.generated";
+import { createClient, defineQuery, RecordId } from "./surrealguard.generated";
 import { allPeople, liveTeam, peopleOf } from "./queries";
 
 const db = createClient({ url: "ws://localhost:8000/rpc" });
 const team = new RecordId("team", "red");
 
 export async function guarantees() {
+  // ---- db.query, with nothing wrapped around it ---------------------------
+  // The plain literal form is checked exactly as hard as the named one.
+
+  // @ts-expect-error `nope` is not in the generated result shape.
+  (await db.query("SELECT id, name, age, team FROM person"))[0][0]!.nope;
+
+  // @ts-expect-error a required param cannot be omitted.
+  await db.query("SELECT id, name FROM person WHERE team = $team");
+
+  // @ts-expect-error a plain string is not a RecordId<"team">.
+  await db.query("SELECT id, name FROM person WHERE team = $team", { team: "team:red" });
+
+  // ---- the same guarantees through a named query --------------------------
+
   // @ts-expect-error a required param cannot be omitted.
   await db.run(peopleOf);
 

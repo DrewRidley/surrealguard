@@ -162,7 +162,7 @@ DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
       <div class="ts-head">
         <div class="tag">TypeScript · @surrealguard/{client, next, svelte}</div>
         <h3>Typed queries in every framework</h3>
-        <p>One typed <code>db.query</code> that extends the SurrealDB SDK, plus reactive live-query adapters for Next.js and Svelte 5. The row type is always inferred from the query text — dynamic strings degrade to <code>unknown[]</code> and still run.</p>
+        <p>One typed <code>db.query</code> — no wrapper, no cast, nothing to provide first — plus reactive live-query adapters for Next.js and Svelte 5. The row type is always inferred from the query text; a query built at runtime degrades to <code>unknown[]</code> and still runs.</p>
       </div>
       <div class="ts-tablist" role="tablist" aria-label="TypeScript framework variants" id="tsTabs">
         <button class="ts-tab active" role="tab" id="tstab-client" aria-controls="tspanel-client" aria-selected="true" tabindex="0">Client</button>
@@ -171,25 +171,27 @@ DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
       </div>
 
       <div class="ts-panel" role="tabpanel" id="tspanel-client" aria-labelledby="tstab-client">
-        <div class="code"><span class="k">const</span> db = <span class="k">new</span> <span class="fn">SurrealGuardClient</span>();  <span class="c">// extends the SurrealDB SDK</span>
-<span class="k">const</span> [rows] = <span class="k">await</span> db.<span class="fn">query</span>(<span class="s">`SELECT name FROM user`</span>);
+        <div class="code"><span class="k">import</span> { db } <span class="k">from</span> <span class="s">"./db"</span>;   <span class="c">// createClient(...), connects lazily</span>
+
+<span class="k">const</span> [rows] = <span class="k">await</span> db.<span class="fn">query</span>(<span class="s">"SELECT name FROM user"</span>);
 <span class="c">//     ^ Array&lt;{ name: string }&gt; — inferred from the query text</span>
 
-<span class="k">const</span> [x] = <span class="k">await</span> db.<span class="fn">query</span>(<span class="s">`SELECT name, ssn FROM user`</span>);
+<span class="k">const</span> [x] = <span class="k">await</span> db.<span class="fn">query</span>(<span class="s">"SELECT name, ssn FROM user"</span>);
 <span class="err">//    ✗ unknown field `ssn` on table `user`</span></div>
       </div>
 
       <div class="ts-panel" role="tabpanel" id="tspanel-next" aria-labelledby="tstab-next" hidden>
-        <div class="code"><span class="c">// app/providers.tsx — wrap once</span>
-&lt;<span class="fn">SurrealGuardProvider</span> client={db}&gt;{children}&lt;/<span class="fn">SurrealGuardProvider</span>&gt;
+        <div class="code"><span class="c">// a Server Component needs nothing from the adapter:</span>
+<span class="k">const</span> [users] = <span class="k">await</span> <span class="fn">getDb</span>().<span class="fn">query</span>(<span class="s">"SELECT name FROM user"</span>);
 
-<span class="c">// any client component:</span>
-<span class="k">const</span> { data } = <span class="fn">useLiveQuery</span>((db) =&gt; db.<span class="fn">live</span>(<span class="s">`SELECT * FROM user`</span>));
-<span class="c">//      ^ live Array&lt;{ … }&gt; — reconciled by record id, SSR-seeded</span></div>
+<span class="c">// …and a client component gets the live version as a hook:</span>
+<span class="k">const</span> users = <span class="fn">useLive</span>(liveUsers);
+<span class="c">//    ^ users.data: live Array&lt;{ … }&gt; — reconciled by record id, SSR-seeded</span></div>
       </div>
 
       <div class="ts-panel" role="tabpanel" id="tspanel-svelte" aria-labelledby="tstab-svelte" hidden>
-        <div class="code"><span class="k">const</span> users = <span class="fn">liveQuery</span>((db) =&gt; db.<span class="fn">live</span>(<span class="s">`SELECT * FROM user`</span>));
+        <div class="code"><span class="c">// &lt;script lang="ts"&gt; — without it, nothing is typechecked</span>
+<span class="k">const</span> users = <span class="fn">createLive</span>(liveUsers);
 <span class="c">// users.data is a rune getter — read it directly, no store $ prefix</span>
 
 <span class="c">// {#each users.data as u (u.id)}</span>
@@ -315,8 +317,9 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
         <div class="term">
           <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">npm</span></div>
           <div class="term-body">
-            <div class="term-line"><span class="prompt">$</span><code>npm i @surrealguard/client</code><button class="term-copy" data-copy="npm i @surrealguard/client">Copy</button></div>
-            <div class="term-line comment"># + @surrealguard/{query,next,svelte}</div>
+            <div class="term-line"><span class="prompt">$</span><code>npm i @surrealguard/client surrealdb</code><button class="term-copy" data-copy="npm i @surrealguard/client surrealdb">Copy</button></div>
+            <div class="term-line"><span class="prompt">$</span><code>npm i -D surrealguard</code><button class="term-copy" data-copy="npm i -D surrealguard">Copy</button></div>
+            <div class="term-line comment"># + @surrealguard/{query,next,svelte} for live queries</div>
           </div>
         </div>
       </div>

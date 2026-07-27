@@ -18,6 +18,29 @@ const peopleOf = defineQuery("SELECT name FROM person WHERE team = $team");
 const roster = defineQuery("SELECT id, name, joined FROM person");
 
 async function main() {
+  // THE HEADLINE CLAIM, asserted exactly: a plain `db.query("…")` — no
+  // `defineQuery`, no ceremony — resolves the real per-statement tuple through
+  // nothing but the generated file's augmentation. This is the first thing
+  // every README shows, so it is pinned here rather than left to prose.
+  const direct = await db.query("SELECT id, name, joined FROM person");
+  type _direct = Expect<
+    Equal<typeof direct, [Array<{ id: RecordId<"person">; joined: Date; name: string }>]>
+  >;
+  direct[0][0]!.name.length;
+  direct[0][0]!.joined.getTime();
+  // @ts-expect-error `nope` is not on the row — a miss is an error, not `any`.
+  direct[0][0]!.nope;
+
+  // Params too: required exactly when the text reads them, and typed.
+  const [directRed] = await db.query("SELECT name FROM person WHERE team = $team", {
+    team: new RecordId("team", "red"),
+  });
+  directRed[0]!.name.length;
+  // @ts-expect-error the text reads $team, so the params object is required.
+  await db.query("SELECT name FROM person WHERE team = $team");
+  // @ts-expect-error a string is not a RecordId<"team">.
+  await db.query("SELECT name FROM person WHERE team = $team", { team: "team:red" });
+
   // Resolved from the generated registry entry — params required and typed as
   // the SDK class, which is what makes the query match on the wire.
   const rows = await db.run(peopleOf, { team: new RecordId("team", "red") });

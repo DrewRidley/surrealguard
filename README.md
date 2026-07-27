@@ -120,17 +120,33 @@ declare module "@surrealguard/client" {
 }
 ```
 
-Importing `SurrealGuardClient` **from that generated file** is what loads the
+Importing `createClient` **from that generated file** is what loads the
 registry. `people` is now `Array<{ name: string; age: number }>`, the `team`
 param is required and must be a `RecordId<"team">`, and `person.nope` is a
 compile error. `tsc --noEmit` proves it.
 
-`SurrealGuardClient` extends the official `surrealdb` SDK's `Surreal`, so nothing
-else about your client changes. A query built at runtime is not in the registry
-and resolves to `unknown[]` — it still runs; there is no `any` in the API.
+A query built at runtime is not in the registry and resolves to `unknown[]` — it
+still runs; there is no `any` in the API. The client composes the official
+`surrealdb` SDK rather than extending it, so the raw `Surreal` instance stays
+reachable at `db.surreal`.
 
-See [`@surrealguard/client`](packages/client) for the full contract, and
-[`examples/`](examples) for a vanilla-TS and a SvelteKit project you can run.
+Three things are worth stating because each one produces `any` **with no error
+on your own code**:
+
+- `@surrealguard/client` must actually be installed. The generated file says
+  `declare module "@surrealguard/client"`; if that specifier does not resolve,
+  TypeScript reports `TS2664` *inside the generated file* and silently drops the
+  whole registry.
+- `--out` must match how you import it. Bare `generate` writes to the workspace
+  root, which is usually not where `./surrealguard.generated`,
+  `$lib/surrealguard.generated` or `@/surrealguard.generated` points. Pin it in
+  `package.json` once.
+- A `.svelte` `<script>` needs `lang="ts"`. Without it Svelte does not typecheck
+  the block at all.
+
+See [`@surrealguard/client`](packages/client) for the full contract — including
+[when everything is `any`](packages/client/README.md#when-everything-is-any) —
+and [`examples/`](examples) for a vanilla-TS and a SvelteKit project you can run.
 
 ## Check in CI
 
@@ -143,10 +159,10 @@ files, and reports findings rustc-style at their real `file:line`:
 
 ```
 error[E1002]: `person` has no field `ag`
-  --> src/routes/+page.svelte:6:58
+  --> src/routes/+page.svelte:6:39
   |
-6 |   const people = liveQuery((db) => db.live(`SELECT name, ag FROM person`));
-  |                                                          ^^
+6 |   const rows = db.query("SELECT name, ag FROM person");
+  |                                       ^^
   |
   = help: did you mean `age`?
 note: `person` is defined here
@@ -171,26 +187,39 @@ a broken build can never overwrite good types.
 
 ## Live queries, typed
 
-The framework adapters build on a reactive core (`@surrealguard/query`) that owns
-the cache, reference-counts subscriptions, and reconciles `LIVE SELECT`
-notifications by record id.
+`db.query` covers reading. When you want rows that *keep* updating, name the
+query once and subscribe to it. Vanilla TypeScript needs no extra package:
+
+```ts
+import { defineLive } from "./surrealguard.generated";
+
+const livePeople = defineLive("SELECT id, name, age FROM person");
+const stop = db.watch(livePeople, (rows) => render(rows));
+//    ^? rows: Array<{ id: RecordId<"person">; name: string; age: number }>
+```
+
+The framework adapters turn the same reference into framework-native reactive
+state, on a shared core (`@surrealguard/query`) that owns the cache,
+reference-counts subscriptions, and reconciles `LIVE SELECT` notifications by
+record id.
 
 ```svelte
 <script lang="ts">
-  import { liveQuery } from "@surrealguard/svelte";
+  import { createLive } from "@surrealguard/svelte";
+  import { livePeople } from "$lib/queries";
 
-  // `db` comes from Svelte context (setClient in +layout.svelte). `people` is
-  // runes-reactive — read it directly, no store `$` prefix.
-  const people = liveQuery((db) => db.live(`SELECT name, age FROM person`));
+  // runes-reactive — read it directly, no store `$` prefix
+  const people = createLive(livePeople);
 </script>
 
-{#each people.data as person (person.name)}<li>{person.name}</li>{/each}
+{#each people.data as person (person.id)}<li>{person.name}</li>{/each}
 ```
 
-`@surrealguard/next` offers the same as a hook:
-``const { data } = useLiveQuery((db) => db.live(`…`))``. Both packages seed from
-the server (`loadLive` / `queryServer`) so the first paint has no loading gap and
-then upgrades to live in place.
+`@surrealguard/next` offers the same as a hook: `const people =
+useLive(livePeople)`. Both packages seed from the server with `preload(db,
+livePeople)`, whose payload carries its own cache key — so the component
+subscribes to exactly the query the server ran without naming it twice, the
+first paint has no loading gap, and it upgrades to live in place.
 
 ## The compiler is the checker (Rust)
 

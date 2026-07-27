@@ -28,6 +28,14 @@ declare module "@surrealguard/client" {
       result: [Array<{ count: number }>];
       params: Record<string, never>;
     };
+    "SELECT id, name, age FROM person": {
+      result: [Array<{ id: RecordId<"person">; name: string; age: number }>];
+      params: Record<string, never>;
+    };
+    "SELECT id, name FROM person WHERE team = $team": {
+      result: [Array<{ id: RecordId<"person">; name: string }>];
+      params: { team: RecordId<"team"> };
+    };
   }
 }
 
@@ -63,6 +71,37 @@ const getDb = cache(() =>
     database: "app",
   }),
 );
+
+// --- The README's headline: a Server Component and nothing else -------------
+//
+// No provider, no hook, no wrapper around the string. This is the first block
+// of the README, so it is pinned here rather than left to prose.
+
+export async function SimplePage() {
+  const [people] = await getDb().query("SELECT id, name, age FROM person");
+  type _direct = Expect<
+    Equal<typeof people, Array<{ id: RecordId<"person">; name: string; age: number }>>
+  >;
+  // @ts-expect-error `nope` is not on the row — a miss is an error, not `any`.
+  void people[0]?.nope;
+
+  // Params are required exactly when the text reads them, and typed.
+  const [red] = await getDb().query("SELECT id, name FROM person WHERE team = $team", {
+    team: new RecordId("team", "red"),
+  });
+  // @ts-expect-error the text reads $team, so the params object is required.
+  await getDb().query("SELECT id, name FROM person WHERE team = $team");
+
+  return (
+    <ul>
+      {people.map((p) => (
+        <li key={String(p.id)}>
+          {p.name} {red.length}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 // --- A Server Component reading data directly (zero client JS) --------------
 

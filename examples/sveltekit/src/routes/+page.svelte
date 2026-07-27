@@ -1,35 +1,42 @@
 <!--
-  The page. Note what is NOT here: the query text. `data.people` carries its own
-  key, so this subscribes to exactly the query `+page.ts` ran — the seed cannot
-  be silently discarded by a one-byte drift, because there is nothing to drift.
+  Level 1: the whole thing, with nothing around it.
 
-  `people.data` is reactive state read directly, with no store `$` prefix. It
-  renders from the SSR seed on the first paint and upgrades to live.
+  No `defineQuery`, no `setClient`, no `+page.ts`. Import the client, write the
+  SurrealQL you already know, and the rows are typed from your schema —
+  `person.name` is a `string`, `person.team` is a `RecordId<"team">`, and
+  `person.nope` is a compile error.
+
+  Two things this file cannot do without. Both fail SILENTLY — every field
+  becomes `any` and nothing complains — so they are worth saying out loud:
+
+    1. `lang="ts"` on the script tag. Without it Svelte does not typecheck the
+       block at all.
+    2. `@surrealguard/client` actually installed. The generated module augments
+       that module BY NAME; if the name does not resolve, TypeScript drops the
+       whole `declare module` block (TS2664) and every lookup falls back to
+       `any` — with the error landing in the generated file, which you would
+       never open.
 -->
 <script lang="ts">
-  import { createLive } from "@surrealguard/svelte";
-  import type { load } from "./+page";
+  import { db } from "$lib/db";
 
-  // A real SvelteKit app writes `import type { PageData } from "./$types"`,
-  // which SvelteKit generates as exactly this type. Spelled out here so the
-  // example type-checks without running `svelte-kit sync`.
-  type PageData = Awaited<ReturnType<typeof load>>;
-
-  let { data }: { data: PageData } = $props();
-
-  // Through a thunk, so a client-side navigation that replaces `data` re-runs
-  // this rather than pinning the first payload forever.
-  const people = createLive(() => data.people);
+  // SurrealDB returns one result per statement, so `query` resolves the
+  // per-statement tuple. One statement, one element.
+  const rows = db.query("SELECT id, name, age, team FROM person");
 </script>
 
 <h1>People</h1>
 
-{#if people.error}
-  <p class="error">{people.error.message}</p>
-{:else}
+{#await rows}
+  <p>Loading…</p>
+{:then [people]}
   <ul>
-    {#each people.data as person (person.id)}
-      <li>{person.name} — {person.age}</li>
+    {#each people as person (person.id)}
+      <li>{person.name} — {person.age} — {person.team.id}</li>
     {/each}
   </ul>
-{/if}
+{:catch error}
+  <p class="error">{error.message}</p>
+{/await}
+
+<p><a href="/live">The same rows, preloaded on the server and live →</a></p>
