@@ -92,20 +92,14 @@ pub(crate) fn check_graph_idiom_at(
                 };
                 let step_result = check_step(ctx, &source, dir.node, step, pending_edge.is_some());
 
-                // A plain-table landing completes a hop: verify it is on
-                // the previous edge's far side.
+                // A plain-table landing completes a hop: verify every name
+                // it lists is on the previous edge's far side. `->(a, b)`
+                // lists more than one; each is a landing in its own right.
                 if step_result.edge_table.is_none() {
-                    if let (Some((edge, edge_dir)), [target]) =
-                        (&pending_edge, step.targets.as_slice())
-                    {
-                        check_hop_reachability(ctx, edge, *edge_dir, target);
-                    }
-                }
-
-                // Inline `->(edge WHERE ...)` filters run on the edge.
-                if let Some(cond) = &step.where_clause {
-                    if let Some(edge) = &step_result.edge_table {
-                        check_filter(ctx, edge, cond);
+                    if let Some((edge, edge_dir)) = &pending_edge {
+                        for target in &step.targets {
+                            check_hop_reachability(ctx, edge, *edge_dir, target);
+                        }
                     }
                 }
 
@@ -113,6 +107,18 @@ pub(crate) fn check_graph_idiom_at(
                     .edge_table
                     .clone()
                     .or_else(|| step_result.landed_on.clone());
+
+                // An inline `->(X WHERE ...)` filters the rows the step
+                // produced — the edge for `->(likes WHERE ...)`, the node
+                // for the landing half of a hop, `->likes->(post WHERE
+                // ...)`. That is exactly the table a bracketed
+                // `->likes[WHERE ...]` filters, so both forms read the same
+                // `filter_table`; keying the inline form off the edge alone
+                // silently dropped every landing-step filter.
+                if let (Some(cond), Some(table)) = (&step.where_clause, filter_table.clone()) {
+                    check_filter(ctx, &table, cond);
+                }
+
                 pending_edge = if step_result.violated {
                     None
                 } else {
@@ -218,11 +224,19 @@ fn check_step(
     after_edge: bool,
 ) -> StepOutcome {
     let [target] = step.targets.as_slice() else {
-        // `->(a, b)` is valid — each named edge must still be a relation,
-        // but not resolving the landing to one table is an analyzer
-        // limitation, not a contract violation.
+        // `->(a, b)` is valid — but what each name must *be* depends on
+        // where the step sits. A traversal step names relations; the
+        // landing half of a hop pair names node tables. Checking every
+        // multi-target step as relations reported the valid landing
+        // `->wrote->(post, comment)` as two 3001s. Not resolving the
+        // landing to one table is an analyzer limitation, not a contract
+        // violation.
         for target in &step.targets {
-            check_edge_is_relation(ctx, &target.node, target.span);
+            if after_edge {
+                crate::analyzer::data::check_table_reference(ctx, &target.node, target.span);
+            } else {
+                check_edge_is_relation(ctx, &target.node, target.span);
+            }
         }
         return StepOutcome {
             edge_table: None,
@@ -459,4 +473,87 @@ fn emit_with_declaration(
         finding = finding.with_related(declared_at, format!("relation `{edge}` declared here"));
     }
     ctx.emit(finding);
+}
+
+#[cfg(test)]
+mod tests {
+    /// The schema every case below traverses: `user ->wrote-> post`.
+    const SCHEMA: &str = "\
+DEFINE TABLE user SCHEMAFULL;
+DEFINE FIELD name ON user TYPE string;
+DEFINE TABLE post SCHEMAFULL;
+DEFINE FIELD title ON post TYPE string;
+DEFINE TABLE comment SCHEMAFULL;
+DEFINE TABLE wrote TYPE RELATION IN user OUT post SCHEMAFULL;
+DEFINE FIELD since ON wrote TYPE datetime;
+";
+
+    /// `CODE message` for every finding a query raises against `SCHEMA`,
+    /// minus the allow-by-default lints that say nothing about graphs.
+    fn findings(query: &str) -> Vec<String> {
+        let mut workspace = crate::Workspace::default();
+        workspace.add_virtual_source("schema".into(), SCHEMA.into());
+        let source = workspace.add_virtual_source("query".into(), query.into());
+        let output = crate::analyze_workspace(&workspace);
+        output.sources[&source]
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code().number() != 7014)
+            .map(|finding| format!("{} {}", finding.code(), finding.message()))
+            .collect()
+    }
+
+    #[test]
+    fn an_inline_filter_is_checked_on_the_rows_the_step_produced() {
+        // The edge half filters the edge, the landing half filters the node.
+        // Both are the *same* contract as the bracketed form, so both must
+        // report the same way — `->wrote->(post WHERE …)` used to be dropped
+        // entirely because the step resolved to a landing, not an edge.
+        assert_eq!(
+            findings("SELECT ->(wrote WHERE since != 5) FROM user;"),
+            vec!["E2004 `!=` can't combine a `datetime` and a `int`"]
+        );
+        assert_eq!(
+            findings("SELECT ->wrote->(post WHERE title != 5) FROM user;"),
+            vec!["E2004 `!=` can't combine a `string` and a `int`"]
+        );
+        assert_eq!(
+            findings("SELECT ->wrote->(post WHERE nope = 1) FROM user;"),
+            vec!["E1002 `post` has no field `nope`"]
+        );
+        // The bracketed spelling of the same filter, for the same table.
+        assert_eq!(
+            findings("SELECT ->wrote->post[WHERE title != 5] FROM user;"),
+            vec!["E2004 `!=` can't combine a `string` and a `int`"]
+        );
+    }
+
+    #[test]
+    fn a_filter_that_holds_up_is_silent() {
+        assert!(findings("SELECT ->wrote->(post WHERE title = 'x') FROM user;").is_empty());
+        assert!(findings("SELECT ->(wrote WHERE since > time::now())->post FROM user;").is_empty());
+    }
+
+    #[test]
+    fn a_multi_target_step_is_read_by_position_not_as_edges_everywhere() {
+        // After an edge, `->(a, b)` lists landings: `post` is on `wrote`'s
+        // far side and is silent; `comment` is not, and that is 3002. Reading
+        // both as edges reported two 3001s on a query the engine runs fine.
+        assert_eq!(
+            findings("SELECT ->wrote->(post, comment) FROM user;"),
+            vec!["E3002 relation `wrote` connects `user`->`wrote`->`post`, so this hop cannot land on `comment`"]
+        );
+        assert_eq!(
+            findings("SELECT ->wrote->(post, ghost) FROM user;"),
+            vec![
+                "E1001 `ghost` is not a defined table",
+                "E3002 relation `wrote` connects `user`->`wrote`->`post`, so this hop cannot land on `ghost`",
+            ]
+        );
+        // In traversal position they are still edges, and must be relations.
+        assert_eq!(
+            findings("SELECT ->(wrote, post) FROM user;"),
+            vec!["E3001 `post` can't be traversed — it is not a relation table"]
+        );
+    }
 }
