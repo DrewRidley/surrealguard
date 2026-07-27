@@ -9028,54 +9028,16 @@
           "name": "BraceOpen"
         },
         {
-          "type": "SEQ",
+          "type": "CHOICE",
           "members": [
             {
-              "type": "CHOICE",
+              "type": "SEQ",
               "members": [
                 {
-                  "type": "SEQ",
+                  "type": "CHOICE",
                   "members": [
                     {
-                      "type": "SYMBOL",
-                      "name": "Ident"
-                    },
-                    {
-                      "type": "SYMBOL",
-                      "name": "Colon"
-                    },
-                    {
-                      "type": "CHOICE",
-                      "members": [
-                        {
-                          "type": "SEQ",
-                          "members": [
-                            {
-                              "type": "SYMBOL",
-                              "name": "Lookup"
-                            },
-                            {
-                              "type": "REPEAT",
-                              "content": {
-                                "type": "SYMBOL",
-                                "name": "_pathElement"
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "type": "SYMBOL",
-                          "name": "_value"
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "SEQ",
-                  "members": [
-                    {
-                      "type": "CHOICE",
+                      "type": "SEQ",
                       "members": [
                         {
                           "type": "SYMBOL",
@@ -9083,76 +9045,76 @@
                         },
                         {
                           "type": "SYMBOL",
-                          "name": "Lookup"
+                          "name": "Colon"
+                        },
+                        {
+                          "type": "CHOICE",
+                          "members": [
+                            {
+                              "type": "SEQ",
+                              "members": [
+                                {
+                                  "type": "SYMBOL",
+                                  "name": "Lookup"
+                                },
+                                {
+                                  "type": "REPEAT",
+                                  "content": {
+                                    "type": "SYMBOL",
+                                    "name": "_pathElement"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "type": "SYMBOL",
+                              "name": "_value"
+                            }
+                          ]
                         }
                       ]
                     },
                     {
-                      "type": "REPEAT",
-                      "content": {
-                        "type": "SYMBOL",
-                        "name": "_pathElement"
-                      }
+                      "type": "SEQ",
+                      "members": [
+                        {
+                          "type": "CHOICE",
+                          "members": [
+                            {
+                              "type": "SYMBOL",
+                              "name": "Ident"
+                            },
+                            {
+                              "type": "SYMBOL",
+                              "name": "Lookup"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "REPEAT",
+                          "content": {
+                            "type": "SYMBOL",
+                            "name": "_pathElement"
+                          }
+                        }
+                      ]
                     }
                   ]
-                }
-              ]
-            },
-            {
-              "type": "REPEAT",
-              "content": {
-                "type": "SEQ",
-                "members": [
-                  {
-                    "type": "STRING",
-                    "value": ","
-                  },
-                  {
-                    "type": "CHOICE",
+                },
+                {
+                  "type": "REPEAT",
+                  "content": {
+                    "type": "SEQ",
                     "members": [
                       {
-                        "type": "SEQ",
-                        "members": [
-                          {
-                            "type": "SYMBOL",
-                            "name": "Ident"
-                          },
-                          {
-                            "type": "SYMBOL",
-                            "name": "Colon"
-                          },
-                          {
-                            "type": "CHOICE",
-                            "members": [
-                              {
-                                "type": "SEQ",
-                                "members": [
-                                  {
-                                    "type": "SYMBOL",
-                                    "name": "Lookup"
-                                  },
-                                  {
-                                    "type": "REPEAT",
-                                    "content": {
-                                      "type": "SYMBOL",
-                                      "name": "_pathElement"
-                                    }
-                                  }
-                                ]
-                              },
-                              {
-                                "type": "SYMBOL",
-                                "name": "_value"
-                              }
-                            ]
-                          }
-                        ]
+                        "type": "STRING",
+                        "value": ","
                       },
                       {
-                        "type": "SEQ",
+                        "type": "CHOICE",
                         "members": [
                           {
-                            "type": "CHOICE",
+                            "type": "SEQ",
                             "members": [
                               {
                                 "type": "SYMBOL",
@@ -9160,23 +9122,69 @@
                               },
                               {
                                 "type": "SYMBOL",
-                                "name": "Lookup"
+                                "name": "Colon"
+                              },
+                              {
+                                "type": "CHOICE",
+                                "members": [
+                                  {
+                                    "type": "SEQ",
+                                    "members": [
+                                      {
+                                        "type": "SYMBOL",
+                                        "name": "Lookup"
+                                      },
+                                      {
+                                        "type": "REPEAT",
+                                        "content": {
+                                          "type": "SYMBOL",
+                                          "name": "_pathElement"
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "type": "SYMBOL",
+                                    "name": "_value"
+                                  }
+                                ]
                               }
                             ]
                           },
                           {
-                            "type": "REPEAT",
-                            "content": {
-                              "type": "SYMBOL",
-                              "name": "_pathElement"
-                            }
+                            "type": "SEQ",
+                            "members": [
+                              {
+                                "type": "CHOICE",
+                                "members": [
+                                  {
+                                    "type": "SYMBOL",
+                                    "name": "Ident"
+                                  },
+                                  {
+                                    "type": "SYMBOL",
+                                    "name": "Lookup"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "REPEAT",
+                                "content": {
+                                  "type": "SYMBOL",
+                                  "name": "_pathElement"
+                                }
+                              }
+                            ]
                           }
                         ]
                       }
                     ]
                   }
-                ]
-              }
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
             }
           ]
         },

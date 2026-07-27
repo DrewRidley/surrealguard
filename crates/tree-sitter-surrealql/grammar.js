@@ -1624,20 +1624,26 @@ export default grammar({
 			),
 		GraphPredicate: ($) => choice($._value, $.Any),
 
+		// The selection list is OPTIONAL: `id.{}` is valid SurrealQL and
+		// evaluates to the empty object (3.0.5: `SELECT VALUE id.{} FROM ONLY
+		// user:ada` -> `{}`). Requiring at least one entry made every such
+		// expression a parse error, which is fatal to the whole source.
 		Destructure: ($) =>
 			seq(
 				$.BraceOpen,
-				csep(
-					choice(
-						seq(
-							$.Ident,
-							$.Colon,
-							choice(
-								seq($.Lookup, repeat($._pathElement)),
-								$._value,
+				optional(
+					csep(
+						choice(
+							seq(
+								$.Ident,
+								$.Colon,
+								choice(
+									seq($.Lookup, repeat($._pathElement)),
+									$._value,
+								),
 							),
+							seq(choice($.Ident, $.Lookup), repeat($._pathElement)),
 						),
-						seq(choice($.Ident, $.Lookup), repeat($._pathElement)),
 					),
 				),
 				$.BraceClose,
