@@ -14,7 +14,7 @@ export function People() {
 }
 ```
 
-`people.data` is `Array<{ id: `person:${string}`; name: string; age: number }>`,
+`people.data` is ``Array<{ id: `person:${string}`; name: string; age: number }>``,
 inferred from your schema.
 
 ## Install
@@ -22,6 +22,21 @@ inferred from your schema.
 ```sh
 npm install @surrealguard/next @surrealguard/client surrealdb
 ```
+
+## Generate
+
+SurrealGuard reads your schema and writes one module holding the typed client
+and the query registry. Write it where your `@/` alias points — `src/` in a
+`create-next-app` project with a `src` directory, the project root without one
+(check `paths` in `tsconfig.json`):
+
+```sh
+npx surrealguard generate --out src/surrealguard.generated.ts
+```
+
+Re-run it whenever the schema or a query changes, or leave `--watch` running.
+Commit the generated module: it is what makes a fresh checkout type-check
+without a build step.
 
 ## Setup
 

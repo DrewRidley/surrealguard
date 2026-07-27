@@ -16,7 +16,7 @@ primitives, with the query text written exactly once.
 {/each}
 ```
 
-`people.data` is `Array<{ id: `person:${string}`; name: string; age: number }>`,
+`people.data` is ``Array<{ id: `person:${string}`; name: string; age: number }>``,
 inferred from your schema. No `$` prefix — reading a getter tracks.
 
 ## Install
@@ -24,6 +24,20 @@ inferred from your schema. No `$` prefix — reading a getter tracks.
 ```sh
 npm install @surrealguard/svelte @surrealguard/client surrealdb
 ```
+
+## Generate
+
+SurrealGuard reads your schema and writes one module holding the typed client
+and the query registry. Point it at `src/lib` so `$lib/…` resolves:
+
+```sh
+npx surrealguard generate --out src/lib/surrealguard.generated.ts
+```
+
+Re-run it whenever the schema or a query changes — or leave `--watch` running,
+which regenerates on every change to a `.surql` file, a host file, or
+`surrealguard.toml`. Commit the generated module: it is what makes a fresh
+checkout type-check without a build step.
 
 ## Setup
 
