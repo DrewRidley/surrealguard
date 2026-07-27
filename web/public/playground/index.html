@@ -10,22 +10,25 @@
 <meta name="color-scheme" content="dark" />
 <style>html{background:#0a0b0e}</style>
 <title>Playground — SurrealGuard</title>
-<meta name="description" content="Run the SurrealGuard analyzer in your browser. Edit a schema and a query for live diagnostics and the inferred response type of every statement — no install, no database." />
+<meta name="description" content="Run the SurrealGuard analyzer in your browser. Edit a schema and a query for live inline diagnostics and the inferred response type of every statement — no install, no database. Share what you see as a link." />
 <meta property="og:title" content="SurrealGuard Playground" />
-<meta property="og:description" content="The SurrealQL analyzer compiled to WebAssembly. Live diagnostics and inferred response types, entirely in your browser." />
+<meta property="og:description" content="The SurrealQL analyzer compiled to WebAssembly. Inline diagnostics and inferred response types, entirely in your browser." />
 <meta property="og:type" content="website" />
 <meta name="theme-color" content="#0a0b0e" />
 <!-- The canonical home of the playground. Static Assets serves this directory
      at /playground/ (a request for /playground gets a 307 to it), and anything
      that ever fronts it — a playground.surrealguard.dev subdomain, say —
-     points back here rather than becoming a second copy of the page. -->
+     points back here rather than becoming a second copy of the page.
+     Bare: the state lives in the fragment, which is not part of the identity
+     of the document and never reaches a crawler anyway. -->
 <link rel="canonical" href="https://surrealguard.dev/playground/" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
 <link rel="stylesheet" href="/styles.css" />
 <link rel="stylesheet" href="/playground/types-panel.css" />
 <link rel="stylesheet" href="/playground/playground.css" />
+<link rel="preload" href="/playground/surrealguard_wasm.wasm" as="fetch" type="application/wasm" crossorigin />
 </head>
-<body>
+<body class="pg-shell">
 
 <nav>
   <div class="wrap">
@@ -39,141 +42,279 @@
   </div>
 </nav>
 
-<section class="sec pg-head">
-  <div class="wrap pg-wrap">
-    <div class="eyebrow">// playground</div>
-    <h1>Run the analyzer <span class="grad">in your browser</span></h1>
-    <p class="lead">
-      The real SurrealGuard engine, compiled to WebAssembly — no install, no server,
-      no database. Edit the schema or the query for live diagnostics: findings are
-      underlined where they happen, hover a squiggle for the message, click a row to
-      jump to its span. Every statement's inferred response type is set out in full
-      below the query, across as many lines as it takes.
-    </p>
-  </div>
-</section>
+<main class="pg-app">
 
-<section class="sec pg-main" style="padding-top:0">
-  <div class="wrap pg-wrap">
-    <div class="demo pg-demo">
-      <div class="demo-tabs" id="presets">
-        <span class="strip-label">presets</span>
-        <span class="demo-status" id="status">loading engine…</span>
-      </div>
-      <div class="demo-body pg-body">
-        <div class="demo-inputs">
-          <!-- First-paint contents only: presets.mjs is authoritative and
-               overwrites both panes as soon as it loads. -->
-          <label class="io-label" for="schema">Schema (.surql)</label>
-          <textarea class="code-input schema-in" id="schema" spellcheck="false">DEFINE TABLE user SCHEMAFULL;
+  <div class="pg-bar">
+    <div class="pg-menu">
+      <button class="pg-btn" id="examplesBtn" type="button" aria-haspopup="true" aria-expanded="false">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+        Examples
+        <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="pg-menu-list" id="examplesList" role="menu" aria-label="Examples" hidden></div>
+    </div>
+    <button class="pg-btn" id="shareBtn" type="button" title="Copy a link that reproduces exactly this schema and query">
+      <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 007.5.5l3-3a5 5 0 00-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 00-7.5-.5l-3 3a5 5 0 007 7l1.7-1.7"/></svg>
+      <span id="shareLabel">Share</span>
+    </button>
+    <div class="spacer"></div>
+    <span class="pg-tally" id="tally"></span>
+    <span class="pg-engine" id="status">loading engine…</span>
+  </div>
+
+  <div class="pg-panes" id="panes">
+
+    <!-- inputs: the schema, and the query it gives meaning to -->
+    <section class="pg-col pg-col-in" id="colIn">
+      <div class="pg-pane pg-pane-edit pg-pane-schema" id="schemaPane">
+        <div class="pg-pane-head">
+          <button class="pg-fold" id="schemaFold" type="button" aria-expanded="true" aria-controls="schemaBody" title="Hide the schema">
+            <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <span>Schema</span><span class="ext">.surql</span>
+          <div class="spacer"></div>
+          <span class="pg-count" id="schemaCount"></span>
+        </div>
+        <div class="pg-pane-body" id="schemaBody">
+          <!-- First-paint contents only: presets.mjs (or the URL) is
+               authoritative and overwrites both panes as soon as it loads. -->
+          <textarea class="code-input schema-in" id="schema" spellcheck="false" aria-label="Schema" autocapitalize="off" autocomplete="off" autocorrect="off">DEFINE TABLE user SCHEMAFULL;
 DEFINE FIELD name ON user TYPE string;
 DEFINE FIELD age ON user TYPE int;
-DEFINE FIELD email ON user TYPE option&lt;string&gt;;
-
-DEFINE TABLE post SCHEMAFULL;
-DEFINE FIELD title ON post TYPE string;
-DEFINE FIELD author ON post TYPE record&lt;user&gt;;
-
-DEFINE TABLE follows TYPE RELATION IN user OUT user SCHEMAFULL;
-DEFINE FIELD since ON follows TYPE datetime;
-
-DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
-          <label class="io-label" for="query">Query (.surql)</label>
-          <textarea class="code-input query-in" id="query" spellcheck="false">SELECT name, ssn FROM user WHERE age &gt; 18;</textarea>
-          <!-- Filled by types-panel.mjs: one row per statement, directly under
-               the query it describes. -->
-          <div id="queryTypes"></div>
-        </div>
-        <div class="demo-out">
-          <div class="muted-h">Diagnostics · <span class="live-dot">live</span></div>
-          <div class="diag-list" id="results">
-            <div class="pg-note">Loading analyzer…</div>
-          </div>
+DEFINE FIELD email ON user TYPE option&lt;string&gt;;</textarea>
         </div>
       </div>
-    </div>
-    <div class="pg-foot">
-      <span>Everything runs locally — nothing you type leaves the page.</span>
-      <span class="sep">·</span>
-      <a href="/docs/diagnostics.html">Every diagnostic code</a>
-      <span class="sep">·</span>
-      <a href="/docs/getting-started.html">Run it on your own project</a>
-    </div>
-  </div>
-</section>
 
-<footer>
-  <div class="wrap pg-wrap">
-    <div>
-      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex">
-        <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span>
-        SurrealGuard
-      </a>
-      <div class="tiny">Static analysis &amp; type inference for SurrealQL.</div>
-    </div>
-    <div class="cols">
-      <a href="/docs/">Docs</a>
-      <a href="/llms.txt">llms.txt</a>
-      <a href="/AGENTS.md">AGENTS.md</a>
-      <a href="https://github.com/DrewRidley/surrealguard">GitHub</a>
-      <a href="https://crates.io/crates/surrealguard">crates.io</a>
-    </div>
-    <div class="tiny">MIT OR Apache-2.0</div>
+      <div class="pg-split pg-split-row" id="inSplit" aria-label="Resize the schema editor"></div>
+
+      <div class="pg-pane pg-pane-edit pg-pane-query">
+        <div class="pg-pane-head">
+          <span>Query</span><span class="ext">.surql</span>
+          <div class="spacer"></div>
+          <span class="pg-count" id="queryCount"></span>
+        </div>
+        <div class="pg-pane-body">
+          <textarea class="code-input query-in" id="query" spellcheck="false" aria-label="Query" autocapitalize="off" autocomplete="off" autocorrect="off">SELECT name, ssn FROM user WHERE age &gt; 18;</textarea>
+        </div>
+      </div>
+    </section>
+
+    <div class="pg-split pg-split-col" id="colSplit" aria-label="Resize the editor column"></div>
+
+    <!-- outputs: what the analyzer found, and what it inferred -->
+    <section class="pg-col pg-col-out" id="colOut">
+      <div class="pg-pane pg-pane-diag">
+        <div class="pg-pane-head">
+          <span>Problems</span>
+          <div class="spacer"></div>
+          <span class="live-dot">live</span>
+        </div>
+        <div class="pg-pane-body">
+          <div class="diag-list" id="results"><div class="pg-note">Loading analyzer…</div></div>
+        </div>
+      </div>
+
+      <div class="pg-split pg-split-row" id="outSplit" aria-label="Resize the problems panel"></div>
+
+      <div class="pg-pane pg-pane-types">
+        <div class="pg-pane-body">
+          <!-- types-panel.mjs draws its own header here; it is this pane's. -->
+          <div id="queryTypes"></div>
+        </div>
+      </div>
+    </section>
   </div>
-</footer>
+
+  <div class="pg-foot">
+    <!-- The promise shortens on a phone rather than wrapping: this strip is a
+         fixed-height piece of chrome, and a second line of it pushes the
+         editor off the bottom of the screen. -->
+    <span>Everything runs locally<span class="hide-sm"> — nothing you type leaves the page</span>.</span>
+    <div class="spacer"></div>
+    <a class="hide-sm" href="/docs/diagnostics.html">Diagnostic codes</a>
+    <span class="sep hide-sm">·</span>
+    <a href="/docs/getting-started.html">Run it on your project</a>
+  </div>
+
+</main>
 
 <script type="module">
   import { createAnalyzer } from "./sg-analyzer.mjs";
-  import { attachSquiggleEditor, analyzePanes } from "./editor.mjs";
+  import { attachSquiggleEditor, analyzePanes, lineColOf } from "./editor.mjs";
   import { createTypePanel } from "./types-panel.mjs";
   import { PRESETS } from "./presets.mjs";
+  import { mountDivider, mountMenu, mountFold } from "./shell.mjs";
+  import { decodeState, encodeState, encodeExample, slugify } from "./share.mjs";
   // The same highlighter the landing page draws with, so the two surfaces
   // colour identical SurrealQL identically.
   import { sgHighlight, sgEsc, sgMsg } from "./highlight.mjs";
 
-  const results = document.getElementById("results");
-  const status = document.getElementById("status");
-  const schemaEl = document.getElementById("schema");
-  const queryEl = document.getElementById("query");
-  const presetBar = document.getElementById("presets");
+  const $ = (id) => document.getElementById(id);
+  const results = $("results");
+  const status = $("status");
+  const tally = $("tally");
+  const schemaEl = $("schema");
+  const queryEl = $("query");
+  const schemaCount = $("schemaCount");
+  const queryCount = $("queryCount");
+
+  // --- the shell ----------------------------------------------------------
+
+  const fold = mountFold($("schemaFold"), $("schemaPane"), $("colIn"));
+  mountDivider($("colSplit"), { container: $("panes"), prop: "--pg-col", axis: "x", min: 260, minOther: 307, store: "col" });
+  mountDivider($("inSplit"), { container: $("colIn"), prop: "--pg-in", axis: "y", min: 70, minOther: 140, store: "in" });
+  mountDivider($("outSplit"), { container: $("colOut"), prop: "--pg-out", axis: "y", min: 70, minOther: 140, store: "out" });
+
+  // --- the editors --------------------------------------------------------
 
   const editors = {
-    schema: attachSquiggleEditor(schemaEl, { highlight: sgHighlight }),
-    query: attachSquiggleEditor(queryEl, { highlight: sgHighlight }),
+    schema: attachSquiggleEditor(schemaEl, { highlight: sgHighlight, gutter: true, tabIndent: true }),
+    query: attachSquiggleEditor(queryEl, { highlight: sgHighlight, gutter: true, tabIndent: true }),
   };
 
-  // The type region under the query. Hovering a row lights that statement's
-  // badge in the editor; clicking one selects the statement itself.
-  const types = createTypePanel(document.getElementById("queryTypes"), {
+  // The type region. Hovering a row lights that statement's badge in the
+  // editor; clicking one selects the statement itself.
+  const types = createTypePanel($("queryTypes"), {
     highlight: sgHighlight,
     onPick: (statement) => editors.query.reveal(statement.start, statement.end),
     onHover: (i) => editors.query.setActiveMarker(i),
   });
 
-  // The same curated list the landing page shows, asserted against the
-  // shipped bundle by `harness.mjs`.
-  for (const preset of PRESETS) {
-    const button = document.createElement("button");
-    button.className = "demo-preset";
-    button.type = "button";
-    button.textContent = preset.label;
-    if (preset.note) button.title = preset.note;
-    button.addEventListener("click", () => {
-      schemaEl.value = preset.schema;
-      queryEl.value = preset.query;
-      editors.schema.refresh();
-      editors.query.refresh();
-      run(0);
-    });
-    presetBar.insertBefore(button, status);
-  }
-  // The markup's first-paint text is a placeholder; the list is the truth.
-  schemaEl.value = PRESETS[0].schema;
-  queryEl.value = PRESETS[0].query;
-  editors.schema.refresh();
-  editors.query.refresh();
+  // --- examples -----------------------------------------------------------
 
-  let analyzer;
+  // A menu, not a strip of ten buttons over the editor: the tool is what the
+  // visitor came for and the examples are how they start once.
+  mountMenu($("examplesBtn"), $("examplesList"), PRESETS, (i) => {
+    const preset = PRESETS[i];
+    load(preset.schema, preset.query);
+    // A named example gets a link anyone can read: #x/graph-edge.
+    writeHash(encodeExample(preset.label));
+  });
+
+  /** Puts a schema/query pair in the panes and re-analyzes. */
+  function load(schema, query) {
+    schemaEl.value = schema;
+    queryEl.value = query;
+    editors.schema.refresh();
+    editors.query.refresh();
+    run(0);
+  }
+
+  // --- the URL ------------------------------------------------------------
+
+  // Every keystroke is shareable, not just the ones you thought to press a
+  // button for: the hash is rewritten (in place — no history entries) shortly
+  // after you stop typing, so the address bar always describes what is on
+  // screen. The button then only has to copy it.
+  let ourHash = "";
+  let hashTimer;
+
+  function writeHash(hash) {
+    if (hash === location.hash || hash === ourHash) return;
+    ourHash = hash;
+    history.replaceState(null, "", hash || location.pathname);
+  }
+
+  function scheduleHash() {
+    clearTimeout(hashTimer);
+    hashTimer = setTimeout(async () => {
+      const hash = await encodeState(schemaEl.value, queryEl.value);
+      // `null` means the pair is past the URL budget. Leave the old hash
+      // alone rather than writing a link that would restore something else.
+      if (hash) writeHash(hash);
+      shareState = hash ? "ready" : "too-big";
+    }, 500);
+  }
+
+  let shareState = "ready";
+  const shareBtn = $("shareBtn");
+  const shareLabel = $("shareLabel");
+  let shareTimer;
+
+  shareBtn.addEventListener("click", async () => {
+    clearTimeout(shareTimer);
+    const hash = await encodeState(schemaEl.value, queryEl.value);
+    if (!hash) {
+      shareState = "too-big";
+      say("Too long to link", false);
+      return;
+    }
+    writeHash(hash);
+    const url = location.origin + location.pathname + hash;
+    try {
+      await navigator.clipboard.writeText(url);
+      say("Link copied", true);
+    } catch {
+      // No clipboard permission (or an insecure origin): the URL is in the
+      // address bar either way, which is the thing that actually had to work.
+      say("Link is in the address bar", false);
+    }
+  });
+
+  function say(text, ok) {
+    shareLabel.textContent = text;
+    shareBtn.classList.toggle("is-done", ok);
+    shareTimer = setTimeout(() => {
+      shareLabel.textContent = "Share";
+      shareBtn.classList.remove("is-done");
+    }, 2000);
+  }
+
+  /**
+   * Applies whatever the URL says, falling back to the first example. Also the
+   * `hashchange` handler, so the back button and a pasted link behave the same.
+   */
+  async function restore() {
+    const state = await decodeState(location.hash);
+    if (state && state.kind === "source") {
+      load(state.schema, state.query);
+      return;
+    }
+    if (state && state.kind === "example") {
+      const preset = PRESETS.find((p) => slugify(p.label) === state.slug);
+      if (preset) {
+        load(preset.schema, preset.query);
+        return;
+      }
+    }
+    load(PRESETS[0].schema, PRESETS[0].query);
+  }
+
+  window.addEventListener("hashchange", () => {
+    if (location.hash === ourHash) return; // our own rewrite coming back around
+    ourHash = location.hash;
+    restore();
+  });
+
+  // --- diagnostics --------------------------------------------------------
+
+  const SEV_CLASS = { error: "err", warning: "warn", hint: "hint" };
+  const worst = (list) =>
+    list.some((d) => d.severity === "error")
+      ? "err"
+      : list.some((d) => d.severity === "warning")
+        ? "warn"
+        : "hint";
+
+  /** The count chip in a pane header: how much of this is yours. */
+  function setCount(el, list) {
+    el.textContent = list.length ? String(list.length) : "";
+    el.className = `pg-count ${list.length ? worst(list) : ""}`;
+    el.title = list.length ? `${list.length} finding${list.length === 1 ? "" : "s"} in this pane` : "";
+  }
+
+  function setTally(all) {
+    if (!all.length) {
+      tally.innerHTML = '<span class="n-ok">no problems</span>';
+      return;
+    }
+    const n = (sev) => all.filter((d) => d.severity === sev).length;
+    const parts = [];
+    if (n("error")) parts.push(`<span class="n-err">${n("error")} error${n("error") === 1 ? "" : "s"}</span>`);
+    if (n("warning")) parts.push(`<span class="n-warn">${n("warning")} warning${n("warning") === 1 ? "" : "s"}</span>`);
+    if (n("hint")) parts.push(`${n("hint")} hint${n("hint") === 1 ? "" : "s"}`);
+    tally.innerHTML = parts.join(" · ");
+  }
 
   function render(diagnostics) {
     if (!diagnostics.length) {
@@ -183,20 +324,22 @@ DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
       return;
     }
     // The site's problems-panel row: severity gutter, glyph, code badge, and
-    // the message with its backtick spans as code. The byte range is the one
-    // thing this page adds — see `.diag-loc` in playground.css.
+    // the message with its backtick spans as code. The position is the one
+    // thing this page adds, and it is the *editor's* coordinates — line and
+    // column, matching the gutter — so the two surfaces agree.
     results.innerHTML = diagnostics
       .map((d, i) => {
         const sev = d.severity || "error";
         const glyph = sev === "warning" ? "!" : sev === "hint" ? "i" : "×";
         const where = d.pane === "schema" ? '<span class="diag-pane">schema</span>' : "";
+        const at = lineColOf(d.pane === "schema" ? schemaEl.value : queryEl.value, d.start);
         return (
-          `<div class="diag ${sev}" data-i="${i}" role="button" tabindex="0" title="jump to this span">` +
+          `<div class="diag ${sev}" data-i="${i}" role="button" tabindex="0" title="Jump to this span — bytes ${d.start}..${d.end}">` +
           `<span class="diag-icon" aria-hidden="true">${glyph}</span>` +
           `<div class="diag-body">` +
           `<div class="diag-head"><span class="code">${sgEsc(d.code || "")}</span>` +
           `<span class="sev">${sev}</span>${where}` +
-          `<span class="diag-loc">${d.start}..${d.end}</span></div>` +
+          `<span class="diag-loc">${at.line}:${at.col}</span></div>` +
           `<div class="msg">${sgMsg(d.message)}</div>` +
           `</div></div>`
         );
@@ -205,6 +348,8 @@ DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
     results.querySelectorAll(".diag[data-i]").forEach((row) => {
       const jump = () => {
         const d = diagnostics[Number(row.dataset.i)];
+        // Jumping into a pane nobody can see is not a jump. Unfold first.
+        if (d.pane === "schema") fold.set(false);
         editors[d.pane]?.reveal(d.start, d.end);
       };
       row.addEventListener("click", jump);
@@ -228,6 +373,9 @@ DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
     if (document.activeElement === queryEl) markCaret();
   });
 
+  // --- the loop -----------------------------------------------------------
+
+  let analyzer;
   let timer;
   function run(delay = 120) {
     clearTimeout(timer);
@@ -242,6 +390,9 @@ DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
         editors.query.setMarkers(panes.statements);
         types.update(panes.statements, queryEl.value);
         markCaret();
+        setCount(schemaCount, panes.schema);
+        setCount(queryCount, panes.query);
+        setTally(panes.all);
         render(panes.all);
       } catch (err) {
         results.innerHTML = `<div class="pg-note err">wasm error — ${sgEsc(String(err))}</div>`;
@@ -249,16 +400,27 @@ DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
     }, delay);
   }
 
+  const edited = () => {
+    run();
+    scheduleHash();
+  };
+  schemaEl.addEventListener("input", edited);
+  queryEl.addEventListener("input", edited);
+
   (async () => {
+    // The URL first: the panes should hold the shared query before the engine
+    // arrives, so a slow connection shows the right code with no diagnostics
+    // rather than the wrong code with some.
+    await restore();
     try {
       const bytes = await fetch("./surrealguard_wasm.wasm").then((r) => r.arrayBuffer());
       analyzer = await createAnalyzer(bytes);
       status.textContent = "wasm ready";
-      schemaEl.addEventListener("input", () => run());
-      queryEl.addEventListener("input", () => run());
+      status.className = "pg-engine ready";
       run(0);
     } catch (err) {
-      status.textContent = "engine failed to load";
+      status.textContent = "engine failed";
+      status.className = "pg-engine failed";
       results.innerHTML = `<div class="pg-note err">failed to load the analyzer — ${sgEsc(String(err))}</div>`;
     }
   })();
