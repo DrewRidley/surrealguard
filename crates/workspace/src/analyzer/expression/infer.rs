@@ -132,11 +132,7 @@ fn closure_fact(
     span: SourceSpan,
     ctx: &mut AnalysisContext<'_>,
 ) -> ExpressionFact {
-    let param_kinds: Vec<Kind> = closure
-        .params
-        .iter()
-        .map(|(_, ty)| declared_kind(ty.as_ref(), ctx).unwrap_or(Kind::Any))
-        .collect();
+    let param_kinds = closure_param_kinds(closure, ctx);
     let return_kind = closure_return_kind(closure, &param_kinds, ctx);
 
     ExpressionFact::new(span, ExpressionValueClass::Literal)
@@ -164,24 +160,52 @@ pub fn closure_return_kind(
     }
 
     ctx.with_child_env(|ctx| {
-        for (index, (name, ty)) in closure.params.iter().enumerate() {
-            let kind = match arg_kinds.get(index) {
-                Some(kind) if *kind != Kind::Any => kind.clone(),
-                _ => declared_kind(ty.as_ref(), ctx).unwrap_or(Kind::Any),
-            };
-            let mut fact = ExpressionFact::new(
-                SourceSpan::new(ctx.source().clone(), name.span),
-                ExpressionValueClass::Variable,
-            );
-            fact.kind = Some(kind);
-            ctx.define_local(name.node.clone(), fact);
-        }
-
+        bind_closure_params(closure, arg_kinds, ctx);
         match &closure.body.node {
             ast::Expr::Block(block) => pure_block_kind(block, ctx),
             _ => infer_expression_fact(&closure.body, ctx).kind,
         }
     })
+}
+
+/// The closure's parameters at their **declared** kinds, `any` where a
+/// parameter carries no type. What is known about a closure read on its own,
+/// before any call site says what it is applied to.
+pub(crate) fn closure_param_kinds(
+    closure: &ast::Closure,
+    ctx: &mut AnalysisContext<'_>,
+) -> Vec<Kind> {
+    closure
+        .params
+        .iter()
+        .map(|(_, ty)| declared_kind(ty.as_ref(), ctx).unwrap_or(Kind::Any))
+        .collect()
+}
+
+/// Binds a closure's parameters in the **current** scope — which must already
+/// be the closure's own child scope, since these bindings are exactly what
+/// must not escape it.
+///
+/// `arg_kinds` are the kinds the closure is applied to; a position without one
+/// (or one carrying no information) falls back to the declared type, then to
+/// `any`.
+pub(crate) fn bind_closure_params(
+    closure: &ast::Closure,
+    arg_kinds: &[Kind],
+    ctx: &mut AnalysisContext<'_>,
+) {
+    for (index, (name, ty)) in closure.params.iter().enumerate() {
+        let kind = match arg_kinds.get(index) {
+            Some(kind) if *kind != Kind::Any => kind.clone(),
+            _ => declared_kind(ty.as_ref(), ctx).unwrap_or(Kind::Any),
+        };
+        let mut fact = ExpressionFact::new(
+            SourceSpan::new(ctx.source().clone(), name.span),
+            ExpressionValueClass::Variable,
+        );
+        fact.kind = Some(kind);
+        ctx.define_local(name.node.clone(), fact);
+    }
 }
 
 /// The value of a block in pure inference: threads `LET` bindings through

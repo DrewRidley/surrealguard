@@ -133,6 +133,7 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
                 crate::analyzer::flow::block::analyze_block(ctx, block);
             });
         }
+        ast::Expr::Closure(closure) => check_closure(ctx, closure),
         // A param, a table name, a record id and an unlowerable node carry no
         // position of their own. Exhaustive rather than a catch-all: a new
         // expression form must decide whether it has inner obligations, and
@@ -141,9 +142,29 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
         ast::Expr::Param(_)
         | ast::Expr::Table(_)
         | ast::Expr::RecordId { .. }
-        | ast::Expr::Closure(_)
         | ast::Expr::Partial(_) => {}
     }
+}
+
+/// A closure's body, checked in the closure's own scope with its parameters
+/// bound — the internal half of the rule, for the one construct that had
+/// *neither* half. No closure body has ever been checked: inference walks one
+/// (to type the return), and the checking walk's catch-all swallowed it.
+///
+/// The parameters are bound at their **declared** kinds, `any` where a closure
+/// declares none. That is the honest answer for a closure read on its own: the
+/// element kind a `.filter()` or `.map()` applies it to is a fact about the
+/// call site, and reading it here would be inventing one. An `any` parameter
+/// proves nothing, so a body that depends on it stays silent — prove or stay
+/// silent, applied to a position that used to be silent unconditionally.
+fn check_closure(ctx: &mut AnalysisContext<'_>, closure: &ast::Closure) {
+    ctx.with_child_env(|ctx| {
+        let declared = crate::analyzer::expression::infer::closure_param_kinds(closure, ctx);
+        crate::analyzer::expression::infer::bind_closure_params(closure, &declared, ctx);
+        // `expr_fact` is the entry that pairs inference with checking, and it
+        // routes a block body through the block analyzer itself.
+        crate::analyzer::expression::expr_fact(ctx, &closure.body);
+    });
 }
 
 /// The inner obligations of a statement used as a value — `(THROW …)`,
@@ -398,6 +419,14 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
                 return;
             }
             ast::IdiomPart::Method { name, args } => {
+                // A method's arguments are expressions in their own right, and
+                // the `Expr::Call` arm above checks a plain call's. This arm
+                // read their kinds and checked none of them, which is why
+                // `$rows.filter(|$r| …)` was the one call spelling whose
+                // closure body nothing reached.
+                for arg in args {
+                    check_value_expression(ctx, arg);
+                }
                 let arg_kinds: Vec<Kind> = std::iter::once(receiver.clone())
                     .chain(
                         args.iter()
@@ -1216,6 +1245,49 @@ mod tests {
         assert!(!fires(query, "E2004"), "codes: {:?}", codes(query));
     }
 
+    #[test]
+    fn a_closure_body_is_checked_in_the_closures_own_scope() {
+        // No closure body had ever been checked, in any spelling: inference
+        // walks one to type the return, and the checking walk's catch-all
+        // swallowed `Expr::Closure` whole.
+        for query in [
+            // a closure bound to a name
+            "LET $f = |$v: int| $v + 'a';",
+            // a block body
+            "LET $f = |$v: int| { RETURN $v + 'a'; };",
+            // as a call argument
+            "RETURN array::map([1, 2], |$v: int| $v + 'a');",
+            // …and as a METHOD argument, which nothing checked at all
+            "RETURN [1, 2].map(|$v: int| $v + 'a');",
+        ] {
+            assert!(
+                fires(query, "E2004"),
+                "{query:?} must report its operand mismatch: {:?}",
+                codes(query)
+            );
+        }
+    }
+
+    #[test]
+    fn an_undeclared_closure_parameter_proves_nothing() {
+        // The parameters are bound at their DECLARED kinds. The element kind a
+        // `.map()` applies the closure to is a fact about the call site, and
+        // reading it here would be inventing one — so an undeclared parameter
+        // is `any` and a body that depends on it stays silent. Checking a
+        // position that used to be unconditionally silent is exactly where a
+        // false-positive wave would come from.
+        let query = "RETURN array::map([1, 2], |$v| $v + 'a');";
+        assert!(!fires(query, "E2004"), "codes: {:?}", codes(query));
+
+        // A body that does NOT depend on the parameter is still checked.
+        let independent = "RETURN array::map([1, 2], |$v| 'a'.nomethod());";
+        assert!(
+            fires(independent, "E5001"),
+            "codes: {:?}",
+            codes(independent)
+        );
+    }
+
     // ---- a check inside a guarded region reads the guarded kind ----
 
     /// A function whose parameter is an object with one optional field. A
@@ -1641,6 +1713,7 @@ mod tests {
         assert!(!fires(query, "E1027"), "codes: {:?}", codes(query));
     }
 }
+
 
 
 
