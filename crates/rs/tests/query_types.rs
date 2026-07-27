@@ -161,7 +161,11 @@ fn a_datetime_decodes_as_a_datetime() {
 
 #[test]
 fn an_unrefined_number_decodes_as_number_so_every_variant_fits() {
-    let q = query!("RETURN { n: math::sum([1, 2]) };");
+    // `math::mean` is the unrefined one: it returns a float over an int column
+    // (`math::mean([1,2])` -> 1.5 on 3.0.5), so `number` is the honest kind.
+    // `math::sum([1,2])` is NOT — it is an `int`, and typing it `Number` would
+    // hide that from the caller.
+    let q = query!("RETURN { n: math::mean([1, 2]) };");
     // Whatever numeric variant the server picks, the field accepts it.
     let row = q
         .decode(one(object([("n", Number::Int(3).into_value())])))
