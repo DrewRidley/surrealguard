@@ -251,6 +251,12 @@ impl Refinement {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Facts {
     refined: BTreeMap<Place, Refinement>,
+    /// Why each place was refined — the claims that touched it, in the order
+    /// the interpreter met them. Kept beside the refinement rather than inside
+    /// it because a refinement is a *function on kinds* and composes by
+    /// nesting, while a reason composes by joining: an `All` conjoins the
+    /// claims, an `Any` disjoins them.
+    proofs: BTreeMap<Place, Vec<String>>,
 }
 
 impl Facts {
@@ -267,6 +273,24 @@ impl Facts {
     /// nothing costs no scope.
     pub(crate) fn is_empty(&self) -> bool {
         self.refined.is_empty()
+    }
+
+    /// Why `place` was refined, as one phrase — `$x != NONE`,
+    /// `$x != NONE and $x != NULL`, `$x = 'a' or $x = 'b'`.
+    ///
+    /// `None` when nothing recorded a reason, which is the recognizer path and
+    /// every consumer that builds a `Facts` by hand.
+    pub(crate) fn proof(&self, place: &Place) -> Option<String> {
+        let claims = self.proofs.get(place)?;
+        (!claims.is_empty()).then(|| claims.join(" and "))
+    }
+
+    /// Records why a place was refined.
+    fn add_proof(&mut self, place: Place, claim: String) {
+        let claims = self.proofs.entry(place).or_default();
+        if !claims.contains(&claim) {
+            claims.push(claim);
+        }
     }
 
     /// Adds a claim about one place, composing it with anything already known.
@@ -307,6 +331,9 @@ impl Guard {
             Guard::Atom(atom) => {
                 if let Some(refinement) = refinement_of(atom, oracle) {
                     facts.add(atom.place().clone(), refinement);
+                    if let Some(claim) = atom.describe() {
+                        facts.add_proof(atom.place().clone(), claim);
+                    }
                 }
             }
             Guard::All(parts) => {
@@ -336,6 +363,16 @@ impl Guard {
                     }
                     if alternatives.len() == live.len() {
                         facts.add(place.clone(), Refinement::Any(alternatives));
+                        // A disjunction's reason is the disjunction of the
+                        // reasons: every alternative had to refine the place,
+                        // and any one of them may be why it held.
+                        let reasons: Vec<String> = live
+                            .iter()
+                            .filter_map(|part| part.proof(place))
+                            .collect();
+                        if reasons.len() == live.len() {
+                            facts.add_proof(place.clone(), reasons.join(" or "));
+                        }
                     }
                 }
             }

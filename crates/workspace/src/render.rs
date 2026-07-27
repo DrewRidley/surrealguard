@@ -40,10 +40,14 @@ pub enum KindContext<'a> {
     /// which members are still live *here*, not that the declaration was
     /// optional.
     ///
-    /// (The provenance note — "narrowed by `$x != NONE`" — needs the atom that
-    /// proved the refinement, which does not exist as a value yet. It arrives
-    /// with the guard IR, and with it a `note` field on [`Rendered`].)
-    Occurrence,
+    /// `proved` is the claim that refined it — "narrowed by `$x != NONE`" —
+    /// which the guard IR makes available as a value for the first time. `None`
+    /// where the kind is the declared one, or where the narrowing came from the
+    /// recognizer path, which cannot say why.
+    Occurrence {
+        /// The claim that proved the refinement, canonically written.
+        proved: Option<&'a str>,
+    },
     /// A glanceable label with a hard budget. The ONLY context permitted to
     /// drop information, and it drops it *structurally* — by widening whole
     /// members, object bodies and table sets — so the result is always a
@@ -72,22 +76,25 @@ pub enum KindContext<'a> {
     },
 }
 
-/// The rendered text.
-///
-/// A struct rather than a bare `String` because `Occurrence` gains a second
-/// field — one line of "why this and not the declared kind" — as soon as the
-/// analysis records the atom that proved the refinement.
+/// The rendered text, and — for an occurrence the analysis narrowed — one line
+/// of why this and not the declared kind.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rendered {
     /// The type text.
     pub text: String,
+    /// "narrowed by `$x != NONE`", when the caller supplied the claim.
+    pub note: Option<String>,
 }
 
 /// Renders `kind` for the audience `ctx` names.
 pub fn render(kind: &Kind, ctx: KindContext<'_>) -> Rendered {
+    let mut note = None;
     let text = match ctx {
         KindContext::Declared => write_kind(kind, Style::DECLARED),
-        KindContext::Occurrence => write_kind(kind, Style::SPELLED_OUT),
+        KindContext::Occurrence { proved } => {
+            note = proved.map(|claim| format!("narrowed by `{claim}`"));
+            write_kind(kind, Style::SPELLED_OUT)
+        }
         KindContext::Glance { budget } => glance(kind, budget),
         KindContext::Diagnostic { blame } => {
             // The `none` folds into `option<…>` only when it is *not* the
@@ -104,7 +111,7 @@ pub fn render(kind: &Kind, ctx: KindContext<'_>) -> Rendered {
             )
         }
     };
-    Rendered { text }
+    Rendered { text, note }
 }
 
 /// Renders a [`Kind`] as the author would have written it: `record<file>`,
@@ -430,12 +437,12 @@ mod tests {
         // here, so the `none` is named rather than folded into a wrapper that
         // reads as "this was declared optional".
         let optional = Kind::either(vec![Kind::None, Kind::String]);
-        assert_eq!(render(&optional, KindContext::Occurrence).text, "none | string");
+        assert_eq!(render(&optional, KindContext::Occurrence { proved: None }).text, "none | string");
         // Nested optionality is spelled out too — the reader is being told
         // what the value can be, at every depth.
         let row = object(&[("nick", optional)]);
         assert_eq!(
-            render(&row, KindContext::Occurrence).text,
+            render(&row, KindContext::Occurrence { proved: None }).text,
             "{ nick: none | string }"
         );
     }

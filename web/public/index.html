@@ -706,17 +706,22 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
     const queryEd = attachSquiggleEditor(queryIn, { highlight: sgHighlight });
     const editors = { schema: schemaEd, query: queryEd };
 
-    const load = (p) => {
+    const showPreset = (p) => {
       schemaIn.value = p.schema; queryIn.value = p.query;
       schemaEd.refresh(); queryEd.refresh(); run(0);
     };
     PRESETS.forEach((p) => {
       const b = document.createElement("button"); b.className = "demo-preset"; b.textContent = p.label;
       b.title = p.note || "";
-      b.addEventListener("click", () => load(p));
+      b.addEventListener("click", () => showPreset(p));
       tabs.insertBefore(b, status);
     });
-    load(PRESETS[0]);
+    // Seat the first preset without analyzing: the engine is lazy-loaded when
+    // the section scrolls into view, and `load()` runs the first pass. (Going
+    // through `showPreset` here would reach `run`'s `let t` before it is
+    // initialised.)
+    schemaIn.value = PRESETS[0].schema; queryIn.value = PRESETS[0].query;
+    schemaEd.refresh(); queryEd.refresh();
 
     function render(list) {
       if (!Array.isArray(list) || list.length === 0) {

@@ -921,3 +921,46 @@ fn builtins_cover_every_dispatch_arm_the_analyzer_resolves() {
     }
     assert!(checked > 400, "expected the whole builtin surface, saw {checked}");
 }
+
+// ---------------------------------------------------------------------------
+// Completion and hover read the same analysis
+// ---------------------------------------------------------------------------
+
+#[test]
+fn completion_sees_the_narrowing_hover_already_saw() {
+    // A guard that narrowed a symbol narrowed it for the completion list too.
+    // Hover has read `output.narrowings` since they were recorded; completion
+    // read the *binding's* kind, so past a diverging NONE-guard the `$p`
+    // candidate was still labelled `none | { ... }` while hovering the same
+    // name one line up said `{ ... }`. One analysis, two answers.
+    let detail = |query: &str| -> String {
+        crate::with_fact_layer(true, || {
+            let fixture = Fixture::new(query);
+            fixture
+                .complete()
+                .into_iter()
+                .find(|candidate| candidate.label == "$p")
+                .and_then(|candidate| candidate.detail)
+                .unwrap_or_default()
+        })
+    };
+
+    let before = detail(
+        "LET $p = (SELECT * FROM ONLY person LIMIT 1);\n\
+         RETURN $▏;",
+    );
+    assert!(
+        before.starts_with("option<"),
+        "before any guard the binding is optional: {before}"
+    );
+
+    let after = detail(
+        "LET $p = (SELECT * FROM ONLY person LIMIT 1);\n\
+         IF $p = NONE THEN THROW 'missing' END;\n\
+         RETURN $▏;",
+    );
+    assert!(
+        !after.starts_with("option<"),
+        "past the guard `$p` cannot be NONE — hover already says so: {after}"
+    );
+}

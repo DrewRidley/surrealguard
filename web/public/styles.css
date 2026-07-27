@@ -521,9 +521,13 @@ h1 .grad {
    inside the mirror: the mirror has to hold exactly the textarea's own
    characters or the caret stops lining up with what is drawn. */
 .sg-chips { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
+/* inline-block, not inline-flex: `text-overflow: ellipsis` has no effect on a
+   flex container, and a chip with no room must end in "…" rather than be
+   sliced mid-glyph. Vertical centring comes from a line-height set to the
+   measured line height. */
 .sg-chip {
-  position: absolute; display: inline-flex; align-items: center;
-  font-family: var(--mono); font-size: 11.5px; line-height: 1;
+  position: absolute; display: inline-block;
+  font-family: var(--mono); font-size: 11.5px;
   color: #9db2d0; background: rgba(125,211,252,0.09);
   border: 1px solid rgba(125,211,252,0.22); border-radius: 5px;
   padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

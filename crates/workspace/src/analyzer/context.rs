@@ -246,10 +246,16 @@ impl<'a> AnalysisContext<'a> {
         path: String,
         range: surrealguard_syntax::span::ByteRange,
         kind: surrealdb_types::Kind,
+        by: Option<String>,
     ) {
         let span = SourceSpan::new(self.source.clone(), range);
         self.env
-            .record_narrowing(crate::analysis::NarrowingAnalysis { path, span, kind });
+            .record_narrowing(crate::analysis::NarrowingAnalysis {
+                path,
+                span,
+                kind,
+                by,
+            });
     }
 
     /// The end offset of the statement sequence being analyzed: a fall-through

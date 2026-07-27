@@ -120,6 +120,17 @@ pub struct NarrowingAnalysis {
     pub span: SourceSpan,
     /// The kind the binding (or path) has inside that region.
     pub kind: Kind,
+    /// **Why** — the claim that proved the refinement, canonically written
+    /// (`$x != NONE`, `$x = 'a' or $x = 'b'`).
+    ///
+    /// The fourth field, and the last one to become expressible: under the
+    /// hand-written recognizers there was nothing to record. `Narrowing::
+    /// StripNone` was an enum variant with no subject and the guard expression
+    /// was gone by the time a narrowing was recorded, so an editor could say
+    /// what a symbol's kind is *here* and never why it differs from the
+    /// declaration. `None` on the recognizer path, which still cannot say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
 }
 
 /// A SELECT clause modifier fact: which clause, where, whether it

@@ -903,6 +903,12 @@ fn in_scope_params(
         );
     }
 
+    // A guard that narrowed a symbol narrowed it for the completion list too.
+    // Hover has read `output.narrowings` since it was recorded; completion read
+    // the declared kind, so `$x.` past `IF $x = NONE THEN THROW` offered the
+    // fields of an `option<record<t>>` — which is to say none — while hovering
+    // the same token two columns left said `record<t>`. One analysis, two
+    // answers, and the one the user sees first was the wrong one.
     let closed = closed_block_ranges(parsed.text(), offset);
     for binding in &output.let_bindings {
         if binding.name_span.source() != parsed.source_id() {
@@ -916,6 +922,19 @@ fn in_scope_params(
             binding.name.clone(),
             (binding.kind.clone(), ParamOrigin::Binding),
         );
+    }
+
+    // Applied last, over every origin: a narrowing is a statement about this
+    // program point, and it outranks whatever bound the name.
+    for (name, (kind, _)) in seen.iter_mut() {
+        if let Some(narrowing) = crate::query::narrowing_at(
+            &output.narrowings,
+            parsed.source_id(),
+            name,
+            offset,
+        ) {
+            *kind = Some(narrowing.kind.clone());
+        }
     }
 
     ScopedParams {

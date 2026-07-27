@@ -35,16 +35,15 @@
       }
       h1 { font-size: 18px; margin: 0 0 4px; }
       p.sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; max-width: 78ch; line-height: 1.6; }
-      .grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-        max-width: 1100px;
-      }
-      @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+      /* Panes stack rather than sit side by side: a type chip is drawn after
+         the statement it describes, and half a 1100px column is not enough
+         line for `array<{ id: record<follows>, in: record<user>, … }>` to fit
+         beside a 60-character RELATE. Full-width lines are what make the chip
+         readable instead of an ellipsis. */
+      .grid { display: grid; gap: 16px; max-width: 1200px; }
       label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
       .results {
-        max-width: 1100px;
+        max-width: 1200px;
         margin-top: 16px;
         background: var(--panel);
         border: 1px solid var(--border);
@@ -96,6 +95,9 @@
         outline: none;
       }
       .sg-editor > textarea:focus { border-color: var(--accent); }
+      /* Tall enough for the whole preset schema; a half-shown DEFINE reads as
+         a rendering bug rather than a scrollable pane. */
+      #schema { min-height: 270px; }
       .sg-editor > textarea::selection { background: rgba(167,139,250,.35); }
 
       /* --- layer three: inferred-type chips. Absolutely positioned over the
@@ -103,9 +105,13 @@
              mirror must hold exactly the textarea's characters or the caret
              stops lining up with what is drawn. --- */
       .sg-chips { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
+      /* inline-block, not inline-flex: `text-overflow: ellipsis` has no effect
+         on a flex container, and a chip with no room must end in "…" rather
+         than be sliced mid-glyph. Vertical centring comes from a line-height
+         set to the measured line height. */
       .sg-chip {
-        position: absolute; display: inline-flex; align-items: center;
-        font-family: var(--mono); font-size: 11px; line-height: 1;
+        position: absolute; display: inline-block;
+        font-family: var(--mono); font-size: 11px;
         color: #9db2d0; background: rgba(125,211,252,.09);
         border: 1px solid rgba(125,211,252,.22); border-radius: 5px;
         padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -114,7 +120,7 @@
       .type-readout { color: var(--accent-2); font-family: var(--mono); }
       .type-readout:empty { display: none; }
 
-      .presets { display: flex; flex-wrap: wrap; gap: 6px; max-width: 1100px; margin-bottom: 14px; }
+      .presets { display: flex; flex-wrap: wrap; gap: 6px; max-width: 1200px; margin-bottom: 14px; }
       .preset {
         font-family: var(--mono); font-size: 12px; color: var(--muted);
         background: transparent; border: 1px solid var(--border); border-radius: 7px;

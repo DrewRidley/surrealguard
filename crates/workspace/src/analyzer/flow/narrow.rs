@@ -850,7 +850,7 @@ pub(crate) fn apply_effects_over(
             // folding may draw a verdict from the tightened kind.
             ctx.narrow_local(effect.path.param.clone(), new_fact);
             if let Some(region) = region {
-                ctx.record_narrowing(effect.path.param.clone(), region, narrowed);
+                ctx.record_narrowing(effect.path.param.clone(), region, narrowed, None);
             }
         } else {
             // Resolve the path's declared kind through the schema, then narrow
@@ -866,7 +866,7 @@ pub(crate) fn apply_effects_over(
                 continue;
             };
             if let Some(region) = region {
-                ctx.record_narrowing(effect.path.key(), region, narrowed.clone());
+                ctx.record_narrowing(effect.path.key(), region, narrowed.clone(), None);
             }
             ctx.define_narrowed_path(effect.path.key(), narrowed);
         }
@@ -963,7 +963,7 @@ pub(crate) fn apply_facts_over(
             // folding may draw a verdict from the tightened kind.
             ctx.narrow_local(param.clone(), new_fact);
             if let Some(region) = region {
-                ctx.record_narrowing(param.clone(), region, narrowed);
+                ctx.record_narrowing(param.clone(), region, narrowed, facts.proof(place));
             }
         } else {
             // Resolve the path's declared kind through the schema, then narrow
@@ -980,7 +980,7 @@ pub(crate) fn apply_facts_over(
             };
             let key = format!("{param}.{}", fields.join("."));
             if let Some(region) = region {
-                ctx.record_narrowing(key.clone(), region, narrowed.clone());
+                ctx.record_narrowing(key.clone(), region, narrowed.clone(), facts.proof(place));
             }
             ctx.define_narrowed_path(key, narrowed);
         }

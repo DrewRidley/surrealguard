@@ -169,6 +169,17 @@ fn narrowed_kind_at<'a>(
     path: &str,
     offset: u32,
 ) -> Option<&'a Kind> {
+    narrowing_at(narrowings, source, path, offset).map(|narrowing| &narrowing.kind)
+}
+
+/// The narrowing in force for `path` at `offset` — the innermost region
+/// covering it — carrying both the kind and the claim that proved it.
+pub(crate) fn narrowing_at<'a>(
+    narrowings: &'a [NarrowingAnalysis],
+    source: &SourceId,
+    path: &str,
+    offset: u32,
+) -> Option<&'a NarrowingAnalysis> {
     narrowings
         .iter()
         .filter(|narrowing| narrowing.path == path && narrowing.span.source() == source)
@@ -180,7 +191,6 @@ fn narrowed_kind_at<'a>(
             let range = narrowing.span.range();
             range.end().saturating_sub(range.start())
         })
-        .map(|narrowing| &narrowing.kind)
 }
 
 /// Resolves a hover at byte `offset` in `source`: maps the cursor to the
@@ -256,7 +266,9 @@ pub fn hover_at(
     // the source narrows the uses that follow it, not the ones before it.
     for param in &output.inferred_params {
         for span in &param.spans {
-            let here = narrowed_kind_at(&output.narrowings, source, &param.name, offset)
+            let narrowed = narrowing_at(&output.narrowings, source, &param.name, offset);
+            let here = narrowed
+                .map(|narrowing| &narrowing.kind)
                 .or(param.kind.as_ref());
             consider(
                 span,
@@ -264,7 +276,9 @@ pub fn hover_at(
                     Some(&format!("parameter `${}`", param.name)),
                     &format!("${}", param.name),
                     here,
-                    KindContext::Occurrence,
+                    KindContext::Occurrence {
+                        proved: narrowed.and_then(|narrowing| narrowing.by.as_deref()),
+                    },
                     schema,
                 ),
             );
@@ -424,12 +438,21 @@ fn symbol_markdown(
     ctx: KindContext<'_>,
     schema: &SchemaIndex,
 ) -> String {
-    let rendered = kind.map_or_else(|| "unknown".to_string(), |kind| render(kind, ctx).text);
+    let rendered = kind.map(|kind| render(kind, ctx));
+    let text = rendered
+        .as_ref()
+        .map_or_else(|| "unknown".to_string(), |rendered| rendered.text.clone());
     let mut markdown = String::new();
     if let Some(caption) = caption {
         markdown.push_str(&format!("**{caption}**\n"));
     }
-    markdown.push_str(&format!("```surql\n{name}: {rendered}\n```"));
+    markdown.push_str(&format!("```surql\n{name}: {text}\n```"));
+    // The "why" line, when the analysis proved one. A hover that shows a kind
+    // narrower than the declaration and says nothing about why reads as a bug
+    // in the tool.
+    if let Some(note) = rendered.as_ref().and_then(|rendered| rendered.note.as_ref()) {
+        markdown.push_str(&format!("\n\n{note}"));
+    }
     // Only records earn an expanded field block: their linked-table fields
     // aren't visible in the compact `record<t>` render, so listing them adds
     // information. Object/array kinds already render their shape inline, so a
@@ -591,6 +614,14 @@ impl SchemaHovers<'_> {
     /// `param.field.field` key) at the cursor, if a guard proved one there.
     fn narrowed_kind(&self, path: &str) -> Option<Kind> {
         narrowed_kind_at(self.narrowings, self.source, path, self.offset).cloned()
+    }
+
+    /// The claim that proved the narrowing in force for `path` here, when the
+    /// analysis recorded one. Paired with [`Self::narrowed_kind`], so a hover
+    /// never shows a tightened kind without the reason beside it.
+    fn narrowed_by(&self, path: &str) -> Option<&str> {
+        narrowing_at(self.narrowings, self.source, path, self.offset)
+            .and_then(|narrowing| narrowing.by.as_deref())
     }
 
     /// The bold caption for a `$var` hover: `local` for a `LET`/`FOR`
@@ -958,7 +989,9 @@ impl SchemaHovers<'_> {
                     Some(&self.var_caption(name)),
                     &format!("${name}"),
                     Some(&kind),
-                    KindContext::Occurrence,
+                    KindContext::Occurrence {
+                        proved: self.narrowed_by(name),
+                    },
                     self.schema,
                 ),
             ));
@@ -997,7 +1030,9 @@ impl SchemaHovers<'_> {
                     Some(&self.var_caption(name)),
                     &format!("${name}"),
                     Some(&root_kind),
-                    KindContext::Occurrence,
+                    KindContext::Occurrence {
+                        proved: self.narrowed_by(name),
+                    },
                     self.schema,
                 ),
             ));
@@ -1068,7 +1103,7 @@ impl SchemaHovers<'_> {
                                     Some(&format!("field `{field}`")),
                                     field,
                                     Some(next),
-                                    KindContext::Occurrence,
+                                    KindContext::Occurrence { proved: None },
                                     self.schema,
                                 ),
                             ));
@@ -1854,6 +1889,30 @@ mod tests {
         assert!(
             !after.contains("none") && after.contains("label"),
             "past the guard the binding cannot be NONE: {after}"
+        );
+    }
+
+    /// A hover that shows a kind narrower than the declaration and says
+    /// nothing about why reads as a bug in the tool. The claim is available as
+    /// a value for the first time, so it is shown.
+    #[test]
+    fn hover_says_why_the_kind_is_narrower_than_the_declaration() {
+        let text = format!(
+            "{NARROWING_SCHEMA}\
+             LET $x = (SELECT label FROM ONLY unit LIMIT 1);\n\
+             IF $x = NONE THEN THROW 'missing' END;\n\
+             RETURN $x.label;\n"
+        );
+
+        let at_guard = hover_kind_at_occurrence(&text, 2);
+        assert!(
+            !at_guard.contains("narrowed by"),
+            "at the guard nothing is narrowed yet: {at_guard}"
+        );
+        let after = crate::with_fact_layer(true, || hover_kind_at_occurrence(&text, 3));
+        assert!(
+            after.contains("narrowed by `$x != NONE`"),
+            "past the guard the hover must say what proved it: {after}"
         );
     }
 

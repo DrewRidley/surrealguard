@@ -174,7 +174,7 @@ fn run(schema: &str, query: &str) -> Analysis {
                 response: statement
                     .response_kind
                     .as_ref()
-                    .map(|kind| render(kind, KindContext::Occurrence).text),
+                    .map(|kind| render(kind, KindContext::Occurrence { proved: None }).text),
             })
         })
         .collect();

@@ -38,7 +38,7 @@ use surrealguard_syntax::ast;
 
 use crate::statement_env::StatementEnv;
 
-use super::place::{place_of, Place};
+use super::place::{place_of, Place, PlaceRoot};
 use super::term::{eval, Bindings, ConstValue, Term};
 
 /// An ordering comparison, always written with the place on the left.
@@ -55,6 +55,16 @@ pub(crate) enum OrdOp {
 }
 
 impl OrdOp {
+    /// The operator as written.
+    fn symbol(self) -> &'static str {
+        match self {
+            OrdOp::Gt => ">",
+            OrdOp::GtEq => ">=",
+            OrdOp::Lt => "<",
+            OrdOp::LtEq => "<=",
+        }
+    }
+
     /// The operator with its operands kept but the place moved to the left:
     /// `18 < f` is `f > 18`.
     fn flipped(self) -> OrdOp {
@@ -160,6 +170,59 @@ impl Atom {
             | Atom::NotInTables(place, _)
             | Atom::Member(place, _) => place,
         }
+    }
+
+    /// The claim, written the way a reader would write it.
+    ///
+    /// This is the *why* behind a narrowing, and the fact layer is the first
+    /// design in which it exists as a value at all: `Narrowing::StripNone` was
+    /// an enum variant with no subject, and the guard expression was gone by
+    /// the time a narrowing was recorded. An editor could say what a symbol's
+    /// kind is here and never why it differs from the declaration.
+    ///
+    /// Canonical rather than verbatim: `$x IS NOT NONE`, `!($x = NONE)` and
+    /// `$x != NONE` are one atom and get one phrasing. That is the honest
+    /// answer — the refinement really did come from the claim, not from the
+    /// spelling — and it is why this renders the atom rather than slicing the
+    /// source.
+    pub(crate) fn describe(&self) -> Option<String> {
+        let subject = match &self.place().root {
+            PlaceRoot::Param(_) => format!("${}", self.place().key()?),
+            PlaceRoot::RowField => self.place().key()?,
+        };
+        Some(match self {
+            Atom::IsNone(_) => format!("{subject} = NONE"),
+            Atom::IsNotNone(_) => format!("{subject} != NONE"),
+            Atom::IsNull(_) => format!("{subject} = NULL"),
+            Atom::IsNotNull(_) => format!("{subject} != NULL"),
+            Atom::Truthy(_) => subject,
+            Atom::Eq(_, value) => format!("{subject} = {}", describe_const(value)),
+            Atom::NotEq(_, value) => format!("{subject} != {}", describe_const(value)),
+            Atom::Ord(_, op) => format!("{subject} {} …", op.symbol()),
+            Atom::HasKind(_, kind) => format!("{subject} is a {}", crate::render_kind(kind)),
+            Atom::NotKind(_, kind) => format!("{subject} is not a {}", crate::render_kind(kind)),
+            Atom::InTables(_, tables) => format!(
+                "{subject} is a record<{}>",
+                tables.iter().cloned().collect::<Vec<_>>().join(" | ")
+            ),
+            Atom::NotInTables(_, tables) => format!(
+                "{subject} is not a record<{}>",
+                tables.iter().cloned().collect::<Vec<_>>().join(" | ")
+            ),
+            Atom::Member(_, _) => format!("{subject} IN …"),
+        })
+    }
+}
+
+/// A constant, as it would have been written.
+fn describe_const(value: &ConstValue) -> String {
+    match value {
+        ConstValue::Str(text) => format!("'{text}'"),
+        ConstValue::Int(number) => number.to_string(),
+        ConstValue::Float(number) => number.to_string(),
+        ConstValue::Bool(value) => value.to_string(),
+        ConstValue::None => "NONE".to_string(),
+        ConstValue::Null => "NULL".to_string(),
     }
 }
 
