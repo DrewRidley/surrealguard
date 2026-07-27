@@ -43,8 +43,15 @@ jobs:
             # C via the `cc` crate, and a native cross build points `cc` at the
             # cross compiler directly (see the toolchain step below).
             gcc-cross: aarch64-linux-gnu
+          # Cross-compiled from Apple Silicon. `macos-13` was the last Intel
+          # runner and has been retired, so a job asking for it queues forever
+          # rather than failing — v0.4.1 sat waiting on this one job for 23
+          # hours while its other four targets had long since succeeded, and
+          # the release it was meant to publish never appeared. The Apple
+          # toolchain targets both architectures, and `rust-toolchain` above
+          # already installs `matrix.target`, so nothing else has to change.
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-14
           - target: aarch64-apple-darwin
             os: macos-14
           - target: x86_64-pc-windows-msvc
