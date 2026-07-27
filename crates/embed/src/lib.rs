@@ -70,6 +70,21 @@ impl EmbeddedQuery {
         }
     }
 
+    /// Maps a host-file byte offset back into the extracted query text —
+    /// the inverse of [`Self::host_offset`]. `None` when the offset is not
+    /// inside a copied run: outside the template entirely, or inside a
+    /// `${...}` substitution, neither of which names a position in the
+    /// query the analyzer saw.
+    ///
+    /// This is what lets a cursor-addressed request (hover, completion)
+    /// asked at a host position be answered by the query's own analysis.
+    pub fn embed_offset(&self, host_offset: usize) -> Option<usize> {
+        self.segments.iter().find_map(|segment| {
+            let into = host_offset.checked_sub(segment.host_start)?;
+            (into < segment.len).then_some(segment.embed_start + into)
+        })
+    }
+
     /// The template's static parts in order — the copied text runs
     /// between substitutions. One part for substitution-free queries.
     pub fn parts(&self) -> Vec<String> {
@@ -170,5 +185,28 @@ mod tests {
         // point at the same word in the full file.
         let mapped = queries[0].host_offset(14);
         assert_eq!(&source[mapped..mapped + 6], "person");
+    }
+
+    #[test]
+    fn host_offsets_map_back_into_the_query() {
+        let source = "const q = surql`SELECT * FROM person WHERE age > ${min}`;";
+        let queries = extract("app.ts", source);
+        let query = &queries[0];
+
+        // Every copied byte round-trips: a host offset inside the template
+        // names the same byte of the query text.
+        let person = source.find("person").expect("person present");
+        let embedded = query.embed_offset(person).expect("inside a copied run");
+        assert_eq!(&query.text[embedded..embedded + 6], "person");
+        assert_eq!(query.host_offset(embedded), person);
+
+        // A `${...}` substitution is not a position in the query: the
+        // analyzer saw `$__host0` there, and pointing at the middle of that
+        // generated name would answer about text the user never wrote.
+        let substitution = source.find("${min}").expect("substitution present");
+        assert_eq!(query.embed_offset(substitution + 2), None);
+
+        // Outside the template entirely.
+        assert_eq!(query.embed_offset(0), None);
     }
 }
