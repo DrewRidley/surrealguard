@@ -390,8 +390,8 @@ W7002 = "deny"
 
     #[test]
     fn lints_table_accepts_error_as_a_deny_alias() {
-        let config = WorkspaceConfig::from_toml_str("[lints]\nE1002 = \"error\"\n")
-            .expect("config parses");
+        let config =
+            WorkspaceConfig::from_toml_str("[lints]\nE1002 = \"error\"\n").expect("config parses");
         assert_eq!(
             config.lints.levels.get(&FindingCode::from_number(1002)),
             Some(&LintLevel::Deny)
@@ -420,7 +420,9 @@ W7002 = "deny"
     fn lints_table_rejects_an_invalid_level() {
         let error = WorkspaceConfig::from_toml_str("[lints]\nE1002 = \"loud\"\n")
             .expect_err("an invalid level must be rejected");
-        assert!(error.message().contains("expected allow, warn, deny, or error"));
+        assert!(error
+            .message()
+            .contains("expected allow, warn, deny, or error"));
     }
 
     #[test]

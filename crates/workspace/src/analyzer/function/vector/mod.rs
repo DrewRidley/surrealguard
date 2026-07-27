@@ -46,17 +46,37 @@ pub(crate) fn analyze_vector_function(
         "vector::project" => project::analyze_vector_project(ctx, call, args),
         "vector::scale" => scale::analyze_vector_scale(ctx, call, args),
         "vector::subtract" => subtract::analyze_vector_subtract(ctx, call, args),
-        "vector::distance::chebyshev" => distance_chebyshev::analyze_vector_distance_chebyshev(ctx, call, args),
-        "vector::distance::euclidean" => distance_euclidean::analyze_vector_distance_euclidean(ctx, call, args),
-        "vector::distance::hamming" => distance_hamming::analyze_vector_distance_hamming(ctx, call, args),
+        "vector::distance::chebyshev" => {
+            distance_chebyshev::analyze_vector_distance_chebyshev(ctx, call, args)
+        }
+        "vector::distance::euclidean" => {
+            distance_euclidean::analyze_vector_distance_euclidean(ctx, call, args)
+        }
+        "vector::distance::hamming" => {
+            distance_hamming::analyze_vector_distance_hamming(ctx, call, args)
+        }
         "vector::distance::knn" => distance_knn::analyze_vector_distance_knn(ctx, call, args),
-        "vector::distance::mahalanobis" => distance_mahalanobis::analyze_vector_distance_mahalanobis(ctx, call, args),
-        "vector::distance::manhattan" => distance_manhattan::analyze_vector_distance_manhattan(ctx, call, args),
-        "vector::distance::minkowski" => distance_minkowski::analyze_vector_distance_minkowski(ctx, call, args),
-        "vector::similarity::cosine" => similarity_cosine::analyze_vector_similarity_cosine(ctx, call, args),
-        "vector::similarity::jaccard" => similarity_jaccard::analyze_vector_similarity_jaccard(ctx, call, args),
-        "vector::similarity::pearson" => similarity_pearson::analyze_vector_similarity_pearson(ctx, call, args),
-        "vector::similarity::spearman" => similarity_spearman::analyze_vector_similarity_spearman(ctx, call, args),
+        "vector::distance::mahalanobis" => {
+            distance_mahalanobis::analyze_vector_distance_mahalanobis(ctx, call, args)
+        }
+        "vector::distance::manhattan" => {
+            distance_manhattan::analyze_vector_distance_manhattan(ctx, call, args)
+        }
+        "vector::distance::minkowski" => {
+            distance_minkowski::analyze_vector_distance_minkowski(ctx, call, args)
+        }
+        "vector::similarity::cosine" => {
+            similarity_cosine::analyze_vector_similarity_cosine(ctx, call, args)
+        }
+        "vector::similarity::jaccard" => {
+            similarity_jaccard::analyze_vector_similarity_jaccard(ctx, call, args)
+        }
+        "vector::similarity::pearson" => {
+            similarity_pearson::analyze_vector_similarity_pearson(ctx, call, args)
+        }
+        "vector::similarity::spearman" => {
+            similarity_spearman::analyze_vector_similarity_spearman(ctx, call, args)
+        }
         _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

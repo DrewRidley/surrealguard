@@ -256,9 +256,7 @@ fn check_cast(
                 2007,
                 format!("`{}` is not a known type", name.node),
             );
-            if let Some(nearest) =
-                crate::suggest::closest(&name.node, TYPE_NAMES.iter().copied())
-            {
+            if let Some(nearest) = crate::suggest::closest(&name.node, TYPE_NAMES.iter().copied()) {
                 finding = finding.with_help(format!("did you mean `{nearest}`?"));
             }
             ctx.emit(finding);
@@ -291,7 +289,10 @@ fn check_cast(
                 ctx,
                 whole.span,
                 2008,
-                format!("`{text}` can't be cast to `{}`", crate::render_kind(&target)),
+                format!(
+                    "`{text}` can't be cast to `{}`",
+                    crate::render_kind(&target)
+                ),
             );
         }
         return;
@@ -382,9 +383,7 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
             // Index/filter needs a collection — and a union of
             // collections is one: `[[1, 2], [3]]` is
             // `array<int, 2> | array<int, 1>`, indexable on every arm.
-            ast::IdiomPart::Index(_)
-            | ast::IdiomPart::Where(_)
-            | ast::IdiomPart::Last
+            ast::IdiomPart::Index(_) | ast::IdiomPart::Where(_) | ast::IdiomPart::Last
                 if !crate::analyzer::expression::infer::is_indexable_kind(&receiver) =>
             {
                 emit(
@@ -817,13 +816,8 @@ fn sentinel_mismatch(
 /// Two non-empty record table sets share no table, so no record id of one can
 /// equal a record id of the other. An empty set is the unconstrained
 /// `record<>` (any table) and never counts as disjoint.
-fn tables_disjoint(
-    left: &[surrealdb_types::Table],
-    right: &[surrealdb_types::Table],
-) -> bool {
-    !left.is_empty()
-        && !right.is_empty()
-        && !left.iter().any(|table| right.contains(table))
+fn tables_disjoint(left: &[surrealdb_types::Table], right: &[surrealdb_types::Table]) -> bool {
+    !left.is_empty() && !right.is_empty() && !left.iter().any(|table| right.contains(table))
 }
 
 /// C3: `=`/`!=` between two record links whose declared table sets are
@@ -852,9 +846,9 @@ fn comparable_element(a: &Kind, b: &Kind) -> bool {
     }
     match (a, b) {
         (Kind::Record(at), Kind::Record(bt)) => !tables_disjoint(at, bt),
-        (Kind::Either(variants), other) | (other, Kind::Either(variants)) => {
-            variants.iter().any(|variant| comparable_element(variant, other))
-        }
+        (Kind::Either(variants), other) | (other, Kind::Either(variants)) => variants
+            .iter()
+            .any(|variant| comparable_element(variant, other)),
         _ => {
             let a = crate::kinds::literal_base_kind(a).unwrap_or_else(|| a.clone());
             let b = crate::kinds::literal_base_kind(b).unwrap_or_else(|| b.clone());
@@ -920,8 +914,7 @@ fn comparable(left: &Kind, right: &Kind) -> bool {
     // = 'folder'` is the idiomatic record-discriminant guard.
     if matches!(
         (left, right),
-        (Kind::Table(_), Kind::String | Kind::Table(_))
-            | (Kind::String, Kind::Table(_))
+        (Kind::Table(_), Kind::String | Kind::Table(_)) | (Kind::String, Kind::Table(_))
     ) {
         return true;
     }
@@ -1308,7 +1301,11 @@ mod tests {
             // nested inside another expression
             "RETURN 1 + { RETURN 'a'.nomethod(); };",
         ] {
-            let expected = if query.contains("nomethod") { "E5001" } else { "E2004" };
+            let expected = if query.contains("nomethod") {
+                "E5001"
+            } else {
+                "E2004"
+            };
             assert!(
                 fires(query, expected),
                 "{query:?} must report {expected}: {:?}",
@@ -1462,8 +1459,7 @@ mod tests {
         // `f`. `string::len(NULL)` is a runtime error ("Expected `string` but
         // found `NULL`"), so this must fire; narrowing `$x` to `string` here
         // hid a genuine failure.
-        const NULLABLE: &str =
-            "DEFINE FUNCTION fn::f($x: option<string | null>) { RETURN ";
+        const NULLABLE: &str = "DEFINE FUNCTION fn::f($x: option<string | null>) { RETURN ";
         for guard in [
             "$x != NONE AND string::len($x) > 0",
             "$x = NONE OR string::len($x) > 0",
@@ -1656,7 +1652,11 @@ mod tests {
             "RETURN 'abc'.map(|$v| $v);",
             "RETURN (5).filter(|$v| $v);",
         ] {
-            assert!(fires(query, "E5001"), "codes for {query:?}: {:?}", codes(query));
+            assert!(
+                fires(query, "E5001"),
+                "codes for {query:?}: {:?}",
+                codes(query)
+            );
         }
     }
 
@@ -1845,7 +1845,3 @@ mod tests {
         assert!(!fires(query, "E1027"), "codes: {:?}", codes(query));
     }
 }
-
-
-
-

@@ -66,7 +66,8 @@ impl Flow {
         // it, so a guard's `RETURN []` (e.g. `IF array::len($rows) = 0 THEN
         // RETURN [] END; … RETURN $mapped`) yields `array<E>` rather than
         // `array<any,0> | array<E>`.
-        let is_empty_collection = |k: &Kind| matches!(k, Kind::Array(_, Some(0)) | Kind::Set(_, Some(0)));
+        let is_empty_collection =
+            |k: &Kind| matches!(k, Kind::Array(_, Some(0)) | Kind::Set(_, Some(0)));
         let has_concrete_collection = exits
             .iter()
             .any(|k| matches!(k, Kind::Array(_, _) | Kind::Set(_, _)) && !is_empty_collection(k));
@@ -90,7 +91,10 @@ pub(crate) fn analyze_block(ctx: &mut AnalysisContext<'_>, block: &ast::Block) -
 pub(crate) fn analyze_block_flow(ctx: &mut AnalysisContext<'_>, block: &ast::Block) -> Flow {
     // A fall-through narrowing established inside this block dies with the
     // block, so the statement sequence's end bounds the region it covers.
-    let block_end = block.statements.last().map(|statement| statement.span.end());
+    let block_end = block
+        .statements
+        .last()
+        .map(|statement| statement.span.end());
     ctx.with_scope_end(block_end, |ctx| block_flow(ctx, block))
 }
 
@@ -155,8 +159,12 @@ fn statement_flow(ctx: &mut AnalysisContext<'_>, statement: &ast::Spanned<ast::S
         }
         // Composite constructs surface their nested `RETURN`s and their own
         // pass-through value (see the respective flow builders).
-        ast::Statement::IfElse(stmt) => crate::analyzer::flow::if_else::analyze_if_else_flow(ctx, stmt),
-        ast::Statement::For(stmt) => crate::analyzer::flow::for_loop::analyze_for_loop_flow(ctx, stmt),
+        ast::Statement::IfElse(stmt) => {
+            crate::analyzer::flow::if_else::analyze_if_else_flow(ctx, stmt)
+        }
+        ast::Statement::For(stmt) => {
+            crate::analyzer::flow::for_loop::analyze_for_loop_flow(ctx, stmt)
+        }
         ast::Statement::Block(block) => analyze_block_flow(ctx, block),
         // Everything else carries no `RETURN` exit; its value is the trailing
         // contribution. `THROW`/`BREAK`/`CONTINUE` divergence is recognized by
@@ -191,7 +199,11 @@ pub(crate) fn apply_fall_through_narrowing(
     if if_else.else_branch.is_some() || if_else.branches.is_empty() {
         return;
     }
-    if !if_else.branches.iter().all(|branch| block_diverges(&branch.body)) {
+    if !if_else
+        .branches
+        .iter()
+        .all(|branch| block_diverges(&branch.body))
+    {
         return;
     }
     // The refinement holds from just past the guard to the end of the
@@ -370,10 +382,7 @@ mod tests {
         // `IF c THEN RETURN 1 END; RETURN 'x'` → `int | string`. The non-trailing
         // RETURN is captured; the IF's own NONE fall-through is not spuriously
         // added (the trailing statement diverges).
-        let kind = block_exit_kind(
-            "RETURN { IF $c THEN RETURN 1 END; RETURN 'x' };",
-            |_ctx| {},
-        );
+        let kind = block_exit_kind("RETURN { IF $c THEN RETURN 1 END; RETURN 'x' };", |_ctx| {});
         assert_eq!(kind, Kind::Either(vec![Kind::Int, Kind::String]));
     }
 

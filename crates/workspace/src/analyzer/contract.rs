@@ -424,8 +424,14 @@ mod tests {
     #[test]
     fn a_known_value_outside_a_literal_union_is_proven_wrong() {
         let expects = union(vec![literal("red"), literal("blue")]);
-        assert_eq!(decide(&literal("green"), &expects, Strictness::Inhabits), Verdict::Violated);
-        assert_eq!(decide(&literal("red"), &expects, Strictness::Inhabits), Verdict::Satisfied);
+        assert_eq!(
+            decide(&literal("green"), &expects, Strictness::Inhabits),
+            Verdict::Violated
+        );
+        assert_eq!(
+            decide(&literal("red"), &expects, Strictness::Inhabits),
+            Verdict::Satisfied
+        );
     }
 
     #[test]
@@ -434,14 +440,23 @@ mod tests {
         // whose *kind* is `string` carries no evidence about which string, so
         // it is not provably outside the union.
         let expects = union(vec![literal("red"), literal("blue")]);
-        assert_eq!(decide(&Kind::String, &expects, Strictness::Inhabits), Verdict::Satisfied);
+        assert_eq!(
+            decide(&Kind::String, &expects, Strictness::Inhabits),
+            Verdict::Satisfied
+        );
     }
 
     #[test]
     fn any_proves_nothing_on_the_value_side() {
-        assert_eq!(decide(&Kind::Any, &Kind::Int, Strictness::Inhabits), Verdict::Unknown);
+        assert_eq!(
+            decide(&Kind::Any, &Kind::Int, Strictness::Inhabits),
+            Verdict::Unknown
+        );
         // …but an `any` *expectation* accepts anything.
-        assert_eq!(decide(&Kind::Int, &Kind::Any, Strictness::Inhabits), Verdict::Satisfied);
+        assert_eq!(
+            decide(&Kind::Int, &Kind::Any, Strictness::Inhabits),
+            Verdict::Satisfied
+        );
     }
 
     #[test]
@@ -449,14 +464,26 @@ mod tests {
         // `meet(float, int)` is `int`, not `⊥` — the lattice reads `int` into
         // `float` as a coercion — so disjointness alone would let a
         // `TYPE int VALUE 1.5` through. The subtype test is what catches it.
-        assert_eq!(decide(&Kind::Float, &Kind::Int, Strictness::Inhabits), Verdict::Violated);
-        assert_eq!(decide(&Kind::Int, &Kind::Float, Strictness::Inhabits), Verdict::Satisfied);
+        assert_eq!(
+            decide(&Kind::Float, &Kind::Int, Strictness::Inhabits),
+            Verdict::Violated
+        );
+        assert_eq!(
+            decide(&Kind::Int, &Kind::Float, Strictness::Inhabits),
+            Verdict::Satisfied
+        );
     }
 
     #[test]
     fn an_optional_target_accepts_the_sentinel_and_a_bare_one_does_not() {
         let optional = union(vec![Kind::None, Kind::Int]);
-        assert_eq!(decide(&Kind::None, &optional, Strictness::Inhabits), Verdict::Satisfied);
-        assert_eq!(decide(&Kind::None, &Kind::Int, Strictness::Inhabits), Verdict::Violated);
+        assert_eq!(
+            decide(&Kind::None, &optional, Strictness::Inhabits),
+            Verdict::Satisfied
+        );
+        assert_eq!(
+            decide(&Kind::None, &Kind::Int, Strictness::Inhabits),
+            Verdict::Violated
+        );
     }
 }

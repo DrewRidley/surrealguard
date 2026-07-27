@@ -91,7 +91,9 @@ pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::If
                         crate::render::render_offending(&condition_kind, Some(&Kind::Bool))
                     ),
                 )
-                .with_help("an IF chooses a branch on a true/false test; the condition must be a bool"),
+                .with_help(
+                    "an IF chooses a branch on a true/false test; the condition must be a bool",
+                ),
             );
         }
 
@@ -341,7 +343,10 @@ mod tests {
             .filter(|finding| finding.code().number() == 4024)
             .collect();
         assert_eq!(dead.len(), 1, "exactly one dead-branch finding");
-        assert_eq!(dead[0].tags(), &[surrealguard_diagnostics::FindingTag::Unnecessary]);
+        assert_eq!(
+            dead[0].tags(),
+            &[surrealguard_diagnostics::FindingTag::Unnecessary]
+        );
     }
 
     #[test]
@@ -383,7 +388,12 @@ mod tests {
         // Now it fires — and exactly once, despite re-inference of the
         // subquery kind (dedup via `ctx.emit`).
         let query = "RETURN IF $c { 'a' + true } ELSE { 1 };";
-        assert_eq!(value_if_count(query, "E2004"), 1, "codes: {:?}", value_if_codes(query));
+        assert_eq!(
+            value_if_count(query, "E2004"),
+            1,
+            "codes: {:?}",
+            value_if_codes(query)
+        );
     }
 
     #[test]
@@ -395,7 +405,12 @@ mod tests {
             "DEFINE FIELD name ON thing TYPE string;\n",
             "RETURN IF $c { SELECT badfield FROM thing } ELSE { 1 };",
         );
-        assert_eq!(value_if_count(query, "E1002"), 1, "codes: {:?}", value_if_codes(query));
+        assert_eq!(
+            value_if_count(query, "E1002"),
+            1,
+            "codes: {:?}",
+            value_if_codes(query)
+        );
     }
 
     #[test]
@@ -403,11 +418,21 @@ mod tests {
         // A NON-field rule must fire inside the branch too: an unknown-table
         // SELECT (1001) in a reachable branch, exactly once.
         let query = "RETURN IF $c { SELECT * FROM nonexistent } ELSE { 1 };";
-        assert_eq!(value_if_count(query, "E1001"), 1, "codes: {:?}", value_if_codes(query));
+        assert_eq!(
+            value_if_count(query, "E1001"),
+            1,
+            "codes: {:?}",
+            value_if_codes(query)
+        );
 
         // And a function argument-kind mismatch (5002) inside a branch.
         let arg = "RETURN IF $c { string::len(1) } ELSE { 1 };";
-        assert_eq!(value_if_count(arg, "E5002"), 1, "codes: {:?}", value_if_codes(arg));
+        assert_eq!(
+            value_if_count(arg, "E5002"),
+            1,
+            "codes: {:?}",
+            value_if_codes(arg)
+        );
     }
 
     #[test]
@@ -415,7 +440,12 @@ mod tests {
         // The subquery kind is re-read by the operator check, re-inferring the
         // branch — `ctx.emit` dedup keeps it a single finding.
         let query = "RETURN (IF $c { 'a' + true } ELSE { 2 }) ?? 0;";
-        assert_eq!(value_if_count(query, "E2004"), 1, "codes: {:?}", value_if_codes(query));
+        assert_eq!(
+            value_if_count(query, "E2004"),
+            1,
+            "codes: {:?}",
+            value_if_codes(query)
+        );
     }
 
     #[test]
@@ -429,11 +459,21 @@ mod tests {
             "DEFINE FIELD name ON thing TYPE string;\n",
             "RETURN IF false { SELECT badfield FROM thing } ELSE { 1 };",
         );
-        assert_eq!(value_if_count(query, "E1002"), 0, "codes: {:?}", value_if_codes(query));
+        assert_eq!(
+            value_if_count(query, "E1002"),
+            0,
+            "codes: {:?}",
+            value_if_codes(query)
+        );
 
         // Likewise a check-side error in a dead branch stays silent.
         let binary = "RETURN IF false { 'a' + true } ELSE { 1 };";
-        assert_eq!(value_if_count(binary, "E2004"), 0, "codes: {:?}", value_if_codes(binary));
+        assert_eq!(
+            value_if_count(binary, "E2004"),
+            0,
+            "codes: {:?}",
+            value_if_codes(binary)
+        );
     }
 
     #[test]
@@ -444,7 +484,10 @@ mod tests {
             analyze_query(&mut workspace, query).response_kind
         };
         // A const-true guard still folds to just the THEN's kind.
-        assert_eq!(response("RETURN IF 1 == 1 { 1 } ELSE { 'x' };"), Some(Kind::Int));
+        assert_eq!(
+            response("RETURN IF 1 == 1 { 1 } ELSE { 'x' };"),
+            Some(Kind::Int)
+        );
         // A dynamic guard still unions both branches.
         assert_eq!(
             response("RETURN IF $c { 1 } ELSE { 'x' };"),
@@ -611,8 +654,11 @@ mod tests {
         // `$x` was narrowed to a bare `record<b>` by a prior guard, so a
         // re-check `IF $x = NONE { ... }` can never run: the THEN is dead and
         // only the ELSE contributes.
-        let (kind, findings) =
-            bound_if(record("b"), true, "IF $x = NONE { RETURN 1 } ELSE { RETURN 2 };");
+        let (kind, findings) = bound_if(
+            record("b"),
+            true,
+            "IF $x = NONE { RETURN 1 } ELSE { RETURN 2 };",
+        );
         assert_eq!(dead_count(&findings), 1, "exactly one greyed branch");
         assert_eq!(
             findings
@@ -629,8 +675,11 @@ mod tests {
     #[test]
     fn not_none_guard_on_a_flow_narrowed_non_none_subject_greys_the_else() {
         // `$x != NONE` is always true for the narrowed record, so the ELSE is dead.
-        let (kind, findings) =
-            bound_if(record("b"), true, "IF $x != NONE { RETURN 1 } ELSE { RETURN 2 };");
+        let (kind, findings) = bound_if(
+            record("b"),
+            true,
+            "IF $x != NONE { RETURN 1 } ELSE { RETURN 2 };",
+        );
         assert_eq!(dead_count(&findings), 1, "the ELSE is greyed");
         // Only the THEN runs → the value is the THEN's `int`.
         assert_eq!(kind, Kind::Int);
@@ -644,7 +693,11 @@ mod tests {
             true,
             "IF type::table($x) = 'a' { RETURN 1 } ELSE { RETURN 2 };",
         );
-        assert_eq!(dead_count(&findings), 1, "the dead discriminant THEN is greyed");
+        assert_eq!(
+            dead_count(&findings),
+            1,
+            "the dead discriminant THEN is greyed"
+        );
     }
 
     #[test]
@@ -653,9 +706,16 @@ mod tests {
         // param (never flow-narrowed) with an idiomatic defensive
         // `IF $x = NONE { ... }` is technically dead but must NOT be greyed —
         // it is a defensive check, not conditional-flow dead code.
-        let (_kind, findings) =
-            bound_if(record("b"), false, "IF $x = NONE { RETURN 1 } ELSE { RETURN 2 };");
-        assert_eq!(dead_count(&findings), 0, "defensive check on a base binding is kept");
+        let (_kind, findings) = bound_if(
+            record("b"),
+            false,
+            "IF $x = NONE { RETURN 1 } ELSE { RETURN 2 };",
+        );
+        assert_eq!(
+            dead_count(&findings),
+            0,
+            "defensive check on a base binding is kept"
+        );
 
         // Likewise the discriminant and is_record forms on a base binding.
         let (_k, f) = bound_if(
@@ -703,7 +763,11 @@ mod tests {
         // Exactly one dead-branch finding (the second, redundant guard).
         assert_eq!(workspace_code_count(source, 4024), 1);
         // Its body is never analyzed → the unknown-table SELECT raises no 1001.
-        assert_eq!(workspace_code_count(source, 1001), 0, "dead body not checked");
+        assert_eq!(
+            workspace_code_count(source, 1001),
+            0,
+            "dead body not checked"
+        );
     }
 
     #[test]
@@ -717,7 +781,15 @@ mod tests {
                 };\n\
                 RETURN 3;\n\
              };";
-        assert_eq!(workspace_code_count(source, 4024), 1, "inner re-check greyed");
-        assert_eq!(workspace_code_count(source, 1001), 0, "dead body not checked");
+        assert_eq!(
+            workspace_code_count(source, 4024),
+            1,
+            "inner re-check greyed"
+        );
+        assert_eq!(
+            workspace_code_count(source, 1001),
+            0,
+            "dead body not checked"
+        );
     }
 }

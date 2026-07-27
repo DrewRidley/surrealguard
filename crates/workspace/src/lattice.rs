@@ -219,10 +219,7 @@ pub(crate) fn meet(a: &Kind, b: &Kind) -> KindMeet {
     //    a mutually-assignable pair (which the literal rule above can still
     //    produce nested inside an object or a collection) falls through to the
     //    structural rules, which are symmetric.
-    match (
-        kind_is_assignable_to(a, b),
-        kind_is_assignable_to(b, a),
-    ) {
+    match (kind_is_assignable_to(a, b), kind_is_assignable_to(b, a)) {
         (true, false) => return KindMeet::Exact(a.clone()),
         (false, true) => return KindMeet::Exact(b.clone()),
         (true, true) | (false, false) => {}
@@ -350,14 +347,12 @@ fn meet_structural(a: &Kind, b: &Kind) -> KindMeet {
         (Kind::Set(left, left_len), Kind::Set(right, right_len)) => {
             meet_collection(left, *left_len, right, *right_len, Collection::Set)
         }
-        (
-            Kind::Literal(KindLiteral::Object(left)),
-            Kind::Literal(KindLiteral::Object(right)),
-        ) => meet_objects(left, right),
-        (
-            Kind::Literal(KindLiteral::Array(left)),
-            Kind::Literal(KindLiteral::Array(right)),
-        ) => meet_tuples(left, right),
+        (Kind::Literal(KindLiteral::Object(left)), Kind::Literal(KindLiteral::Object(right))) => {
+            meet_objects(left, right)
+        }
+        (Kind::Literal(KindLiteral::Array(left)), Kind::Literal(KindLiteral::Array(right))) => {
+            meet_tuples(left, right)
+        }
         _ => {
             // The numeric tower is a coercion order, not value inclusion: `int`
             // is admitted into both `float` and `decimal`, so those two share a
@@ -453,10 +448,7 @@ fn meet_collection(
 /// ones that admit `NONE`. So a property one side requires and the other never
 /// declares can be satisfied by no value of both kinds at once — that is a
 /// proof of disjointness, not an invitation to union the property sets.
-fn meet_objects(
-    left: &BTreeMap<String, Kind>,
-    right: &BTreeMap<String, Kind>,
-) -> KindMeet {
+fn meet_objects(left: &BTreeMap<String, Kind>, right: &BTreeMap<String, Kind>) -> KindMeet {
     let one_sided_required = |from: &BTreeMap<String, Kind>, other: &BTreeMap<String, Kind>| {
         from.iter()
             .any(|(key, kind)| !other.contains_key(key) && !kind_admits_none(kind))
@@ -522,10 +514,7 @@ fn residual(a: &Kind, b: &Kind) -> Option<Kind> {
 }
 
 fn is_numeric(kind: &Kind) -> bool {
-    matches!(
-        kind,
-        Kind::Int | Kind::Float | Kind::Decimal | Kind::Number
-    )
+    matches!(kind, Kind::Int | Kind::Float | Kind::Decimal | Kind::Number)
 }
 
 /// A union built from the variants that survived, in the order they were
@@ -665,7 +654,10 @@ mod tests {
             object(&[("inner", object(&[("flag", Kind::Bool)]))]),
             // array literals (fixed-arity tuples)
             Kind::Literal(KindLiteral::Array(vec![Kind::Int, Kind::String])),
-            Kind::Literal(KindLiteral::Array(vec![Kind::Int, string_literal("active")])),
+            Kind::Literal(KindLiteral::Array(vec![
+                Kind::Int,
+                string_literal("active"),
+            ])),
             Kind::Literal(KindLiteral::Array(vec![Kind::Int])),
         ]
     }
@@ -767,8 +759,16 @@ mod tests {
     #[test]
     fn any_is_the_identity_of_meet() {
         for a in &universe() {
-            assert_eq!(meet(a, &Kind::Any), KindMeet::Exact(a.clone()), "meet({a}, any)");
-            assert_eq!(meet(&Kind::Any, a), KindMeet::Exact(a.clone()), "meet(any, {a})");
+            assert_eq!(
+                meet(a, &Kind::Any),
+                KindMeet::Exact(a.clone()),
+                "meet({a}, any)"
+            );
+            assert_eq!(
+                meet(&Kind::Any, a),
+                KindMeet::Exact(a.clone()),
+                "meet(any, {a})"
+            );
         }
     }
 
@@ -787,8 +787,14 @@ mod tests {
                 let KindMeet::Exact(common) = meet(a, b) else {
                     continue;
                 };
-                assert!(below(&common, a), "meet({a}, {b}) = {common} is not below {a}");
-                assert!(below(&common, b), "meet({a}, {b}) = {common} is not below {b}");
+                assert!(
+                    below(&common, a),
+                    "meet({a}, {b}) = {common} is not below {a}"
+                );
+                assert!(
+                    below(&common, b),
+                    "meet({a}, {b}) = {common} is not below {b}"
+                );
             }
         }
     }
@@ -974,7 +980,10 @@ mod tests {
         assert_eq!(meet(&status, &string_literal("bogus")), KindMeet::Empty);
         // And a bare `string` — which is what inference produces for a written
         // literal — narrows the union to nothing but must not widen it either.
-        assert_eq!(meet(&status, &Kind::String), KindMeet::Exact(status.clone()));
+        assert_eq!(
+            meet(&status, &Kind::String),
+            KindMeet::Exact(status.clone())
+        );
         // The plain-field case that already works, for the same operation.
         assert_eq!(
             meet(&Kind::String, &string_literal("bob")),
@@ -1006,7 +1015,10 @@ mod tests {
             Some(Kind::String)
         );
         // And on a plain option there is no NULL to lose.
-        assert_eq!(subtract(&option_of(Kind::String), &Kind::None), Some(Kind::String));
+        assert_eq!(
+            subtract(&option_of(Kind::String), &Kind::None),
+            Some(Kind::String)
+        );
         assert_eq!(
             subtract(&option_of(Kind::String), &Kind::Null),
             Some(option_of(Kind::String))
@@ -1019,11 +1031,20 @@ mod tests {
     #[test]
     fn record_table_sets_meet_and_subtract() {
         let both = record(&["user", "folder"]);
-        assert_eq!(meet(&both, &record(&["user"])), KindMeet::Exact(record(&["user"])));
-        assert_eq!(subtract(&both, &record(&["folder"])), Some(record(&["user"])));
+        assert_eq!(
+            meet(&both, &record(&["user"])),
+            KindMeet::Exact(record(&["user"]))
+        );
+        assert_eq!(
+            subtract(&both, &record(&["folder"])),
+            Some(record(&["user"]))
+        );
         assert_eq!(subtract(&both, &record(&["user", "folder"])), None);
         // A table the link cannot point at is a proven contradiction.
-        assert_eq!(meet(&record(&["user"]), &record(&["post"])), KindMeet::Empty);
+        assert_eq!(
+            meet(&record(&["user"]), &record(&["post"])),
+            KindMeet::Empty
+        );
         // `record<>` is any record: it is the top of the record sub-lattice.
         assert_eq!(meet(&both, &record(&[])), KindMeet::Exact(both.clone()));
         assert_eq!(subtract(&both, &record(&[])), None);
@@ -1040,12 +1061,18 @@ mod tests {
     #[test]
     fn the_deliberate_over_approximations() {
         // Removing one value from an infinite kind has no name.
-        assert_eq!(subtract(&Kind::String, &string_literal("a")), Some(Kind::String));
+        assert_eq!(
+            subtract(&Kind::String, &string_literal("a")),
+            Some(Kind::String)
+        );
         // The numeric tower is a coercion order, so this is not `float | decimal`.
         assert_eq!(subtract(&Kind::Number, &Kind::Int), Some(Kind::Number));
         // `int` is below both `float` and `decimal` under that same order.
         assert_eq!(meet(&Kind::Int, &Kind::Float), KindMeet::Exact(Kind::Int));
-        assert_eq!(meet(&Kind::Float, &Kind::Decimal), KindMeet::Unrepresentable);
+        assert_eq!(
+            meet(&Kind::Float, &Kind::Decimal),
+            KindMeet::Unrepresentable
+        );
         // Two collections with disjoint elements share only the empty one.
         assert_eq!(
             meet(

@@ -17,7 +17,10 @@ pub(crate) fn analyze_geo_hash_encode(
         &Signature {
             min_args: 1,
             max_args: Some(2),
-            arg_kinds: vec![ParamKind::Exact(Kind::Geometry(Vec::new())), ParamKind::Numeric],
+            arg_kinds: vec![
+                ParamKind::Exact(Kind::Geometry(Vec::new())),
+                ParamKind::Numeric,
+            ],
             return_kind: ReturnKind::Fixed(Kind::String),
         },
         args,

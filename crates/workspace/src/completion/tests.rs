@@ -115,7 +115,10 @@ fn context_kind(query: &str) -> ContextKind {
 #[test]
 fn a_projection_position_is_a_field_position_even_before_the_from_is_typed() {
     assert_eq!(context_kind("SELECT ▏"), ContextKind::FieldName);
-    assert_eq!(context_kind("SELECT name, ▏ FROM person"), ContextKind::FieldName);
+    assert_eq!(
+        context_kind("SELECT name, ▏ FROM person"),
+        ContextKind::FieldName
+    );
 }
 
 #[test]
@@ -124,12 +127,18 @@ fn an_empty_projection_before_an_existing_from_still_sees_its_table() {
     // ERROR node holding one Keyword — every structural fact is gone. The
     // token scan still finds SELECT, FROM, and the table.
     let fixture = Fixture::new("SELECT ▏ FROM person");
-    assert!(fixture.parsed.has_error(), "fixture must exercise broken input");
+    assert!(
+        fixture.parsed.has_error(),
+        "fixture must exercise broken input"
+    );
     assert_eq!(fixture.context().kind, ContextKind::FieldName);
     assert_eq!(fixture.context().tables, vec!["person".to_string()]);
     let labels = fixture.labels_of(CandidateKind::Field);
     for expected in ["name", "status", "age", "employer", "tags", "id"] {
-        assert!(labels.contains(&expected.to_string()), "missing {expected} in {labels:?}");
+        assert!(
+            labels.contains(&expected.to_string()),
+            "missing {expected} in {labels:?}"
+        );
     }
 }
 
@@ -146,7 +155,10 @@ fn a_dangling_from_is_a_table_position() {
 #[test]
 fn a_lone_dollar_after_a_comparison_is_a_param_position() {
     let fixture = Fixture::new("SELECT * FROM person WHERE status = $▏");
-    assert!(fixture.parsed.has_error(), "fixture must exercise broken input");
+    assert!(
+        fixture.parsed.has_error(),
+        "fixture must exercise broken input"
+    );
     let context = fixture.context();
     assert_eq!(context.kind, ContextKind::ParamName);
     assert_eq!(context.expected, Some(Kind::String));
@@ -244,7 +256,10 @@ fn a_mutation_target_and_its_set_clause_classify_separately() {
 #[test]
 fn a_graph_step_alternates_an_edge_slot_and_the_node_it_lands_on() {
     assert_eq!(context_kind("RELATE $a->▏"), ContextKind::EdgeTable);
-    assert_eq!(context_kind("SELECT ->▏ FROM person"), ContextKind::EdgeTable);
+    assert_eq!(
+        context_kind("SELECT ->▏ FROM person"),
+        ContextKind::EdgeTable
+    );
     assert_eq!(
         context_kind("SELECT ->works_at->▏ FROM person"),
         ContextKind::GraphNode
@@ -481,13 +496,23 @@ fn a_graph_step_filter_completes_the_edges_fields_not_the_outer_rows() {
         "SELECT ->(has_email WHERE ▏)->email_address FROM account",
     ] {
         let fixture = graph(query);
-        assert_eq!(fixture.context().tables, vec!["has_email".to_string()], "{query}");
+        assert_eq!(
+            fixture.context().tables,
+            vec!["has_email".to_string()],
+            "{query}"
+        );
         let fields = fixture.labels_of(CandidateKind::Field);
         for expected in ["verified", "in", "out", "id"] {
-            assert!(fields.contains(&expected.to_string()), "{query}: {fields:?}");
+            assert!(
+                fields.contains(&expected.to_string()),
+                "{query}: {fields:?}"
+            );
         }
         // The outer row's own fields belong to `account`, not to the edge.
-        assert!(!fields.contains(&"owner".to_string()), "{query}: {fields:?}");
+        assert!(
+            !fields.contains(&"owner".to_string()),
+            "{query}: {fields:?}"
+        );
     }
 }
 
@@ -520,17 +545,26 @@ fn a_group_key_offers_the_projections_aliases_and_the_rows_fields_only() {
     assert_eq!(fixture.context().kind, ContextKind::GroupKey);
     let labels = fixture.labels();
     for expected in ["region", "amount", "id", "total"] {
-        assert!(labels.contains(&expected.to_string()), "missing {expected}: {labels:?}");
+        assert!(
+            labels.contains(&expected.to_string()),
+            "missing {expected}: {labels:?}"
+        );
     }
     // Nothing that cannot label a group.
     for absent in ["math::sum", "math::", "$auth", "$session", "sale", "other"] {
-        assert!(!labels.contains(&absent.to_string()), "{absent} in {labels:?}");
+        assert!(
+            !labels.contains(&absent.to_string()),
+            "{absent} in {labels:?}"
+        );
     }
 }
 
 #[test]
 fn a_second_group_key_does_not_re_offer_the_first() {
-    let fixture = Fixture::with_schema(GROUPED, "SELECT region, amount FROM sale GROUP BY region, ▏");
+    let fixture = Fixture::with_schema(
+        GROUPED,
+        "SELECT region, amount FROM sale GROUP BY region, ▏",
+    );
     let labels = fixture.labels();
     assert!(labels.contains(&"amount".to_string()), "{labels:?}");
     assert!(!labels.contains(&"region".to_string()), "{labels:?}");
@@ -541,7 +575,9 @@ fn order_by_stays_a_plain_field_position() {
     // `BY` belongs to whichever clause opened it; ORDER must not be dragged
     // into the group-key rules.
     assert_eq!(
-        Fixture::with_schema(GROUPED, "SELECT * FROM sale ORDER BY ▏").context().kind,
+        Fixture::with_schema(GROUPED, "SELECT * FROM sale ORDER BY ▏")
+            .context()
+            .kind,
         ContextKind::FieldName
     );
 }
@@ -552,14 +588,20 @@ fn order_by_stays_a_plain_field_position() {
 
 #[test]
 fn with_index_offers_the_queried_tables_indexes_and_nothing_else() {
-    let fixture = Fixture::with_schema(GROUPED, "SELECT * FROM sale WITH INDEX ▏ WHERE region = 'a'");
+    let fixture = Fixture::with_schema(
+        GROUPED,
+        "SELECT * FROM sale WITH INDEX ▏ WHERE region = 'a'",
+    );
     assert_eq!(fixture.context().kind, ContextKind::IndexName);
     assert_offers(&fixture, &["sale_region", "sale_amount"]);
     let labels = fixture.labels();
     // Another table's index, the tables themselves, and the params are all
     // invalid here.
     for absent in ["other_only", "sale", "other", "$auth", "region"] {
-        assert!(!labels.contains(&absent.to_string()), "{absent} in {labels:?}");
+        assert!(
+            !labels.contains(&absent.to_string()),
+            "{absent} in {labels:?}"
+        );
     }
     let index = fixture
         .complete()
@@ -575,11 +617,15 @@ fn defining_an_index_is_still_a_name_position_not_an_index_reference() {
     // `DEFINE INDEX` also puts `INDEX` in the token stream; only the `WITH`
     // pair is a reference to an existing index.
     assert_ne!(
-        Fixture::with_schema(GROUPED, "DEFINE INDEX ▏").context().kind,
+        Fixture::with_schema(GROUPED, "DEFINE INDEX ▏")
+            .context()
+            .kind,
         ContextKind::IndexName
     );
     assert_eq!(
-        Fixture::with_schema(GROUPED, "DEFINE INDEX i ON sale FIELDS ▏").context().kind,
+        Fixture::with_schema(GROUPED, "DEFINE INDEX i ON sale FIELDS ▏")
+            .context()
+            .kind,
         ContextKind::FieldName
     );
 }
@@ -597,7 +643,10 @@ DEFINE FIELD body ON note TYPE string;
     let with_index = Fixture::with_schema(indexed, "SELECT search::▏ FROM article");
     let labels = with_index.labels();
     assert!(labels.contains(&"search::score".to_string()), "{labels:?}");
-    assert!(labels.contains(&"search::highlight".to_string()), "{labels:?}");
+    assert!(
+        labels.contains(&"search::highlight".to_string()),
+        "{labels:?}"
+    );
 
     let without = Fixture::with_schema(indexed, "SELECT search::▏ FROM note");
     let labels = without.labels();
@@ -608,7 +657,10 @@ DEFINE FIELD body ON note TYPE string;
         );
     }
     // The rest of the family works without one.
-    assert!(labels.contains(&"search::analyze".to_string()), "{labels:?}");
+    assert!(
+        labels.contains(&"search::analyze".to_string()),
+        "{labels:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -662,7 +714,10 @@ fn an_unknown_type_scores_neutrally_rather_than_as_a_mismatch() {
     let unknown = type_score(None, Some(&Kind::String));
     let mismatch = type_score(Some(&Kind::Int), Some(&Kind::String));
     assert!(compatible > unknown, "a known fit beats an unknown type");
-    assert!(unknown > mismatch, "an unknown type beats a proven mismatch");
+    assert!(
+        unknown > mismatch,
+        "an unknown type beats a proven mismatch"
+    );
     // No expectation at all is neutral for everyone.
     assert_eq!(type_score(Some(&Kind::Int), None), type_score(None, None));
 }
@@ -685,7 +740,9 @@ fn the_ranked_order_is_pinned_for_the_client_by_sort_text() {
 #[test]
 fn a_schema_field_outranks_a_builtin_that_matches_the_same_prefix() {
     let fixture = Fixture::new("SELECT ta▏ FROM person");
-    let field = fixture.rank_of("tags").expect("the row table's field is offered");
+    let field = fixture
+        .rank_of("tags")
+        .expect("the row table's field is offered");
     let builtin = fixture
         .rank_of("type::table")
         .expect("a built-in matching `ta` is offered too");
@@ -770,13 +827,13 @@ DEFINE TABLE person SCHEMAFULL;
 DEFINE FIELD name ON person TYPE string;
 DEFINE FIELD age ON person TYPE int;
 "#;
-    for query in [
-        "SELECT lead.▏ FROM team",
-        "SELECT members.▏ FROM team",
-    ] {
+    for query in ["SELECT lead.▏ FROM team", "SELECT members.▏ FROM team"] {
         let fixture = Fixture::with_schema(schema, query);
         let members = fixture.labels_of(CandidateKind::Field);
-        assert!(members.contains(&"name".to_string()), "{query}: {members:?}");
+        assert!(
+            members.contains(&"name".to_string()),
+            "{query}: {members:?}"
+        );
         assert!(members.contains(&"age".to_string()), "{query}: {members:?}");
     }
 }
@@ -786,7 +843,10 @@ fn a_relation_edge_offers_its_implicit_in_and_out() {
     let fixture = Fixture::new("SELECT ▏ FROM works_at");
     let fields = fixture.labels_of(CandidateKind::Field);
     for expected in ["in", "out", "id", "since"] {
-        assert!(fields.contains(&expected.to_string()), "missing {expected}: {fields:?}");
+        assert!(
+            fields.contains(&expected.to_string()),
+            "missing {expected}: {fields:?}"
+        );
     }
 }
 
@@ -816,7 +876,10 @@ fn a_call_argument_takes_its_expectation_from_the_signature() {
     let fields = builtin_call.labels_of(CandidateKind::Field);
     let name = fields.iter().position(|label| label == "name");
     let age = fields.iter().position(|label| label == "age");
-    assert!(name < age, "the string field must outrank the int one: {fields:?}");
+    assert!(
+        name < age,
+        "the string field must outrank the int one: {fields:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -919,7 +982,10 @@ fn builtins_cover_every_dispatch_arm_the_analyzer_resolves() {
             );
         }
     }
-    assert!(checked > 400, "expected the whole builtin surface, saw {checked}");
+    assert!(
+        checked > 400,
+        "expected the whole builtin surface, saw {checked}"
+    );
 }
 
 // ---------------------------------------------------------------------------

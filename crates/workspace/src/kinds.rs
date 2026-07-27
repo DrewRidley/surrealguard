@@ -78,10 +78,8 @@ pub fn kind_is_assignable_to(actual: &Kind, expected: &Kind) -> bool {
     // which would otherwise collapse `{ a: int }` to a bare `object` and lose
     // the structure. A plain `object` target is open and matched by the base
     // reduction (`object` == `object`).
-    if let (
-        Kind::Literal(KindLiteral::Object(src)),
-        Kind::Literal(KindLiteral::Object(dst)),
-    ) = (actual, expected)
+    if let (Kind::Literal(KindLiteral::Object(src)), Kind::Literal(KindLiteral::Object(dst))) =
+        (actual, expected)
     {
         return object_is_assignable_to(src, dst);
     }
@@ -129,10 +127,7 @@ pub fn kind_is_assignable_to(actual: &Kind, expected: &Kind) -> bool {
         if dst_tables.is_empty() {
             return true;
         }
-        return !src_tables.is_empty()
-            && src_tables
-                .iter()
-                .all(|table| dst_tables.contains(table));
+        return !src_tables.is_empty() && src_tables.iter().all(|table| dst_tables.contains(table));
     }
     match (actual, expected) {
         (Kind::Array(src_elem, src_len), Kind::Array(dst_elem, dst_len))
@@ -643,10 +638,7 @@ mod tests {
     #[test]
     fn object_literal_assignability_is_structural() {
         let option_string = Kind::Either(vec![Kind::None, Kind::String]);
-        let theme_union = Kind::Either(vec![
-            string_literal("marble"),
-            string_literal("euclid"),
-        ]);
+        let theme_union = Kind::Either(vec![string_literal("marble"), string_literal("euclid")]);
 
         // A string-literal property fits a string-literal-union target, and a
         // missing optional property is fine.
@@ -698,7 +690,10 @@ mod tests {
         // `string`, which carries no evidence of falling outside the union.
         assert!(kind_is_assignable_to(&Kind::String, &status));
         assert!(kind_is_assignable_to(&Kind::Int, &level));
-        assert!(kind_is_assignable_to(&Kind::String, &string_literal("active")));
+        assert!(kind_is_assignable_to(
+            &Kind::String,
+            &string_literal("active")
+        ));
 
         // Must-still-fail boundaries. A wrong *base* is a provable mismatch.
         assert!(!kind_is_assignable_to(&Kind::Int, &status));
@@ -1046,7 +1041,11 @@ mod tests {
     fn wrappers_peel_outermost_first_and_rewrap_to_the_original() {
         let cases: &[(&str, Kind, Vec<KindWrapper>)] = &[
             ("bare", user_link(), vec![]),
-            ("option", option_of(user_link()), vec![KindWrapper::Optional]),
+            (
+                "option",
+                option_of(user_link()),
+                vec![KindWrapper::Optional],
+            ),
             (
                 "array",
                 Kind::Array(Box::new(user_link()), None),

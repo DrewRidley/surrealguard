@@ -86,8 +86,7 @@ pub(crate) fn analyze_define_function(
             // several exits is a set of positions rather than one value, and
             // splitting 2012 across them is the compositional-checking work,
             // not this.
-            let actual =
-                returned_constant_kind(stmt).unwrap_or_else(|| body_kind.clone());
+            let actual = returned_constant_kind(stmt).unwrap_or_else(|| body_kind.clone());
             let contract = Contract::new(Position::FunctionReturn, declared.clone());
             if contract.decide(&actual).is_violation() {
                 let span = surrealguard_syntax::span::SourceSpan::new(
@@ -109,10 +108,7 @@ pub(crate) fn analyze_define_function(
                             crate::render::render_offending(&actual, Some(&declared))
                         ),
                     )
-                    .with_related(
-                        name_span,
-                        format!("`{}` is defined here", stmt.name.node),
-                    ),
+                    .with_related(name_span, format!("`{}` is defined here", stmt.name.node)),
                 );
             }
         }

@@ -115,8 +115,7 @@ fn check_event_references(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineEvent
                 stmt.name.node, stmt.table.node
             ),
         );
-        let finding =
-            crate::analyzer::data::with_table_suggestion(finding, ctx, &stmt.table.node);
+        let finding = crate::analyzer::data::with_table_suggestion(finding, ctx, &stmt.table.node);
         ctx.emit(finding);
         return;
     }
@@ -126,7 +125,11 @@ fn check_event_references(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineEvent
         collect_event_field_refs(clause, &mut refs);
     }
 
-    let (unknown, table_name_span, field_keys): (Vec<(String, ByteRange)>, SourceSpan, Vec<String>) = {
+    let (unknown, table_name_span, field_keys): (
+        Vec<(String, ByteRange)>,
+        SourceSpan,
+        Vec<String>,
+    ) = {
         let table = &ctx.schema().tables[&stmt.table.node];
         let unknown = refs
             .iter()

@@ -158,7 +158,8 @@ mod tests {
     fn an_unknown_guard_does_not_kill_a_later_const_true() {
         // The unknown first guard leaves the second reachable; the const-true
         // second guard then kills the else.
-        let reach = reachability_of("IF $x { RETURN 0 } ELSE IF true { RETURN 1 } ELSE { RETURN 2 };");
+        let reach =
+            reachability_of("IF $x { RETURN 0 } ELSE IF true { RETURN 1 } ELSE { RETURN 2 };");
         assert_eq!(
             reach.branches,
             vec![BranchReach::Reachable, BranchReach::Reachable]

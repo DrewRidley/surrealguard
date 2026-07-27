@@ -58,7 +58,9 @@ pub(crate) fn analyze_permission_predicates(
                 // `$this.field`) are not plain field paths, so session params
                 // and record members never trip this.
                 if let Some(table) = row_table {
-                    crate::analyzer::data::check_expression_field_paths(ctx, table, predicate, 1002);
+                    crate::analyzer::data::check_expression_field_paths(
+                        ctx, table, predicate, 1002,
+                    );
                 }
                 // F4 — a predicate whose kind is provably never boolean can
                 // never gate access as written. Guarded to provably-non-bool

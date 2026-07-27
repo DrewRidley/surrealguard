@@ -750,7 +750,12 @@ fn walk_statement(stmt: &ast::Statement, refs: &mut SourceReferenceSet) {
         }
         S::Expr(expr) => walk_expr(&expr.node, refs),
         // No catalog reads: transaction control, USE, OPTION, BREAK/CONTINUE.
-        S::Begin(_) | S::Commit(_) | S::Cancel(_) | S::Use(_) | S::Option(_) | S::Break(_)
+        S::Begin(_)
+        | S::Commit(_)
+        | S::Cancel(_)
+        | S::Use(_)
+        | S::Option(_)
+        | S::Break(_)
         | S::Continue(_) => {}
         S::Partial(_) => refs.depends_on_all = true,
     }
@@ -878,8 +883,7 @@ fn walk_expr(expr: &ast::Expr, refs: &mut SourceReferenceSet) {
         E::Prefix { expr, .. } => walk_expr(&expr.node, refs),
         E::Call(call) => {
             if call.path.node.starts_with("fn::") {
-                refs.symbols
-                    .insert(SymbolKey::Func(call.path.node.clone()));
+                refs.symbols.insert(SymbolKey::Func(call.path.node.clone()));
             }
             for arg in &call.args {
                 walk_expr(&arg.node, refs);
@@ -1079,8 +1083,12 @@ pub fn reanalyze_sources<P: std::borrow::Borrow<ParsedSource>>(
     affected: &BTreeSet<SourceId>,
     require_suppression_reasons: bool,
 ) -> BTreeMap<SourceId, AnalysisOutput> {
-    let mut per_source =
-        pipeline::reanalyze_sources(parsed_sources, global, affected, require_suppression_reasons);
+    let mut per_source = pipeline::reanalyze_sources(
+        parsed_sources,
+        global,
+        affected,
+        require_suppression_reasons,
+    );
 
     let mut outputs = BTreeMap::new();
     for parsed in parsed_sources {
@@ -1336,8 +1344,8 @@ INSERT INTO person { name: 'Ada' };
              DEFINE FIELD billing ON organization COMPUTED <~organization_billing[0];"
                 .into(),
         );
-        let query =
-            workspace.add_virtual_source("query".into(), "SELECT billing FROM organization;".into());
+        let query = workspace
+            .add_virtual_source("query".into(), "SELECT billing FROM organization;".into());
 
         let output = analyze_workspace(&workspace);
         let rendered = crate::render_kind(
@@ -1414,7 +1422,10 @@ INSERT INTO person { name: 'Ada' };
             "DEFINE TABLE account SCHEMAFULL;\n\
              DEFINE FIELD passkeys ON account COMPUTED <~passkey;",
         );
-        assert_eq!(findings, vec!["`passkey` is not a defined table".to_string()]);
+        assert_eq!(
+            findings,
+            vec!["`passkey` is not a defined table".to_string()]
+        );
     }
 
     #[test]
@@ -1724,10 +1735,7 @@ INSERT INTO person { name: 'Ada' };
     #[test]
     fn unused_let_fires_7001_once() {
         let mut workspace = Workspace::default();
-        workspace.add_virtual_source(
-            "query".into(),
-            "LET $unused = 1;\nRETURN 5;".into(),
-        );
+        workspace.add_virtual_source("query".into(), "LET $unused = 1;\nRETURN 5;".into());
         let output = analyze_workspace(&workspace);
         assert_eq!(codes(&output, 7001), 1, "{:?}", output.diagnostics);
     }
@@ -1735,10 +1743,7 @@ INSERT INTO person { name: 'Ada' };
     #[test]
     fn used_let_stays_silent_for_7001() {
         let mut workspace = Workspace::default();
-        workspace.add_virtual_source(
-            "query".into(),
-            "LET $used = 1;\nRETURN $used;".into(),
-        );
+        workspace.add_virtual_source("query".into(), "LET $used = 1;\nRETURN $used;".into());
         let output = analyze_workspace(&workspace);
         assert_eq!(codes(&output, 7001), 0, "{:?}", output.diagnostics);
     }
@@ -1981,7 +1986,12 @@ INSERT INTO person { name: 'Ada' };
 
         let output = analyze_workspace(&workspace);
 
-        assert_eq!(codes(&output, 1001), 0, "unexpected: {:?}", output.diagnostics);
+        assert_eq!(
+            codes(&output, 1001),
+            0,
+            "unexpected: {:?}",
+            output.diagnostics
+        );
     }
 
     #[test]
@@ -2002,7 +2012,12 @@ INSERT INTO person { name: 'Ada' };
 
         let output = analyze_workspace(&workspace);
 
-        assert_eq!(codes(&output, 1001), 0, "unexpected: {:?}", output.diagnostics);
+        assert_eq!(
+            codes(&output, 1001),
+            0,
+            "unexpected: {:?}",
+            output.diagnostics
+        );
     }
 
     #[test]
@@ -2021,7 +2036,12 @@ INSERT INTO person { name: 'Ada' };
 
         let output = analyze_workspace(&workspace);
 
-        assert_eq!(codes(&output, 1001), 1, "unexpected: {:?}", output.diagnostics);
+        assert_eq!(
+            codes(&output, 1001),
+            1,
+            "unexpected: {:?}",
+            output.diagnostics
+        );
         let finding = output
             .diagnostics
             .iter()
@@ -2047,7 +2067,12 @@ INSERT INTO person { name: 'Ada' };
 
         let output = analyze_workspace(&workspace);
 
-        assert_eq!(codes(&output, 2037), 1, "unexpected: {:?}", output.diagnostics);
+        assert_eq!(
+            codes(&output, 2037),
+            1,
+            "unexpected: {:?}",
+            output.diagnostics
+        );
     }
 
     #[test]
@@ -2064,7 +2089,12 @@ INSERT INTO person { name: 'Ada' };
 
         let output = analyze_workspace(&workspace);
 
-        assert_eq!(codes(&output, 2037), 0, "unexpected: {:?}", output.diagnostics);
+        assert_eq!(
+            codes(&output, 2037),
+            0,
+            "unexpected: {:?}",
+            output.diagnostics
+        );
     }
 
     #[test]
@@ -2084,23 +2114,22 @@ INSERT INTO person { name: 'Ada' };
 
         let output = analyze_workspace(&workspace);
 
-        assert_eq!(codes(&output, 2037), 0, "unexpected: {:?}", output.diagnostics);
+        assert_eq!(
+            codes(&output, 2037),
+            0,
+            "unexpected: {:?}",
+            output.diagnostics
+        );
     }
 
     #[test]
     fn bare_count_resolves_without_unknown_function() {
         let mut workspace = Workspace::default();
-        workspace.add_virtual_source(
-            "schema".into(),
-            "DEFINE TABLE person SCHEMAFULL;".into(),
-        );
+        workspace.add_virtual_source("schema".into(), "DEFINE TABLE person SCHEMAFULL;".into());
 
         // Bare `count()` must resolve to the builtin (no spurious 5001), and a
         // grouped count is a real aggregate (no 4023 either).
-        let output = analyze_query(
-            &mut workspace,
-            "SELECT count() AS n FROM person GROUP ALL;",
-        );
+        let output = analyze_query(&mut workspace, "SELECT count() AS n FROM person GROUP ALL;");
 
         assert_eq!(
             output
@@ -2125,10 +2154,7 @@ INSERT INTO person { name: 'Ada' };
     #[test]
     fn ungrouped_bare_count_fires_4023_not_5001() {
         let mut workspace = Workspace::default();
-        workspace.add_virtual_source(
-            "schema".into(),
-            "DEFINE TABLE person SCHEMAFULL;".into(),
-        );
+        workspace.add_virtual_source("schema".into(), "DEFINE TABLE person SCHEMAFULL;".into());
 
         let output = analyze_query(&mut workspace, "SELECT count() AS n FROM person;");
 
@@ -2182,10 +2208,7 @@ INSERT INTO person { name: 'Ada' };
             );
             let output = analyze_query(&mut workspace, query);
             assert!(
-                !output
-                    .diagnostics
-                    .iter()
-                    .any(|f| f.code().number() == 4023),
+                !output.diagnostics.iter().any(|f| f.code().number() == 4023),
                 "4023 must not fire in a cardinality position: {query}\n{:?}",
                 output.diagnostics
             );
@@ -2212,10 +2235,7 @@ INSERT INTO person { name: 'Ada' };
             );
             let output = analyze_query(&mut workspace, query);
             assert!(
-                output
-                    .diagnostics
-                    .iter()
-                    .any(|f| f.code().number() == 4023),
+                output.diagnostics.iter().any(|f| f.code().number() == 4023),
                 "expected 4023 for {query}: {:?}",
                 output.diagnostics
             );
@@ -2270,7 +2290,7 @@ INSERT INTO person { name: 'Ada' };
              DEFINE EVENT ev ON t WHEN $event = 'CREATE' THEN {\n\
                  LET $x = CREATE t SET name = 'a';\n\
              };"
-                .into(),
+            .into(),
         );
 
         let output = analyze_workspace(&workspace);
@@ -2642,7 +2662,10 @@ INSERT INTO person { name: 'Ada' };
             .filter(|finding| finding.code() == FindingCode::schema(1001))
             .collect();
         assert_eq!(unknown_tables.len(), 1);
-        assert_eq!(unknown_tables[0].message(), "`company` is not a defined table");
+        assert_eq!(
+            unknown_tables[0].message(),
+            "`company` is not a defined table"
+        );
         assert_eq!(unknown_tables[0].span().source(), &query);
         assert_eq!(unknown_tables[0].span().range().start(), 35);
         assert_eq!(unknown_tables[0].span().range().end(), 42);
@@ -2895,8 +2918,7 @@ INSERT INTO person { name: 'Ada' };
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
             "query".into(),
-            "DEFINE TABLE post;\nSELECT * FROM post WHERE owner = $auth AND title = $name;"
-                .into(),
+            "DEFINE TABLE post;\nSELECT * FROM post WHERE owner = $auth AND title = $name;".into(),
         );
 
         let output = analyze_workspace(&workspace);
@@ -3518,8 +3540,7 @@ INSERT INTO person { name: 'Ada' };
             "value", "before", "after", "input",
         ] {
             let mut workspace = Workspace::default();
-            let source =
-                workspace.add_virtual_source("query".into(), format!("LET ${name} = 1;"));
+            let source = workspace.add_virtual_source("query".into(), format!("LET ${name} = 1;"));
             let output = analyze_workspace(&workspace);
             assert!(
                 output.sources[&source]
@@ -4050,7 +4071,10 @@ INSERT INTO person { name: 'Ada' };
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(messages, vec!["`age` is declared `int`, but this value is `'old'`"]);
+        assert_eq!(
+            messages,
+            vec!["`age` is declared `int`, but this value is `'old'`"]
+        );
     }
 
     #[test]
@@ -4323,8 +4347,7 @@ INSERT INTO person { name: 'Ada' };
         // NONE into a non-optional field violates the one assignability
         // contract (2001); into option<datetime> it is fine.
         assert!(messages.iter().any(|(code, message)| {
-            code == "E2001"
-                && message == "`age` is not optional, so it can't be set to none"
+            code == "E2001" && message == "`age` is not optional, so it can't be set to none"
         }));
         assert!(!messages
             .iter()
@@ -4410,10 +4433,8 @@ INSERT INTO person { name: 'Ada' };
             "schema".into(),
             "DEFINE PARAM $default_tier VALUE 'free';".into(),
         );
-        let query = workspace.add_virtual_source(
-            "query".into(),
-            "LET $tier_default = $default_tier;".into(),
-        );
+        let query = workspace
+            .add_virtual_source("query".into(), "LET $tier_default = $default_tier;".into());
 
         let output = analyze_workspace(&workspace);
         let params = &output.sources[&query].inferred_params;
@@ -4433,10 +4454,8 @@ INSERT INTO person { name: 'Ada' };
             "schema".into(),
             "DEFINE PARAM $default_tier VALUE 'free';".into(),
         );
-        let query = workspace.add_virtual_source(
-            "query".into(),
-            "LET $bound = $some_other_param;".into(),
-        );
+        let query =
+            workspace.add_virtual_source("query".into(), "LET $bound = $some_other_param;".into());
 
         let output = analyze_workspace(&workspace);
         let params = &output.sources[&query].inferred_params;
@@ -4510,7 +4529,8 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5002" && message == "argument 1 to `string::len` is a `int`, but `string` is required"
+            code == "E5002"
+                && message == "argument 1 to `string::len` is a `int`, but `string` is required"
         }));
     }
 
@@ -4530,7 +4550,8 @@ INSERT INTO person { name: 'Ada' };
             .collect();
 
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5002" && message == "argument 1 to `string::len` is a `int`, but `string` is required"
+            code == "E5002"
+                && message == "argument 1 to `string::len` is a `int`, but `string` is required"
         }));
     }
 
@@ -4552,10 +4573,12 @@ INSERT INTO person { name: 'Ada' };
         // WHERE conditions and SET values are walked like any other
         // expression position.
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5002" && message == "argument 1 to `string::len` is a `int`, but `string` is required"
+            code == "E5002"
+                && message == "argument 1 to `string::len` is a `int`, but `string` is required"
         }));
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5002" && message == "argument 1 to `math::abs` is a `string`, but a number is required"
+            code == "E5002"
+                && message == "argument 1 to `math::abs` is a `string`, but a number is required"
         }));
     }
 
@@ -4603,10 +4626,12 @@ INSERT INTO person { name: 'Ada' };
             code == "E5002" && message == "`string::len` takes 1 argument, but this call passes 0"
         }));
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5002" && message == "argument 1 to `string::len` is a `int`, but `string` is required"
+            code == "E5002"
+                && message == "argument 1 to `string::len` is a `int`, but `string` is required"
         }));
         assert!(messages.iter().any(|(code, message)| {
-            code == "E5002" && message == "argument 1 to `array::len` is a `int`, but an array is required"
+            code == "E5002"
+                && message == "argument 1 to `array::len` is a `int`, but an array is required"
         }));
         assert!(messages.iter().any(|(code, message)| {
             code == "E5001" && message == "`unknown::fn` is not a known function"
@@ -4833,7 +4858,10 @@ INSERT INTO person { name: 'Ada' };
 
         assert_eq!(
             messages,
-            vec!["`missing` is not a defined table", "`ghost` is not a defined table",]
+            vec![
+                "`missing` is not a defined table",
+                "`ghost` is not a defined table",
+            ]
         );
     }
 
@@ -4888,7 +4916,10 @@ INSERT INTO person { name: 'Ada' };
                 "`$auth` is a protected parameter and can't be assigned",
             ),
             ("L7003", "array literal mixes kinds: `int`, `string`"),
-            ("L7004", "this IF condition is constant, so one branch is never taken"),
+            (
+                "L7004",
+                "this IF condition is constant, so one branch is never taken",
+            ),
             (
                 "E5002",
                 "`array::map` calls its closure with 2 arguments; `$extra` is never bound",
@@ -5192,20 +5223,17 @@ INSERT INTO person { name: 'Ada' };
 
         for (code, message) in [
             // DEFAULT must inhabit the declared type.
-            ("E2001", "`age`'s value is `'young'`, but the field is declared `int`"),
+            (
+                "E2001",
+                "`age`'s value is `'young'`, but the field is declared `int`",
+            ),
             // ASSERT is a condition; `$value` carries the declared kind.
             ("E2005", "this ASSERT is a `int`, not a `bool`"),
             ("E2004", "`>` can't combine a `int` and a `string`"),
             // READONLY blocks non-creation writes; computed fields warn.
             ("E2025", "`created` can't be changed after creation"),
-            (
-                "E2026",
-                "this write to `synced` is discarded",
-            ),
-            (
-                "L7012",
-                "`http::get` runs on every write to this row",
-            ),
+            ("E2026", "this write to `synced` is discarded"),
+            ("L7012", "`http::get` runs on every write to this row"),
         ] {
             assert!(
                 messages.iter().any(|(c, m)| c == code && m == message),
@@ -5277,17 +5305,23 @@ INSERT INTO person { name: 'Ada' };
                 "this writes every row of `person`; add WHERE or a record id",
             ),
             ("L7011", "record ids are immutable; `id` is set at creation"),
-            (
-                "E2004",
-                "`+=` can't combine a `int` and a `string`",
-            ),
+            ("E2004", "`+=` can't combine a `int` and a `string`"),
             (
                 "E5002",
                 "argument 1 to `fn::greet` is a `1`, but `$who` is declared `string`",
             ),
-            ("E5002", "`fn::greet` takes 1 argument, but this call passes 0"),
-            ("E4005", "BREAK here does nothing — it is outside any FOR loop"),
-            ("E4006", "this statement is unreachable — the block already returned"),
+            (
+                "E5002",
+                "`fn::greet` takes 1 argument, but this call passes 0",
+            ),
+            (
+                "E4005",
+                "BREAK here does nothing — it is outside any FOR loop",
+            ),
+            (
+                "E4006",
+                "this statement is unreachable — the block already returned",
+            ),
             (
                 "L7002",
                 "`$shadow` is re-bound inside this block; the outer `$shadow` is unchanged",
@@ -5301,7 +5335,10 @@ INSERT INTO person { name: 'Ada' };
                 "L7006",
                 "membership test against an empty collection is always false",
             ),
-            ("E4022", "`audit` is a DROP table, so this SELECT never returns rows"),
+            (
+                "E4022",
+                "`audit` is a DROP table, so this SELECT never returns rows",
+            ),
             (
                 "E4021",
                 "`person` has no CHANGEFEED, so SHOW CHANGES reads nothing",
@@ -5528,10 +5565,7 @@ INSERT INTO person { name: 'Ada' };
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(
-            messages,
-            vec!["`likes` has no field `missing_since`"]
-        );
+        assert_eq!(messages, vec!["`likes` has no field `missing_since`"]);
     }
 
     #[test]
@@ -5550,10 +5584,7 @@ INSERT INTO person { name: 'Ada' };
             .map(|finding| finding.message().to_string())
             .collect();
 
-        assert_eq!(
-            messages,
-            vec!["`likes` has no field `missing_since`"]
-        );
+        assert_eq!(messages, vec!["`likes` has no field `missing_since`"]);
     }
 
     /// A parsed fixture must reach semantic analysis: any `S`-category
@@ -5614,7 +5645,10 @@ INSERT INTO person { name: 'Ada' };
             .filter(|finding| finding.code() == FindingCode::graph(3001))
             .map(|finding| finding.message().to_string())
             .collect();
-        assert_eq!(messages, vec!["`post` can't be traversed — it is not a relation table"]);
+        assert_eq!(
+            messages,
+            vec!["`post` can't be traversed — it is not a relation table"]
+        );
     }
 
     #[test]
@@ -5724,7 +5758,10 @@ INSERT INTO person { name: 'Ada' };
             .filter(|finding| finding.code() == FindingCode::graph(3001))
             .map(|finding| finding.message().to_string())
             .collect();
-        assert_eq!(messages, vec!["`post` can't be traversed — it is not a relation table"]);
+        assert_eq!(
+            messages,
+            vec!["`post` can't be traversed — it is not a relation table"]
+        );
     }
 
     #[test]
@@ -5913,7 +5950,8 @@ INSERT INTO person { name: 'Ada' };
             "query".into(),
             "THROW 'boom';
 RETURN 1;
-RETURN 2;".into(),
+RETURN 2;"
+                .into(),
         );
 
         let output = analyze_workspace(&workspace);
@@ -5959,10 +5997,7 @@ RETURN 2;".into(),
 
     /// Asserts the incremental output for `target` equals the full-pass output
     /// for `target` on every dimension the task pins.
-    fn assert_incremental_matches_full(
-        schema_sources: &[&str],
-        query_text: &str,
-    ) {
+    fn assert_incremental_matches_full(schema_sources: &[&str], query_text: &str) {
         let mut workspace = Workspace::default();
         for (i, schema) in schema_sources.iter().enumerate() {
             workspace.add_virtual_source(format!("schema{i}"), (*schema).into());
@@ -6168,9 +6203,18 @@ RETURN 2;".into(),
             let parsed_query = parse_source(target.clone(), query).expect("query parses");
             let incremental = analyze_one_source(&catalog, &parsed_query, false);
 
-            assert_eq!(incremental.diagnostics, full_target.diagnostics, "query `{query}`");
-            assert_eq!(incremental.response_kind, full_target.response_kind, "query `{query}`");
-            assert_eq!(incremental.let_bindings, full_target.let_bindings, "query `{query}`");
+            assert_eq!(
+                incremental.diagnostics, full_target.diagnostics,
+                "query `{query}`"
+            );
+            assert_eq!(
+                incremental.response_kind, full_target.response_kind,
+                "query `{query}`"
+            );
+            assert_eq!(
+                incremental.let_bindings, full_target.let_bindings,
+                "query `{query}`"
+            );
         }
     }
 }
@@ -6215,7 +6259,11 @@ mod symbol_incremental_tests {
         before: &[(&str, &str)],
         after: &[(&str, &str)],
     ) -> (BTreeSet<SourceId>, BTreeMap<SourceId, AnalysisOutput>) {
-        assert_eq!(before.len(), after.len(), "harness expects a same-doc-set edit");
+        assert_eq!(
+            before.len(),
+            after.len(),
+            "harness expects a same-doc-set edit"
+        );
         let before_parsed = parsed_for(before);
         let after_parsed = parsed_for(after);
         let before_catalog = build_global_catalog(&before_parsed);
@@ -6252,8 +6300,7 @@ mod symbol_incremental_tests {
         }
 
         let reanalyzed = reanalyze_sources(&after_parsed, &after_catalog, &affected, false);
-        let mut merged: BTreeMap<SourceId, AnalysisOutput> =
-            full_workspace(before).sources;
+        let mut merged: BTreeMap<SourceId, AnalysisOutput> = full_workspace(before).sources;
         for (id, output) in &reanalyzed {
             merged.insert(id.clone(), output.clone());
         }
@@ -6272,7 +6319,10 @@ mod symbol_incremental_tests {
             let got = merged
                 .get(id)
                 .unwrap_or_else(|| panic!("merged result missing source {id}"));
-            assert_eq!(got.diagnostics, expected.diagnostics, "diagnostics for {id}");
+            assert_eq!(
+                got.diagnostics, expected.diagnostics,
+                "diagnostics for {id}"
+            );
             assert_eq!(
                 got.response_kind, expected.response_kind,
                 "response_kind for {id}"
@@ -6282,7 +6332,10 @@ mod symbol_incremental_tests {
                 got.inferred_params, expected.inferred_params,
                 "inferred_params for {id}"
             );
-            assert_eq!(got.let_bindings, expected.let_bindings, "let_bindings for {id}");
+            assert_eq!(
+                got.let_bindings, expected.let_bindings,
+                "let_bindings for {id}"
+            );
         }
 
         // The incrementally-rebuilt schema must match a full pass' schema so
@@ -6319,10 +6372,7 @@ mod symbol_incremental_tests {
     #[test]
     fn function_body_edit_changing_return_reanalyzes_callers() {
         let before = &[
-            (
-                "fns.surql",
-                "DEFINE FUNCTION fn::pick() { RETURN 1; };",
-            ),
+            ("fns.surql", "DEFINE FUNCTION fn::pick() { RETURN 1; };"),
             ("caller.surql", "RETURN fn::pick();"),
         ];
         let after = &[
@@ -6389,19 +6439,13 @@ mod symbol_incremental_tests {
     #[test]
     fn editing_a_called_function_reanalyzes_every_caller() {
         let before = &[
-            (
-                "fns.surql",
-                "DEFINE FUNCTION fn::v() { RETURN 1; };",
-            ),
+            ("fns.surql", "DEFINE FUNCTION fn::v() { RETURN 1; };"),
             ("a.surql", "RETURN fn::v();"),
             ("b.surql", "RETURN fn::v() + 1;"),
             ("c.surql", "RETURN 42;"),
         ];
         let after = &[
-            (
-                "fns.surql",
-                "DEFINE FUNCTION fn::v() { RETURN 'x'; };",
-            ),
+            ("fns.surql", "DEFINE FUNCTION fn::v() { RETURN 'x'; };"),
             ("a.surql", "RETURN fn::v();"),
             ("b.surql", "RETURN fn::v() + 1;"),
             ("c.surql", "RETURN 42;"),
@@ -6455,8 +6499,7 @@ mod symbol_incremental_tests {
         assert!(source_requires_full_reanalysis(&parsed));
         let alter = parse_source(sid("s.surql"), "ALTER TABLE person DROP;").expect("parse");
         assert!(source_requires_full_reanalysis(&alter));
-        let define_param =
-            parse_source(sid("s.surql"), "DEFINE PARAM $x VALUE 1;").expect("parse");
+        let define_param = parse_source(sid("s.surql"), "DEFINE PARAM $x VALUE 1;").expect("parse");
         assert!(source_requires_full_reanalysis(&define_param));
         let plain = parse_source(sid("s.surql"), "DEFINE TABLE person;").expect("parse");
         assert!(!source_requires_full_reanalysis(&plain));
@@ -6555,10 +6598,14 @@ mod symbol_incremental_tests {
             1,
         );
 
-        let before_refs: Vec<(&str, &str)> =
-            before.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-        let after_refs: Vec<(&str, &str)> =
-            after.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+        let before_refs: Vec<(&str, &str)> = before
+            .iter()
+            .map(|(n, t)| (n.as_str(), t.as_str()))
+            .collect();
+        let after_refs: Vec<(&str, &str)> = after
+            .iter()
+            .map(|(n, t)| (n.as_str(), t.as_str()))
+            .collect();
 
         let iters = 20;
         // Full whole-workspace pass per keystroke.
@@ -6606,8 +6653,10 @@ mod symbol_incremental_tests {
             "DEFINE FUNCTION fn::f0_0($x: record<t0_0>) { RETURN 'label'; };",
             1,
         );
-        let after_b_refs: Vec<(&str, &str)> =
-            after_b.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+        let after_b_refs: Vec<(&str, &str)> = after_b
+            .iter()
+            .map(|(n, t)| (n.as_str(), t.as_str()))
+            .collect();
         let mut affected_b = 0usize;
         let incr_b_start = Instant::now();
         for _ in 0..iters {
@@ -6643,10 +6692,7 @@ mod symbol_incremental_tests {
             "DEFINE FUNCTION fn::helper() -> int { RETURN 1; };".to_string(),
         ));
         for i in 0..40 {
-            before.push((
-                format!("q{i}.surql"),
-                format!("RETURN {i};"),
-            ));
+            before.push((format!("q{i}.surql"), format!("RETURN {i};")));
         }
         let before_refs: Vec<(&str, &str)> = before
             .iter()
@@ -6662,10 +6708,10 @@ mod symbol_incremental_tests {
 
         let affected = assert_equivalent(&before_refs, &after_refs);
         assert_eq!(
-            affected, 1,
+            affected,
+            1,
             "an unreferenced function-body edit re-analyzes exactly one source, not {}",
             before.len()
         );
     }
 }
-

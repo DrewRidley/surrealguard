@@ -6,12 +6,12 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 
 pub mod ac;
-pub mod rd;
 pub mod db;
 pub mod id;
 pub mod ip;
 pub mod ns;
 pub mod origin;
+pub mod rd;
 pub mod sc;
 pub mod sd;
 pub mod token;

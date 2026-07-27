@@ -414,7 +414,10 @@ mod tests {
         assert_eq!(missing_fields(&diagnostics), 1, "got: {diagnostics:?}");
 
         // Both rows short: two findings, one anchored on each row.
-        let both = diagnostics_for(&schema, "INSERT INTO person [{ name: 'Ada' }, { name: 'Bob' }];");
+        let both = diagnostics_for(
+            &schema,
+            "INSERT INTO person [{ name: 'Ada' }, { name: 'Bob' }];",
+        );
         assert_eq!(missing_fields(&both), 2, "got: {both:?}");
         let spans: Vec<_> = both
             .iter()

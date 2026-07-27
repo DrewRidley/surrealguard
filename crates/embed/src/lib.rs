@@ -1,12 +1,19 @@
 //! Embedded SurrealQL extraction from host-language sources.
 //!
-//! Host adapters share one convention: SurrealQL lives in `surql`
-//! tagged-template literals (`` surql`SELECT * FROM person` ``). This
-//! crate finds those templates with the host language's own grammar,
-//! rewrites `${...}` substitutions into analyzer-visible parameters, and
-//! keeps a byte-precise map from the extracted query back to the host
+//! Host adapters share one convention: SurrealQL lives in a **string
+//! literal** passed to a query sink — `db.query("SELECT * FROM person")`,
+//! `defineQuery("...")`, `defineLive("...")`. This crate finds those calls
+//! with the host language's own grammar, rewrites the `${...}`
+//! substitutions of a template argument into analyzer-visible parameters,
+//! and keeps a byte-precise map from the extracted query back to the host
 //! file — so findings computed on the query render at the right host
 //! spans.
+//!
+//! A string literal rather than a tagged template because only a literal
+//! survives into the type system: `TemplateStringsArray` has no generic
+//! parameter, so `` surql`…` `` erases its query before inference can look
+//! at it. Extraction and the generated registry key on the same text, which
+//! only the literal form makes possible.
 //!
 //! Framework files (Svelte, Vue, Astro) are TypeScript inside
 //! `<script>` blocks; [`extract`] handles both plain and framework
@@ -174,7 +181,7 @@ mod tests {
 
     #[test]
     fn svelte_script_blocks_extract_with_shifted_offsets() {
-        let source = "<h1>hi</h1>\n<script lang=\"ts\">\nconst q = surql`SELECT * FROM person`;\n</script>\n";
+        let source = "<h1>hi</h1>\n<script lang=\"ts\">\nconst q = db.query(\"SELECT * FROM person\");\n</script>\n";
         let queries = extract("app.svelte", source);
 
         assert_eq!(queries.len(), 1);
@@ -189,7 +196,7 @@ mod tests {
 
     #[test]
     fn host_offsets_map_back_into_the_query() {
-        let source = "const q = surql`SELECT * FROM person WHERE age > ${min}`;";
+        let source = "const q = db.query(`SELECT * FROM person WHERE age > ${min}`);";
         let queries = extract("app.ts", source);
         let query = &queries[0];
 

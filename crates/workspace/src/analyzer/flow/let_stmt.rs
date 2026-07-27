@@ -21,7 +21,9 @@ pub(crate) fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) ->
                     stmt.name.node, stmt.name.node
                 ),
             )
-            .with_help("a block introduces a new scope, so this LET does not affect the outer binding")
+            .with_help(
+                "a block introduces a new scope, so this LET does not affect the outer binding",
+            )
             .with_help("silence with `W7002 = \"allow\"`"),
         );
     }
@@ -40,7 +42,9 @@ pub(crate) fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) ->
                     stmt.name.node
                 ),
             )
-            .with_help("protected parameters (`$this`, `$parent`, `$value`, ...) are bound by the engine"),
+            .with_help(
+                "protected parameters (`$this`, `$parent`, `$value`, ...) are bound by the engine",
+            ),
         );
     }
 

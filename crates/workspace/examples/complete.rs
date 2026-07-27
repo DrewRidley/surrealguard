@@ -15,16 +15,18 @@ use surrealguard_workspace::{complete_at, completion_context_at};
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let root = args.next().expect("usage: complete <dir> \"<query with ▏>\"");
-    let query = args.next().expect("usage: complete <dir> \"<query with ▏>\"");
+    let root = args
+        .next()
+        .expect("usage: complete <dir> \"<query with ▏>\"");
+    let query = args
+        .next()
+        .expect("usage: complete <dir> \"<query with ▏>\"");
     let limit: usize = args
         .next()
         .and_then(|value| value.parse().ok())
         .unwrap_or(20);
 
-    let offset = query
-        .find('▏')
-        .expect("place the cursor with `▏`") as u32;
+    let offset = query.find('▏').expect("place the cursor with `▏`") as u32;
     let query = query.replace('▏', "");
 
     let mut workspace = Workspace::default();
@@ -37,11 +39,7 @@ fn main() {
     }
     let query_id = workspace.add_virtual_source("probe".into(), query.clone());
     let analysis = analyze_workspace(&workspace);
-    let output = analysis
-        .sources
-        .get(&query_id)
-        .cloned()
-        .unwrap_or_default();
+    let output = analysis.sources.get(&query_id).cloned().unwrap_or_default();
     let parsed = parse_source(query_id, query).expect("the probe query parses");
 
     let context = completion_context_at(&output, &analysis.schema, &parsed, offset);
@@ -49,7 +47,10 @@ fn main() {
         "context={:?} tables={:?} expected={:?} prefix={:?}",
         context.kind,
         context.tables,
-        context.expected.as_ref().map(surrealguard_workspace::render_kind),
+        context
+            .expected
+            .as_ref()
+            .map(surrealguard_workspace::render_kind),
         context.prefix,
     );
     // Completion runs per keystroke, so its own cost is worth showing.

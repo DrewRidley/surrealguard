@@ -369,12 +369,7 @@ fn field_candidates(
     out
 }
 
-fn member_candidate(
-    name: String,
-    kind: Option<Kind>,
-    owner: Option<String>,
-    weight: f32,
-) -> Draft {
+fn member_candidate(name: String, kind: Option<Kind>, owner: Option<String>, weight: f32) -> Draft {
     Draft::new(
         CompletionCandidate {
             label: name.clone(),
@@ -398,11 +393,7 @@ fn member_candidate(
 /// `allowed_tables` has already resolved that set — so this is a *filter*.
 /// Ranking a wrong edge below a right one still offers it, and an offered
 /// traversal that returns nothing at runtime is worse than no offer at all.
-fn table_candidates(
-    schema: &SchemaIndex,
-    context: &CompletionContext,
-    weight: f32,
-) -> Vec<Draft> {
+fn table_candidates(schema: &SchemaIndex, context: &CompletionContext, weight: f32) -> Vec<Draft> {
     schema
         .tables
         .values()
@@ -471,11 +462,7 @@ fn alias_candidates(context: &CompletionContext, weight: f32) -> Vec<Draft> {
 
 /// The indexes defined on the queried tables. Only these can follow
 /// `WITH INDEX`: an index on another table is not a candidate at all.
-fn index_candidates(
-    schema: &SchemaIndex,
-    context: &CompletionContext,
-    weight: f32,
-) -> Vec<Draft> {
+fn index_candidates(schema: &SchemaIndex, context: &CompletionContext, weight: f32) -> Vec<Draft> {
     let mut out = Vec::new();
     for table in &context.tables {
         let Some(definition) = schema.table(table) else {
@@ -578,24 +565,27 @@ fn function_candidates(
 
     if !context.prefix.is_empty() {
         let fulltext = has_fulltext_index(schema, &context.tables);
-        out.extend(builtins::BUILTINS.iter().filter(|builtin| {
-            fulltext || !FULLTEXT_ONLY.contains(&builtin.name)
-        }).map(|builtin| {
-            Draft::new(
-                CompletionCandidate {
-                    label: builtin.name.to_string(),
-                    insert_text: builtin.name.to_string(),
-                    kind: CandidateKind::Function,
-                    detail: Some(builtin.signature()),
-                    documentation: Some("built-in function".to_string()),
-                    candidate_kind: kind_text::return_kind(builtin.returns),
-                    score: 0.0,
-                    sort_text: String::new(),
-                    replace: (0, 0),
-                },
-                weight,
-            )
-        }));
+        out.extend(
+            builtins::BUILTINS
+                .iter()
+                .filter(|builtin| fulltext || !FULLTEXT_ONLY.contains(&builtin.name))
+                .map(|builtin| {
+                    Draft::new(
+                        CompletionCandidate {
+                            label: builtin.name.to_string(),
+                            insert_text: builtin.name.to_string(),
+                            kind: CandidateKind::Function,
+                            detail: Some(builtin.signature()),
+                            documentation: Some("built-in function".to_string()),
+                            candidate_kind: kind_text::return_kind(builtin.returns),
+                            score: 0.0,
+                            sort_text: String::new(),
+                            replace: (0, 0),
+                        },
+                        weight,
+                    )
+                }),
+        );
     }
     out
 }
@@ -897,10 +887,7 @@ fn in_scope_params(
         if matches!(seen.get(&param.name), Some((_, ParamOrigin::Context))) {
             continue;
         }
-        seen.insert(
-            param.name.clone(),
-            (param.kind.clone(), ParamOrigin::Host),
-        );
+        seen.insert(param.name.clone(), (param.kind.clone(), ParamOrigin::Host));
     }
 
     // A guard that narrowed a symbol narrowed it for the completion list too.
@@ -915,7 +902,11 @@ fn in_scope_params(
             continue;
         }
         let start = binding.name_span.range().start();
-        if start >= offset || closed.iter().any(|(from, to)| start >= *from && start < *to) {
+        if start >= offset
+            || closed
+                .iter()
+                .any(|(from, to)| start >= *from && start < *to)
+        {
             continue;
         }
         seen.insert(
@@ -927,12 +918,9 @@ fn in_scope_params(
     // Applied last, over every origin: a narrowing is a statement about this
     // program point, and it outranks whatever bound the name.
     for (name, (kind, _)) in seen.iter_mut() {
-        if let Some(narrowing) = crate::query::narrowing_at(
-            &output.narrowings,
-            parsed.source_id(),
-            name,
-            offset,
-        ) {
+        if let Some(narrowing) =
+            crate::query::narrowing_at(&output.narrowings, parsed.source_id(), name, offset)
+        {
             *kind = Some(narrowing.kind.clone());
         }
     }
@@ -988,18 +976,23 @@ const WEIGHT_LOCAL: f32 = 0.05;
 fn rank(drafts: Vec<Draft>, context: &CompletionContext) -> Vec<CompletionCandidate> {
     let mut scored: Vec<CompletionCandidate> = drafts
         .into_iter()
-        .filter_map(|Draft { mut candidate, family }| {
-            let name_score = match_score(&context.prefix, &candidate.label)?;
-            let type_score =
-                type_score(candidate.candidate_kind.as_ref(), context.expected.as_ref());
-            let local = f32::from(u8::from(is_schema_local(&candidate)));
-            candidate.score = WEIGHT_MATCH * name_score
-                + WEIGHT_TYPE * type_score
-                + WEIGHT_FAMILY * family
-                + WEIGHT_LOCAL * local;
-            candidate.replace = context.replace;
-            Some(candidate)
-        })
+        .filter_map(
+            |Draft {
+                 mut candidate,
+                 family,
+             }| {
+                let name_score = match_score(&context.prefix, &candidate.label)?;
+                let type_score =
+                    type_score(candidate.candidate_kind.as_ref(), context.expected.as_ref());
+                let local = f32::from(u8::from(is_schema_local(&candidate)));
+                candidate.score = WEIGHT_MATCH * name_score
+                    + WEIGHT_TYPE * type_score
+                    + WEIGHT_FAMILY * family
+                    + WEIGHT_LOCAL * local;
+                candidate.replace = context.replace;
+                Some(candidate)
+            },
+        )
         .collect();
 
     scored.sort_by(|a, b| {

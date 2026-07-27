@@ -3,6 +3,7 @@
 //! reads source text; analysis consumes only `ast::*` values.
 
 pub mod ast;
+pub mod highlight;
 pub mod lower;
 pub mod parse;
 pub mod source;

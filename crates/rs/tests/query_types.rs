@@ -48,11 +48,7 @@ fn nested_objects_and_arrays_compose() {
             ("user", object([("name", Value::String("ada".into()))])),
             (
                 "tags",
-                vec![
-                    Value::String("a".into()),
-                    Value::String("b".into()),
-                ]
-                .into_value(),
+                vec![Value::String("a".into()), Value::String("b".into())].into_value(),
             ),
         ])))
         .unwrap();
@@ -66,9 +62,11 @@ fn nested_objects_and_arrays_compose() {
 fn array_result_is_a_vec_of_the_nameless_row() {
     let q = query!("RETURN [{ city: 'london' }];");
     let rows = q
-        .decode(one(
-            vec![object([("city", Value::String("london".into()))])].into_value(),
-        ))
+        .decode(one(vec![object([(
+            "city",
+            Value::String("london".into()),
+        )])]
+        .into_value()))
         .unwrap();
     assert_eq!(rows.len(), 1);
     let city: String = rows[0].city.clone();
@@ -98,7 +96,9 @@ fn a_record_link_decodes_as_a_record_id_not_a_string() {
     let q = query!("SELECT id FROM user;");
     let id = RecordId::new("user", "ada");
     let rows = q
-        .decode(one(vec![object([("id", id.clone().into_value())])].into_value()))
+        .decode(one(
+            vec![object([("id", id.clone().into_value())])].into_value()
+        ))
         .unwrap();
     // Typed as `RecordId`; decoding this same value into a `String` is the bug
     // `a_record_id_does_not_decode_as_a_string` pins.
@@ -123,9 +123,7 @@ fn a_duration_decodes_as_a_duration_not_a_string() {
     let q = query!("SELECT ttl FROM user;");
     let ttl = Duration::from_secs(3600);
     let rows = q
-        .decode(one(
-            vec![object([("ttl", ttl.into_value())])].into_value()
-        ))
+        .decode(one(vec![object([("ttl", ttl.into_value())])].into_value()))
         .unwrap();
     let got: Duration = rows[0].ttl;
     assert_eq!(got, ttl);
@@ -137,7 +135,7 @@ fn a_decimal_decodes_as_a_decimal_not_an_f64() {
     let score = Decimal::new(15, 1);
     let rows = q
         .decode(one(
-            vec![object([("score", score.into_value())])].into_value(),
+            vec![object([("score", score.into_value())])].into_value()
         ))
         .unwrap();
     let got: Decimal = rows[0].score;
@@ -152,7 +150,7 @@ fn a_datetime_decodes_as_a_datetime() {
     let created = Datetime::default();
     let rows = q
         .decode(one(
-            vec![object([("created", created.into_value())])].into_value(),
+            vec![object([("created", created.into_value())])].into_value()
         ))
         .unwrap();
     let got: Datetime = rows[0].created;
@@ -198,7 +196,9 @@ fn an_optional_field_decodes_from_null() {
 fn a_decode_mismatch_names_the_field_and_the_query() {
     let q = query!("SELECT name FROM user;");
     let error = q
-        .decode(one(vec![object([("name", 42i64.into_value())])].into_value()))
+        .decode(one(
+            vec![object([("name", 42i64.into_value())])].into_value()
+        ))
         .unwrap_err();
     let rendered = error.to_string();
     assert!(rendered.contains("field `name`"), "{rendered}");
@@ -215,7 +215,7 @@ fn a_select_is_a_row_set() {
     let q = query!("SELECT name FROM user;");
     let rows = q
         .decode(one(
-            vec![object([("name", Value::String("ada".into()))])].into_value(),
+            vec![object([("name", Value::String("ada".into()))])].into_value()
         ))
         .unwrap();
     // `Rows` is what gates `fetch_all` and friends.
@@ -320,13 +320,11 @@ fn query_file_reads_checks_and_types_a_file_relative_to_the_crate_root() {
     assert!(q.text().contains("SELECT name, age FROM user"));
     assert_eq!(q.bound(), vec!["min"]);
     let rows = q
-        .decode(one(
-            vec![object([
-                ("name", Value::String("ada".into())),
-                ("age", 42i64.into_value()),
-            ])]
-            .into_value(),
-        ))
+        .decode(one(vec![object([
+            ("name", Value::String("ada".into())),
+            ("age", 42i64.into_value()),
+        ])]
+        .into_value()))
         .unwrap();
     let name: String = rows[0].name.clone();
     let age: i64 = rows[0].age;

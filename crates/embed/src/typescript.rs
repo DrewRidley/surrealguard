@@ -1,10 +1,10 @@
-//! `surql` tagged-template extraction over the TypeScript grammar.
+//! Embedded-query extraction over the TypeScript grammar.
 
 use tree_sitter::{Node, Parser};
 
 use crate::{EmbeddedQuery, Segment, Substitution};
 
-/// Finds every `` surql`...` `` template in a TypeScript source. `tsx`
+/// Finds every embedded SurrealQL query in a TypeScript source. `tsx`
 /// selects the TSX grammar (needed for files with JSX).
 pub fn extract_typescript(text: &str, tsx: bool) -> Vec<EmbeddedQuery> {
     let language = if tsx {
@@ -31,19 +31,16 @@ fn collect(node: Node<'_>, text: &str, queries: &mut Vec<EmbeddedQuery>) {
             node.child_by_field_name("function"),
             node.child_by_field_name("arguments"),
         ) {
-            if is_surql_tag(function, text) {
-                if arguments.kind() == "template_string" {
-                    if let Some(query) = template_to_query(arguments, text) {
-                        queries.push(query);
-                    }
-                } else if let Some(query) = call_string_to_query(arguments, text) {
+            if is_query_sink(function, text) {
+                if let Some(query) = call_string_to_query(arguments, text) {
                     queries.push(query);
                 }
             } else if is_query_method(function, text) {
                 // The runtime API: `db.query("...")` / `db.live("...")`. The
                 // first string (or template) argument is the query; a trailing
                 // bindings object is ignored. This is what makes the generated
-                // registry cover real client code, not just `surql` templates.
+                // registry cover real client code, not just `defineQuery`
+                // declarations.
                 if let Some(query) = method_call_to_query(arguments, text) {
                     queries.push(query);
                 }
@@ -57,15 +54,23 @@ fn collect(node: Node<'_>, text: &str, queries: &mut Vec<EmbeddedQuery>) {
     }
 }
 
-/// The tag is `surql` itself or a `.surql` member (`db.surql`, ...).
-/// The identifiers whose call form carries a query literal. `surql` is the
-/// original; `defineQuery`/`defineLive` are the 0.5 API, where a query is a
-/// *value* built once and reused. Extraction has to know all three, or a query
-/// written the new way is invisible to `generate` — the registry comes out
-/// empty and every call resolves to `unknown`, with nothing to say why.
-const QUERY_SINKS: [&str; 3] = ["surql", "defineQuery", "defineLive"];
+/// The identifiers whose call form carries a query literal: `defineQuery` /
+/// `defineLive`, the 0.5 API where a query is a *value* built once and reused.
+/// Extraction has to know them, or a query written that way is invisible to
+/// `generate` — the registry comes out empty and every call resolves to
+/// `unknown`, with nothing to say why.
+///
+/// There is deliberately no tag here. A `` surql`…` `` tagged template cannot
+/// carry its literal into the type system at all: `TemplateStringsArray` has
+/// no generic parameter (TypeScript#33304, open since 2019), so the literal is
+/// erased before inference runs and the registry lookup has nothing to key on.
+/// A sink that can never be typed is a sink that lies about being checked, so
+/// the tag form was removed rather than kept as a second-class spelling.
+const QUERY_SINKS: [&str; 2] = ["defineQuery", "defineLive"];
 
-fn is_surql_tag(node: Node<'_>, text: &str) -> bool {
+/// The callee names a query sink, either bare (`defineQuery(...)`) or through
+/// a member (`sg.defineQuery(...)`).
+fn is_query_sink(node: Node<'_>, text: &str) -> bool {
     let names = |name: &str| QUERY_SINKS.contains(&name);
     match node.kind() {
         "identifier" => names(&text[node.byte_range()]),
@@ -76,8 +81,8 @@ fn is_surql_tag(node: Node<'_>, text: &str) -> bool {
     }
 }
 
-/// The call form `surql("...")`: one plain string-literal argument. This
-/// is the *typed* form — string literals resolve through the generated
+/// The call form `defineQuery("...")`: one plain string-literal argument.
+/// This is the *typed* form — string literals resolve through the generated
 /// registry, which tagged templates cannot (TypeScript never infers
 /// literal types for template string arrays).
 fn call_string_to_query(arguments: Node<'_>, text: &str) -> Option<EmbeddedQuery> {
@@ -102,9 +107,9 @@ fn call_string_to_query(arguments: Node<'_>, text: &str) -> Option<EmbeddedQuery
 /// objects, not string literals) from matching.
 fn is_query_method(node: Node<'_>, text: &str) -> bool {
     node.kind() == "member_expression"
-        && node.child_by_field_name("property").is_some_and(|property| {
-            matches!(&text[property.byte_range()], "query" | "live")
-        })
+        && node
+            .child_by_field_name("property")
+            .is_some_and(|property| matches!(&text[property.byte_range()], "query" | "live"))
 }
 
 /// `db.query("...")` / `db.live("...")`: the first string (or template)
@@ -211,26 +216,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn finds_surql_tagged_templates() {
+    fn a_tagged_template_is_not_a_query() {
+        // `surql` was a sink until the type system proved it could never be
+        // one: the literal is erased before inference, so a tagged query is a
+        // query nothing can check. Extraction must not resurrect it — a
+        // finding on text the registry cannot type is a finding with no fix.
         let source = r#"
 const name = "Ada";
 const q = surql`SELECT * FROM person`;
 const other = css`b { color: red }`;
 "#;
-        let queries = extract_typescript(source, false);
-
-        assert_eq!(queries.len(), 1);
-        assert_eq!(queries[0].text, "SELECT * FROM person");
-        assert_eq!(
-            &source[queries[0].host_range.clone()],
-            "SELECT * FROM person"
-        );
-        assert!(queries[0].substitutions.is_empty());
+        assert!(extract_typescript(source, false).is_empty());
     }
 
     #[test]
     fn substitutions_become_parameters_with_host_ranges() {
-        let source = "const q = surql`SELECT * FROM person WHERE age > ${min} AND name = ${name}`;";
+        let source =
+            "const q = db.query(`SELECT * FROM person WHERE age > ${min} AND name = ${name}`);";
         let queries = extract_typescript(source, false);
 
         assert_eq!(queries.len(), 1);
@@ -251,7 +253,8 @@ const other = css`b { color: red }`;
 
     #[test]
     fn offsets_map_through_substitutions() {
-        let source = "const q = surql`SELECT * FROM person WHERE age > ${min} AND name = 'x'`;";
+        let source =
+            "const q = db.query(`SELECT * FROM person WHERE age > ${min} AND name = 'x'`);";
         let queries = extract_typescript(source, false);
         let query = &queries[0];
 
@@ -273,7 +276,7 @@ const other = css`b { color: red }`;
 
     #[test]
     fn call_form_string_literals_extract() {
-        let source = "const q = surql(\"SELECT name FROM person WHERE team = $team\");";
+        let source = "const q = defineQuery(\"SELECT name FROM person WHERE team = $team\");";
         let queries = extract_typescript(source, false);
 
         assert_eq!(queries.len(), 1);
@@ -294,7 +297,10 @@ const other = css`b { color: red }`;
         let queries = extract_typescript(source, false);
 
         assert_eq!(queries.len(), 1);
-        assert_eq!(queries[0].text, "SELECT name FROM person WHERE team = $team");
+        assert_eq!(
+            queries[0].text,
+            "SELECT name FROM person WHERE team = $team"
+        );
         assert!(queries[0].substitutions.is_empty());
         // The query maps back to the host string, past the bindings object.
         let embedded_team = queries[0].text.find("team =").expect("team present");
@@ -322,8 +328,9 @@ const other = css`b { color: red }`;
     }
 
     #[test]
-    fn member_tags_and_tsx_sources_work() {
-        let source = "export const App = () => <div>{db.surql`SELECT 1 FROM person`}</div>;";
+    fn member_sinks_and_tsx_sources_work() {
+        let source =
+            "export const App = () => <div>{sg.defineQuery(\"SELECT 1 FROM person\")}</div>;";
         let queries = extract_typescript(source, true);
 
         assert_eq!(queries.len(), 1);

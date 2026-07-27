@@ -461,7 +461,10 @@ mod tests {
         // here, so the `none` is named rather than folded into a wrapper that
         // reads as "this was declared optional".
         let optional = Kind::either(vec![Kind::None, Kind::String]);
-        assert_eq!(render(&optional, KindContext::Occurrence { proved: None }).text, "none | string");
+        assert_eq!(
+            render(&optional, KindContext::Occurrence { proved: None }).text,
+            "none | string"
+        );
         // Nested optionality is spelled out too — the reader is being told
         // what the value can be, at every depth.
         let row = object(&[("nick", optional)]);

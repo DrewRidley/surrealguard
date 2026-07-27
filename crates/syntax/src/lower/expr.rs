@@ -1296,8 +1296,7 @@ mod tests {
 
         // Record unions: `record<team | user | organization>` nests the table
         // names as a single UnionType argument.
-        let parsed =
-            parse("DEFINE FIELD owner ON thing TYPE record<team | user | organization>;");
+        let parsed = parse("DEFINE FIELD owner ON thing TYPE record<team | user | organization>;");
         let param = find_first(parsed.tree().root_node(), "ParameterizedType")
             .expect("has a ParameterizedType node");
         let ty = lower_type_expr(param, parsed.text());
@@ -1432,7 +1431,10 @@ mod tests {
         };
         assert!(matches!(op.node, BinaryOp::Mul));
         let Expr::Binary { op: inner_op, .. } = &lhs.node else {
-            panic!("expected the grouped binary on the left, got {:?}", lhs.node);
+            panic!(
+                "expected the grouped binary on the left, got {:?}",
+                lhs.node
+            );
         };
         assert!(matches!(inner_op.node, BinaryOp::Add));
     }

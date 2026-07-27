@@ -166,10 +166,7 @@ pub fn check_required_fields(
                 "`{path}` is `{}` with no `DEFAULT`, so every create must provide it",
                 crate::render_kind(kind)
             ))
-            .with_related(
-                field.name_span.clone(),
-                format!("`{path}` is defined here"),
-            ),
+            .with_related(field.name_span.clone(), format!("`{path}` is defined here")),
         );
     }
 }
@@ -437,8 +434,13 @@ fn check_field_write_flags(
                 2025,
                 format!("`{path}` can't be changed after creation"),
             )
-            .with_help(format!("`{path}` is READONLY; set it once, when the row is created"))
-            .with_related(field.name_span.clone(), format!("`{path}` is defined READONLY here")),
+            .with_help(format!(
+                "`{path}` is READONLY; set it once, when the row is created"
+            ))
+            .with_related(
+                field.name_span.clone(),
+                format!("`{path}` is defined READONLY here"),
+            ),
         );
         return;
     }
@@ -574,8 +576,8 @@ fn check_assignment_value(
                 crate::render_kind(&field_kind)
             ));
             if let Some(def) = table.fields.get(&path) {
-                finding =
-                    finding.with_related(def.name_span.clone(), format!("`{path}` is defined here"));
+                finding = finding
+                    .with_related(def.name_span.clone(), format!("`{path}` is defined here"));
             }
             ctx.emit(finding);
         }
@@ -1157,7 +1159,12 @@ mod tests {
 
     /// The returned row object of a mutation (unwrapping the array).
     fn row_fields(schema_src: &str, query: &str, statement_kind: &str) -> BTreeMap<String, Kind> {
-        object_fields(array_element(&build_kind(schema_src, query, statement_kind))).clone()
+        object_fields(array_element(&build_kind(
+            schema_src,
+            query,
+            statement_kind,
+        )))
+        .clone()
     }
 
     #[test]
@@ -1168,7 +1175,10 @@ mod tests {
             ("CREATE person;", "CreateStatement"),
             ("CREATE person RETURN AFTER;", "CreateStatement"),
             ("UPDATE person SET age = 1 RETURN AFTER;", "UpdateStatement"),
-            ("UPDATE person SET age = 1 RETURN BEFORE;", "UpdateStatement"),
+            (
+                "UPDATE person SET age = 1 RETURN BEFORE;",
+                "UpdateStatement",
+            ),
             ("UPDATE person SET age = 1 RETURN *;", "UpdateStatement"),
         ] {
             let fields = row_fields(PERSON_SCHEMA, query, statement_kind);
@@ -1267,11 +1277,19 @@ mod tests {
     fn return_modes_that_produce_no_row_gain_no_id() {
         // RETURN NONE: an empty array, not a row.
         assert_eq!(
-            build_kind(PERSON_SCHEMA, "CREATE person RETURN NONE;", "CreateStatement"),
+            build_kind(
+                PERSON_SCHEMA,
+                "CREATE person RETURN NONE;",
+                "CreateStatement"
+            ),
             Kind::Array(Box::new(Kind::Any), Some(0))
         );
         // RETURN DIFF: a patch list, not a row.
-        let diff = build_kind(PERSON_SCHEMA, "UPDATE person RETURN DIFF;", "UpdateStatement");
+        let diff = build_kind(
+            PERSON_SCHEMA,
+            "UPDATE person RETURN DIFF;",
+            "UpdateStatement",
+        );
         let patch = object_fields(array_element(array_element(&diff)));
         assert!(!patch.contains_key("id"), "got: {patch:?}");
         assert_eq!(patch.len(), 3);

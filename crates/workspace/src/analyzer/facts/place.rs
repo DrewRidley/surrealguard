@@ -154,9 +154,7 @@ fn idiom_place(idiom: &ast::Idiom) -> Option<Place> {
             None => return None,
         },
         // A bare row field: `email`, `profile.email`.
-        ast::IdiomPart::Field(name) => {
-            (PlaceRoot::RowField, vec![Step::Field(name.clone())])
-        }
+        ast::IdiomPart::Field(name) => (PlaceRoot::RowField, vec![Step::Field(name.clone())]),
         _ => return None,
     };
     for part in parts {
@@ -232,10 +230,7 @@ mod tests {
     #[test]
     fn a_constant_index_is_a_step_but_not_a_field_path() {
         let indexed = place("$x[0].f").expect("a place");
-        assert_eq!(
-            indexed.path,
-            vec![Step::Index(0), Step::Field("f".into())]
-        );
+        assert_eq!(indexed.path, vec![Step::Index(0), Step::Field("f".into())]);
         // Refining an element is sound only against a fixed-length tuple, so
         // every consumer asks for the field path and gets nothing here.
         assert_eq!(indexed.field_path(), None);
@@ -263,7 +258,10 @@ mod tests {
         // read of `$x.f.g` ask whether `$x.f` was narrowed.
         let base = Place::param("x");
         let field = ast::IdiomPart::Field("f".into());
-        assert_eq!(base.stepped(&field).and_then(|p| p.key()), Some("x.f".into()));
+        assert_eq!(
+            base.stepped(&field).and_then(|p| p.key()),
+            Some("x.f".into())
+        );
         // A part that computes names nothing, so the prefix stops there.
         assert_eq!(
             base.stepped(&ast::IdiomPart::All),

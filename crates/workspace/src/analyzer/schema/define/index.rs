@@ -49,9 +49,7 @@ pub(crate) fn analyze_define_index(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
                 // different work (one enforces a constraint, the other only
                 // speeds lookups), so they are not redundant. Two indexes are
                 // duplicates only when their backing kind matches too.
-                other.name != stmt.name.node
-                    && other.kind == this_kind
-                    && other_paths == paths
+                other.name != stmt.name.node && other.kind == this_kind && other_paths == paths
             })
         })
         .flatten()

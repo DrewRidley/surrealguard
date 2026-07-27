@@ -176,7 +176,11 @@ fn response(
 
     match responders.as_slice() {
         // Nothing responds: a schema-only or LET-only query.
-        [] => (quote!(()), quote!({ ::core::result::Result::Ok(()) }), statements),
+        [] => (
+            quote!(()),
+            quote!({ ::core::result::Result::Ok(()) }),
+            statements,
+        ),
         [(index, kind)] => {
             let ty = generate::rust_type(kind, scope);
             let body = quote! {

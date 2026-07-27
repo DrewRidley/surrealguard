@@ -103,9 +103,7 @@ pub(crate) fn check_field_path(
         code,
         format!("`{}` has no field `{path}`", table.name),
     );
-    if let Some(nearest) =
-        crate::suggest::closest(&path, table.fields.keys().map(String::as_str))
-    {
+    if let Some(nearest) = crate::suggest::closest(&path, table.fields.keys().map(String::as_str)) {
         finding = finding.with_help(format!("did you mean `{nearest}`?"));
     }
     finding = finding.with_related(

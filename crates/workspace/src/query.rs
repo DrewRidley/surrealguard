@@ -41,7 +41,8 @@ const INLAY_LABEL_MAX: usize = 48;
 /// Duplicate bindings at the same span (should not occur, but re-inference
 /// could) are emitted once.
 pub fn let_binding_hints(output: &AnalysisOutput) -> Vec<TypeHint> {
-    let mut seen: std::collections::HashSet<(SourceId, u32, u32)> = std::collections::HashSet::new();
+    let mut seen: std::collections::HashSet<(SourceId, u32, u32)> =
+        std::collections::HashSet::new();
     output
         .let_bindings
         .iter()
@@ -254,8 +255,7 @@ pub fn hover_at(
     // The kind of each `LET`/`FOR` variable, by name, for resolving `$var`
     // uses and `$var[i].field` idioms anywhere in the source. A name bound
     // more than once keeps the last binding's kind (source-order shadowing).
-    let mut let_kinds: std::collections::HashMap<String, Kind> =
-        std::collections::HashMap::new();
+    let mut let_kinds: std::collections::HashMap<String, Kind> = std::collections::HashMap::new();
     for binding in &output.let_bindings {
         if let Some(kind) = &binding.kind {
             let_kinds.insert(binding.name.clone(), kind.clone());
@@ -373,7 +373,9 @@ pub fn definition_at(
             return;
         }
         let width = cover.end().saturating_sub(cover.start());
-        let is_smaller = best.as_ref().map_or(true, |(best_width, _)| width < *best_width);
+        let is_smaller = best
+            .as_ref()
+            .map_or(true, |(best_width, _)| width < *best_width);
         if is_smaller {
             best = Some((width, target));
         }
@@ -450,7 +452,10 @@ fn symbol_markdown(
     // The "why" line, when the analysis proved one. A hover that shows a kind
     // narrower than the declaration and says nothing about why reads as a bug
     // in the tool.
-    if let Some(note) = rendered.as_ref().and_then(|rendered| rendered.note.as_ref()) {
+    if let Some(note) = rendered
+        .as_ref()
+        .and_then(|rendered| rendered.note.as_ref())
+    {
         markdown.push_str(&format!("\n\n{note}"));
     }
     // Only records earn an expanded field block: their linked-table fields
@@ -555,7 +560,10 @@ fn table_field_lines(table: &str, schema: &SchemaIndex) -> Vec<String> {
     def.fields
         .values()
         .map(|field| {
-            let kind = field.kind.as_ref().map_or_else(|| "any".to_string(), render_kind);
+            let kind = field
+                .kind
+                .as_ref()
+                .map_or_else(|| "any".to_string(), render_kind);
             format!("{}: {kind}", field.path.join("."))
         })
         .collect()
@@ -677,7 +685,10 @@ impl SchemaHovers<'_> {
                 for idiom in select.omit.iter().chain(&select.split).chain(&select.fetch) {
                     self.walk_idiom(root, &idiom.node);
                 }
-                for extra in [&select.limit, &select.start, &select.timeout].into_iter().flatten() {
+                for extra in [&select.limit, &select.start, &select.timeout]
+                    .into_iter()
+                    .flatten()
+                {
                     self.walk_expr(None, extra);
                 }
             }
@@ -728,10 +739,16 @@ impl SchemaHovers<'_> {
                 self.walk_insert_data(root, &insert.data);
             }
             Statement::Relate(relate) => {
-                for endpoint in [&relate.from, &relate.edge, &relate.to].into_iter().flatten() {
+                for endpoint in [&relate.from, &relate.edge, &relate.to]
+                    .into_iter()
+                    .flatten()
+                {
                     self.walk_expr(None, endpoint);
                 }
-                let root = relate.edge.as_ref().and_then(|edge| expr_table_name(&edge.node));
+                let root = relate
+                    .edge
+                    .as_ref()
+                    .and_then(|edge| expr_table_name(&edge.node));
                 self.walk_data(root, relate.data.as_ref());
             }
             Statement::Define(define) => self.walk_define(define),
@@ -811,7 +828,10 @@ impl SchemaHovers<'_> {
                 self.table_ref(&field.table);
                 self.walk_idiom(Some(field.table.node.as_str()), &field.path.node);
                 let root = Some(field.table.node.as_str());
-                for expr in [&field.default, &field.value, &field.assert].into_iter().flatten() {
+                for expr in [&field.default, &field.value, &field.assert]
+                    .into_iter()
+                    .flatten()
+                {
                     self.walk_expr(root, expr);
                 }
                 for predicate in &field.permissions {
@@ -1320,7 +1340,10 @@ impl SchemaDefs<'_> {
                 for idiom in select.omit.iter().chain(&select.split).chain(&select.fetch) {
                     self.walk_idiom(root, &idiom.node);
                 }
-                for extra in [&select.limit, &select.start, &select.timeout].into_iter().flatten() {
+                for extra in [&select.limit, &select.start, &select.timeout]
+                    .into_iter()
+                    .flatten()
+                {
                     self.walk_expr(None, extra);
                 }
             }
@@ -1371,10 +1394,16 @@ impl SchemaDefs<'_> {
                 self.walk_insert_data(root, &insert.data);
             }
             Statement::Relate(relate) => {
-                for endpoint in [&relate.from, &relate.edge, &relate.to].into_iter().flatten() {
+                for endpoint in [&relate.from, &relate.edge, &relate.to]
+                    .into_iter()
+                    .flatten()
+                {
                     self.walk_expr(None, endpoint);
                 }
-                let root = relate.edge.as_ref().and_then(|edge| expr_table_name(&edge.node));
+                let root = relate
+                    .edge
+                    .as_ref()
+                    .and_then(|edge| expr_table_name(&edge.node));
                 self.walk_data(root, relate.data.as_ref());
             }
             Statement::Define(define) => self.walk_define(define),
@@ -1454,7 +1483,10 @@ impl SchemaDefs<'_> {
                 self.table_ref(&field.table);
                 self.walk_idiom(Some(field.table.node.as_str()), &field.path.node);
                 let root = Some(field.table.node.as_str());
-                for expr in [&field.default, &field.value, &field.assert].into_iter().flatten() {
+                for expr in [&field.default, &field.value, &field.assert]
+                    .into_iter()
+                    .flatten()
+                {
                     self.walk_expr(root, expr);
                 }
                 for predicate in &field.permissions {
@@ -1574,8 +1606,10 @@ impl SchemaDefs<'_> {
                 // `LET`/`DEFINE PARAM` binding wins over a function parameter
                 // of the same name.
                 if self.covers(expr.span) {
-                    if let Some(target) =
-                        self.bindings.get(name).or_else(|| self.param_spans.get(name))
+                    if let Some(target) = self
+                        .bindings
+                        .get(name)
+                        .or_else(|| self.param_spans.get(name))
                     {
                         self.out.push((expr.span, target.clone()));
                     }
@@ -1990,7 +2024,9 @@ mod tests {
         let in_body = output
             .narrowings
             .iter()
-            .find(|narrowing| narrowing.path == "x" && narrowing.span.range().start() as usize == body)
+            .find(|narrowing| {
+                narrowing.path == "x" && narrowing.span.range().start() as usize == body
+            })
             .expect("the THEN body is a narrowed region");
         assert_eq!(in_body.kind, Kind::None);
 
@@ -2004,7 +2040,8 @@ mod tests {
             .iter()
             .find(|narrowing| {
                 narrowing.path == "x"
-                    && (guard_end..=last_statement).contains(&(narrowing.span.range().start() as usize))
+                    && (guard_end..=last_statement)
+                        .contains(&(narrowing.span.range().start() as usize))
             })
             .expect("the statements past the guard are a narrowed region");
         assert!(
@@ -2024,7 +2061,11 @@ mod tests {
         let offset = text.find("$id").expect("param present") as u32 + 1;
         let hover = hover_at(&output, &schema, &source, text, offset).expect("hover over $id");
 
-        assert!(hover.markdown.contains("$id: int"), "got: {}", hover.markdown);
+        assert!(
+            hover.markdown.contains("$id: int"),
+            "got: {}",
+            hover.markdown
+        );
     }
 
     #[test]
@@ -2035,9 +2076,21 @@ mod tests {
         let offset = text.find("person").expect("table name present") as u32 + 1;
         let hover = hover_at(&output, &schema, &source, text, offset).expect("hover over table");
 
-        assert!(hover.markdown.contains("DEFINE TABLE person"), "got: {}", hover.markdown);
-        assert!(hover.markdown.contains("name: string"), "got: {}", hover.markdown);
-        assert!(hover.markdown.contains("age: int"), "got: {}", hover.markdown);
+        assert!(
+            hover.markdown.contains("DEFINE TABLE person"),
+            "got: {}",
+            hover.markdown
+        );
+        assert!(
+            hover.markdown.contains("name: string"),
+            "got: {}",
+            hover.markdown
+        );
+        assert!(
+            hover.markdown.contains("age: int"),
+            "got: {}",
+            hover.markdown
+        );
     }
 
     #[test]
@@ -2057,7 +2110,11 @@ mod tests {
         let offset = text.find("$value").expect("param present") as u32 + 1;
         let hover = hover_at(&output, &schema, &source, text, offset).expect("hover over $value");
 
-        assert!(hover.markdown.contains("$value: string"), "got: {}", hover.markdown);
+        assert!(
+            hover.markdown.contains("$value: string"),
+            "got: {}",
+            hover.markdown
+        );
     }
 
     #[test]
@@ -2071,7 +2128,9 @@ mod tests {
         let event_hover =
             hover_at(&output, &schema, &source, text, event_offset).expect("hover over $event");
         assert!(
-            event_hover.markdown.contains("'CREATE' | 'UPDATE' | 'DELETE'"),
+            event_hover
+                .markdown
+                .contains("'CREATE' | 'UPDATE' | 'DELETE'"),
             "got: {}",
             event_hover.markdown
         );
@@ -2095,11 +2154,24 @@ mod tests {
         let (output, schema, source) = analyze(text);
         // Cursor on the `person` in the `FROM person` clause (last occurrence).
         let offset = text.rfind("person").expect("FROM table present") as u32 + 1;
-        let hover = hover_at(&output, &schema, &source, text, offset).expect("hover over FROM table");
+        let hover =
+            hover_at(&output, &schema, &source, text, offset).expect("hover over FROM table");
 
-        assert!(hover.markdown.contains("DEFINE TABLE person"), "got: {}", hover.markdown);
-        assert!(hover.markdown.contains("name: string"), "got: {}", hover.markdown);
-        assert!(hover.markdown.contains("age: int"), "got: {}", hover.markdown);
+        assert!(
+            hover.markdown.contains("DEFINE TABLE person"),
+            "got: {}",
+            hover.markdown
+        );
+        assert!(
+            hover.markdown.contains("name: string"),
+            "got: {}",
+            hover.markdown
+        );
+        assert!(
+            hover.markdown.contains("age: int"),
+            "got: {}",
+            hover.markdown
+        );
     }
 
     #[test]
@@ -2113,7 +2185,11 @@ mod tests {
         let hover =
             hover_at(&output, &schema, &source, text, offset).expect("hover over projected field");
 
-        assert!(hover.markdown.contains("age: int"), "got: {}", hover.markdown);
+        assert!(
+            hover.markdown.contains("age: int"),
+            "got: {}",
+            hover.markdown
+        );
     }
 
     #[test]
@@ -2145,7 +2221,10 @@ mod tests {
         );
 
         // No collection arm at all: still no element kind (stay silent).
-        assert_eq!(element_kind(&Kind::Either(vec![Kind::None, Kind::Int])), None);
+        assert_eq!(
+            element_kind(&Kind::Either(vec![Kind::None, Kind::Int])),
+            None
+        );
         assert_eq!(element_kind(&Kind::String), None);
     }
 
@@ -2160,8 +2239,8 @@ mod tests {
 
         // The link field itself renders as `record<user>`.
         let author_offset = text.rfind("author").expect("projected link present") as u32 + 1;
-        let author_hover =
-            hover_at(&output, &schema, &source, text, author_offset).expect("hover over link field");
+        let author_hover = hover_at(&output, &schema, &source, text, author_offset)
+            .expect("hover over link field");
         assert!(
             author_hover.markdown.contains("author: record<user>"),
             "got: {}",
@@ -2170,8 +2249,8 @@ mod tests {
 
         // The field reached through the link resolves against the linked table.
         let name_offset = text.rfind("name").expect("linked field present") as u32 + 1;
-        let name_hover =
-            hover_at(&output, &schema, &source, text, name_offset).expect("hover over linked field");
+        let name_hover = hover_at(&output, &schema, &source, text, name_offset)
+            .expect("hover over linked field");
         assert!(
             name_hover.markdown.contains("name: string"),
             "got: {}",
@@ -2241,7 +2320,9 @@ mod tests {
             definition_at(&output, &schema, &source, text, offset).expect("definition of field");
 
         // Jumps to the `name` in the DEFINE FIELD statement.
-        let expected = text.find("name ON person").expect("DEFINE FIELD name present") as u32;
+        let expected = text
+            .find("name ON person")
+            .expect("DEFINE FIELD name present") as u32;
         assert_eq!(target.span.source(), &source);
         assert_eq!(target.span.range().start(), expected);
     }
@@ -2259,7 +2340,9 @@ mod tests {
         let target = definition_at(&output, &schema, &source, text, offset)
             .expect("definition of linked field");
 
-        let expected = text.find("name ON user").expect("DEFINE FIELD name present") as u32;
+        let expected = text
+            .find("name ON user")
+            .expect("DEFINE FIELD name present") as u32;
         assert_eq!(target.span.range().start(), expected);
     }
 
@@ -2269,10 +2352,12 @@ mod tests {
              RETURN fn::greet('ada');";
         let (output, schema, source) = analyze(text);
         let offset = text.rfind("fn::greet").expect("call present") as u32 + 2;
-        let target = definition_at(&output, &schema, &source, text, offset)
-            .expect("definition of function");
+        let target =
+            definition_at(&output, &schema, &source, text, offset).expect("definition of function");
 
-        let expected = text.find("fn::greet").expect("DEFINE FUNCTION name present") as u32;
+        let expected = text
+            .find("fn::greet")
+            .expect("DEFINE FUNCTION name present") as u32;
         assert_eq!(target.span.range().start(), expected);
     }
 
@@ -2315,16 +2400,26 @@ mod tests {
 
         // Field reference → DEFINE FIELD in the schema source.
         let field_offset = query_text.find("name").expect("field present") as u32 + 1;
-        let field_target =
-            definition_at(&analysis, &output.schema, &query_source, query_text, field_offset)
-                .expect("cross-file field definition");
+        let field_target = definition_at(
+            &analysis,
+            &output.schema,
+            &query_source,
+            query_text,
+            field_offset,
+        )
+        .expect("cross-file field definition");
         assert_eq!(field_target.span.source(), &schema_source);
 
         // Table reference → DEFINE TABLE in the schema source.
         let table_offset = query_text.find("person").expect("table present") as u32 + 1;
-        let table_target =
-            definition_at(&analysis, &output.schema, &query_source, query_text, table_offset)
-                .expect("cross-file table definition");
+        let table_target = definition_at(
+            &analysis,
+            &output.schema,
+            &query_source,
+            query_text,
+            table_offset,
+        )
+        .expect("cross-file table definition");
         assert_eq!(table_target.span.source(), &schema_source);
         assert_eq!(table_target.span.range().start(), 13);
     }
@@ -2339,7 +2434,11 @@ mod tests {
         let hover = hover_at(&output, &schema, &source, text, offset);
         // If anything resolves it must not claim the context-param field kind.
         if let Some(hover) = hover {
-            assert!(!hover.markdown.contains("record<"), "got: {}", hover.markdown);
+            assert!(
+                !hover.markdown.contains("record<"),
+                "got: {}",
+                hover.markdown
+            );
         }
     }
 
@@ -2369,15 +2468,27 @@ mod tests {
         let bind_offset = BODY_FIXTURE.find("$direct").expect("binding present") as u32 + 1;
         let bind = hover_at(&output, &schema, &source, BODY_FIXTURE, bind_offset)
             .expect("hover over body LET binding");
-        assert!(bind.markdown.contains("$direct: array<"), "got: {}", bind.markdown);
-        assert!(bind.markdown.contains("role: string"), "got: {}", bind.markdown);
+        assert!(
+            bind.markdown.contains("$direct: array<"),
+            "got: {}",
+            bind.markdown
+        );
+        assert!(
+            bind.markdown.contains("role: string"),
+            "got: {}",
+            bind.markdown
+        );
 
         // Use site: `$direct[0].role` — the `$direct` token resolves to the
         // same array kind.
         let use_offset = BODY_FIXTURE.rfind("$direct").expect("use present") as u32 + 1;
         let used = hover_at(&output, &schema, &source, BODY_FIXTURE, use_offset)
             .expect("hover over body LET use");
-        assert!(used.markdown.contains("$direct: array<"), "got: {}", used.markdown);
+        assert!(
+            used.markdown.contains("$direct: array<"),
+            "got: {}",
+            used.markdown
+        );
     }
 
     #[test]
@@ -2388,7 +2499,11 @@ mod tests {
         let role_use = BODY_FIXTURE.rfind(".role").expect("subscript present") as u32 + 1;
         let hover = hover_at(&output, &schema, &source, BODY_FIXTURE, role_use)
             .expect("hover over subscript field");
-        assert!(hover.markdown.contains("role: string"), "got: {}", hover.markdown);
+        assert!(
+            hover.markdown.contains("role: string"),
+            "got: {}",
+            hover.markdown
+        );
     }
 
     #[test]
@@ -2402,7 +2517,9 @@ mod tests {
         let hover =
             hover_at(&output, &schema, &source, BODY_FIXTURE, call).expect("hover over fn call");
         assert!(
-            hover.markdown.contains("fn::org::unit($organization: record<unit>) -> record<unit>"),
+            hover
+                .markdown
+                .contains("fn::org::unit($organization: record<unit>) -> record<unit>"),
             "got: {}",
             hover.markdown
         );
@@ -2457,7 +2574,8 @@ mod tests {
         let text = format!("DEFINE FIELD f ON t TYPE {label};");
         let parsed = parse_source(SourceId::new("label"), text.as_str()).ok()?;
         let statements = surrealguard_syntax::lower::lower_statements(&parsed);
-        let ast::Statement::Define(ast::DefineStmt::Field(field)) = &statements.first()?.node else {
+        let ast::Statement::Define(ast::DefineStmt::Field(field)) = &statements.first()?.node
+        else {
             return None;
         };
         let parsed_kind = crate::schema::kind_from_type_expr(&field.ty.as_ref()?.node, &text);
@@ -2478,8 +2596,14 @@ mod tests {
         assert!(render_kind(&wide).chars().count() > INLAY_LABEL_MAX);
 
         let label = glance_label(&wide);
-        assert!(label.chars().count() <= INLAY_LABEL_MAX, "over budget: {label}");
-        assert!(!label.contains('…'), "the label is elided by kind, not by character: {label}");
+        assert!(
+            label.chars().count() <= INLAY_LABEL_MAX,
+            "over budget: {label}"
+        );
+        assert!(
+            !label.contains('…'),
+            "the label is elided by kind, not by character: {label}"
+        );
 
         // The label parses as a type, and every value the binding can hold
         // still satisfies it — the elision widens, so the shorter label is
@@ -2552,19 +2676,35 @@ mod tests {
             + 1;
         let hover = hover_at(&output, &schema, &source, RELATION_FIXTURE, offset)
             .expect("hover over relation table");
-        assert!(hover.markdown.contains("```surql"), "got: {}", hover.markdown);
         assert!(
-            hover.markdown.contains("DEFINE TABLE has_subsidiary SCHEMAFULL;"),
+            hover.markdown.contains("```surql"),
             "got: {}",
             hover.markdown
         );
         assert!(
-            hover.markdown.contains("TYPE RELATION IN organization OUT organization"),
+            hover
+                .markdown
+                .contains("DEFINE TABLE has_subsidiary SCHEMAFULL;"),
             "got: {}",
             hover.markdown
         );
-        assert!(hover.markdown.contains("public: bool"), "got: {}", hover.markdown);
-        assert!(hover.markdown.contains("status: string"), "got: {}", hover.markdown);
+        assert!(
+            hover
+                .markdown
+                .contains("TYPE RELATION IN organization OUT organization"),
+            "got: {}",
+            hover.markdown
+        );
+        assert!(
+            hover.markdown.contains("public: bool"),
+            "got: {}",
+            hover.markdown
+        );
+        assert!(
+            hover.markdown.contains("status: string"),
+            "got: {}",
+            hover.markdown
+        );
     }
 
     #[test]
@@ -2578,7 +2718,9 @@ mod tests {
         let hover = hover_at(&output, &schema, &source, RELATION_FIXTURE, use_offset)
             .expect("hover over fn param use");
         assert!(
-            hover.markdown.contains("$organization: record<organization>"),
+            hover
+                .markdown
+                .contains("$organization: record<organization>"),
             "got: {}",
             hover.markdown
         );
@@ -2612,17 +2754,18 @@ mod tests {
         let use_offset = text.rfind("$organization").expect("use present") as u32 + 1;
         let hover =
             hover_at(&output, &schema, &source, text, use_offset).expect("hover over shadowed var");
-        assert!(hover.markdown.contains("$organization: int"), "got: {}", hover.markdown);
+        assert!(
+            hover.markdown.contains("$organization: int"),
+            "got: {}",
+            hover.markdown
+        );
     }
 
     #[test]
     fn hover_resolves_an_implicit_relation_out_field() {
         let (output, schema, source) = analyze(RELATION_FIXTURE);
         // `out` in `WHERE out = $organization` on the relation table.
-        let out_offset = RELATION_FIXTURE
-            .find("WHERE out")
-            .expect("out present") as u32
-            + 6;
+        let out_offset = RELATION_FIXTURE.find("WHERE out").expect("out present") as u32 + 6;
         let hover = hover_at(&output, &schema, &source, RELATION_FIXTURE, out_offset)
             .expect("hover over implicit out field");
         assert!(
@@ -2635,11 +2778,7 @@ mod tests {
     #[test]
     fn definition_of_an_implicit_relation_field_returns_none() {
         let (output, schema, source) = analyze(RELATION_FIXTURE);
-        let out_offset = RELATION_FIXTURE
-            .find("WHERE out")
-            .expect("out present") as u32
-            + 6;
+        let out_offset = RELATION_FIXTURE.find("WHERE out").expect("out present") as u32 + 6;
         assert!(definition_at(&output, &schema, &source, RELATION_FIXTURE, out_offset).is_none());
     }
-
 }

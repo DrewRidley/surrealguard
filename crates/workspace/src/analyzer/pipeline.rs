@@ -94,9 +94,7 @@ type LoweredSource<'a> = (&'a ParsedSource, Vec<ast::Spanned<ast::Statement>>);
 /// `[ParsedSource]` (the full pass) or borrowed/`Arc`-shared handles (the
 /// symbol-incremental LSP path, which reuses cached `ParsedSource`s for the
 /// unchanged documents).
-fn lower_all<P: std::borrow::Borrow<ParsedSource>>(
-    parsed_sources: &[P],
-) -> Vec<LoweredSource<'_>> {
+fn lower_all<P: std::borrow::Borrow<ParsedSource>>(parsed_sources: &[P]) -> Vec<LoweredSource<'_>> {
     parsed_sources
         .iter()
         .map(|parsed| {
@@ -202,7 +200,11 @@ fn build_global_catalog_from_lowered(sources: &[LoweredSource<'_>]) -> GlobalCat
                 // `ELSE`/fall-through arm can still yield a concrete kind — so the
                 // field lands as `Any | T`, non-`None`, and would otherwise be
                 // skipped here. The full catalog is now built, so resolve it.
-                Some(field) if field.kind.as_ref().map_or(true, crate::schema::kind_contains_any) => {}
+                Some(field)
+                    if field
+                        .kind
+                        .as_ref()
+                        .map_or(true, crate::schema::kind_contains_any) => {}
                 _ => continue,
             }
             // No separate workspace catalog: `global_defined` already IS the
@@ -242,7 +244,8 @@ fn build_global_catalog_from_lowered(sources: &[LoweredSource<'_>]) -> GlobalCat
     for (parsed, statements) in sources {
         for stmt in statements {
             for (name, range) in implicit_table_targets(stmt) {
-                if global_defined.tables.contains_key(&name) || !seen_implicit.insert(name.clone()) {
+                if global_defined.tables.contains_key(&name) || !seen_implicit.insert(name.clone())
+                {
                     continue;
                 }
                 implicit_tables.push(TableDef {
@@ -901,7 +904,10 @@ fn apply_additive_define(
     };
     match def {
         ast::DefineStmt::Table(def) => {
-            schema.insert_table(crate::schema::table_def_from_ast(def, source), def.overwrite);
+            schema.insert_table(
+                crate::schema::table_def_from_ast(def, source),
+                def.overwrite,
+            );
         }
         ast::DefineStmt::Field(def) => {
             schema.insert_field(
@@ -942,9 +948,7 @@ fn apply_additive_define(
 /// table and report an *unknown field* (1002) instead — trading one false
 /// positive for another. A field/event/index on an undefined table therefore
 /// still reports, which no valid corpus exercises.
-fn implicit_table_targets(
-    stmt: &ast::Spanned<ast::Statement>,
-) -> Vec<(String, ByteRange)> {
+fn implicit_table_targets(stmt: &ast::Spanned<ast::Statement>) -> Vec<(String, ByteRange)> {
     fn target(source: Option<&ast::Spanned<ast::Expr>>) -> Option<(String, ByteRange)> {
         let expr = source?;
         let name = crate::analyzer::data::mutation::source_table_name(source)?;
@@ -985,9 +989,7 @@ fn fn_body_branches(stmt: &ast::Spanned<ast::Statement>) -> bool {
     let ast::Statement::Define(ast::DefineStmt::Function(def)) = &stmt.node else {
         return false;
     };
-    def.body
-        .as_ref()
-        .is_some_and(|body| block_branches(body))
+    def.body.as_ref().is_some_and(|body| block_branches(body))
 }
 
 /// Whether any statement in a block branches.
@@ -1028,17 +1030,11 @@ fn expr_branches(expr: &ast::Expr) -> bool {
     match expr {
         ast::Expr::Block(block) => block_branches(block),
         ast::Expr::Subquery(inner) => statement_branches(&inner.node),
-        ast::Expr::Binary { lhs, rhs, .. } => {
-            expr_branches(&lhs.node) || expr_branches(&rhs.node)
-        }
-        ast::Expr::Prefix { expr, .. } | ast::Expr::Cast { expr, .. } => {
-            expr_branches(&expr.node)
-        }
+        ast::Expr::Binary { lhs, rhs, .. } => expr_branches(&lhs.node) || expr_branches(&rhs.node),
+        ast::Expr::Prefix { expr, .. } | ast::Expr::Cast { expr, .. } => expr_branches(&expr.node),
         ast::Expr::Call(call) => call.args.iter().any(|arg| expr_branches(&arg.node)),
         ast::Expr::Array(items) => items.iter().any(|item| expr_branches(&item.node)),
-        ast::Expr::Object(entries) => {
-            entries.iter().any(|(_, value)| expr_branches(&value.node))
-        }
+        ast::Expr::Object(entries) => entries.iter().any(|(_, value)| expr_branches(&value.node)),
         // A closure body is a branch the caller can route through, exactly as
         // an inline `IF` is.
         ast::Expr::Closure(closure) => expr_branches(&closure.body.node),

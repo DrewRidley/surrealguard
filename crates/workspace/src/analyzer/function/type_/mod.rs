@@ -5,14 +5,12 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub mod range;
 pub mod array;
 pub mod bool;
 pub mod bytes;
 pub mod datetime;
 pub mod decimal;
 pub mod duration;
-pub mod record;
 pub mod field;
 pub mod fields;
 pub mod file;
@@ -47,6 +45,8 @@ pub mod is_uuid;
 pub mod number;
 pub mod of;
 pub mod point;
+pub mod range;
+pub mod record;
 pub mod set;
 pub mod string;
 pub mod string_lossy;

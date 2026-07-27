@@ -600,7 +600,8 @@ pub(crate) fn apply_schema_statement_effects(
                 // resolves (the standalone build above only sees params). Only
                 // upgrade a concrete result — never overwrite with `Any`.
                 if function.return_kind.is_none() {
-                    if let Some(inferred) = infer_untyped_return(def, source, text, Some(&*schema)) {
+                    if let Some(inferred) = infer_untyped_return(def, source, text, Some(&*schema))
+                    {
                         function.inferred_return = Some(inferred);
                     }
                 }
@@ -1019,12 +1020,8 @@ pub(crate) fn infer_untyped_return(
     let empty = SchemaIndex::default();
     let schema = schema.unwrap_or(&empty);
     let mut scratch: Vec<surrealguard_diagnostics::Finding> = Vec::new();
-    let mut ctx = crate::analyzer::context::AnalysisContext::new(
-        schema,
-        source.clone(),
-        text,
-        &mut scratch,
-    );
+    let mut ctx =
+        crate::analyzer::context::AnalysisContext::new(schema, source.clone(), text, &mut scratch);
     match crate::analyzer::schema::define::function::infer_function_body_kind(&mut ctx, def) {
         Some(Kind::Any) | None => None,
         Some(kind) => Some(kind),
@@ -1104,12 +1101,8 @@ pub(crate) fn infer_field_value_kind(
     let empty = SchemaIndex::default();
     let schema = schema.unwrap_or(&empty);
     let mut scratch: Vec<surrealguard_diagnostics::Finding> = Vec::new();
-    let mut ctx = crate::analyzer::context::AnalysisContext::new(
-        schema,
-        source.clone(),
-        text,
-        &mut scratch,
-    );
+    let mut ctx =
+        crate::analyzer::context::AnalysisContext::new(schema, source.clone(), text, &mut scratch);
     let inferred = ctx.with_row_table(self_table, |ctx| {
         crate::analyzer::schema::define::field::infer_field_clause_kind(ctx, expr, &def.table.node)
     });
@@ -1397,9 +1390,7 @@ mod tests {
         );
 
         assert_eq!(field_kind(&schema, "t", "title"), Some(Kind::String));
-        assert!(schema
-            .field("t", &FieldPath::parse("title.sub"))
-            .is_none());
+        assert!(schema.field("t", &FieldPath::parse("title.sub")).is_none());
     }
 
     #[test]
@@ -1664,7 +1655,10 @@ mod tests {
 
         let extraction = extract_schema(&[parsed]);
         assert_eq!(extraction.diagnostics, Vec::new());
-        let thing = extraction.schema.table("thing").expect("thing table exists");
+        let thing = extraction
+            .schema
+            .table("thing")
+            .expect("thing table exists");
 
         let address = thing
             .field(&FieldPath::parse("address"))
@@ -1723,7 +1717,10 @@ mod tests {
             .field("organization", &FieldPath::parse("label"))
             .expect("label field exists");
         assert_eq!(label.kind, Some(Kind::String));
-        assert!(label.partial.is_empty(), "an inferred value kind is not partial");
+        assert!(
+            label.partial.is_empty(),
+            "an inferred value kind is not partial"
+        );
     }
 
     #[test]
@@ -1988,5 +1985,3 @@ mod tests {
         assert!(extraction.schema.table("person").is_none());
     }
 }
-
-

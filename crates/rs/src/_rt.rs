@@ -43,10 +43,8 @@ pub fn decode_at<T: SurrealValue>(values: &mut [Value], statement: usize) -> Dec
             "the response has no result for statement {statement}"
         )),
     })?;
-    T::from_value(std::mem::replace(slot, Value::None)).map_err(|source| DecodeError {
-        statement,
-        source,
-    })
+    T::from_value(std::mem::replace(slot, Value::None))
+        .map_err(|source| DecodeError { statement, source })
 }
 
 /// Reads field `name` out of `object` and decodes it into `T`.

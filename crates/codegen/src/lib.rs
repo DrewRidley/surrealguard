@@ -4,8 +4,9 @@
 //! TypeScript type *for a named position* ([`TsContext`]), and
 //! [`render_registry`] emits the generated `.d.ts`
 //! — a literal-keyed registry mapping each embedded query to its result
-//! type, substitution tuple, and named-parameter object, plus the `surql`
-//! tag and `SurqlQuery` carrier the host code consumes.
+//! type, substitution tuple, and named-parameter object, plus the
+//! `defineQuery`/`defineLive` re-exports and the `SurqlQuery` carrier the
+//! host code consumes.
 //!
 //! Value conventions (documented in the generated header) name the values
 //! the SurrealDB SDK **actually decodes**, which are its own value classes:

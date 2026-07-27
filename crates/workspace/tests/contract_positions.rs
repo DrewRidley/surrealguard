@@ -427,16 +427,19 @@ fn every_position_rejects_a_provably_wrong_value() {
 
 #[test]
 fn every_position_accepts_a_valid_value() {
-    every_crossing("a value that inhabits the contract must be silent", |site, case| {
-        if fires(site, case, case.ok) {
-            return Err(format!(
-                "false E{:04} for `{}`",
-                site.position.code(),
-                fill(site.query, case.declared, case.ok).trim()
-            ));
-        }
-        Ok(())
-    });
+    every_crossing(
+        "a value that inhabits the contract must be silent",
+        |site, case| {
+            if fires(site, case, case.ok) {
+                return Err(format!(
+                    "false E{:04} for `{}`",
+                    site.position.code(),
+                    fill(site.query, case.declared, case.ok).trim()
+                ));
+            }
+            Ok(())
+        },
+    );
 }
 
 #[test]

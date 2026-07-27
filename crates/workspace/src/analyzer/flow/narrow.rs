@@ -233,7 +233,10 @@ pub(crate) fn apply_facts_over(
 /// likewise for `AlwaysTrue`; so verdicts drawn against the un-accumulated base
 /// `env` can only *under*-report dead branches, never grey a live one. (That is
 /// the deliberately conservative trade: soundness over completeness.)
-pub(crate) fn branch_reachability_in_env(stmt: &ast::IfElseStmt, env: &StatementEnv) -> Reachability {
+pub(crate) fn branch_reachability_in_env(
+    stmt: &ast::IfElseStmt,
+    env: &StatementEnv,
+) -> Reachability {
     let mut branches = Vec::with_capacity(stmt.branches.len());
     // Set once an earlier branch is proven always-taken.
     let mut taken = false;
@@ -388,7 +391,11 @@ mod tests {
                 RETURN false;\n\
              }};"
         );
-        assert_eq!(code_count(&guarded, 5002), 0, "AND-right sees the narrowed path");
+        assert_eq!(
+            code_count(&guarded, 5002),
+            0,
+            "AND-right sees the narrowed path"
+        );
 
         // The same call WITHOUT the guard genuinely fails against the
         // `option<record<folder>>` argument — proving the guard is what clears it.
@@ -411,7 +418,11 @@ mod tests {
                 RETURN false;\n\
              }};"
         );
-        assert_eq!(code_count(&guarded, 5002), 0, "THEN body sees the narrowed path");
+        assert_eq!(
+            code_count(&guarded, 5002),
+            0,
+            "THEN body sees the narrowed path"
+        );
     }
 
     #[test]
@@ -450,7 +461,11 @@ mod tests {
                 RETURN fn::any_record($auth);\n\
              }};"
         );
-        assert_eq!(code_count(&unguarded, 5002), 1, "option<record> is not record");
+        assert_eq!(
+            code_count(&unguarded, 5002),
+            1,
+            "option<record> is not record"
+        );
     }
 
     #[test]
@@ -464,7 +479,11 @@ mod tests {
                 RETURN false;\n\
              }};"
         );
-        assert_eq!(code_count(&guarded, 5002), 0, "!= NONE narrows $auth to record");
+        assert_eq!(
+            code_count(&guarded, 5002),
+            0,
+            "!= NONE narrows $auth to record"
+        );
     }
 
     #[test]
@@ -478,7 +497,11 @@ mod tests {
                 RETURN false;\n\
              }};"
         );
-        assert_eq!(code_count(&guarded, 5002), 0, "positive branch narrows to record<user>");
+        assert_eq!(
+            code_count(&guarded, 5002),
+            0,
+            "positive branch narrows to record<user>"
+        );
 
         // The same call without the guard genuinely fails — the guard is what
         // clears it (also proves the double-colon spelling normalizes).
@@ -489,7 +512,11 @@ mod tests {
                 RETURN false;\n\
              }};"
         );
-        assert_eq!(code_count(&colon, 5002), 0, "type::is::record normalizes to type::is_record");
+        assert_eq!(
+            code_count(&colon, 5002),
+            0,
+            "type::is::record normalizes to type::is_record"
+        );
     }
 
     // --- AND-operand narrowing (occurrence typing over `A AND B`) ----------
@@ -534,7 +561,11 @@ mod tests {
                 RETURN false;\n\
              }};"
         );
-        assert_eq!(code_count(&guarded, 5002), 0, "IN narrows $s to int in the arg");
+        assert_eq!(
+            code_count(&guarded, 5002),
+            0,
+            "IN narrows $s to int in the arg"
+        );
 
         // Unguarded, `option<int>` is not assignable to the `int` param.
         let unguarded = format!(
@@ -557,7 +588,11 @@ mod tests {
                 RETURN false;\n\
              }};"
         );
-        assert_eq!(code_count(&guarded, 5002), 0, "THEN body sees the narrowed $s");
+        assert_eq!(
+            code_count(&guarded, 5002),
+            0,
+            "THEN body sees the narrowed $s"
+        );
     }
 
     #[test]
@@ -571,7 +606,11 @@ mod tests {
                 RETURN false;\n\
              }};"
         );
-        assert_eq!(code_count(&guarded, 5002), 0, "both $x and $y narrowed for the tail call");
+        assert_eq!(
+            code_count(&guarded, 5002),
+            0,
+            "both $x and $y narrowed for the tail call"
+        );
 
         // Unguarded, both arguments fail — proving the chain cleared two findings.
         let unguarded = format!(
@@ -608,7 +647,11 @@ mod tests {
                 RETURN fn::takes_record($x);\n\
              }};"
         );
-        assert_eq!(code_count(&leaky, 5002), 1, "narrowing must not leak past the AND");
+        assert_eq!(
+            code_count(&leaky, 5002),
+            1,
+            "narrowing must not leak past the AND"
+        );
     }
 
     // --- The design's table, as behaviour ----------------------------------
@@ -717,7 +760,10 @@ mod tests {
         ];
 
         for (case, query, expected) in cases {
-            assert_eq!((case, response_kind(SCHEMA, query).as_str()), (case, expected));
+            assert_eq!(
+                (case, response_kind(SCHEMA, query).as_str()),
+                (case, expected)
+            );
         }
     }
 
@@ -788,7 +834,10 @@ mod tests {
         let any = env_with("x", Kind::Any);
         assert_eq!(verdict("$x = NONE", &any), Verdict::Unknown);
         // An unbound subject has no kind → Unknown.
-        assert_eq!(verdict("$x = NONE", &StatementEnv::default()), Verdict::Unknown);
+        assert_eq!(
+            verdict("$x = NONE", &StatementEnv::default()),
+            Verdict::Unknown
+        );
     }
 
     #[test]
@@ -809,12 +858,24 @@ mod tests {
     fn table_discriminant_verdict_folds_a_pinned_record() {
         // `type::table($x) = 'a'` on a `record<b>` can never hold.
         let rec_b = env_with("x", record("b"));
-        assert_eq!(verdict("type::table($x) = 'a'", &rec_b), Verdict::AlwaysFalse);
-        assert_eq!(verdict("type::table($x) != 'a'", &rec_b), Verdict::AlwaysTrue);
+        assert_eq!(
+            verdict("type::table($x) = 'a'", &rec_b),
+            Verdict::AlwaysFalse
+        );
+        assert_eq!(
+            verdict("type::table($x) != 'a'", &rec_b),
+            Verdict::AlwaysTrue
+        );
         // Exactly `{a}` → always true; `!= 'a'` → always false.
         let rec_a = env_with("x", record("a"));
-        assert_eq!(verdict("type::table($x) = 'a'", &rec_a), Verdict::AlwaysTrue);
-        assert_eq!(verdict("type::table($x) != 'a'", &rec_a), Verdict::AlwaysFalse);
+        assert_eq!(
+            verdict("type::table($x) = 'a'", &rec_a),
+            Verdict::AlwaysTrue
+        );
+        assert_eq!(
+            verdict("type::table($x) != 'a'", &rec_a),
+            Verdict::AlwaysFalse
+        );
         // An open union `record<a | b>` is not pinned → Unknown either way.
         let union = env_with("x", Kind::Record(vec![Table::from("a"), Table::from("b")]));
         assert_eq!(verdict("type::table($x) = 'a'", &union), Verdict::Unknown);
@@ -826,13 +887,22 @@ mod tests {
     #[test]
     fn is_record_verdict_mirrors_the_table_discriminant() {
         let rec_b = env_with("x", record("b"));
-        assert_eq!(verdict("type::is_record($x, 'a')", &rec_b), Verdict::AlwaysFalse);
+        assert_eq!(
+            verdict("type::is_record($x, 'a')", &rec_b),
+            Verdict::AlwaysFalse
+        );
         let rec_a = env_with("x", record("a"));
-        assert_eq!(verdict("type::is_record($x, 'a')", &rec_a), Verdict::AlwaysTrue);
+        assert_eq!(
+            verdict("type::is_record($x, 'a')", &rec_a),
+            Verdict::AlwaysTrue
+        );
         // A none-carrying subject is not a pinned record union → Unknown (and
         // indeed `is_record` genuinely varies: false on NONE, true on record<a>).
         let opt_a = env_with("x", Kind::Either(vec![Kind::None, record("a")]));
-        assert_eq!(verdict("type::is_record($x, 'a')", &opt_a), Verdict::Unknown);
+        assert_eq!(
+            verdict("type::is_record($x, 'a')", &opt_a),
+            Verdict::Unknown
+        );
     }
 
     #[test]

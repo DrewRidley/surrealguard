@@ -318,10 +318,7 @@ impl StatementEnv {
         span: SourceSpan,
         kind: surrealdb_types::Kind,
         domain: Option<crate::analysis::ValueDomain>,
-        unify: impl Fn(
-            &surrealdb_types::Kind,
-            &surrealdb_types::Kind,
-        ) -> Option<surrealdb_types::Kind>,
+        unify: impl Fn(&surrealdb_types::Kind, &surrealdb_types::Kind) -> Option<surrealdb_types::Kind>,
     ) -> Option<(surrealdb_types::Kind, surrealdb_types::Kind)> {
         self.record_param_use(name.clone(), span);
         let entry = self.params.get_mut(&name).expect("recorded above");
@@ -515,9 +512,11 @@ mod tests {
             env.constrain_param_comparable("p".into(), span(0), record("account"), None),
             None
         );
-        let conflict =
-            env.constrain_param_comparable("p".into(), span(5), record("team"), None);
-        assert_eq!(conflict, None, "records of different tables do not conflict");
+        let conflict = env.constrain_param_comparable("p".into(), span(5), record("team"), None);
+        assert_eq!(
+            conflict, None,
+            "records of different tables do not conflict"
+        );
 
         let kind = env.into_params().into_iter().next().unwrap().kind.unwrap();
         assert_eq!(
@@ -538,8 +537,7 @@ mod tests {
             env.constrain_param_comparable("p".into(), span(0), Kind::None, None),
             None
         );
-        let conflict =
-            env.constrain_param_comparable("p".into(), span(5), record("account"), None);
+        let conflict = env.constrain_param_comparable("p".into(), span(5), record("account"), None);
         assert_eq!(conflict, None, "`none` is comparable with any record");
 
         let kind = env.into_params().into_iter().next().unwrap().kind.unwrap();
@@ -555,8 +553,7 @@ mod tests {
             env.constrain_param_comparable("p".into(), span(0), Kind::Int, None),
             None
         );
-        let conflict =
-            env.constrain_param_comparable("p".into(), span(5), Kind::String, None);
+        let conflict = env.constrain_param_comparable("p".into(), span(5), Kind::String, None);
         assert_eq!(conflict, Some((Kind::Int, Kind::String)));
     }
 

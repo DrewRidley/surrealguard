@@ -623,7 +623,7 @@ impl Workspace {
     /// Analyze a document through the shared `surrealguard-workspace`
     /// pipeline. Plain `.surql` documents analyze as themselves (through the
     /// shared cache); host documents (TypeScript, Svelte, ...) analyze their
-    /// embedded `surql` templates, with findings re-spanned onto the host file.
+    /// embedded queries, with findings re-spanned onto the host file.
     pub fn diagnostic_analysis(&self, uri: &Url) -> Option<DiagnosticAnalysisResult> {
         let target = self.documents.get(uri)?;
 
@@ -669,7 +669,7 @@ impl Workspace {
     /// invalidates. Both the diagnostics surface and the cursor-addressed
     /// features read this one entry.
     ///
-    /// A host file with no `surql` template costs an extraction and nothing
+    /// A host file with no embedded query costs an extraction and nothing
     /// else — it never reaches the `.surql` analysis at all.
     fn host_analysis(&self, uri: &Url, target: &Document) -> Option<HostCache> {
         // Only the file types [`surrealguard_embed::extract`] actually knows.
@@ -1553,7 +1553,7 @@ mod tests {
         let host = Url::parse("file:///workspace/app.ts").expect("valid uri");
         workspace.upsert(
             host.clone(),
-            "const q = surql`SELECT name FROM person`;".into(),
+            "const q = db.query(\"SELECT name FROM person\");".into(),
         );
 
         // Warm the shared `.surql` schema pass so the counts below reflect
@@ -1582,7 +1582,7 @@ mod tests {
         // one embedded query, not a whole-workspace pass.
         workspace.upsert(
             host.clone(),
-            "const q = surql`SELECT name FROM person WHERE name != NONE`;".into(),
+            "const q = db.query(\"SELECT name FROM person WHERE name != NONE\");".into(),
         );
         let _ = workspace
             .diagnostic_analysis(&host)
@@ -1617,7 +1617,7 @@ mod tests {
 
         assert!(
             result.diagnostics.is_empty(),
-            "a host file with no `surql` template says nothing"
+            "a host file with no embedded query says nothing"
         );
         assert_eq!(
             (
@@ -1655,7 +1655,7 @@ mod tests {
         let host = Url::parse("file:///workspace/app.svelte").expect("valid uri");
         workspace.upsert(
             host.clone(),
-            "<script>const q = surql`SELECT nickname FROM person`;</script>".into(),
+            "<script>const q = db.query(\"SELECT nickname FROM person\");</script>".into(),
         );
 
         // Errors only: the lint about reading a whole table is a matter of
@@ -1706,7 +1706,8 @@ mod tests {
             "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;".into(),
         );
         let host = Url::parse("file:///workspace/app.svelte").expect("valid uri");
-        let text = "<script lang=\"ts\">\n  const q = surql`SELECT name FROM person`;\n</script>\n";
+        let text =
+            "<script lang=\"ts\">\n  const q = db.query(\"SELECT name FROM person\");\n</script>\n";
         workspace.upsert(host.clone(), text.into());
 
         let at = text.find("person").expect("host offset of the table name");

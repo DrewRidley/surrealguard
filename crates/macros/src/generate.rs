@@ -124,9 +124,9 @@ fn object_struct(
 
     let ident = scope.fresh();
     let field_defs = rendered.iter().map(|(_, name, ty)| quote!(pub #name: #ty));
-    let decodes = rendered.iter().map(|(key, name, _)| {
-        quote!(#name: ::surrealguard_rs::_rt::field(&mut __object, #key)?)
-    });
+    let decodes = rendered
+        .iter()
+        .map(|(key, name, _)| quote!(#name: ::surrealguard_rs::_rt::field(&mut __object, #key)?));
     let encodes = rendered
         .iter()
         .map(|(key, name, _)| quote!(__object.insert(#key, self.#name);));

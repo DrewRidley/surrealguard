@@ -15,6 +15,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 surrealguard-workspace = { path = "../workspace" }
 surrealguard-diagnostics = { path = "../diagnostics" }
+surrealguard-syntax = { path = "../syntax" }
+surrealguard-embed = { path = "../embed" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

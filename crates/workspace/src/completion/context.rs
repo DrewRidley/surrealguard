@@ -165,9 +165,10 @@ pub(crate) fn classify(
 
     // A cursor inside a quoted run is inside a string literal: nothing to
     // complete, and offering identifiers there would be pure noise.
-    if tokens.iter().any(|token| {
-        token.kind == TokenKind::Quoted && token.start < offset && offset < token.end
-    }) {
+    if tokens
+        .iter()
+        .any(|token| token.kind == TokenKind::Quoted && token.start < offset && offset < token.end)
+    {
         return CompletionContext::disabled(offset);
     }
 
@@ -320,7 +321,9 @@ fn clause_position(tokens: &[Token], source: &str, frame: &Frame, cut: usize) ->
 
     match (head, clause) {
         // A table name follows the target keywords.
-        (_, Some(Clause::From | Clause::Into | Clause::On | Clause::Only)) => ContextKind::TableName,
+        (_, Some(Clause::From | Clause::Into | Clause::On | Clause::Only)) => {
+            ContextKind::TableName
+        }
         (
             Some(
                 Head::Create
@@ -401,7 +404,8 @@ fn in_ignored_region(parsed: &ParsedSource, offset: u32) -> bool {
     while let Some(current) = node {
         // Only a *strictly interior* position is inside the region; sitting at
         // its edge is a position next to it, where completion is fine.
-        let interior = (current.start_byte() as u32) < offset && offset < (current.end_byte() as u32);
+        let interior =
+            (current.start_byte() as u32) < offset && offset < (current.end_byte() as u32);
         if interior
             && matches!(
                 current.kind(),
@@ -734,7 +738,12 @@ fn graph_filter_table(
 }
 
 /// The aliases a projection binds: the depth-0 identifier after each `AS`.
-fn projection_aliases(tokens: &[Token], source: &str, head_index: usize, end: usize) -> Vec<String> {
+fn projection_aliases(
+    tokens: &[Token],
+    source: &str,
+    head_index: usize,
+    end: usize,
+) -> Vec<String> {
     let mut aliases = Vec::new();
     for (index, token, depth) in scan(tokens, source, head_index, end) {
         if token.kind == TokenKind::Ident
@@ -788,19 +797,33 @@ fn token_text<'a>(tokens: &[Token], source: &'a str, index: usize) -> Option<&'a
 fn is_value_operator(operator: &str) -> bool {
     matches!(
         operator.to_ascii_uppercase().as_str(),
-        "=" | "==" | "!=" | ">" | "<" | ">=" | "<=" | "+=" | "-=" | "*=" | "/=" | "?=" | "+?="
-            | "~" | "!~" | "?~" | "*~" | "CONTAINS" | "INSIDE" | "OUTSIDE" | "INTERSECTS" | "IS"
+        "=" | "=="
+            | "!="
+            | ">"
+            | "<"
+            | ">="
+            | "<="
+            | "+="
+            | "-="
+            | "*="
+            | "/="
+            | "?="
+            | "+?="
+            | "~"
+            | "!~"
+            | "?~"
+            | "*~"
+            | "CONTAINS"
+            | "INSIDE"
+            | "OUTSIDE"
+            | "INTERSECTS"
+            | "IS"
     )
 }
 
 /// Identifier tokens at depth 0 in `[from, to)` — the sibling entries already
 /// written in a destructure.
-fn depth_zero_idents(
-    tokens: &[Token],
-    source: &str,
-    from: usize,
-    to: usize,
-) -> BTreeSet<String> {
+fn depth_zero_idents(tokens: &[Token], source: &str, from: usize, to: usize) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     for (_, token, depth) in scan(tokens, source, from, to) {
         if token.kind == TokenKind::Ident && depth == 0 {
@@ -991,9 +1014,10 @@ enum Clause {
 impl Clause {
     fn from_text(text: &str) -> Option<Self> {
         Some(match text.to_ascii_uppercase().as_str() {
-            "SELECT" | "CREATE" | "UPDATE" | "UPSERT" | "DELETE" | "RELATE" | "INSERT"
-            | "LIVE" | "DEFINE" | "REMOVE" | "ALTER" | "LET" | "RETURN" | "IF" | "FOR"
-            | "THROW" => Self::Head,
+            "SELECT" | "CREATE" | "UPDATE" | "UPSERT" | "DELETE" | "RELATE" | "INSERT" | "LIVE"
+            | "DEFINE" | "REMOVE" | "ALTER" | "LET" | "RETURN" | "IF" | "FOR" | "THROW" => {
+                Self::Head
+            }
             "FROM" => Self::From,
             "INTO" => Self::Into,
             "ON" => Self::On,
@@ -1299,9 +1323,9 @@ impl Env<'_> {
             Segment::Param(name) => self.params.get(name).cloned()?,
             Segment::Name(name) => self.field_kind_on_tables(tables, name).or_else(|| {
                 // A bare table name is a receiver too (`person.name`).
-                self.schema
-                    .table(name)
-                    .map(|table| Kind::Record(vec![surrealdb_types::Table::from(table.name.as_str())]))
+                self.schema.table(name).map(|table| {
+                    Kind::Record(vec![surrealdb_types::Table::from(table.name.as_str())])
+                })
             })?,
             Segment::Index => return None,
         };
@@ -1443,7 +1467,9 @@ fn accepts(relation: &crate::schema::RelationDef, dir: Dir, standing: &Standing)
     match standing {
         Standing::Any => true,
         Standing::Unknown => false,
-        Standing::Tables(tables) => tables.iter().any(|table| near.iter().any(|end| *end == table)),
+        Standing::Tables(tables) => tables
+            .iter()
+            .any(|table| near.iter().any(|end| *end == table)),
     }
 }
 
@@ -1462,9 +1488,7 @@ fn tables_standing(kind: &Kind) -> Standing {
     match crate::kinds::record_link_shape(kind) {
         // `record` with no target list is a record of *some* table.
         Some((_, targets)) if targets.is_empty() => Standing::Any,
-        Some((_, targets)) => {
-            Standing::Tables(targets.iter().map(ToString::to_string).collect())
-        }
+        Some((_, targets)) => Standing::Tables(targets.iter().map(ToString::to_string).collect()),
         None => match tables_of_kind(kind).as_slice() {
             [] => Standing::Unknown,
             tables => Standing::Tables(tables.to_vec()),
@@ -1493,11 +1517,9 @@ pub(crate) fn step_field(value: &Kind, field: &str, schema: &SchemaIndex) -> Opt
             let mut resolved = Vec::new();
             for target in targets {
                 let table = schema.table(&target.to_string())?;
-                let kind = crate::analyzer::data::select::kind_for_path(
-                    table,
-                    &[field.to_string()],
-                )
-                .or_else(|| table.implicit_field_kind(field))?;
+                let kind =
+                    crate::analyzer::data::select::kind_for_path(table, &[field.to_string()])
+                        .or_else(|| table.implicit_field_kind(field))?;
                 resolved.push(kind);
             }
             (!resolved.is_empty()).then(|| Kind::either(resolved))?

@@ -278,7 +278,9 @@ fn check_source_table_shape(
                 7008,
                 format!("`{table_name}` has no declared fields, so field-level checks are skipped"),
             )
-            .with_help(format!("add `DEFINE FIELD` declarations to `{table_name}` for full analysis")),
+            .with_help(format!(
+                "add `DEFINE FIELD` declarations to `{table_name}` for full analysis"
+            )),
         );
         return Some(walk_projections_for_findings(stmt, ctx));
     }
@@ -320,7 +322,9 @@ fn check_where_clause<'a>(
                         crate::render::render_offending(&kind, Some(&Kind::Bool))
                     ),
                 )
-                .with_help("a WHERE filter keeps rows where the condition is true; it must be a bool"),
+                .with_help(
+                    "a WHERE filter keeps rows where the condition is true; it must be a bool",
+                ),
             );
         }
     }
@@ -367,7 +371,10 @@ fn check_fetch_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analy
                                     1023,
                                     format!(
                                         "FETCH `{alias_name}` does nothing — `{}` holds no records",
-                                        crate::render::render_offending(&kind, Some(&Kind::Record(Vec::new())))
+                                        crate::render::render_offending(
+                                            &kind,
+                                            Some(&Kind::Record(Vec::new()))
+                                        )
                                     ),
                                 )
                                 .with_help("FETCH only expands record links, not scalar values"),
@@ -1001,7 +1008,9 @@ fn check_group_key_projection(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<
                 surrealguard_diagnostics::catalog::finding(
                     span,
                     4013,
-                    format!("GROUP BY `{name}` is not projected, so it can't appear in the result rows"),
+                    format!(
+                        "GROUP BY `{name}` is not projected, so it can't appear in the result rows"
+                    ),
                 )
                 .with_help(format!(
                     "add `{name}` to the projection so each group is labelled by its key"
@@ -1195,7 +1204,10 @@ fn graph_hop_target(
         return Some(next.to_string());
     }
     // Step from the current edge onto its far-side node `next` (`->node`).
-    let relation = schema.tables.get(current).and_then(|t| t.relation.as_ref())?;
+    let relation = schema
+        .tables
+        .get(current)
+        .and_then(|t| t.relation.as_ref())?;
     let reaches = match dir {
         ast::GraphDir::Out => relation.out_tables.iter().any(|t| t == next),
         ast::GraphDir::In => relation.in_tables.iter().any(|t| t == next),
@@ -1226,7 +1238,6 @@ fn single_graph_target(part: &ast::IdiomPart) -> Option<(ast::GraphDir, &str)> {
         _ => None,
     }
 }
-
 
 /// Does `edge`'s relation accept `source_table` on the near side of a step
 /// in direction `dir`? (Single-hop edge-field projections need only this.)
@@ -1321,9 +1332,7 @@ pub(crate) fn reference_back_target(idiom: &ast::Idiom) -> Option<(&ast::Spanned
 fn kind_targets_table(kind: Option<&Kind>, table: &str) -> bool {
     match kind {
         Some(Kind::Record(tables)) => tables.iter().any(|t| t.to_string() == table),
-        Some(Kind::Either(variants)) => {
-            variants.iter().any(|v| kind_targets_table(Some(v), table))
-        }
+        Some(Kind::Either(variants)) => variants.iter().any(|v| kind_targets_table(Some(v), table)),
         Some(Kind::Array(element, _) | Kind::Set(element, _)) => {
             kind_targets_table(Some(element), table)
         }
@@ -1895,8 +1904,7 @@ fn aggregate_operand_kind(
         ast::Expr::Cast { ty, expr: inner } => {
             aggregate_operand_kind(inner, table, ctx)?;
             Some(
-                crate::analyzer::expression::infer::cast_target_kind(&ty.node)
-                    .unwrap_or(Kind::Any),
+                crate::analyzer::expression::infer::cast_target_kind(&ty.node).unwrap_or(Kind::Any),
             )
         }
         _ => None,
@@ -2036,9 +2044,7 @@ fn graph_split(
 
 /// The graph steps within a graph section, dropping interleaved `[WHERE …]`
 /// filters (which narrow rows but preserve the traversal's type).
-fn graph_steps(
-    section: &[ast::Spanned<ast::IdiomPart>],
-) -> Vec<&ast::Spanned<ast::IdiomPart>> {
+fn graph_steps(section: &[ast::Spanned<ast::IdiomPart>]) -> Vec<&ast::Spanned<ast::IdiomPart>> {
     section
         .iter()
         .filter(|part| matches!(part.node, ast::IdiomPart::Graph { .. }))
@@ -2359,7 +2365,9 @@ fn destructure_kinds(
         segments.extend(sub_segments);
         outputs.push((segments, kind));
     }
-    let wrappers = wrapped_link.map(|(wrappers, _)| wrappers).unwrap_or_default();
+    let wrappers = wrapped_link
+        .map(|(wrappers, _)| wrappers)
+        .unwrap_or_default();
     Some((wrappers, outputs))
 }
 
@@ -2927,7 +2935,10 @@ fn record_link_targets_at(
     prefix: &[String],
 ) -> Option<(Vec<crate::kinds::KindWrapper>, Vec<surrealdb_types::Table>)> {
     if let Some(field) = table.fields.get(&prefix.join(".")) {
-        return field.kind.as_ref().and_then(crate::kinds::record_link_shape);
+        return field
+            .kind
+            .as_ref()
+            .and_then(crate::kinds::record_link_shape);
     }
     if let [head] = prefix {
         if let Some(kind) = table.implicit_field_kind(head) {
@@ -3139,7 +3150,10 @@ mod tests {
         select_response_kind(&stmt, &mut ctx)
     }
 
-    fn diagnostics_for(schema: &SchemaIndex, query: &str) -> Vec<surrealguard_diagnostics::Finding> {
+    fn diagnostics_for(
+        schema: &SchemaIndex,
+        query: &str,
+    ) -> Vec<surrealguard_diagnostics::Finding> {
         let parsed = parse(query);
         let stmt = lower_select(&parsed);
         let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
@@ -3266,7 +3280,10 @@ mod tests {
             // An explicit LIMIT 1.
             "SELECT * FROM ONLY person WHERE name = 'A' LIMIT 1;",
         ] {
-            assert!(!fires(&schema, query, 4026), "4026 should be silent for `{query}`");
+            assert!(
+                !fires(&schema, query, 4026),
+                "4026 should be silent for `{query}`"
+            );
         }
     }
 
@@ -3826,10 +3843,11 @@ mod tests {
         assert!(!codes.contains(&4025), "got: {codes:?}");
 
         // Projecting the key clears 4013.
-        let projected: Vec<u16> = diagnostics_for(&schema, "SELECT name FROM person GROUP BY name;")
-            .iter()
-            .map(|finding| finding.code().number())
-            .collect();
+        let projected: Vec<u16> =
+            diagnostics_for(&schema, "SELECT name FROM person GROUP BY name;")
+                .iter()
+                .map(|finding| finding.code().number())
+                .collect();
         assert!(!projected.contains(&4013), "got: {projected:?}");
     }
 
@@ -4087,7 +4105,10 @@ mod tests {
         assert!(inner.contains_key("deep"), "got: {nested:?}");
 
         // Chained methods drop together; an index part drops too.
-        let chained = row_fields(&schema, "SELECT name.len().to_string(), tags[0] FROM person;");
+        let chained = row_fields(
+            &schema,
+            "SELECT name.len().to_string(), tags[0] FROM person;",
+        );
         assert!(chained.contains_key("name"), "got: {chained:?}");
         assert!(chained.contains_key("tags"), "got: {chained:?}");
         assert!(!chained.contains_key("tags[0]"), "got: {chained:?}");
@@ -4150,7 +4171,10 @@ mod tests {
         // themselves — `type::fields(['name', 'age'])` returns `{name, age}`.
         let schema = schema_from(KEY_SCHEMA);
 
-        let single = row_fields(&schema, "SELECT type::field('meta.inner.deep') FROM person;");
+        let single = row_fields(
+            &schema,
+            "SELECT type::field('meta.inner.deep') FROM person;",
+        );
         let meta = object_fields(&single["meta"]);
         let inner = object_fields(&meta["inner"]);
         assert_eq!(inner["deep"], Kind::String);
@@ -4176,7 +4200,10 @@ mod tests {
             "DEFINE TABLE employee_of SCHEMAFULL;\nDEFINE FIELD status ON employee_of TYPE string;",
         );
 
-        let kind = analyze(&schema, "SELECT status, count() FROM employee_of GROUP BY status;");
+        let kind = analyze(
+            &schema,
+            "SELECT status, count() FROM employee_of GROUP BY status;",
+        );
         let fields = object_fields(array_element(&kind));
         assert_eq!(fields["status"], Kind::String);
         assert_eq!(fields["count"], Kind::Int);
@@ -4525,8 +4552,10 @@ mod tests {
             "DEFINE TABLE employee_of SCHEMAFULL;\nDEFINE FIELD status ON employee_of TYPE string;",
         );
 
-        let (_, diagnostics) =
-            analyze_diagnostics(&schema, "SELECT count() FROM employee_of WHERE status = 'active';");
+        let (_, diagnostics) = analyze_diagnostics(
+            &schema,
+            "SELECT count() FROM employee_of WHERE status = 'active';",
+        );
         assert!(
             codes(&diagnostics).contains(&4023),
             "expected 4023, got {:?}",
@@ -4730,7 +4759,8 @@ mod tests {
 
         // `purrs` exists only on `cat` -> widen to Any (never invent), and no
         // 1002 (a union is too ambiguous to report without a false positive).
-        let (kind, diagnostics) = analyze_diagnostics(&schema, "SELECT VALUE pet.purrs FROM owner;");
+        let (kind, diagnostics) =
+            analyze_diagnostics(&schema, "SELECT VALUE pet.purrs FROM owner;");
         assert_eq!(kind, Kind::Array(Box::new(Kind::Any), None));
         assert!(
             !codes(&diagnostics).contains(&1002),
@@ -4945,7 +4975,10 @@ mod tests {
             graph.iter().any(|finding| finding.code().number() == 1002
                 && finding.message().contains("`user` has no field `aeg`")),
             "expected the selection itself to be reported: {:?}",
-            graph.iter().map(surrealguard_diagnostics::Finding::message).collect::<Vec<_>>()
+            graph
+                .iter()
+                .map(surrealguard_diagnostics::Finding::message)
+                .collect::<Vec<_>>()
         );
 
         let schema = user_with_team_schema();
@@ -4955,7 +4988,9 @@ mod tests {
                 .any(|finding| finding.code().number() == 1002
                     && finding.message().contains("`nope`")),
             "expected the selection itself to be reported: {:?}",
-            row.iter().map(surrealguard_diagnostics::Finding::message).collect::<Vec<_>>()
+            row.iter()
+                .map(surrealguard_diagnostics::Finding::message)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -5024,7 +5059,10 @@ mod tests {
                 .any(|finding| finding.code().number() == 1002
                     && finding.message().contains("selected nothing")),
             "expected 1002 naming the empty selection: {:?}",
-            diagnostics.iter().map(surrealguard_diagnostics::Finding::message).collect::<Vec<_>>()
+            diagnostics
+                .iter()
+                .map(surrealguard_diagnostics::Finding::message)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -5075,7 +5113,9 @@ mod tests {
             .find(|f| f.code().number() == 1002)
             .expect("expected 1002 for the absent row-destructure field");
         assert!(
-            finding.message().contains("`person` has no field `profile.nope`"),
+            finding
+                .message()
+                .contains("`person` has no field `profile.nope`"),
             "unexpected message: {}",
             finding.message()
         );
@@ -5139,10 +5179,7 @@ mod tests {
         // Both wrappers, outermost first.
         assert_eq!(
             fields["om"],
-            Kind::Either(vec![
-                Kind::None,
-                Kind::Array(Box::new(Kind::String), None)
-            ])
+            Kind::Either(vec![Kind::None, Kind::Array(Box::new(Kind::String), None)])
         );
         assert!(
             !codes(&diagnostics).contains(&1002),
@@ -5406,7 +5443,10 @@ mod tests {
         let schema = narrowing_schema();
         // Baseline: without the guard, `email` keeps its option.
         let baseline = analyze(&schema, "SELECT email FROM user;");
-        assert_eq!(object_fields(array_element(&baseline))["email"], option_string());
+        assert_eq!(
+            object_fields(array_element(&baseline))["email"],
+            option_string()
+        );
 
         let kind = analyze(&schema, "SELECT email FROM user WHERE email != NONE;");
         assert_eq!(object_fields(array_element(&kind))["email"], Kind::String);
@@ -5495,7 +5535,10 @@ mod tests {
             &schema,
             "SELECT email FROM user WHERE email != NONE GROUP BY country;",
         );
-        assert_eq!(object_fields(array_element(&kind))["email"], option_string());
+        assert_eq!(
+            object_fields(array_element(&kind))["email"],
+            option_string()
+        );
     }
 
     #[test]
@@ -5563,10 +5606,7 @@ mod tests {
     #[test]
     fn a_sibling_field_untouched_by_any_guard_keeps_its_schema_kind() {
         let schema = narrowing_schema();
-        let kind = analyze(
-            &schema,
-            "SELECT email, age FROM user WHERE email != NONE;",
-        );
+        let kind = analyze(&schema, "SELECT email, age FROM user WHERE email != NONE;");
         let fields = object_fields(array_element(&kind));
         assert_eq!(fields["email"], Kind::String);
         // `age` is untouched by the guard.
@@ -5580,7 +5620,10 @@ mod tests {
             &schema,
             "SELECT * FROM (SELECT email FROM user) WHERE email != NONE;",
         );
-        assert_eq!(object_fields(array_element(&kind))["email"], option_string());
+        assert_eq!(
+            object_fields(array_element(&kind))["email"],
+            option_string()
+        );
     }
 
     #[test]
@@ -5678,9 +5721,18 @@ mod tests {
         // The expected total kind follows the collected column: an `int`
         // column totals to an `int`, a `float`/`number` one to a `number`.
         for (query, expected) in [
-            ("SELECT math::sum(price * qty) AS a FROM post GROUP ALL;", Kind::Number),
-            ("SELECT math::mean(qty * 1) AS a FROM post GROUP ALL;", Kind::Number),
-            ("SELECT math::sum(<float> qty) AS a FROM post GROUP ALL;", Kind::Number),
+            (
+                "SELECT math::sum(price * qty) AS a FROM post GROUP ALL;",
+                Kind::Number,
+            ),
+            (
+                "SELECT math::mean(qty * 1) AS a FROM post GROUP ALL;",
+                Kind::Number,
+            ),
+            (
+                "SELECT math::sum(<float> qty) AS a FROM post GROUP ALL;",
+                Kind::Number,
+            ),
         ] {
             let (kind, diagnostics) = analyze_diagnostics(&schema, query);
             assert!(
@@ -5769,7 +5821,8 @@ mod tests {
                 .filter(|code| *code == 5002)
                 .count();
             assert_eq!(
-                violations, 1,
+                violations,
+                1,
                 "`{query}` must report its argument violation exactly once: {:?}",
                 codes(&diagnostics)
             );
@@ -5780,8 +5833,10 @@ mod tests {
     fn aggregate_arity_is_still_checked() {
         let schema = aggregate_schema();
 
-        let (_, diagnostics) =
-            analyze_diagnostics(&schema, "SELECT math::sum(price, qty) AS a FROM post GROUP ALL;");
+        let (_, diagnostics) = analyze_diagnostics(
+            &schema,
+            "SELECT math::sum(price, qty) AS a FROM post GROUP ALL;",
+        );
         assert!(
             codes(&diagnostics).contains(&5002),
             "a two-argument `math::sum` must still be reported: {:?}",

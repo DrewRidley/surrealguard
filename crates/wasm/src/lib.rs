@@ -38,6 +38,8 @@
 //! diagnostics — the thing the playground exists for — keep working either
 //! way.
 
+pub mod host;
+
 use std::alloc::{alloc as global_alloc, dealloc as global_dealloc, Layout};
 
 use serde::Serialize;
@@ -265,6 +267,39 @@ pub unsafe extern "C" fn sg_analyze2(
     let query = str_from_raw(query_ptr, query_len);
 
     let json = analyze_with_types(&schema, &query);
+
+    let bytes = json.into_bytes().into_boxed_slice();
+    let len = bytes.len();
+    let ptr = Box::into_raw(bytes) as *mut u8;
+    ((ptr as u64) << 32) | (len as u64)
+}
+
+/// Analyze a whole **host file** — a `.ts`, `.tsx`, `.svelte`, … — and answer
+/// diagnostics, highlighting tokens, query extents and (optionally) a hover in
+/// one call, all at host-file byte offsets.
+///
+/// The argument is a single JSON object rather than a widening list of string
+/// pairs, because this is the export an editor plugin calls on a keystroke and
+/// the set of questions it asks will grow. A JSON request costs one parse of a
+/// few hundred bytes against an analysis measured in milliseconds, and it
+/// means adding a question never renumbers an argument.
+///
+/// See [`host::Request`] / [`host::Response`] for the shapes. Result packing
+/// and ownership are identical to [`sg_analyze`].
+///
+/// # Safety
+/// `(request_ptr, request_len)` must describe a valid UTF-8 buffer in guest
+/// memory.
+#[no_mangle]
+pub unsafe extern "C" fn sg_host(request_ptr: *const u8, request_len: usize) -> u64 {
+    let request = str_from_raw(request_ptr, request_len);
+
+    let json = match serde_json::from_str::<host::Request>(&request) {
+        Ok(request) => host::analyze_host(&request),
+        // A request we cannot read is a bug in the caller, not something to
+        // paint in someone's editor: answer "nothing to say".
+        Err(_) => r#"{"diagnostics":[],"tokens":[],"queries":[],"hover":null}"#.to_string(),
+    };
 
     let bytes = json.into_bytes().into_boxed_slice();
     let len = bytes.len();

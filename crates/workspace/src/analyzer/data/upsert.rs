@@ -92,7 +92,8 @@ mod tests {
         let schema = extract_schema(&[schema_parsed]).schema;
 
         // No WHERE: UPSERT generates a record, so 7009 must not fire.
-        let (_, diagnostics) = analyze_with_diagnostics(&schema, "UPSERT settlement SET amount = 1;");
+        let (_, diagnostics) =
+            analyze_with_diagnostics(&schema, "UPSERT settlement SET amount = 1;");
         assert!(
             diagnostics
                 .iter()

@@ -265,11 +265,11 @@ impl Error for CheckFailed {}
 type EmbeddedQueries =
     std::collections::BTreeMap<String, (surrealguard_embed::EmbeddedQuery, String)>;
 
-/// Adds every `surql` template found in a host file to `workspace` as a virtual
+/// Adds every embedded query found in a host file to `workspace` as a virtual
 /// source, and records the host file's text so findings can be rendered against
 /// real source.
 ///
-/// Embedded queries in host files (`surql` tagged templates in `.ts`/`.svelte`/…)
+/// Embedded queries in host files (`db.query("…")` in `.ts`/`.svelte`/…)
 /// are part of the workspace: they are the queries the client actually runs.
 /// `generate` has always analyzed them, so a `check` that ignored them would
 /// pass a workspace whose `generate` then fails with errors — CI green, build
@@ -1719,7 +1719,7 @@ mod tests {
     #[test]
     fn check_reports_errors_in_embedded_host_queries_at_the_host_file() {
         // `check` is the CI gate. It must see the queries the client actually
-        // runs — a host file's `surql` template — or CI passes green on a
+        // runs — a host file's embedded query — or CI passes green on a
         // workspace whose `generate` then fails.
         let root = temp_project_dir("check-embedded-error");
         fs::create_dir_all(root.join("schema")).expect("schema dir");
@@ -1732,7 +1732,7 @@ mod tests {
         fs::write(root.join("schema/t.surql"), "DEFINE TABLE t SCHEMAFULL;").expect("write schema");
         fs::write(
             root.join("src/app.ts"),
-            "const q = surql`SELECT * FROM nonexistent_table;`;",
+            "const q = db.query(\"SELECT * FROM nonexistent_table;\");",
         )
         .expect("write host source");
 
@@ -1776,7 +1776,7 @@ mod tests {
         .expect("write schema");
         fs::write(
             root.join("src/app.ts"),
-            "const q = surql`SELECT price FROM t;`;",
+            "const q = db.query(\"SELECT price FROM t;\");",
         )
         .expect("write host source");
 

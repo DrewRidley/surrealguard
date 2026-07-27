@@ -187,9 +187,7 @@ pub(crate) fn check_graph_idiom_at(
                     surrealguard_diagnostics::catalog::finding(
                         SourceSpan::new(ctx.source().clone(), last.span),
                         3004,
-                        format!(
-                            "this FROM target stops on the edge `{edge}`, not on a table"
-                        ),
+                        format!("this FROM target stops on the edge `{edge}`, not on a table"),
                     )
                     .with_help(format!("add a landing step, e.g. `->{edge}->target`")),
                 );
@@ -701,11 +699,15 @@ DEFINE FIELD since ON wrote TYPE datetime;
         // carries the reason.
         assert_eq!(
             findings("SELECT ->? AS p FROM user;"),
-            vec!["E6003 `?` traverses every edge, so surrealguard can't name what this step reaches"]
+            vec![
+                "E6003 `?` traverses every edge, so surrealguard can't name what this step reaches"
+            ]
         );
         assert_eq!(
             findings("SELECT ->wrote->(?) AS p FROM user;"),
-            vec!["E6003 `?` traverses every edge, so surrealguard can't name what this step reaches"]
+            vec![
+                "E6003 `?` traverses every edge, so surrealguard can't name what this step reaches"
+            ]
         );
         // Targets the vendored grammar admits and SurrealDB's parser rejects
         // (verified against 3.2.3): the destructure and splat belong *after*

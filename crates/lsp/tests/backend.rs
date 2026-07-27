@@ -302,7 +302,7 @@ async fn embedded_surql_in_svelte_publishes_findings_at_host_spans() {
         .await;
     let _ = server.next_publish().await;
 
-    let svelte = "<h1>People</h1>\n<script lang=\"ts\">\nconst rows = surql`SELECT * FROM persn WHERE name = ${filter}`;\n</script>\n";
+    let svelte = "<h1>People</h1>\n<script lang=\"ts\">\nconst rows = db.query(`SELECT * FROM persn WHERE name = ${filter}`);\n</script>\n";
     server
         .call(
             "textDocument/didOpen",

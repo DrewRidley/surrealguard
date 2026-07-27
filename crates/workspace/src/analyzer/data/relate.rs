@@ -27,11 +27,8 @@ pub(crate) fn relate_response_kind(stmt: &ast::RelateStmt, ctx: &mut AnalysisCon
                     1001,
                     format!("`{endpoint_table}` is not a defined table"),
                 );
-                let finding = crate::analyzer::data::with_table_suggestion(
-                    finding,
-                    ctx,
-                    &endpoint_table,
-                );
+                let finding =
+                    crate::analyzer::data::with_table_suggestion(finding, ctx, &endpoint_table);
                 ctx.emit(finding);
             }
         }

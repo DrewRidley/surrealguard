@@ -1,28 +1,23 @@
 //! Semantic tokens for SurrealQL.
 //!
-//! Tree-sitter already tells the editor what every byte of a `.surql` file
-//! is — but only where the editor has the SurrealQL grammar. Inside a
-//! `` surql`…` `` template in a `.svelte` or `.ts` file the host grammar sees
-//! one long string, and no amount of extension configuration changes that:
-//! the injection would have to be declared by the *host* language. Semantic
-//! tokens are the protocol's answer. The server, which does have the grammar,
-//! reports token kinds at host coordinates and the editor paints them.
+//! The classification itself lives in [`surrealguard_syntax::highlight`],
+//! shared with the TypeScript language-service plugin so an embedded query
+//! gets the same answer whichever surface asks. What is here is the part that
+//! is LSP: the legend, the mapping of a query's tokens onto its host file, and
+//! the delta encoding.
 //!
-//! The kind mapping mirrors the `highlights.scm` the Zed extension ships, so
-//! an embedded query and a `.surql` file agree about what a keyword is.
-//!
-//! Two protocol constraints shape this module: a token may not span a line
+//! Two protocol constraints shape the encoder: a token may not span a line
 //! (multi-line strings and comments are split per line), and tokens are
 //! delta-encoded against their predecessor, so they must be emitted in
 //! ascending position order.
 
-use std::ops::Range;
-
-use surrealguard_syntax::parse::ParsedSource;
+use surrealguard_syntax::highlight::TokenKind;
 use tower_lsp::lsp_types::{SemanticToken, SemanticTokenType};
-use tree_sitter::Node;
 
-/// The legend, in index order — a token's `token_type` is its position here.
+pub use surrealguard_syntax::highlight::{tokens, Token};
+
+/// The legend, in index order — a token's `token_type` is
+/// [`TokenKind::index`], so this must stay in the enum's variant order.
 pub const TOKEN_TYPES: [SemanticTokenType; 12] = [
     SemanticTokenType::KEYWORD,
     SemanticTokenType::COMMENT,
@@ -37,94 +32,6 @@ pub const TOKEN_TYPES: [SemanticTokenType; 12] = [
     SemanticTokenType::PROPERTY,
     SemanticTokenType::ENUM_MEMBER,
 ];
-
-const KEYWORD: u32 = 0;
-const COMMENT: u32 = 1;
-const STRING: u32 = 2;
-const NUMBER: u32 = 3;
-const REGEXP: u32 = 4;
-const OPERATOR: u32 = 5;
-const TYPE: u32 = 6;
-const FUNCTION: u32 = 7;
-const VARIABLE: u32 = 8;
-const PARAMETER: u32 = 9;
-const PROPERTY: u32 = 10;
-const ENUM_MEMBER: u32 = 11;
-
-/// One token as a byte range in some text, before delta encoding.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Token {
-    /// Byte range in the text the token was found in.
-    pub range: Range<usize>,
-    /// Index into [`TOKEN_TYPES`].
-    pub kind: u32,
-}
-
-/// Every semantic token in a parsed SurrealQL source, in ascending order.
-pub fn tokens(parsed: &ParsedSource) -> Vec<Token> {
-    let mut tokens = Vec::new();
-    collect(parsed.tree().root_node(), &mut tokens);
-    tokens
-}
-
-/// Walks the tree, emitting the outermost node that *is* a token. Descending
-/// past one would emit overlapping tokens, which the protocol forbids.
-fn collect(node: Node<'_>, tokens: &mut Vec<Token>) {
-    if let Some(kind) = token_kind(node) {
-        tokens.push(Token {
-            range: node.byte_range(),
-            kind,
-        });
-        return;
-    }
-    let mut cursor = node.walk();
-    let children: Vec<_> = node.children(&mut cursor).collect();
-    for child in children {
-        collect(child, tokens);
-    }
-}
-
-/// The token kind for a grammar node, or `None` when the node is structure
-/// rather than a token (descend into it) — or punctuation, which carries no
-/// meaning the editor cannot see for itself.
-fn token_kind(node: Node<'_>) -> Option<u32> {
-    if !node.is_named() {
-        return None;
-    }
-    Some(match node.kind() {
-        "Comment" | "BlockComment" => COMMENT,
-        // `true`, `NONE`, `NULL`: keyword-shaped literals.
-        "Keyword" | "Bool" | "None" | "Literal" => KEYWORD,
-        // Enumerated constants a clause accepts by name.
-        "Distance" | "Filter" | "AnalyzerTokenizer" | "TokenType" | "HttpMethod" => ENUM_MEMBER,
-        "Number" | "Int" | "Float" | "Decimal" | "Duration" | "DurationPart" | "DurationValue"
-        | "VersionNumber" => NUMBER,
-        "String" | "FormatString" | "RecordIdString" => STRING,
-        "Regex" => REGEXP,
-        "TypeName" => TYPE,
-        "FunctionName" | "IdiomFunction" => FUNCTION,
-        // `$param` — in SurrealQL a parameter is exactly what it looks like.
-        "VariableName" => PARAMETER,
-        "KeyName" | "ObjectKey" => PROPERTY,
-        "RecordTbIdent" => TYPE,
-        "RecordIdIdent" => ENUM_MEMBER,
-        "Operator" | "RangeOp" | "LookupLeft" | "LookupRight" | "LookupBoth" | "Any" | "At"
-        | "Optional" | "Pipe" => OPERATOR,
-        // A bare name is a variable; the same name reached through a path is
-        // a field of whatever the path walked into.
-        "Ident" => {
-            if node
-                .parent()
-                .is_some_and(|parent| matches!(parent.kind(), "Path" | "Subscript" | "Lookup"))
-            {
-                PROPERTY
-            } else {
-                VARIABLE
-            }
-        }
-        _ => return None,
-    })
-}
 
 /// Re-expresses an embedded query's tokens as ranges in its host file.
 ///
@@ -172,7 +79,7 @@ pub fn encode(text: &str, tokens: &[Token]) -> Vec<SemanticToken> {
                 delta_line,
                 delta_start,
                 length,
-                token_type: token.kind,
+                token_type: token.kind.index(),
                 token_modifiers_bitset: 0,
             });
             (last_line, last_start) = (line, start);
@@ -246,75 +153,37 @@ fn utf16_len(text: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_syntax::parse::parse_source;
+    use surrealguard_syntax::parse::{parse_source, ParsedSource};
     use surrealguard_syntax::source::SourceId;
 
     fn parse(text: &str) -> ParsedSource {
         parse_source(SourceId::new("t.surql"), text).expect("parses")
     }
 
-    /// `(covered text, token type)` for each token, which is what actually
-    /// matters: the ranges have to land on the right bytes.
-    fn described(text: &str) -> Vec<String> {
-        tokens(&parse(text))
-            .into_iter()
-            .map(|token| {
-                format!(
-                    "{} {}",
-                    TOKEN_TYPES[token.kind as usize].as_str(),
-                    &text[token.range]
-                )
-            })
-            .collect()
-    }
-
     #[test]
-    fn a_select_is_tokenized_by_role() {
-        let described = described("SELECT name FROM person WHERE age > 21;");
-        assert_eq!(
-            described,
-            [
-                "keyword SELECT",
-                "variable name",
-                "keyword FROM",
-                "variable person",
-                "keyword WHERE",
-                "variable age",
-                "operator >",
-                "number 21",
-            ]
-        );
-    }
-
-    #[test]
-    fn parameters_strings_and_comments_are_distinguished() {
-        let described = described("-- note\nRETURN $name = 'ada';");
-        assert_eq!(
-            described,
-            [
-                "comment -- note",
-                "keyword RETURN",
-                "parameter $name",
-                "operator =",
-                "string 'ada'",
-            ]
-        );
-    }
-
-    #[test]
-    fn tokens_never_overlap_and_always_advance() {
-        let text = "DEFINE TABLE person SCHEMAFULL;\n\
-                    DEFINE FIELD name ON person TYPE string;\n\
-                    SELECT name, math::sum(scores) FROM person:ada;";
-        let tokens = tokens(&parse(text));
-        assert!(tokens.len() > 10, "the corpus should produce real tokens");
-        for pair in tokens.windows(2) {
-            assert!(
-                pair[0].range.end <= pair[1].range.start,
-                "tokens must be ordered and disjoint: {:?} then {:?}",
-                pair[0],
-                pair[1]
-            );
+    fn the_legend_matches_the_classifier_order() {
+        // The client is handed TOKEN_TYPES and then handed indices produced by
+        // `TokenKind::index`. If the two orders ever drift, every token is
+        // painted as some other kind and nothing fails loudly.
+        for (index, kind) in [
+            TokenKind::Keyword,
+            TokenKind::Comment,
+            TokenKind::String,
+            TokenKind::Number,
+            TokenKind::Regexp,
+            TokenKind::Operator,
+            TokenKind::Type,
+            TokenKind::Function,
+            TokenKind::Variable,
+            TokenKind::Parameter,
+            TokenKind::Property,
+            TokenKind::EnumMember,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(kind.index() as usize, index);
+            assert_eq!(TOKEN_TYPES[index].as_str(), kind.lsp_name());
         }
     }
 
@@ -342,7 +211,7 @@ mod tests {
         let encoded = encode(text, &tokens(&parse(text)));
         let string_pieces: Vec<_> = encoded
             .iter()
-            .filter(|token| token.token_type == STRING)
+            .filter(|token| token.token_type == TokenKind::String.index())
             .map(|token| (token.delta_line, token.delta_start, token.length))
             .collect();
         assert_eq!(
@@ -361,7 +230,7 @@ mod tests {
         let encoded = encode(text, &tokens(&parse(text)));
         let string = encoded
             .iter()
-            .find(|token| token.token_type == STRING)
+            .find(|token| token.token_type == TokenKind::String.index())
             .expect("the string is tokenized");
         assert_eq!((string.delta_start, string.length), (7, 5));
     }

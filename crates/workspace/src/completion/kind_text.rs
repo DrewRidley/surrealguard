@@ -169,7 +169,10 @@ mod tests {
             return_kind("array<string>"),
             Some(Kind::Array(Box::new(Kind::String), None))
         );
-        assert_eq!(return_kind("option<string>"), Some(Kind::option(Kind::String)));
+        assert_eq!(
+            return_kind("option<string>"),
+            Some(Kind::option(Kind::String))
+        );
         assert_eq!(
             return_kind("record<person>"),
             Some(Kind::Record(vec![surrealdb_types::Table::from("person")]))
@@ -192,9 +195,15 @@ mod tests {
 
     #[test]
     fn parameter_lists_index_positionally_and_strip_the_documented_decoration() {
-        assert_eq!(parameter_kind("array, value", 0), Some(Kind::Array(Box::new(Kind::Any), None)));
+        assert_eq!(
+            parameter_kind("array, value", 0),
+            Some(Kind::Array(Box::new(Kind::Any), None))
+        );
         assert_eq!(parameter_kind("string, string", 1), Some(Kind::String));
-        assert_eq!(parameter_kind("path: string[, options]", 0), Some(Kind::String));
+        assert_eq!(
+            parameter_kind("path: string[, options]", 0),
+            Some(Kind::String)
+        );
         assert_eq!(parameter_kind("min?, max?", 0), None);
         assert_eq!(
             parameter_kind("(Optional<int>, Optional<int>)", 1),

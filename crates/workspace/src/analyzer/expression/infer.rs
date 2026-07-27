@@ -31,9 +31,7 @@ pub fn infer_expression_fact(
             // one, whatever scope binds it — that is why `$this`, `$parent`,
             // `$self` and `$scope` were being demanded from the caller and
             // emitted by codegen.
-            if ctx.env().let_fact(name).is_none()
-                && !crate::context_params::is_engine_param(name)
-            {
+            if ctx.env().let_fact(name).is_none() && !crate::context_params::is_engine_param(name) {
                 ctx.record_param_use(name.clone(), span.clone());
             }
             param_fact(name, span, ctx.env())
@@ -107,9 +105,9 @@ pub fn statement_value_kind(
         // checked). Re-inference of the same expression re-emits identical
         // findings, which `ctx.emit` dedupes — so this stays single-emit even
         // when the subquery sits inside a binary/call that re-reads its kind.
-        ast::Statement::IfElse(s) => {
-            ctx.with_child_env(|ctx| crate::analyzer::flow::if_else::analyze_if_else_flow(ctx, s).into_kind())
-        }
+        ast::Statement::IfElse(s) => ctx.with_child_env(|ctx| {
+            crate::analyzer::flow::if_else::analyze_if_else_flow(ctx, s).into_kind()
+        }),
         // `({ … })` — a block used as a value. Routed through the same full
         // flow analysis a statement block gets, for the same reason the `IF`
         // arm above is: pure inference walks the block's statements and checks
@@ -451,7 +449,10 @@ pub(crate) fn collection_element_kind(kind: &Kind) -> Option<Kind> {
     match kind {
         Kind::Array(element, _) | Kind::Set(element, _) => Some((**element).clone()),
         Kind::Either(variants) => {
-            let elements: Vec<Kind> = variants.iter().filter_map(collection_element_kind).collect();
+            let elements: Vec<Kind> = variants
+                .iter()
+                .filter_map(collection_element_kind)
+                .collect();
             (!elements.is_empty()).then(|| Kind::either(elements))
         }
         _ => None,
@@ -522,7 +523,9 @@ pub(crate) fn splat_kind(current: &Kind, schema: &SchemaIndex) -> Result<Kind, S
                     .get(&name)
                     .filter(|table| !table.fields.is_empty())
                     .ok_or(name)?;
-                rows.push(crate::analyzer::data::select::object_kind_for_all_fields(table));
+                rows.push(crate::analyzer::data::select::object_kind_for_all_fields(
+                    table,
+                ));
             }
             Ok(Kind::either(rows))
         }
@@ -739,22 +742,15 @@ fn method_return_kind(
             _ => None,
         });
         return Some(match closure {
-            Some(closure) => {
-                closure_return_kind(closure, std::slice::from_ref(receiver), ctx)
-                    .unwrap_or(Kind::Any)
-            }
+            Some(closure) => closure_return_kind(closure, std::slice::from_ref(receiver), ctx)
+                .unwrap_or(Kind::Any),
             // A non-closure argument violates `.chain`'s contract; that is not
             // "no such method", so the call still resolves and the value stays
             // unknown rather than being invented.
             None => Kind::Any,
         });
     }
-    builtin_method_kind(
-        generic_method_path(method)?.as_str(),
-        args,
-        arg_exprs,
-        ctx,
-    )
+    builtin_method_kind(generic_method_path(method)?.as_str(), args, arg_exprs, ctx)
 }
 
 /// The kind a builtin resolves to when called as a method, or `None` when no
@@ -1149,12 +1145,14 @@ pub fn binary_result_kind(op: &ast::BinaryOp, lhs: &Kind, rhs: &Kind) -> Option<
         // element constraint, so coalescing keeps the other side's collection
         // type (`->edge->target ?? []` stays `array<record<target>>`).
         Op::NullCoalesce
-            if is_empty_array_literal(rhs) && matches!(lhs, Kind::Array(_, _) | Kind::Set(_, _)) =>
+            if is_empty_array_literal(rhs)
+                && matches!(lhs, Kind::Array(_, _) | Kind::Set(_, _)) =>
         {
             Some(lhs.clone())
         }
         Op::NullCoalesce
-            if is_empty_array_literal(lhs) && matches!(rhs, Kind::Array(_, _) | Kind::Set(_, _)) =>
+            if is_empty_array_literal(lhs)
+                && matches!(rhs, Kind::Array(_, _) | Kind::Set(_, _)) =>
         {
             Some(rhs.clone())
         }
@@ -1162,9 +1160,11 @@ pub fn binary_result_kind(op: &ast::BinaryOp, lhs: &Kind, rhs: &Kind) -> Option<
         // than becoming a `number | int` union: every numeric kind is a
         // `number`, so the coalesced value is numeric and downstream arithmetic
         // (`$this.total_on_hand - $this.total_committed`) keeps resolving.
-        Op::NullCoalesce if is_numeric(lhs) && is_numeric(rhs) => {
-            Some(if lhs == rhs { lhs.clone() } else { Kind::Number })
-        }
+        Op::NullCoalesce if is_numeric(lhs) && is_numeric(rhs) => Some(if lhs == rhs {
+            lhs.clone()
+        } else {
+            Kind::Number
+        }),
         // Coalescing two known kinds yields one of them.
         Op::NullCoalesce => Some(Kind::either(vec![lhs.clone(), rhs.clone()])),
         _ => None,

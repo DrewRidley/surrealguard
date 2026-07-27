@@ -19,7 +19,7 @@
 //! * every `.surql` / `.surrealql` file under the workspace root,
 //! * every host file ([`crate::is_host_source`]: `.ts`/`.tsx`/`.js`/`.jsx`/
 //!   `.svelte`/`.vue`/`.astro`) — the files
-//!   [`crate::discover_host_sources`] scans for embedded `surql` templates,
+//!   [`crate::discover_host_sources`] scans for embedded queries,
 //! * `surrealguard.toml` itself, because a config change alters which files
 //!   matter and how findings are graded.
 //!
@@ -120,7 +120,7 @@ pub(crate) enum Watched {
     Config,
     /// A `.surql` / `.surrealql` source.
     Surql,
-    /// A host file that may carry embedded `surql` templates.
+    /// A host file that may carry embedded queries.
     Host,
 }
 

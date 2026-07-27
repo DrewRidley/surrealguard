@@ -4272,6 +4272,8 @@ dependencies = [
  "serde",
  "serde_json",
  "surrealguard-diagnostics",
+ "surrealguard-embed",
+ "surrealguard-syntax",
  "surrealguard-workspace",
 ]
 

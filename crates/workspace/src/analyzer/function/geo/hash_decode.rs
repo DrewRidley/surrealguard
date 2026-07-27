@@ -18,7 +18,9 @@ pub(crate) fn analyze_geo_hash_decode(
             min_args: 1,
             max_args: Some(1),
             arg_kinds: vec![ParamKind::Exact(Kind::String)],
-            return_kind: ReturnKind::Fixed(Kind::Geometry(vec![surrealdb_types::GeometryKind::Point])),
+            return_kind: ReturnKind::Fixed(Kind::Geometry(vec![
+                surrealdb_types::GeometryKind::Point,
+            ])),
         },
         args,
     )

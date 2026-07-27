@@ -81,7 +81,10 @@ pub(crate) fn recover_statement(node: Node<'_>, text: &str, out: &mut Vec<Spanne
     }
     // Broken non-container statement: one honest `Partial` for the broken
     // region, then salvage any clean statements tree-sitter nested inside.
-    out.push(Spanned::new(Statement::Partial(partial(node)), node_range(node)));
+    out.push(Spanned::new(
+        Statement::Partial(partial(node)),
+        node_range(node),
+    ));
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         salvage_statements(child, text, out);
@@ -195,7 +198,9 @@ fn is_recoverable_container(node: Node<'_>) -> bool {
         "Block" | "ForStatement" | "IfElseStatement" => true,
         "DefineStatement" => {
             let mut cursor = node.walk();
-            let has_block = node.children(&mut cursor).any(|child| child.kind() == "Block");
+            let has_block = node
+                .children(&mut cursor)
+                .any(|child| child.kind() == "Block");
             has_block
         }
         _ => false,
@@ -1578,7 +1583,10 @@ mod tests {
             let parsed = parse(query);
             let stmt = lower_select_stmt(&parsed);
             let Expr::RecordId { table, range, .. } = &stmt.from[0].node else {
-                panic!("expected record id source for `{query}`, got {:?}", stmt.from[0].node);
+                panic!(
+                    "expected record id source for `{query}`, got {:?}",
+                    stmt.from[0].node
+                );
             };
             assert_eq!(table.node, "person");
             assert!(range, "`{query}` is a record-id range");
@@ -1673,7 +1681,10 @@ mod tests {
             let parsed = parse(query);
             let stmt = lower_select_stmt(&parsed);
             let Expr::Table(name) = &stmt.from[0].node else {
-                panic!("expected table source for {query}, got {:?}", stmt.from[0].node);
+                panic!(
+                    "expected table source for {query}, got {:?}",
+                    stmt.from[0].node
+                );
             };
             assert_eq!(name.node, "person");
         }
@@ -2059,7 +2070,10 @@ mod tests {
         let IdiomPart::Graph { step, .. } = &idiom.parts[0].node else {
             panic!("expected graph part");
         };
-        assert!(!step.reference, "`<-` is an edge traversal, not a reference");
+        assert!(
+            !step.reference,
+            "`<-` is an edge traversal, not a reference"
+        );
     }
 
     #[test]

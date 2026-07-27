@@ -17,7 +17,10 @@ pub(crate) fn analyze_string_similarity_jaro_winkler(
         &Signature {
             min_args: 2,
             max_args: Some(2),
-            arg_kinds: vec![ParamKind::Exact(Kind::String), ParamKind::Exact(Kind::String)],
+            arg_kinds: vec![
+                ParamKind::Exact(Kind::String),
+                ParamKind::Exact(Kind::String),
+            ],
             return_kind: ReturnKind::Fixed(Kind::Float),
         },
         args,

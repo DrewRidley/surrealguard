@@ -87,7 +87,10 @@ async fn fetch_one_returns_the_first_row() {
     let db = connect("sg_fetch_one").await;
     seed_ada(&db).await;
 
-    let row = query!("SELECT name FROM user;").fetch_one(&db).await.unwrap();
+    let row = query!("SELECT name FROM user;")
+        .fetch_one(&db)
+        .await
+        .unwrap();
     assert_eq!(row.name, "ada");
 }
 
@@ -127,10 +130,11 @@ async fn every_scalar_kind_decodes_from_what_the_server_actually_sends() {
     let db = connect("sg_scalars").await;
     seed_ada(&db).await;
 
-    let row = query!("SELECT id, name, age, ratio, score, created, ttl, tags, nickname, best FROM user;")
-        .fetch_one(&db)
-        .await
-        .unwrap();
+    let row =
+        query!("SELECT id, name, age, ratio, score, created, ttl, tags, nickname, best FROM user;")
+            .fetch_one(&db)
+            .await
+            .unwrap();
 
     assert_eq!(row.id, RecordId::new("user", "ada"));
     assert_eq!(row.name, "ada");
@@ -192,7 +196,10 @@ async fn select_from_only_fetches_an_option() {
     let db = connect("sg_only").await;
     seed_ada(&db).await;
 
-    let row = query!("SELECT name FROM ONLY user:ada;").fetch(&db).await.unwrap();
+    let row = query!("SELECT name FROM ONLY user:ada;")
+        .fetch(&db)
+        .await
+        .unwrap();
     assert_eq!(row.unwrap().name, "ada");
 
     let missing = query!("SELECT name FROM ONLY user:nobody;")
@@ -232,7 +239,10 @@ async fn execute_runs_a_statement_and_discards_its_result() {
         .await
         .unwrap();
 
-    let row = query!("SELECT name FROM ONLY user:bob;").fetch(&db).await.unwrap();
+    let row = query!("SELECT name FROM ONLY user:bob;")
+        .fetch(&db)
+        .await
+        .unwrap();
     assert_eq!(row.unwrap().name, "bob");
 }
 

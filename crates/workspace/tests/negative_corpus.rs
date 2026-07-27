@@ -107,7 +107,10 @@ fn invalid_root() -> PathBuf {
 /// Each fixture is analyzed against the *same* schema half of the valid
 /// corpus, so a fixture can be a wrong query about a real table without
 /// restating the schema.
-fn analyzed() -> (Workspace, Vec<(surrealguard_syntax::source::SourceId, String)>) {
+fn analyzed() -> (
+    Workspace,
+    Vec<(surrealguard_syntax::source::SourceId, String)>,
+) {
     let mut workspace = Workspace::default();
     let mut sources = Vec::new();
     for (relative, text) in support::corpus_files() {

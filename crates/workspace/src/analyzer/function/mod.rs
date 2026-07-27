@@ -121,8 +121,9 @@ pub(crate) fn analyze_builtin_function(
                             finding = finding.with_help(format!("did you mean `{nearest}`?"));
                         }
                         None => {
-                            finding = finding
-                                .with_help(format!("no `DEFINE FUNCTION {path}` exists in the workspace"));
+                            finding = finding.with_help(format!(
+                                "no `DEFINE FUNCTION {path}` exists in the workspace"
+                            ));
                         }
                     }
                     ctx.emit(finding);
@@ -187,10 +188,7 @@ pub(crate) fn json_value_kind() -> Kind {
 /// argument 0 yields `None` — exactly what it yielded when synthetic calls
 /// carried no arguments at all. The path span stays empty, so the call is still
 /// [`is_synthetic`] and the signature table stays inference-only on it.
-pub(crate) fn synthetic_method_call(
-    path: &str,
-    args: &[ast::Spanned<ast::Expr>],
-) -> ast::Call {
+pub(crate) fn synthetic_method_call(path: &str, args: &[ast::Spanned<ast::Expr>]) -> ast::Call {
     let empty = surrealguard_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered");
     let receiver = ast::Spanned::new(
         ast::Expr::Partial(ast::PartialNode {
@@ -200,7 +198,9 @@ pub(crate) fn synthetic_method_call(
         empty,
     );
     let mut call = synthetic_call(path);
-    call.args = std::iter::once(receiver).chain(args.iter().cloned()).collect();
+    call.args = std::iter::once(receiver)
+        .chain(args.iter().cloned())
+        .collect();
     call
 }
 
@@ -527,7 +527,10 @@ mod tests {
             ("RETURN rand::duration(1s, 2s);", Kind::Duration),
             ("RETURN string::semver::major('1.2.3');", Kind::Int),
             ("RETURN string::semver::inc::patch('1.2.3');", Kind::String),
-            ("RETURN string::semver::set::minor('1.2.3', 4);", Kind::String),
+            (
+                "RETURN string::semver::set::minor('1.2.3', 4);",
+                Kind::String,
+            ),
             ("RETURN string::distance::levenshtein('a', 'b');", Kind::Int),
             (
                 "RETURN string::distance::normalized_levenshtein('a', 'b');",

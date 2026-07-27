@@ -147,13 +147,9 @@ pub(crate) fn eval(expr: &ast::Expr, bindings: Bindings<'_>) -> Term {
         return Term::Place(place);
     }
     match expr {
-        ast::Expr::Literal(literal) => {
-            literal_const(literal).map_or(Term::Opaque, Term::Const)
-        }
+        ast::Expr::Literal(literal) => literal_const(literal).map_or(Term::Opaque, Term::Const),
         ast::Expr::Prefix { op, expr } => prefix_term(&op.node, &expr.node, bindings),
-        ast::Expr::Binary { lhs, op, rhs } => {
-            binary_term(&op.node, &lhs.node, &rhs.node, bindings)
-        }
+        ast::Expr::Binary { lhs, op, rhs } => binary_term(&op.node, &lhs.node, &rhs.node, bindings),
         ast::Expr::Call(call) => discriminant_term(call),
         // A `Statement::Expr` subquery is a parenthesized expression that the
         // lowering did not unwrap; anything else really is a statement.
@@ -262,18 +258,18 @@ fn binary_term(
         BinaryOp::NotEq => pair(lhs, rhs, bindings)
             .and_then(|(a, b)| const_eq(&a, &b))
             .map(|equal| ConstValue::Bool(!equal)),
-        BinaryOp::Lt => const_order(lhs, rhs, bindings)
-            .map(|o| ConstValue::Bool(o == std::cmp::Ordering::Less)),
+        BinaryOp::Lt => {
+            const_order(lhs, rhs, bindings).map(|o| ConstValue::Bool(o == std::cmp::Ordering::Less))
+        }
         BinaryOp::LtEq => const_order(lhs, rhs, bindings)
             .map(|o| ConstValue::Bool(o != std::cmp::Ordering::Greater)),
         BinaryOp::Gt => const_order(lhs, rhs, bindings)
             .map(|o| ConstValue::Bool(o == std::cmp::Ordering::Greater)),
-        BinaryOp::GtEq => const_order(lhs, rhs, bindings)
-            .map(|o| ConstValue::Bool(o != std::cmp::Ordering::Less)),
+        BinaryOp::GtEq => {
+            const_order(lhs, rhs, bindings).map(|o| ConstValue::Bool(o != std::cmp::Ordering::Less))
+        }
         BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul => arithmetic(op, lhs, rhs, bindings),
-        BinaryOp::Other(name)
-            if matches!(name.to_ascii_uppercase().as_str(), "IN" | "INSIDE") =>
-        {
+        BinaryOp::Other(name) if matches!(name.to_ascii_uppercase().as_str(), "IN" | "INSIDE") => {
             membership(lhs, rhs, bindings).map(ConstValue::Bool)
         }
         BinaryOp::Other(name) if name.eq_ignore_ascii_case("contains") => {
@@ -440,7 +436,10 @@ mod tests {
         assert_eq!(folded("2 * 3 - 1"), Some(ConstValue::Int(5)));
         assert_eq!(folded("'a' IN ['a', 'b']"), Some(ConstValue::Bool(true)));
         assert_eq!(folded("'c' IN ['a', 'b']"), Some(ConstValue::Bool(false)));
-        assert_eq!(folded("['a', 'b'] CONTAINS 'a'"), Some(ConstValue::Bool(true)));
+        assert_eq!(
+            folded("['a', 'b'] CONTAINS 'a'"),
+            Some(ConstValue::Bool(true))
+        );
         assert_eq!(folded("1 = 1"), Some(ConstValue::Bool(true)));
         assert_eq!(folded("!(1 = 2)"), Some(ConstValue::Bool(true)));
     }

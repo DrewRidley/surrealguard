@@ -602,13 +602,13 @@ RETURN $count;
 // Host files (embedded SurrealQL)
 // ---------------------------------------------------------------------------
 
-/// A SvelteKit route with one bad query inside a `surql` template.
+/// A SvelteKit route with one bad query inside a `db.query` literal.
 const HOST_URI: &str = "file:///workspace/src/routes/+page.svelte";
 const HOST: &str = "\
 <script lang=\"ts\">
-  import { surql } from '$lib/db';
+  import { db } from '$lib/db';
 
-  const q = surql`SELECT username, nonExistent FROM account`;
+  const q = db.query(\"SELECT username, nonExistent FROM account\");
 </script>
 
 <h1>hello</h1>
@@ -667,7 +667,7 @@ fn a_host_file_the_schema_satisfies_publishes_nothing() {
     for (uri, text) in [
         (
             "file:///workspace/src/clean.ts",
-            "const q = surql`SELECT username FROM account`;\n",
+            "const q = db.query(\"SELECT username FROM account\");\n",
         ),
         (
             "file:///workspace/src/plain.ts",
@@ -697,7 +697,7 @@ fn a_template_substitution_is_a_parameter_not_an_unknown_name() {
     let _ = lsp.did_open(SCHEMA_URI, SCHEMA);
     let uri = "file:///workspace/src/interpolated.ts";
     let text = "const name = 'ada';\n\
-                const q = surql`SELECT username FROM account WHERE username = ${name}`;\n";
+                const q = db.query(`SELECT username FROM account WHERE username = ${name}`);\n";
     lsp.notify(
         "textDocument/didOpen",
         json!({"textDocument": {

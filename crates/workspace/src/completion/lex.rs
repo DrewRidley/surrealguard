@@ -116,8 +116,7 @@ pub(crate) fn tokenize(source: &str) -> Vec<Token> {
             i += 1;
             while i < bytes.len()
                 && (is_ident_continue(bytes[i])
-                    || (bytes[i] == b'.'
-                        && bytes.get(i + 1).is_some_and(u8::is_ascii_digit)))
+                    || (bytes[i] == b'.' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit)))
             {
                 i += 1;
             }
@@ -136,10 +135,7 @@ pub(crate) fn tokenize(source: &str) -> Vec<Token> {
             .iter()
             .find(|operator| rest.starts_with(**operator))
             .copied();
-        i += operator.map_or_else(
-            || char_len(bytes, i),
-            |operator: &str| operator.len(),
-        );
+        i += operator.map_or_else(|| char_len(bytes, i), |operator: &str| operator.len());
         tokens.push(token(TokenKind::Punct, start, i));
     }
 
@@ -249,10 +245,7 @@ mod tests {
 
     #[test]
     fn a_function_path_is_one_token_even_while_being_typed() {
-        assert_eq!(
-            kinds("string::"),
-            vec![(TokenKind::Ident, "string::")]
-        );
+        assert_eq!(kinds("string::"), vec![(TokenKind::Ident, "string::")]);
         assert_eq!(
             kinds("fn::organization::modules($o)"),
             vec![
@@ -317,7 +310,10 @@ mod tests {
                 (TokenKind::Quoted, "'x FROM y'"),
             ]
         );
-        assert_eq!(kinds("'unterminated"), vec![(TokenKind::Quoted, "'unterminated")]);
+        assert_eq!(
+            kinds("'unterminated"),
+            vec![(TokenKind::Quoted, "'unterminated")]
+        );
     }
 
     #[test]

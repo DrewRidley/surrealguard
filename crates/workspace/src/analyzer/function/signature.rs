@@ -219,7 +219,9 @@ fn param_matches(expected: &ParamKind, kind: &Kind) -> bool {
     // already routes through `kind_is_assignable_to`, which handles unions
     // itself; the other expectations do not, so fan out here.
     if let Kind::Either(variants) = kind {
-        return variants.iter().all(|variant| param_matches(expected, variant));
+        return variants
+            .iter()
+            .all(|variant| param_matches(expected, variant));
     }
     let base = crate::kinds::literal_base_kind(kind).unwrap_or_else(|| kind.clone());
     // An unknown (`any`) argument is given the benefit of the doubt, mirroring

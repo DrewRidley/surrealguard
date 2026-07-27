@@ -379,7 +379,10 @@ impl<T> Query<T> {
 #[cfg(feature = "runtime")]
 impl<T> Query<T> {
     /// Runs the query and returns one [`Value`] per statement.
-    async fn raw<C: surrealdb::Connection>(&self, db: &surrealdb::Surreal<C>) -> Result<Vec<Value>> {
+    async fn raw<C: surrealdb::Connection>(
+        &self,
+        db: &surrealdb::Surreal<C>,
+    ) -> Result<Vec<Value>> {
         let mut request = db.query(self.text);
         for (name, value) in &self.vars {
             request = request.bind((name.clone(), value.clone()));

@@ -366,10 +366,8 @@ impl Guard {
                         // A disjunction's reason is the disjunction of the
                         // reasons: every alternative had to refine the place,
                         // and any one of them may be why it held.
-                        let reasons: Vec<String> = live
-                            .iter()
-                            .filter_map(|part| part.proof(place))
-                            .collect();
+                        let reasons: Vec<String> =
+                            live.iter().filter_map(|part| part.proof(place)).collect();
                         if reasons.len() == live.len() {
                             facts.add_proof(place.clone(), reasons.join(" or "));
                         }
@@ -399,12 +397,8 @@ impl Guard {
             Guard::False => Verdict::AlwaysFalse,
             Guard::Unknown => Verdict::Unknown,
             Guard::Atom(atom) => atom_verdict(atom, oracle),
-            Guard::All(parts) => {
-                combine(parts, oracle, Verdict::AlwaysFalse, Verdict::AlwaysTrue)
-            }
-            Guard::Any(parts) => {
-                combine(parts, oracle, Verdict::AlwaysTrue, Verdict::AlwaysFalse)
-            }
+            Guard::All(parts) => combine(parts, oracle, Verdict::AlwaysFalse, Verdict::AlwaysTrue),
+            Guard::Any(parts) => combine(parts, oracle, Verdict::AlwaysTrue, Verdict::AlwaysFalse),
         }
     }
 }
@@ -841,7 +835,10 @@ mod tests {
     #[test]
     fn a_sentinel_guard_is_decided_by_what_the_kind_can_still_be() {
         // Ruled out…
-        assert_eq!(verdict("$x = NONE", true, Kind::String), Verdict::AlwaysFalse);
+        assert_eq!(
+            verdict("$x = NONE", true, Kind::String),
+            Verdict::AlwaysFalse
+        );
         // …ruled in…
         assert_eq!(verdict("$x = NONE", true, Kind::None), Verdict::AlwaysTrue);
         // …and still open.
@@ -892,7 +889,10 @@ mod tests {
         // `Unknown` on purpose: a dead-branch verdict is the one consumer that
         // can put a new finding on valid code, so an atom decides only once it
         // has a corpus case of its own.
-        assert_eq!(verdict("type::is_string($x)", true, Kind::Int), Verdict::Unknown);
+        assert_eq!(
+            verdict("type::is_string($x)", true, Kind::Int),
+            Verdict::Unknown
+        );
         assert_eq!(verdict("$x", true, Kind::None), Verdict::Unknown);
         assert_eq!(verdict("$x > 0", true, Kind::None), Verdict::Unknown);
         // …while the enabled ones do.

@@ -179,9 +179,7 @@ fn check_record_targets(
                 format!("`record<{table}>` targets a table that's never defined"),
             )
             .with_help(format!("no `DEFINE TABLE {table}` exists in the workspace"));
-            if let Some(suggestion) =
-                crate::suggest::closest(&table, ctx.known_table_names())
-            {
+            if let Some(suggestion) = crate::suggest::closest(&table, ctx.known_table_names()) {
                 finding = finding.with_help(format!("did you mean `{suggestion}`?"));
             }
             ctx.emit(finding);
@@ -252,7 +250,9 @@ fn check_field_definition(
                 crate::analyzer::data::with_table_suggestion(finding, ctx, &stmt.table.node);
             ctx.emit(finding);
         }
-        Some(table) if !stmt.overwrite && field_is_duplicate(table, &stmt.path.node, &field_key) => {
+        Some(table)
+            if !stmt.overwrite && field_is_duplicate(table, &stmt.path.node, &field_key) =>
+        {
             let mut finding = surrealguard_diagnostics::catalog::finding(
                 surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.path.span),
                 1022,
@@ -260,8 +260,10 @@ fn check_field_definition(
             )
             .with_help("use `DEFINE FIELD OVERWRITE` to redefine it intentionally");
             if let Some(existing) = table.fields.get(&field_key) {
-                finding = finding
-                    .with_related(existing.name_span.clone(), format!("`{field_key}` is defined here"));
+                finding = finding.with_related(
+                    existing.name_span.clone(),
+                    format!("`{field_key}` is defined here"),
+                );
             }
             ctx.emit(finding);
         }
@@ -284,11 +286,7 @@ fn check_field_definition(
 /// An undeclared parent, an untyped/`any` parent, a bare (or `FLEXIBLE`)
 /// `object`, a literal object, and any collection reached through `[*]` all
 /// have room, and stay silent.
-fn check_subfield_parent(
-    ctx: &mut AnalysisContext<'_>,
-    stmt: &ast::DefineField,
-    field_key: &str,
-) {
+fn check_subfield_parent(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineField, field_key: &str) {
     let steps = crate::schema::idiom_field_steps(&stmt.path.node);
     let Some(table) = ctx.schema().table(&stmt.table.node) else {
         return;

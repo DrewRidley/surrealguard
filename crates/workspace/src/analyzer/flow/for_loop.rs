@@ -62,7 +62,10 @@ pub(crate) fn analyze_for_loop_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::F
                 contract.code(),
                 format!(
                     "FOR can't iterate a `{}` — it is not a collection",
-                    crate::render::render_offending(kind, Some(&Kind::Array(Box::new(Kind::Any), None)))
+                    crate::render::render_offending(
+                        kind,
+                        Some(&Kind::Array(Box::new(Kind::Any), None))
+                    )
                 ),
             ));
         }
@@ -94,10 +97,8 @@ pub(crate) fn analyze_for_loop_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::F
         // Record the loop variable (element kind of the iterated collection)
         // for editor features, so `$parent` in `FOR $parent IN ...` hovers
         // and gets an inlay hint the same as a LET.
-        let name_span = surrealguard_syntax::span::SourceSpan::new(
-            ctx.source().clone(),
-            stmt.binding.span,
-        );
+        let name_span =
+            surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.binding.span);
         ctx.record_let_binding(crate::analysis::LetBindingAnalysis {
             name: stmt.binding.node.clone(),
             name_span,
