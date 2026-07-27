@@ -98,6 +98,22 @@
       .sg-editor > textarea:focus { border-color: var(--accent); }
       .sg-editor > textarea::selection { background: rgba(167,139,250,.35); }
 
+      /* --- layer three: inferred-type chips. Absolutely positioned over the
+             wrapper from live client rects, never inside the mirror — the
+             mirror must hold exactly the textarea's characters or the caret
+             stops lining up with what is drawn. --- */
+      .sg-chips { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
+      .sg-chip {
+        position: absolute; display: inline-flex; align-items: center;
+        font-family: var(--mono); font-size: 11px; line-height: 1;
+        color: #9db2d0; background: rgba(125,211,252,.09);
+        border: 1px solid rgba(125,211,252,.22); border-radius: 5px;
+        padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .sg-chip::before { content: "\2192\00a0"; color: var(--faint); }
+      .type-readout { color: var(--accent-2); font-family: var(--mono); }
+      .type-readout:empty { display: none; }
+
       .squiggle { text-decoration: underline; text-decoration-style: wavy; text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
       .squiggle.err { text-decoration-color: var(--red); }
       .squiggle.warn { text-decoration-color: var(--amber); }
@@ -136,7 +152,7 @@ DEFINE FIELD name ON user TYPE string;
 DEFINE FIELD email ON user TYPE string;</textarea>
       </div>
       <div>
-        <label for="query">Query (.surql)</label>
+        <label for="query">Query (.surql) <span class="type-readout" id="caretType"></span></label>
         <textarea id="query" spellcheck="false">SELECT ssn FROM user;</textarea>
       </div>
     </div>
@@ -147,11 +163,12 @@ DEFINE FIELD email ON user TYPE string;</textarea>
 
     <script type="module">
       import { createAnalyzer } from "./sg-analyzer.mjs";
-      import { attachSquiggleEditor, analyzePanes } from "./editor.mjs";
+      import { attachSquiggleEditor, analyzePanes, typeAnnotations } from "./editor.mjs";
 
       const results = document.getElementById("results");
       const schemaEl = document.getElementById("schema");
       const queryEl = document.getElementById("query");
+      const caretType = document.getElementById("caretType");
 
       const editors = {
         schema: attachSquiggleEditor(schemaEl),
@@ -206,6 +223,17 @@ DEFINE FIELD email ON user TYPE string;</textarea>
         });
       }
 
+      // The type of the statement the caret sits in, echoed into the pane's
+      // label. A chip can be scrolled out of view, and on a touch device there
+      // is no hover at all — the caret always has an answer.
+      function showCaretType() {
+        const ann = editors.query.annotationAtCaret();
+        caretType.textContent = ann ? `→ ${ann.text}` : "";
+      }
+      document.addEventListener("selectionchange", () => {
+        if (document.activeElement === queryEl) showCaretType();
+      });
+
       let timer;
       function run(delay = 120) {
         clearTimeout(timer);
@@ -215,6 +243,10 @@ DEFINE FIELD email ON user TYPE string;</textarea>
             const panes = analyzePanes(analyzer, schemaEl.value, queryEl.value);
             editors.schema.setDiagnostics(panes.schema);
             editors.query.setDiagnostics(panes.query);
+            // Empty on a module without `sg_analyze2`: no chips, everything
+            // else unchanged.
+            editors.query.setAnnotations(typeAnnotations(panes.statements));
+            showCaretType();
             render(panes.all);
           } catch (err) {
             results.innerHTML = `<span class="code error">wasm error</span> ${escapeHtml(

@@ -101,6 +101,33 @@ fn severity_label(severity: Severity) -> &'static str {
 /// Diagnostics falling inside the schema prefix are dropped; those in the
 /// query are remapped to query-relative byte offsets.
 pub fn analyze(schema: &str, query: &str) -> String {
+    serde_json::to_string(&run(schema, query).diagnostics).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// Analyzes `query` against `schema` and returns
+/// `{ diagnostics, statements }` as a JSON object string.
+///
+/// Same run as [`analyze`], same schema-prefix clipping — the extra half is
+/// the inferred response kind of each top-level statement, which is what the
+/// playground draws as a type chip.
+pub fn analyze_with_types(schema: &str, query: &str) -> String {
+    serde_json::to_string(&run(schema, query))
+        .unwrap_or_else(|_| r#"{"diagnostics":[],"statements":[]}"#.to_string())
+}
+
+/// The one analysis both exports are views of.
+///
+/// Response kinds are rendered with [`KindContext::Occurrence`], which spells
+/// optionality out (`none | string`) instead of folding it into
+/// `option<string>`. A response kind is not something the author wrote — there
+/// is no `DEFINE` for the shape a `SELECT` hands back — so `Declared`, whose
+/// job is to mirror a spelling the reader can go and look at, has nothing to
+/// mirror here. What the reader of a result actually needs to know is which
+/// members they must handle, and a folded `option<…>` reads as "the schema
+/// said optional" rather than "this value may be absent". It is also the
+/// context hover uses for a value's type *at a position*, so a chip and an
+/// editor popover never disagree about the same kind.
+fn run(schema: &str, query: &str) -> Analysis {
     // A newline separates the last schema statement from the query and keeps
     // byte offsets easy to remap.
     let prefix_len = schema.len() as u32 + 1;
@@ -129,7 +156,33 @@ pub fn analyze(schema: &str, query: &str) -> String {
         })
         .collect();
 
-    serde_json::to_string(&diagnostics).unwrap_or_else(|_| "[]".to_string())
+    let statements: Vec<Statement> = output
+        .statements
+        .iter()
+        .filter_map(|statement| {
+            let start = statement.span.range().start();
+            let end = statement.span.range().end();
+            // The schema statements were analyzed too; they are not the
+            // user's query and have no chip.
+            if start < prefix_len {
+                return None;
+            }
+            Some(Statement {
+                kind: statement.kind.clone(),
+                start: start - prefix_len,
+                end: end.saturating_sub(prefix_len),
+                response: statement
+                    .response_kind
+                    .as_ref()
+                    .map(|kind| render(kind, KindContext::Occurrence).text),
+            })
+        })
+        .collect();
+
+    Analysis {
+        diagnostics,
+        statements,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +245,33 @@ pub unsafe extern "C" fn sg_analyze(
     ((ptr as u64) << 32) | (len as u64)
 }
 
+/// Run the analyzer and return diagnostics *and* per-statement response
+/// kinds.
+///
+/// Result packing and ownership are identical to [`sg_analyze`]; only the
+/// JSON shape differs — `{ diagnostics: [...], statements: [...] }`.
+///
+/// # Safety
+/// Both `(schema_ptr, schema_len)` and `(query_ptr, query_len)` must
+/// describe valid UTF-8 buffers in guest memory.
+#[no_mangle]
+pub unsafe extern "C" fn sg_analyze2(
+    schema_ptr: *const u8,
+    schema_len: usize,
+    query_ptr: *const u8,
+    query_len: usize,
+) -> u64 {
+    let schema = str_from_raw(schema_ptr, schema_len);
+    let query = str_from_raw(query_ptr, query_len);
+
+    let json = analyze_with_types(&schema, &query);
+
+    let bytes = json.into_bytes().into_boxed_slice();
+    let len = bytes.len();
+    let ptr = Box::into_raw(bytes) as *mut u8;
+    ((ptr as u64) << 32) | (len as u64)
+}
+
 /// Reconstruct an owned `String` from a guest-memory buffer. Copies so the
 /// caller's buffer lifetime is irrelevant. Invalid UTF-8 is replaced.
 unsafe fn str_from_raw(ptr: *const u8, len: usize) -> String {
@@ -213,5 +293,61 @@ mod tests {
             "SELECT ssn FROM user",
         );
         assert!(json.contains("E1002"), "expected E1002 in {json}");
+    }
+
+    #[test]
+    fn statements_carry_query_relative_spans_and_a_response_kind() {
+        let schema = "DEFINE TABLE user SCHEMAFULL; DEFINE FIELD name ON user TYPE string;";
+        let query = "SELECT name FROM user;";
+        let json = analyze_with_types(schema, query);
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+
+        let statements = value["statements"].as_array().expect("statements array");
+        assert_eq!(
+            statements.len(),
+            1,
+            "schema statements must be clipped: {json}"
+        );
+        assert_eq!(statements[0]["kind"], "select");
+        // Query-relative: the SELECT starts at byte 0 of the query pane.
+        assert_eq!(statements[0]["start"], 0);
+        assert_eq!(
+            statements[0]["response"], "array<{ name: string }>",
+            "unexpected response kind in {json}"
+        );
+    }
+
+    #[test]
+    fn a_non_responding_statement_has_a_null_response() {
+        let json = analyze_with_types("", "DEFINE TABLE thing SCHEMAFULL;");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+        let statements = value["statements"].as_array().expect("statements array");
+        assert_eq!(statements.len(), 1);
+        assert!(statements[0]["response"].is_null(), "{json}");
+    }
+
+    #[test]
+    fn optionality_is_spelled_out_not_folded() {
+        // `KindContext::Occurrence`: the reader of a result must handle the
+        // `none`, so it stays visible rather than folding into `option<…>`.
+        let json = analyze_with_types(
+            "DEFINE TABLE user SCHEMAFULL; DEFINE FIELD nick ON user TYPE option<string>;",
+            "SELECT nick FROM user;",
+        );
+        assert!(
+            json.contains("none | string"),
+            "expected a spelled-out union in {json}"
+        );
+    }
+
+    #[test]
+    fn the_legacy_export_still_returns_a_bare_array() {
+        // Feature detection only helps if the old shape is genuinely
+        // untouched: a page holding a new module must keep working.
+        let json = analyze("", "SELECT 1;");
+        assert!(
+            json.starts_with('['),
+            "sg_analyze must stay an array: {json}"
+        );
     }
 }

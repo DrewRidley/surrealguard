@@ -516,6 +516,20 @@ h1 .grad {
 }
 .sg-editor > .code-input::selection { background: rgba(139,124,255,0.35); }
 
+/* --- layer three: inferred-type chips ---------------------------------
+   Absolutely positioned over the wrapper from live client rects, never
+   inside the mirror: the mirror has to hold exactly the textarea's own
+   characters or the caret stops lining up with what is drawn. */
+.sg-chips { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
+.sg-chip {
+  position: absolute; display: inline-flex; align-items: center;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1;
+  color: #9db2d0; background: rgba(125,211,252,0.09);
+  border: 1px solid rgba(125,211,252,0.22); border-radius: 5px;
+  padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sg-chip::before { content: "\2192\00a0"; color: #5b6472; }
+
 /* --- the hero "live Guard" panel --- */
 .guard {
   margin: 40px auto 0; max-width: 720px; text-align: left;

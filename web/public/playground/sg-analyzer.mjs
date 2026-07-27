@@ -6,6 +6,14 @@
 // analysis happy path except `random_get` (HashMap seeding), so a tiny
 // self-contained shim is enough — no external WASI runtime, works in both the
 // browser and Node.
+//
+// Newer modules also export `sg_analyze2`, which returns
+// `{ diagnostics, statements }` — the same diagnostics plus the inferred
+// response kind of each top-level statement. It is detected, never assumed:
+// the `.wasm` and this `.mjs` are separate files on a CDN with separate cache
+// lifetimes, so a page can genuinely load a script newer than its module.
+// When the export is missing, `analyzeWithTypes` still answers with the
+// diagnostics and an empty `statements`, and the caller draws no chips.
 
 const WASI_ESUCCESS = 0;
 const WASI_EBADF = 8;
@@ -79,7 +87,11 @@ function wasiShim(getMemory) {
 /**
  * Instantiate the analyzer from raw wasm bytes.
  * @param {BufferSource} wasmBytes
- * @returns {Promise<{ analyze(schema: string, query: string): object[] }>}
+ * @returns {Promise<{
+ *   analyze(schema: string, query: string): object[],
+ *   analyzeWithTypes(schema: string, query: string): {diagnostics: object[], statements: object[]},
+ *   hasTypes: boolean,
+ * }>}
  */
 export async function createAnalyzer(wasmBytes) {
   let instance;
@@ -95,9 +107,10 @@ export async function createAnalyzer(wasmBytes) {
     instance.exports._initialize();
   }
 
-  const { sg_alloc, sg_dealloc, sg_analyze, memory } = instance.exports;
+  const { sg_alloc, sg_dealloc, sg_analyze, sg_analyze2, memory } = instance.exports;
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
+  const hasTypes = typeof sg_analyze2 === "function";
 
   function writeString(str) {
     const encoded = encoder.encode(str);
@@ -108,25 +121,41 @@ export async function createAnalyzer(wasmBytes) {
     return { ptr, len };
   }
 
-  return {
-    analyze(schema, query) {
-      const s = writeString(schema);
-      const q = writeString(query);
-      // u64 result: (ptr << 32) | len. `sg_analyze` may grow memory, so read
-      // views *after* the call.
-      const packed = BigInt.asUintN(64, sg_analyze(s.ptr, s.len, q.ptr, q.len));
-      const resPtr = Number(packed >> 32n);
-      const resLen = Number(packed & 0xffffffffn);
+  /** Calls one of the `(schema, query) -> packed u64` exports and parses its JSON. */
+  function call(fn, schema, query, empty) {
+    const s = writeString(schema);
+    const q = writeString(query);
+    // u64 result: (ptr << 32) | len. The call may grow memory, so read views
+    // *after* it returns.
+    const packed = BigInt.asUintN(64, fn(s.ptr, s.len, q.ptr, q.len));
+    const resPtr = Number(packed >> 32n);
+    const resLen = Number(packed & 0xffffffffn);
 
-      let json = "[]";
-      if (resLen > 0) {
-        const bytes = new Uint8Array(memory.buffer, resPtr, resLen).slice();
-        json = decoder.decode(bytes);
-        sg_dealloc(resPtr, resLen);
-      }
-      if (s.len) sg_dealloc(s.ptr, s.len);
-      if (q.len) sg_dealloc(q.ptr, q.len);
-      return JSON.parse(json);
+    let json = empty;
+    if (resLen > 0) {
+      const bytes = new Uint8Array(memory.buffer, resPtr, resLen).slice();
+      json = decoder.decode(bytes);
+      sg_dealloc(resPtr, resLen);
+    }
+    if (s.len) sg_dealloc(s.ptr, s.len);
+    if (q.len) sg_dealloc(q.ptr, q.len);
+    return JSON.parse(json);
+  }
+
+  return {
+    /** True when this module can report per-statement response kinds. */
+    hasTypes,
+    analyze(schema, query) {
+      return call(sg_analyze, schema, query, "[]");
+    },
+    /**
+     * Diagnostics plus one `{kind, start, end, response}` per top-level query
+     * statement. On a module without `sg_analyze2` the diagnostics are still
+     * real and `statements` is empty — degrade, never throw.
+     */
+    analyzeWithTypes(schema, query) {
+      if (!hasTypes) return { diagnostics: call(sg_analyze, schema, query, "[]"), statements: [] };
+      return call(sg_analyze2, schema, query, '{"diagnostics":[],"statements":[]}');
     },
   };
 }
