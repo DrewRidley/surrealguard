@@ -1,6 +1,6 @@
 {
   "name": "@surrealguard/svelte",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Svelte 5 / SvelteKit bindings for SurrealGuard: typed live queries as runes, SSR hydration.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
@@ -42,8 +42,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@surrealguard/client": "0.5.2",
-    "@surrealguard/query": "0.5.2"
+    "@surrealguard/client": "0.5.3",
+    "@surrealguard/query": "0.5.3"
   },
   "peerDependencies": {
     "svelte": "^5",

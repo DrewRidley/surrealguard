@@ -13,7 +13,7 @@ description = "TypeScript type generation from SurrealGuard analysis results"
 
 [dependencies]
 surrealdb-types.workspace = true
-surrealguard-workspace = { path = "../workspace", version = "0.5.2" }
+surrealguard-workspace = { path = "../workspace", version = "0.5.3" }
 
 [lints]
 workspace = true

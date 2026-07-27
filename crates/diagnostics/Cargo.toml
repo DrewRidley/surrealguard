@@ -13,7 +13,7 @@ description = "Structured findings, severities, lint policy, and suppressions fo
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-surrealguard-syntax = { path = "../syntax", version = "0.5.2" }
+surrealguard-syntax = { path = "../syntax", version = "0.5.3" }
 
 [lints]
 workspace = true

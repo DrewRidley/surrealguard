@@ -16,10 +16,10 @@ name = "surrealguard-lsp"
 path = "src/main.rs"
 
 [dependencies]
-surrealguard-diagnostics = { path = "../diagnostics", version = "0.5.2" }
-surrealguard-embed = { path = "../embed", version = "0.5.2" }
-surrealguard-syntax = { path = "../syntax", version = "0.5.2" }
-surrealguard-workspace = { path = "../workspace", version = "0.5.2" }
+surrealguard-diagnostics = { path = "../diagnostics", version = "0.5.3" }
+surrealguard-embed = { path = "../embed", version = "0.5.3" }
+surrealguard-syntax = { path = "../syntax", version = "0.5.3" }
+surrealguard-workspace = { path = "../workspace", version = "0.5.3" }
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync"] }
 walkdir = "2"

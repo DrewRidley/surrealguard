@@ -1,6 +1,6 @@
 {
   "name": "surrealguard",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Static analyzer and type-inference engine for SurrealQL \u2014 run the surrealguard CLI via npx.",
   "bin": {
     "surrealguard": "bin/surrealguard.cjs"
