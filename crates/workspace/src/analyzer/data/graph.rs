@@ -17,8 +17,20 @@
 //! that names no single table stops the traversal's type, and says which
 //! of those it was (6003) rather than leaving the site a silent `any`.
 //!
+//! A field read is not a wall either. The walk carries the segments it passes
+//! and resolves them the moment another `->` arrives, so a traversal that
+//! resumes after a tail (`->wrote->post.author->follows->user`) steps from what
+//! the field NAMES rather than from where the last hop landed. The match over
+//! parts is exhaustive on purpose: what each one does to the table the next
+//! step traverses from is a decision, and a wrong answer here is a false
+//! finding on a valid query.
+//!
 //! The kind of a traversal comes from [`super::select`]'s resolvers; this
-//! module is the checking-side twin, invoked from the same sites.
+//! module is the checking-side twin, invoked from the same sites. Everything
+//! BEHIND a step — the fields, indexes, splats and methods of its tail — is
+//! checked by the ordinary idiom walk
+//! ([`crate::analyzer::expression::check`]), not here; `FROM` is the one
+//! position that walk never sees, so this module checks that one's fields too.
 
 use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
