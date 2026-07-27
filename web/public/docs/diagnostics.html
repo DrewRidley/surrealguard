@@ -13,6 +13,13 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- The site is dark-only. This must be a meta in head, not only the
+     color-scheme declaration in /styles.css: the browser paints its default
+     canvas before any stylesheet loads, and that default follows the OS. On a
+     light-themed OS that meant a white page until the CSS arrived. The inline
+     background below covers the same window for the html box itself. -->
+<meta name="color-scheme" content="dark" />
+<style>html{background:#0a0b0e}</style>
 <title>Diagnostics &amp; lints — SurrealGuard Docs</title>
 <meta name="description" content="The complete SurrealGuard diagnostic catalog: every code across nine families, with its severity, default level (allow / warn / deny), and what trips it." />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
