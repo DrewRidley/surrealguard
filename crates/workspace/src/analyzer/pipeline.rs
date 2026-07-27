@@ -270,7 +270,7 @@ fn build_global_catalog_from_lowered(sources: &[LoweredSource<'_>]) -> GlobalCat
             if let Some(function) =
                 crate::schema::extract_function_def(stmt, parsed.source_id(), parsed.text())
             {
-                fn_guarded.insert(function.name.clone(), fn_body_branches(stmt, parsed.text()));
+                fn_guarded.insert(function.name.clone(), fn_body_branches(stmt));
             }
         }
     }
@@ -965,39 +965,85 @@ fn implicit_table_targets(
     out
 }
 
-/// Whether a `DEFINE FUNCTION` body contains any branching (an `IF` or `FOR`),
-/// i.e. a construct that can route around a self-call to a base case. Used to
-/// keep 5009 to provably-degenerate recursion: a guarded self-call may
-/// terminate and must not be flagged.
-fn fn_body_branches(stmt: &ast::Spanned<ast::Statement>, text: &str) -> bool {
+/// Whether a `DEFINE FUNCTION` body contains any branching — an `IF` or a
+/// `FOR`, i.e. a construct that can route around a self-call to a base case.
+///
+/// Used to keep 5009 to provably-degenerate recursion: a guarded self-call may
+/// terminate and must not be flagged. The carve-out is load-bearing (see
+/// `docs/plans/2026-07-25-analyzer-gap-backlog.md` DX-12), so this walks the
+/// lowered body rather than guessing at it.
+///
+/// It used to guess. The predicate was
+/// `has_keyword(body_text, "if") || has_keyword(body_text, "for")` over the raw
+/// lowercased source, with no string- or comment-awareness, so
+/// `DEFINE FUNCTION fn::x() { RETURN 'if you see this'; }` was classified as
+/// branching and `-- for now` in a comment was too. Both directions were wrong:
+/// a body that only *mentions* the word was spared 5009, and the span it
+/// scanned started at the end of the function *name*, so a parameter named
+/// `$if_true` counted as a branch.
+fn fn_body_branches(stmt: &ast::Spanned<ast::Statement>) -> bool {
     let ast::Statement::Define(ast::DefineStmt::Function(def)) = &stmt.node else {
         return false;
     };
-    let body_start = def.name.span.end() as usize;
-    let body_end = stmt.span.end() as usize;
-    let Some(body) = text.get(body_start..body_end) else {
-        return false;
-    };
-    let lower = body.to_ascii_lowercase();
-    has_keyword(&lower, "if") || has_keyword(&lower, "for")
+    def.body
+        .as_ref()
+        .is_some_and(|body| block_branches(body))
 }
 
-/// Whether `haystack` (already lowercased) contains `keyword` as a whole word.
-fn has_keyword(haystack: &str, keyword: &str) -> bool {
-    let bytes = haystack.as_bytes();
-    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-    let mut from = 0;
-    while let Some(pos) = haystack[from..].find(keyword) {
-        let start = from + pos;
-        let end = start + keyword.len();
-        let before_ok = start == 0 || !is_ident(bytes[start - 1]);
-        let after_ok = end >= bytes.len() || !is_ident(bytes[end]);
-        if before_ok && after_ok {
-            return true;
-        }
-        from = start + 1;
+/// Whether any statement in a block branches.
+fn block_branches(block: &ast::Block) -> bool {
+    block
+        .statements
+        .iter()
+        .any(|statement| statement_branches(&statement.node))
+}
+
+/// Whether a statement is, or contains, an `IF` or a `FOR`.
+///
+/// Recursive rather than a flat match: a branch nested inside another block, a
+/// `LET` whose value is an `IF`-expression, and a `RETURN IF … ELSE …` are all
+/// branches, and the text scan happened to catch every one of them for the
+/// wrong reason.
+fn statement_branches(stmt: &ast::Statement) -> bool {
+    match stmt {
+        ast::Statement::IfElse(_) | ast::Statement::For(_) => true,
+        ast::Statement::Block(block) => block_branches(block),
+        ast::Statement::Let(let_stmt) => expr_branches(&let_stmt.value.node),
+        ast::Statement::Return(ret) => ret
+            .value
+            .as_ref()
+            .is_some_and(|value| expr_branches(&value.node)),
+        ast::Statement::Throw(throw) => throw
+            .value
+            .as_ref()
+            .is_some_and(|value| expr_branches(&value.node)),
+        ast::Statement::Expr(expr) => expr_branches(&expr.node),
+        _ => false,
     }
-    false
+}
+
+/// Whether an expression carries a branch: the forms that hold statements, plus
+/// the operands of the forms that hold expressions.
+fn expr_branches(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Block(block) => block_branches(block),
+        ast::Expr::Subquery(inner) => statement_branches(&inner.node),
+        ast::Expr::Binary { lhs, rhs, .. } => {
+            expr_branches(&lhs.node) || expr_branches(&rhs.node)
+        }
+        ast::Expr::Prefix { expr, .. } | ast::Expr::Cast { expr, .. } => {
+            expr_branches(&expr.node)
+        }
+        ast::Expr::Call(call) => call.args.iter().any(|arg| expr_branches(&arg.node)),
+        ast::Expr::Array(items) => items.iter().any(|item| expr_branches(&item.node)),
+        ast::Expr::Object(entries) => {
+            entries.iter().any(|(_, value)| expr_branches(&value.node))
+        }
+        // A closure body is a branch the caller can route through, exactly as
+        // an inline `IF` is.
+        ast::Expr::Closure(closure) => expr_branches(&closure.body.node),
+        _ => false,
+    }
 }
 
 fn check_function_cycles(

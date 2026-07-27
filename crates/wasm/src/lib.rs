@@ -18,16 +18,32 @@
 //!   UTF-8 JSON buffer in the high 32 bits and its length in the low 32
 //!   bits. The host reads `memory[ptr..ptr+len]`, then frees it with
 //!   `sg_dealloc`.
+//! - `sg_analyze2(...) -> u64` — same call, richer payload: an object
+//!   `{ diagnostics, statements }` where `statements` carries the inferred
+//!   response kind of each top-level query statement.
 //!
-//! The JSON payload is an array of
+//! `sg_analyze`'s JSON payload is an array of
 //! `{ code, severity, message, start, end }` objects, one per diagnostic
 //! raised on the query source.
+//!
+//! ## Why `sg_analyze2` is a second export rather than a wider `sg_analyze`
+//!
+//! The `.wasm` is a plain file on a CDN and the `.mjs` that drives it is
+//! another; a browser can hold a fresh script against a cached module or the
+//! reverse. Changing `sg_analyze`'s payload shape would make those two
+//! combinations fail — silently, in the direction that matters (an old
+//! bundle, a new page). A second export is feature-detectable
+//! (`typeof exports.sg_analyze2 === "function"`), so a page that wants type
+//! chips asks for them and does without when the module predates them, while
+//! diagnostics — the thing the playground exists for — keep working either
+//! way.
 
 use std::alloc::{alloc as global_alloc, dealloc as global_dealloc, Layout};
 
 use serde::Serialize;
 use surrealguard_diagnostics::Severity;
 use surrealguard_workspace::analysis::{analyze_query, Workspace};
+use surrealguard_workspace::{render, KindContext};
 
 /// One diagnostic in the shape the playground consumes.
 #[derive(Serialize)]
@@ -42,6 +58,29 @@ struct Diagnostic {
     start: u32,
     /// Byte offset of the diagnostic span end, in the query source.
     end: u32,
+}
+
+/// One top-level query statement, with the type the engine says it
+/// responds with.
+#[derive(Serialize)]
+struct Statement {
+    /// Stable statement-kind name (`"select"`, `"relate"`, ...).
+    kind: String,
+    /// Byte offset of the statement start, in the query source.
+    start: u32,
+    /// Byte offset of the statement end, in the query source.
+    end: u32,
+    /// The rendered response kind, or `null` when the statement does not
+    /// respond with a value (a `DEFINE`, say) or the engine could not
+    /// determine one.
+    response: Option<String>,
+}
+
+/// Both halves of a run, in query-relative coordinates.
+#[derive(Serialize)]
+struct Analysis {
+    diagnostics: Vec<Diagnostic>,
+    statements: Vec<Statement>,
 }
 
 fn severity_label(severity: Severity) -> &'static str {

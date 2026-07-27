@@ -5822,6 +5822,62 @@ INSERT INTO person { name: 'Ada' };
         );
     }
 
+    /// 5009's guardedness carve-out reads the lowered body, not the text of it.
+    ///
+    /// The predicate used to be `has_keyword(body_text, "if")` over the raw
+    /// lowercased source, so a self-recursive function whose only `if` was
+    /// inside a string literal or a comment was classified as branching and
+    /// spared. Both bodies below recurse unconditionally and both must report.
+    #[test]
+    fn the_word_if_in_a_string_is_not_a_branch() {
+        for body in [
+            "RETURN 'if you see this' + fn::x();",
+            "-- for now\n\tRETURN fn::x();",
+        ] {
+            let mut workspace = Workspace::default();
+            workspace.add_virtual_source(
+                "query".into(),
+                format!("DEFINE FUNCTION fn::x() {{ {body} }};"),
+            );
+            let output = analyze_workspace(&workspace);
+            assert!(
+                output
+                    .diagnostics
+                    .iter()
+                    .any(|finding| finding.code().number() == 5009),
+                "expected 5009 for a body that only mentions the word: {body:?}\n{:?}",
+                output.diagnostics
+            );
+        }
+    }
+
+    /// …and a real branch still spares it, which is the load-bearing half
+    /// (`docs/plans/2026-07-25-analyzer-gap-backlog.md` DX-12).
+    #[test]
+    fn a_real_branch_still_spares_a_self_call() {
+        for body in [
+            "IF $n = 0 { RETURN 0; }; RETURN fn::x($n - 1);",
+            "FOR $i IN [1] { RETURN fn::x($n); }; RETURN 0;",
+            "RETURN IF $n = 0 { 0 } ELSE { fn::x($n - 1) };",
+            "LET $r = IF $n = 0 { 0 } ELSE { fn::x($n - 1) }; RETURN $r;",
+        ] {
+            let mut workspace = Workspace::default();
+            workspace.add_virtual_source(
+                "query".into(),
+                format!("DEFINE FUNCTION fn::x($n: int) {{ {body} }};"),
+            );
+            let output = analyze_workspace(&workspace);
+            assert!(
+                !output
+                    .diagnostics
+                    .iter()
+                    .any(|finding| finding.code().number() == 5009),
+                "a branch can route around the self-call: {body:?}\n{:?}",
+                output.diagnostics
+            );
+        }
+    }
+
     // ---- Incremental single-source analysis equivalence ----
     //
     // The whole risk of the incremental path is a stale/wrong result. These
