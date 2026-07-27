@@ -1084,6 +1084,97 @@ mod tests {
         }
     }
 
+    // ---- a check inside a guarded region reads the guarded kind ----
+
+    /// A function whose parameter is an object with one optional field. A
+    /// declared param is the shortest way to a narrowable field path whose
+    /// declared kind the checker can see.
+    fn guarded(params: &str, body: &str) -> String {
+        format!("DEFINE FUNCTION fn::f({params}) {{ {body} RETURN 0; }};")
+    }
+
+    #[test]
+    fn a_guarded_field_path_is_checked_at_the_kind_the_guard_proved() {
+        // Inference resolved `$r.nick` to `string` inside the guard for as long
+        // as narrowing has existed; *checking* read the declared kind, so the
+        // analyzer reported a method missing from a kind it had itself proven
+        // the value could not have — an error-severity false positive on code
+        // it proved safe (F31). An error aborts codegen for a whole workspace.
+        let query = guarded(
+            "$r: { nick: option<string> }",
+            "IF $r.nick != NONE { RETURN $r.nick.len(); };",
+        );
+        // The recognizer path still reports: it reads `narrowed_path` under the
+        // exact written key, and the *checking* walk never consults it at all.
+        crate::analyzer::flow::narrow::with_fact_layer(false, || {
+            assert!(fires(&query, "E5001"), "codes: {:?}", codes(&query));
+        });
+        crate::analyzer::flow::narrow::with_fact_layer(true, || {
+            assert!(
+                !fires(&query, "E5001"),
+                "the guard proved `$r.nick` is a `string`: {:?}",
+                codes(&query)
+            );
+        });
+    }
+
+    #[test]
+    fn a_guard_on_one_path_says_nothing_about_another() {
+        // The negative half, and the reason a whole `Place` is compared:
+        // suppressing a TRUE finding is the one way reading through narrowing
+        // can go wrong, and a prefix lookup that matched loosely would do it.
+        for (params, guard, read) in [
+            // a sibling binding
+            (
+                "$a: { nick: option<string> }, $b: { nick: option<string> }",
+                "$a.nick",
+                "$b.nick",
+            ),
+            // a sibling field of the same binding
+            (
+                "$a: { nick: option<string>, other: option<string> }",
+                "$a.nick",
+                "$a.other",
+            ),
+        ] {
+            let query = guarded(
+                params,
+                &format!("IF {guard} != NONE {{ RETURN {read}.len(); }};"),
+            );
+            crate::analyzer::flow::narrow::with_fact_layer(true, || {
+                assert!(
+                    fires(&query, "E5001"),
+                    "`{guard}` proves nothing about `{read}`: {:?}",
+                    codes(&query)
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn a_narrowed_prefix_carries_into_a_read_beneath_it() {
+        // Longest prefix, not exact key. The guard names `$r.inner`; the read
+        // names `$r.inner.nick`. Stepping an `option<{...}>` through a field
+        // access fails, so without the prefix the whole path was unresolvable —
+        // the narrowing sat in the environment, unreachable from the read.
+        let query = guarded(
+            "$r: { inner: option<{ nick: string }> }",
+            "IF $r.inner != NONE { RETURN $r.inner.nick.nomethod(); };",
+        );
+        // Unreachable on the recognizer path: nothing is known about the
+        // receiver, so nothing fires.
+        crate::analyzer::flow::narrow::with_fact_layer(false, || {
+            assert!(!fires(&query, "E5001"), "codes: {:?}", codes(&query));
+        });
+        crate::analyzer::flow::narrow::with_fact_layer(true, || {
+            assert!(
+                fires(&query, "E5001"),
+                "the guard makes `$r.inner.nick` a `string`: {:?}",
+                codes(&query)
+            );
+        });
+    }
+
     // ---- sentinel guards eliminate only their own sentinel ----
 
     #[test]
@@ -1418,3 +1509,4 @@ mod tests {
         assert!(!fires(query, "E1027"), "codes: {:?}", codes(query));
     }
 }
+

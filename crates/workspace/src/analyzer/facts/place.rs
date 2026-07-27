@@ -86,6 +86,22 @@ impl Place {
             .collect()
     }
 
+    /// This place extended by one naming step, or `None` when the part names
+    /// no location.
+    ///
+    /// What a *prefix* of an idiom denotes, one part at a time. A walk that
+    /// reaches a part which computes, filters or fails stops naming a place,
+    /// and everything past it reads its declared kind — which is the same
+    /// soundness rule [`place_of`] states, applied incrementally.
+    pub(crate) fn stepped(&self, part: &ast::IdiomPart) -> Option<Place> {
+        let mut path = self.path.clone();
+        path.push(step_of(part)?);
+        Some(Place {
+            root: self.root.clone(),
+            path,
+        })
+    }
+
     /// The `param.field.field` lookup key (just `param`, or the joined field
     /// path for a row field).
     ///
@@ -238,6 +254,22 @@ mod tests {
         ] {
             assert_eq!(place(source), None, "`{source}` must name no place");
         }
+    }
+
+    #[test]
+    fn a_place_steps_one_part_at_a_time() {
+        // What an idiom prefix denotes: the same answer `place_of` gives for
+        // the whole idiom, reached one part at a time — which is what lets a
+        // read of `$x.f.g` ask whether `$x.f` was narrowed.
+        let base = Place::param("x");
+        let field = ast::IdiomPart::Field("f".into());
+        assert_eq!(base.stepped(&field).and_then(|p| p.key()), Some("x.f".into()));
+        // A part that computes names nothing, so the prefix stops there.
+        assert_eq!(
+            base.stepped(&ast::IdiomPart::All),
+            None,
+            "a splat names no single location"
+        );
     }
 
     #[test]

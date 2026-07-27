@@ -341,6 +341,7 @@ pub fn idiom_prefix_kinds<'i>(
     let Some(first) = parts.next() else {
         return result;
     };
+    let mut place = start_place(&first.node);
     let mut current: Option<Kind> = match &first.node {
         ast::IdiomPart::Start(expr) => infer_expression_fact(expr, ctx).kind,
         ast::IdiomPart::Field(name) => ctx.row_table().and_then(|table| {
@@ -348,11 +349,60 @@ pub fn idiom_prefix_kinds<'i>(
         }),
         _ => None,
     };
+    if let Some(narrowed) = narrowed_kind(place.as_ref(), ctx.env()) {
+        current = Some(narrowed);
+    }
     for part in parts {
         result.push((part, current.clone()));
-        current = current.and_then(|kind| step_part_kind(&kind, &part.node, ctx));
+        let stepped = current.and_then(|kind| step_part_kind(&kind, &part.node, ctx));
+        place = place.and_then(|prefix| prefix.stepped(&part.node));
+        current = narrowed_kind(place.as_ref(), ctx.env()).or(stepped);
     }
     result
+}
+
+/// The place an idiom's **first** part names, when it names one.
+///
+/// Only a leading value can: a bare leading `Field` is rooted in the row, and
+/// the flow environment does not key row fields (a row field named `x` and a
+/// `$x` would share a key). The row side has its own oracle
+/// (`data::select::ProjectedRow`).
+fn start_place(part: &ast::IdiomPart) -> Option<crate::analyzer::facts::Place> {
+    match part {
+        ast::IdiomPart::Start(expr) => crate::analyzer::facts::place_of(&expr.node),
+        _ => None,
+    }
+}
+
+/// The kind a flow guard proved for the place an idiom prefix names, or `None`
+/// when no guard proved one.
+///
+/// **Longest prefix, not exact key.** A guard narrows a place; a read of a
+/// *sub*-path of that place must start from what the guard proved, or the
+/// narrowing is present in the environment and unreachable from the read.
+/// Walking the prefixes and taking the innermost recorded one does both halves:
+/// `IF $x.f != NONE` makes `$x.f.g` resolvable through the narrowed `$x.f`, and
+/// makes a contract check on `$x.f.len()` read `string` rather than the
+/// `option<string>` the guard ruled out (the F31 false positive).
+///
+/// Recognizer-path callers see nothing: that path reads `narrowed_path` under
+/// the exact written key only, and moving it is not this stage's business.
+fn narrowed_kind(
+    place: Option<&crate::analyzer::facts::Place>,
+    env: &StatementEnv,
+) -> Option<Kind> {
+    if !crate::analyzer::flow::narrow::use_fact_layer() {
+        return None;
+    }
+    let place = place?;
+    // A bare param carries its narrowing in its own binding, not here.
+    if place.path.is_empty() {
+        return None;
+    }
+    if !matches!(place.root, crate::analyzer::facts::PlaceRoot::Param(_)) {
+        return None;
+    }
+    env.narrowed_path(&place.key()?).cloned()
 }
 
 /// The element kind of a collection, distributed over a union.
@@ -484,60 +534,42 @@ pub(crate) fn step_field_path(
 }
 
 fn step_idiom_kind(idiom: &ast::Idiom, ctx: &mut AnalysisContext<'_>) -> Option<Kind> {
-    // A guard may have flow-narrowed this exact path (`$file.folder` proven
-    // non-none). The narrowed kind supersedes the declared one.
-    if let Some(key) = simple_idiom_path_key(idiom) {
-        if let Some(kind) = ctx.env().narrowed_path(&key) {
-            return Some(kind.clone());
+    // The recognizer path reads a flow narrowing under the *exact* written key
+    // and nothing else. Under the fact layer the same lookup happens inside the
+    // walk below, at every prefix.
+    if !crate::analyzer::flow::narrow::use_fact_layer() {
+        if let Some(key) = simple_idiom_path_key(idiom) {
+            if let Some(kind) = ctx.env().narrowed_path(&key) {
+                return Some(kind.clone());
+            }
         }
     }
     let mut parts = idiom.parts.iter();
-    let mut current: Kind = match &parts.next()?.node {
-        ast::IdiomPart::Start(expr) => infer_expression_fact(expr, ctx).kind?,
-        ast::IdiomPart::Field(name) => {
-            let table = ctx.row_table()?;
-            crate::analyzer::data::select::kind_for_path(table, std::slice::from_ref(name))?
-        }
+    let first = parts.next()?;
+    let mut place = start_place(&first.node);
+    let mut current: Option<Kind> = match &first.node {
+        ast::IdiomPart::Start(expr) => infer_expression_fact(expr, ctx).kind,
+        ast::IdiomPart::Field(name) => ctx.row_table().and_then(|table| {
+            crate::analyzer::data::select::kind_for_path(table, std::slice::from_ref(name))
+        }),
         _ => return None,
     };
+    if let Some(narrowed) = narrowed_kind(place.as_ref(), ctx.env()) {
+        current = Some(narrowed);
+    }
 
     for part in parts {
-        current = match &part.node {
-            ast::IdiomPart::Field(name) => field_of_kind(&current, name, ctx.schema())?,
-            ast::IdiomPart::Index(_) => collection_element_kind(&current)?,
-            // `.*`, `[WHERE ...]`, and `?.` preserve the value's kind.
-            ast::IdiomPart::All | ast::IdiomPart::Where(_) | ast::IdiomPart::Optional => current,
-            ast::IdiomPart::Last => collection_element_kind(&current)?,
-            ast::IdiomPart::Method { name, args } => {
-                let arg_kinds: Vec<Kind> = std::iter::once(current.clone())
-                    .chain(
-                        args.iter()
-                            .map(|arg| infer_expression_fact(arg, ctx).kind.unwrap_or(Kind::Any)),
-                    )
-                    .collect();
-                method_return_kind(&current, &name.node, &arg_kinds, args, ctx)?
-            }
-            ast::IdiomPart::Destructure(selected) => {
-                let mut fields = std::collections::BTreeMap::new();
-                for sub in selected {
-                    let segments = plain_field_segments(&sub.node)?;
-                    let mut kind = current.clone();
-                    for segment in &segments {
-                        kind = field_of_kind(&kind, segment, ctx.schema())?;
-                    }
-                    fields.insert(segments.join("."), kind);
-                }
-                Kind::Literal(KindLiteral::Object(fields))
-            }
-            ast::IdiomPart::Start(_)
-            | ast::IdiomPart::Graph { .. }
-            | ast::IdiomPart::Recurse { .. }
-            | ast::IdiomPart::Partial(_) => {
-                return None;
-            }
-        };
+        let stepped = current.and_then(|kind| step_part_kind(&kind, &part.node, ctx));
+        place = place.and_then(|prefix| prefix.stepped(&part.node));
+        // A narrowing at this prefix supersedes the stepped kind — and stands
+        // in for it when stepping failed, which is how an optional
+        // intermediate segment stops killing the whole path.
+        current = narrowed_kind(place.as_ref(), ctx.env()).or(stepped);
+        if current.is_none() {
+            return None;
+        }
     }
-    Some(current)
+    current
 }
 
 /// The kind of `value.field`, stepping through closed objects and record
