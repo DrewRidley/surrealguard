@@ -15,6 +15,11 @@
 <meta property="og:description" content="The SurrealQL analyzer compiled to WebAssembly. Live diagnostics and inferred response types, entirely in your browser." />
 <meta property="og:type" content="website" />
 <meta name="theme-color" content="#0a0b0e" />
+<!-- The canonical home of the playground. Static Assets serves this directory
+     at /playground/ (a request for /playground gets a 307 to it), and anything
+     that ever fronts it — a playground.surrealguard.dev subdomain, say —
+     points back here rather than becoming a second copy of the page. -->
+<link rel="canonical" href="https://surrealguard.dev/playground/" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
 <link rel="stylesheet" href="/styles.css" />
 <link rel="stylesheet" href="/playground/types-panel.css" />
