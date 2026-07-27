@@ -552,6 +552,8 @@ impl Lowerer<'_> {
             targets: Vec::new(),
             where_clause: None,
             reference: false,
+            wildcard: false,
+            unmodeled: Vec::new(),
         };
 
         for child in named_children(node) {
@@ -568,6 +570,9 @@ impl Lowerer<'_> {
                 "Ident" => step
                     .targets
                     .push(self.spanned(child, self.node_text(child).to_string())),
+                // Unparenthesized `->?` — the same wildcard the parenthesized
+                // `->(?)` spells.
+                "Any" => step.wildcard = true,
                 "LookupSelection" => self.lookup_selection(child, &mut step),
                 _ => {}
             }
@@ -583,12 +588,27 @@ impl Lowerer<'_> {
         for child in named_children(node) {
             match child.kind() {
                 "GraphPredicate" => {
-                    // The predicate wraps the edge-table identifier.
+                    // The grammar admits any value in target position; what
+                    // SurrealDB accepts is a table name, `?`, or a record
+                    // range. Keeping only the first of those left everything
+                    // else looking like a step that named nothing.
                     match single_named_child(child) {
-                        Some(ident) if ident.kind() == "Ident" => step
+                        Some(inner) if inner.kind() == "Ident" => step
                             .targets
-                            .push(self.spanned(ident, self.node_text(ident).to_string())),
-                        _ => {}
+                            .push(self.spanned(inner, self.node_text(inner).to_string())),
+                        Some(inner) if inner.kind() == "Any" => step.wildcard = true,
+                        // `->(post:1..9)` walks to `post` records, exactly as
+                        // `->post` does — only the ids are narrowed.
+                        Some(inner) if inner.kind() == "RecordId" => {
+                            match record_range_table(inner) {
+                                Some(table) => step
+                                    .targets
+                                    .push(self.spanned(table, self.node_text(table).to_string())),
+                                None => step.unmodeled.push(partial(inner)),
+                            }
+                        }
+                        Some(inner) => step.unmodeled.push(partial(inner)),
+                        None => step.unmodeled.push(partial(child)),
                     }
                 }
                 "WhereClause" => {
@@ -614,6 +634,19 @@ impl Lowerer<'_> {
             _ => IdiomPart::Partial(partial(node)),
         }
     }
+}
+
+/// The table half of a record *range* id (`post:1..9` → `post`). `None` for a
+/// single record id (`post:one`), which SurrealDB rejects in graph-target
+/// position and which therefore names no traversal target.
+fn record_range_table<'tree>(record_id: Node<'tree>) -> Option<Node<'tree>> {
+    let children = named_children(record_id);
+    let is_range = children
+        .iter()
+        .any(|child| child.kind() == "RecordIdRange");
+    is_range
+        .then(|| children.into_iter().find(|c| c.kind() == "RecordTbIdent"))
+        .flatten()
 }
 
 /// The expression of a `WHERE <expr>` clause (the last named non-keyword child).
@@ -913,6 +946,62 @@ mod tests {
         assert_eq!(step.targets[0].node, "likes");
         let where_clause = step.where_clause.as_ref().expect("has inline WHERE");
         assert!(matches!(where_clause.node, Expr::Binary { .. }));
+    }
+
+    /// Everything a `LookupSelection`'s target position can hold, and what
+    /// each of them names. Only an identifier, `?`, and a record range are
+    /// legal SurrealQL (3.2.3 rejects the rest with a parse error), but the
+    /// vendored grammar admits any value here — so lowering has to say which
+    /// it saw. Dropping the ones it did not model left the step looking like
+    /// it named nothing, which is indistinguishable from `->()`.
+    #[test]
+    fn lowers_every_parenthesized_graph_target_the_grammar_admits() {
+        fn step_of(query: &str, index: usize) -> GraphStep {
+            let parsed = parse(query);
+            let path = lower_first(&parsed, "Path");
+            let parts = idiom_parts(&path);
+            let IdiomPart::Graph { step, .. } = &parts[index].node else {
+                panic!("expected graph part, got {:?}", parts[index].node);
+            };
+            step.clone()
+        }
+
+        // A bare name in parentheses is the bare name.
+        let step = step_of("SELECT ->(likes) FROM person;", 0);
+        assert_eq!(step.targets[0].node, "likes");
+        assert!(!step.wildcard && step.unmodeled.is_empty());
+
+        // Several names stay several names.
+        let step = step_of("SELECT ->(likes, follows) FROM person;", 0);
+        let names: Vec<_> = step.targets.iter().map(|t| t.node.clone()).collect();
+        assert_eq!(names, vec!["likes", "follows"]);
+
+        // `?` is a wildcard, parenthesized or not — not a missing target.
+        assert!(step_of("SELECT ->(?) FROM person;", 0).wildcard);
+        assert!(step_of("SELECT ->? FROM person;", 0).wildcard);
+
+        // A record *range* walks one table's records, so it names that table.
+        let step = step_of("SELECT ->likes->(post:1..9) FROM person;", 1);
+        assert_eq!(step.targets[0].node, "post");
+        assert!(step.unmodeled.is_empty());
+
+        // A single record id is not a range and names no table.
+        let step = step_of("SELECT ->likes->(post:one) FROM person;", 1);
+        assert!(step.targets.is_empty());
+        assert_eq!(step.unmodeled[0].cst_kind, "RecordId");
+
+        // A path in target position: the destructure and the splat belong
+        // after the closing paren, and a nested traversal is not a target.
+        for (query, cst) in [
+            ("SELECT ->likes->(post.{title}) FROM person;", "Path"),
+            ("SELECT ->likes->(post.*) FROM person;", "Path"),
+            ("SELECT ->likes->(post->likes) FROM person;", "Path"),
+        ] {
+            let step = step_of(query, 1);
+            assert!(step.targets.is_empty(), "for {query}");
+            assert_eq!(step.unmodeled.len(), 1, "for {query}");
+            assert_eq!(step.unmodeled[0].cst_kind, cst, "for {query}");
+        }
     }
 
     #[test]

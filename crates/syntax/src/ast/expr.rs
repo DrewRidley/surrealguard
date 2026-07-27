@@ -181,12 +181,13 @@ pub enum GraphDir {
     Both,
 }
 
-/// The selection inside one graph step. SurrealDB allows a full mini-select
-/// here (multiple edge tables, WHERE, ORDER, LIMIT, alias, ...) — we model
-/// what analysis consumes (targets + filter) and bucket the rest.
+/// The selection inside one graph step. SurrealDB allows a mini-select here
+/// (several tables, WHERE, LIMIT/START, alias) — we model what analysis
+/// consumes (targets + filter) and bucket the rest.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GraphStep {
-    /// One or more edge tables: `->likes` or `->(likes, follows)`.
+    /// One or more tables the step names: `->likes`, `->(likes, follows)`,
+    /// or the table a record range covers (`->(post:1..9)` → `post`).
     pub targets: Vec<Spanned<String>>,
     /// `->(likes WHERE since > $x)` / `->likes[WHERE ...]`.
     pub where_clause: Option<Box<Spanned<Expr>>>,
@@ -194,6 +195,15 @@ pub struct GraphStep {
     /// traversal (`<-`/`->`/`<->`). Reference steps follow `REFERENCE` fields
     /// rather than relation tables, so typing resolves them differently.
     pub reference: bool,
+    /// The step names `?` — every edge, whatever it is (`->?`, `->(?)`).
+    /// Legal SurrealQL with no single table behind it.
+    pub wildcard: bool,
+    /// Target-position syntax the grammar admits and this AST does not model:
+    /// `->(post.{title})`, `->(post:one)`, `->(post->wrote)`. SurrealDB
+    /// rejects all of these outright, so nothing here names a table — but
+    /// dropping them left the step looking like it named nothing at all,
+    /// which reads as "resolved to nothing" instead of "not understood".
+    pub unmodeled: Vec<PartialNode>,
 }
 
 /// A function call. `path` is pre-normalized during lowering

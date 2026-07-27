@@ -90,6 +90,7 @@ pub(crate) fn check_graph_idiom_at(
                 let Some(source) = current.clone() else {
                     return;
                 };
+                report_unresolved_step(ctx, part.span, step);
                 let step_result = check_step(ctx, &source, dir.node, step, pending_edge.is_some());
 
                 // A plain-table landing completes a hop: verify every name
@@ -166,6 +167,56 @@ pub(crate) fn check_graph_idiom_at(
                 );
             }
         }
+    }
+}
+
+/// A step that names no single table ends the traversal's type — `any` from
+/// here on. Say which of the three reasons it was, at the step, rather than
+/// leaving the projection a silent `any`: `?` names every edge, `->(a, b)`
+/// names several, and a target the grammar admits but SurrealDB does not
+/// (`->(post.{title})`) names none.
+///
+/// 6003 is the "analyzer could not resolve this" code, hint-severity and
+/// allow-by-default: the query may well be right, we just cannot type it.
+fn report_unresolved_step(ctx: &mut AnalysisContext<'_>, span: ByteRange, step: &ast::GraphStep) {
+    for unmodeled in &step.unmodeled {
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                SourceSpan::new(ctx.source().clone(), unmodeled.span),
+                6003,
+                "surrealguard can't resolve this graph target".to_string(),
+            )
+            .with_help(format!(
+                "SurrealDB accepts a table name, `?`, or a record range after `->`/`<-`, \
+                 not a `{}`",
+                unmodeled.cst_kind
+            )),
+        );
+    }
+    if step.wildcard {
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                SourceSpan::new(ctx.source().clone(), span),
+                6003,
+                "`?` traverses every edge, so surrealguard can't name what this step reaches"
+                    .to_string(),
+            )
+            .with_help("name the edge or table to have the traversal typed"),
+        );
+        return;
+    }
+    if step.targets.len() > 1 {
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                SourceSpan::new(ctx.source().clone(), span),
+                6003,
+                format!(
+                    "this step names {} tables, so surrealguard can't resolve the traversal to one",
+                    step.targets.len()
+                ),
+            )
+            .with_help("each name is still checked; only the resulting type is left open"),
+        );
     }
 }
 
@@ -541,11 +592,15 @@ DEFINE FIELD since ON wrote TYPE datetime;
         // both as edges reported two 3001s on a query the engine runs fine.
         assert_eq!(
             findings("SELECT ->wrote->(post, comment) FROM user;"),
-            vec!["E3002 relation `wrote` connects `user`->`wrote`->`post`, so this hop cannot land on `comment`"]
+            vec![
+                "E6003 this step names 2 tables, so surrealguard can't resolve the traversal to one",
+                "E3002 relation `wrote` connects `user`->`wrote`->`post`, so this hop cannot land on `comment`",
+            ]
         );
         assert_eq!(
             findings("SELECT ->wrote->(post, ghost) FROM user;"),
             vec![
+                "E6003 this step names 2 tables, so surrealguard can't resolve the traversal to one",
                 "E1001 `ghost` is not a defined table",
                 "E3002 relation `wrote` connects `user`->`wrote`->`post`, so this hop cannot land on `ghost`",
             ]
@@ -553,7 +608,83 @@ DEFINE FIELD since ON wrote TYPE datetime;
         // In traversal position they are still edges, and must be relations.
         assert_eq!(
             findings("SELECT ->(wrote, post) FROM user;"),
-            vec!["E3001 `post` can't be traversed — it is not a relation table"]
+            vec![
+                "E6003 this step names 2 tables, so surrealguard can't resolve the traversal to one",
+                "E3001 `post` can't be traversed — it is not a relation table",
+            ]
+        );
+    }
+
+    /// The kind a one-projection SELECT gives its single column.
+    fn projected(query: &str) -> String {
+        let mut workspace = crate::Workspace::default();
+        workspace.add_virtual_source("schema".into(), SCHEMA.into());
+        let source = workspace.add_virtual_source("query".into(), query.into());
+        let output = crate::analyze_workspace(&workspace);
+        let kind = output.sources[&source].statements[0]
+            .response_kind
+            .clone()
+            .expect("a SELECT responds");
+        crate::render_kind(&kind)
+    }
+
+    #[test]
+    fn a_parenthesized_target_resolves_exactly_as_the_bare_one_does() {
+        // Parentheses around a target are not a wall analysis stops at: the
+        // step means the same thing with or without them, and a record range
+        // over a table walks to that table's records.
+        assert_eq!(
+            projected("SELECT ->wrote->post AS p FROM user;"),
+            "array<{ p: array<record<post>> }>"
+        );
+        assert_eq!(
+            projected("SELECT ->wrote->(post) AS p FROM user;"),
+            "array<{ p: array<record<post>> }>"
+        );
+        assert_eq!(
+            projected("SELECT ->wrote->(post WHERE title = 'x') AS p FROM user;"),
+            "array<{ p: array<record<post>> }>"
+        );
+        assert_eq!(
+            projected("SELECT ->wrote->(post:1..9) AS p FROM user;"),
+            "array<{ p: array<record<post>> }>"
+        );
+    }
+
+    #[test]
+    fn a_target_that_names_no_one_table_says_so_instead_of_going_quiet() {
+        // Every one of these was `any` with nothing said about it. They stay
+        // `any` — none of them names a table we could resolve — but each now
+        // carries the reason.
+        assert_eq!(
+            findings("SELECT ->? AS p FROM user;"),
+            vec!["E6003 `?` traverses every edge, so surrealguard can't name what this step reaches"]
+        );
+        assert_eq!(
+            findings("SELECT ->wrote->(?) AS p FROM user;"),
+            vec!["E6003 `?` traverses every edge, so surrealguard can't name what this step reaches"]
+        );
+        // Targets the vendored grammar admits and SurrealDB's parser rejects
+        // (verified against 3.2.3): the destructure and splat belong *after*
+        // the closing paren, and a single record id is not a target at all.
+        for query in [
+            "SELECT ->wrote->(post.{title}) AS p FROM user;",
+            "SELECT ->wrote->(post.*) AS p FROM user;",
+            "SELECT ->wrote->(post->wrote) AS p FROM user;",
+            "SELECT ->wrote->(post:one) AS p FROM user;",
+        ] {
+            assert_eq!(
+                findings(query),
+                vec!["E6003 surrealguard can't resolve this graph target"],
+                "for {query}"
+            );
+            assert_eq!(projected(query), "array<{ p: any }>", "for {query}");
+        }
+        // And the spelling SurrealDB *does* accept for the same intent is
+        // resolved and checked, parentheses or not.
+        assert_eq!(
+            findings("SELECT ->wrote->(post).{nope} AS p FROM user;"),
+            vec!["E1002 `post` has no field `nope`"]
         );
     }
 }
