@@ -1,0 +1,19 @@
+# SurrealGuard negative corpus — every finding the INVALID corpus produces.
+#
+# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test negative_corpus
+#
+# Every file under tests/corpus/invalid/ is wrong on purpose. This file records
+# `file:line  CODE` for each finding — never the message, which is rendering's
+# business and will move.
+#
+# Its ratchet runs opposite to the oracle's: a finding that DISAPPEARS is a
+# check that stopped firing, and that is a regression until someone argues
+# otherwise.
+
+== invalid/10_field_clauses.surql ==
+     8  E2001
+    10  E2001
+    12  E2001
+    15  E2001
+    17  E2001
+    19  E2001
