@@ -23,6 +23,7 @@ looks identical to no change).
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -31,7 +32,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 BASELINE = REPO / "tests" / "oracle_baseline.txt"
 CORPUS = Path("/Users/drewridley/Documents/Projects/workshop/database")
-BIN = REPO / "target" / "release" / "surrealguard"
+# The release build, unless a caller points elsewhere: an agent or a bisect run
+# builds into its own CARGO_TARGET_DIR precisely so it does not disturb the
+# binary the editor is using.
+BIN = Path(os.environ.get("SG_ORACLE_BIN") or REPO / "target" / "release" / "surrealguard")
 
 HEADER = """\
 # Oracle baseline — every finding the real-world corpus produces, with a verdict.
