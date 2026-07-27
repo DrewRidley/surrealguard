@@ -49,27 +49,49 @@
   <main class="docs-main">
     <span class="eyebrow-doc">// reference</span>
     <h1>CLI</h1>
-    <p class="lead-p">The <code>surrealguard</code> binary analyzes a workspace of <code>.surql</code> sources and reports findings as text or JSON. It has three subcommands: <code>init</code>, <code>check</code>, and <code>generate</code>.</p>
+    <p class="lead-p">The <code>surrealguard</code> binary analyzes a workspace of <code>.surql</code> sources and reports findings as text or JSON. It has four subcommands: <code>init</code>, <code>check</code>, <code>generate</code>, and <code>watch</code>.</p>
 
     <div class="pill-row">
       <span class="p">surrealguard init</span>
       <span class="p">surrealguard check [--json]</span>
       <span class="p">surrealguard generate [--out &lt;path&gt;]</span>
+      <span class="p">surrealguard watch [--out &lt;path&gt;]</span>
     </div>
 
     <h2>init</h2>
     <p>Writes a starter <code>surrealguard.toml</code> in the current directory. If one already exists, it is left untouched.</p>
     <pre class="code"><span class="dollar">$</span> surrealguard init
-Created surrealguard.toml</pre>
+created surrealguard.toml
+next: point [sources] at your .surql files, then run `surrealguard check`</pre>
 
     <h2>check</h2>
     <p>Discovers every <code>.surql</code>/<code>.surrealql</code> file under the workspace root (the nearest ancestor directory containing <code>surrealguard.toml</code>), analyzes them in sorted path order against the schema they define, and reports findings. Severity is resolved through the workspace policy — <code>warnings_as_errors</code> promotion and <code>[lints]</code> levels (named lints, specific codes like <code>E1002</code>, and family wildcards like <code>"7xxx"</code>) apply here, at the consumption edge.</p>
     <pre class="code"><span class="dollar">$</span> surrealguard check
-Checking SurrealQL sources...
 <span class="err">error[E1002]: unknown field `team` on table `user`</span>
- --&gt; queries/users.surql
-  ...
-check failed: 1 error(s), 1 diagnostic(s)</pre>
+  --&gt; queries/users.surql:1:37
+  |
+1 | SELECT name, age FROM user WHERE team = $team;
+  |                                  ^^^^
+  |
+  = help: did you mean `age`?
+
+checked 2 sources in 6ms
+found 1 error</pre>
+
+    <h3 id="color">Colour</h3>
+    <p>On a terminal the severity word, the diagnostic code, file paths, the scaffold and the caret underline are coloured — a related <code>note:</code> is underlined in the scaffold's colour rather than the severity's, so it can never be mistaken for the finding itself. Everywhere else the output is the same text with no escape sequences, which is what makes <code>surrealguard check &gt; report.txt</code> and a CI log readable. Colour is off whenever any of these hold:</p>
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Condition</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td><code>--no-color</code></td><td>Explicit opt-out; accepted on every subcommand.</td></tr>
+        <tr><td><code>NO_COLOR</code> set to anything non-empty</td><td>The <a class="link" href="https://no-color.org">no-color.org</a> convention.</td></tr>
+        <tr><td><code>TERM=dumb</code></td><td>The terminal cannot render escapes.</td></tr>
+        <tr><td>The destination is not a TTY</td><td>A pipe, a file, a CI log. Decided per stream, so <code>check &gt; out.txt</code> writes plain text to the file while errors on the terminal keep their colour.</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p><code>--json</code> never gets colour or a progress spinner under any condition: it is a machine contract, and one document with one exit code is all it emits.</p>
 
     <h3 id="--json">--json</h3>
     <p>Emits machine-readable diagnostics instead of the text renderer. The document has two top-level keys, <code>summary</code> and <code>diagnostics</code>:</p>
@@ -123,8 +145,33 @@ check failed: 1 error(s), 1 diagnostic(s)</pre>
     <p>Scans host-language files for embedded SurrealQL, analyzes each query against the workspace schema, and writes a TypeScript module that re-exports a ready <code>SurrealGuardClient</code> and augments its query registry. Host files are discovered by extension — <code>.ts</code>, <code>.tsx</code>, <code>.js</code>, <code>.jsx</code>, <code>.svelte</code>, <code>.vue</code>, <code>.astro</code> — honoring the same ignore patterns as <code>.surql</code> discovery.</p>
     <pre class="code"><span class="cmt"># the file re-exports a runtime value, so write it to a .ts</span>
 <span class="dollar">$</span> surrealguard generate --out src/surrealguard.generated.ts
-Generated src/surrealguard.generated.ts</pre>
+generated src/surrealguard.generated.ts (4 queries, 11ms)</pre>
     <p>The emitted file both <strong>re-exports <code>SurrealGuardClient</code></strong> and <strong>augments <code>@surrealguard/client</code></strong>. Import the client from that one file — that also loads the augmentation, so every <code>db.query("…")</code> resolves the result and params of each analyzed query from its exact text, with no separate side-import. See the <a class="link" href="/docs/typescript.html">TypeScript</a> page.</p>
+
+    <div class="callout">
+      <strong><code>@surrealguard/client</code> must be installed</strong> for that augmentation to mean anything. A <code>declare module</code> whose target does not resolve is not an augmentation — TypeScript reports <code>TS2664</code> <em>inside the generated file</em>, drops the whole registry, and every query in your own code silently becomes <code>any</code> with no error on it. <code>generate</code> checks the package resolves from the output's own directory and warns by name when it does not:
+      <pre class="code"><span class="err">warning: `@surrealguard/client` is not installed</span>
+  --&gt; src/surrealguard.generated.ts
+  |
+  | this file augments `declare module "@surrealguard/client"`, and an
+  | augmentation whose target does not resolve is silently dropped —
+  | TypeScript reports TS2664 here, and every query typed through it
+  | degrades to `any` with no error on it.
+  |
+  = help: npm install @surrealguard/client surrealdb</pre>
+    </div>
+
+    <h2 id="watch">watch</h2>
+    <p>The development loop, to run beside your dev server. On every change to a <code>.surql</code> source, a host file, or <code>surrealguard.toml</code> it runs the full <code>check</code>, and regenerates the registry when — and only when — that check passes.</p>
+    <pre class="code"><span class="dollar">$</span> surrealguard watch --out src/surrealguard.generated.ts
+surrealguard watch /home/you/app
+run 2 · schema/person.surql changed · 6ms
+
+<span class="ok">PASS</span> 4 sources · no diagnostics · wrote src/surrealguard.generated.ts (3 queries)
+
+watching .surql, host files and surrealguard.toml — Ctrl-C to stop</pre>
+    <p>Pairing the two verbs is the point: <code>check</code> alone leaves the generated types stale, and <code>generate</code> alone reports only the queries it embeds, so a broken <code>.surql</code> file passes unmentioned. Generating second, and only on a clean check, means a half-typed save never overwrites a registry that worked.</p>
+    <p>Each run repaints the screen rather than scrolling the last one away — a watch is a display of the workspace's current state, not a log of its history — and ends in a <code>PASS</code> / <code>WARN</code> / <code>FAIL</code> band. Piped output cannot be cleared, so runs are separated by a rule instead. <code>--check-only</code> writes nothing, which is the mode for a workspace whose registry is committed and reviewed. <code>check --watch</code> and <code>generate --watch</code> still watch a single verb each.</p>
 
     <h2>Exit codes</h2>
     <div class="tbl-wrap">

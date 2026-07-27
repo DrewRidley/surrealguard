@@ -122,7 +122,8 @@ exists it is left untouched.
 
 ```
 $ surrealguard init
-Created surrealguard.toml
+created surrealguard.toml
+next: point [sources] at your .surql files, then run `surrealguard check`
 ```
 
 ### `surrealguard check [--json]`
@@ -133,9 +134,8 @@ Without `--json` it prints rustc-style diagnostic blocks and a summary line.
 
 ```
 $ surrealguard check
-Checking SurrealQL sources...
-Checked 2 source(s), found 0 diagnostic(s)
-All checks passed!
+checked 2 sources in 5ms
+no issues found
 ```
 
 ### `surrealguard check --json`
@@ -198,8 +198,35 @@ re-exports a runtime value (the client), write it to a `.ts` file via `--out`
 
 ```
 $ surrealguard generate --out src/surrealguard.generated.ts
-Generated src/surrealguard.generated.ts
+generated src/surrealguard.generated.ts (3 queries, 11ms)
 ```
+
+`@surrealguard/client` must be installed for the emitted `declare module` to be
+an augmentation at all. When it does not resolve, TypeScript reports `TS2664`
+inside the generated file, drops the whole registry, and every query in the
+user's own code silently becomes `any` with no error on it. `generate` resolves
+the package from the output file's own directory and warns by name when it is
+missing, naming the install command.
+
+### `surrealguard watch [--out <path>] [--check-only]`
+
+The development loop. On every change to a `.surql` source, a host file, or
+`surrealguard.toml` it runs the full `check`, then regenerates the registry if
+and only if that check passed - so a half-typed save never overwrites types that
+worked. `check` alone leaves the generated types stale; `generate` alone reports
+only the queries it embeds, so a broken `.surql` file goes unmentioned. Each run
+repaints the terminal, names what changed and how long it took, and ends in a
+`PASS`/`WARN`/`FAIL` band; piped output is separated by a rule instead.
+`--check-only` writes nothing. `check --watch` and `generate --watch` watch a
+single verb each and still work.
+
+### Colour
+
+Human output is coloured on a terminal and plain everywhere else, so
+`surrealguard check > report.txt` is clean text. `--no-color` (accepted on every
+subcommand), `NO_COLOR`, `TERM=dumb`, and a non-TTY destination each turn it
+off; the decision is made per stream. `--json` is never coloured and never shows
+a progress spinner - it is one document with one exit code.
 
 ### Exit codes
 

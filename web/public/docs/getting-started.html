@@ -65,7 +65,8 @@ cargo install --git https://github.com/DrewRidley/surrealguard surrealguard</pre
     <h2>Scaffold a config</h2>
     <p><code>surrealguard init</code> writes a starter <code>surrealguard.toml</code> in the current directory (it won't overwrite an existing one).</p>
     <pre class="code"><span class="dollar">$</span> surrealguard init
-Created surrealguard.toml</pre>
+<span class="ok">created</span> surrealguard.toml
+next: point [sources] at your .surql files, then run `surrealguard check`</pre>
 
     <h2>Configure your sources</h2>
     <p>The config classifies which <code>.surql</code> files are schema, which are queries, and which directories to skip. Point <code>[sources]</code> at your schema and query directories with glob patterns:</p>
@@ -121,9 +122,19 @@ E1002 = <span class="s">"allow"</span>          <span class="c"># specific code 
     <h2>Check</h2>
     <p>Run <code>surrealguard check</code> from anywhere inside the project. It prints rustc-style diagnostic blocks and a summary; the exit code is non-zero when any error-severity finding survives policy.</p>
     <pre class="code"><span class="dollar">$</span> surrealguard check
-Checking SurrealQL sources...
-Checked 2 source(s), found 0 diagnostic(s)
-<span class="ok">All checks passed!</span></pre>
+checked 2 sources in 5ms
+<span class="ok">no issues found</span></pre>
+    <p>On a terminal the severity, code, paths and carets are coloured; piped to a file or a CI log it is the same text with no escape sequences. <code>--no-color</code> and <code>NO_COLOR</code> turn colour off explicitly, and <code>--json</code> is never decorated. See the <a class="link" href="/docs/cli.html#color">CLI reference</a>.</p>
+
+    <h3>Keep it running</h3>
+    <p><code>surrealguard watch</code> re-runs the check on every save and regenerates the TypeScript registry when the check passes — run it beside your dev server so the types cannot go stale behind you.</p>
+    <pre class="code"><span class="dollar">$</span> surrealguard watch --out src/surrealguard.generated.ts
+surrealguard watch /home/you/app
+run 2 · schema/user.surql changed · 6ms
+
+<span class="ok">PASS</span> 2 sources · no diagnostics · wrote src/surrealguard.generated.ts (3 queries)
+
+watching .surql, host files and surrealguard.toml — Ctrl-C to stop</pre>
 
     <h3>Machine-readable output</h3>
     <p>Add <code>--json</code> for structured findings — code, severity, source, byte range, message, help, and related spans. This is the shape agents and CI consume.</p>

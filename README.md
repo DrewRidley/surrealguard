@@ -26,7 +26,7 @@ construct's contract. One engine, four front ends:
 
 | | |
 | --- | --- |
-| **CLI** — `surrealguard` | `check` your workspace in CI, `generate` TypeScript types |
+| **CLI** — `surrealguard` | `check` your workspace in CI, `generate` TypeScript types, `watch` both while you develop |
 | **Language server** — `surrealguard-lsp` | Diagnostics, hover, inlay hints, go-to-definition, and type-aware completion, in `.surql` files *and* in SurrealQL embedded in TypeScript / Svelte / Vue / Astro |
 | **TypeScript** — `@surrealguard/{client,query,next,svelte}` | `db.query("SELECT …")` typed from the query text; live queries as framework-native reactive state |
 | **Rust** — `surrealguard-rs` | `query!("SELECT …")` checked and typed at compile time |
@@ -67,18 +67,21 @@ DEFINE FIELD team ON person TYPE record<team>;
 ```
 
 Write queries as ordinary string literals in your own code — those calls are
-what `generate` reads. There is no separate query manifest:
+what `generate` reads. There is no separate query manifest, and nothing to wrap
+the string in:
 
 ```ts
 // src/main.ts
-import { SurrealGuardClient } from "./surrealguard.generated";
+import { createClient, RecordId } from "./surrealguard.generated";
 
-const db = new SurrealGuardClient();
-await db.connect("ws://localhost:8000/rpc");
-await db.use({ namespace: "app", database: "app" });
+const db = createClient({
+  url: "ws://localhost:8000/rpc",
+  namespace: "app",
+  database: "app",
+}); // connects lazily; import `db` anywhere, provide it to nothing
 
 const [people] = await db.query("SELECT name, age FROM person WHERE team = $team", {
-  team: "team:red",
+  team: new RecordId("team", "red"),
 });
 
 for (const person of people) {
@@ -91,7 +94,15 @@ npx surrealguard generate --out src/surrealguard.generated.ts
 ```
 
 ```
-Generated src/surrealguard.generated.ts
+generated src/surrealguard.generated.ts (1 query, 8ms)
+```
+
+While you are developing, run it as a loop instead — `watch` checks the whole
+workspace on every save and regenerates when the check passes, so the types
+never go stale behind you:
+
+```sh
+npx surrealguard watch --out src/surrealguard.generated.ts
 ```
 
 `generate` scanned `src/main.ts`, analyzed the query against the schema, and
@@ -136,6 +147,7 @@ error[E1002]: `person` has no field `ag`
   |
 6 |   const people = liveQuery((db) => db.live(`SELECT name, ag FROM person`));
   |                                                          ^^
+  |
   = help: did you mean `age`?
 note: `person` is defined here
   --> schema/schema.surql:4:14
@@ -143,13 +155,19 @@ note: `person` is defined here
 4 | DEFINE TABLE person SCHEMAFULL;
   |              ^^^^^^
 
-check failed: 1 error(s), 1 diagnostic(s)
+checked 3 sources in 6ms
+found 1 error
 ```
+
+On a terminal the severity, code, paths and carets are coloured; piped to a file
+or a CI log it is the same text with no escape sequences, and `--no-color` /
+`NO_COLOR` turn colour off explicitly.
 
 The exit code reflects the post-policy error count, so it drops straight into
 CI. `--json` emits `{ summary, diagnostics[] }` with byte-offset ranges for
-tooling. `generate` runs the same analysis and refuses to write a registry when
-an embedded query has an error, so a broken build can never overwrite good types.
+tooling — one document, one exit code, never decorated. `generate` runs the same
+analysis and refuses to write a registry when an embedded query has an error, so
+a broken build can never overwrite good types.
 
 ## Live queries, typed
 
