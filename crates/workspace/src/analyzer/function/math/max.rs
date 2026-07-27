@@ -18,7 +18,7 @@ pub(crate) fn analyze_math_max(
             min_args: 1,
             max_args: Some(1),
             arg_kinds: vec![ParamKind::Array],
-            return_kind: ReturnKind::Fixed(Kind::Number),
+            return_kind: ReturnKind::NumericAggregate(0),
         },
         args,
     )

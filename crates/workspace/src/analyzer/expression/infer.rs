@@ -1234,6 +1234,12 @@ fn numeric_result(lhs: &Kind, rhs: &Kind) -> Kind {
         Kind::Decimal
     } else if matches!(lhs, Kind::Float) || matches!(rhs, Kind::Float) {
         Kind::Float
+    } else if matches!(lhs, Kind::Number) || matches!(rhs, Kind::Number) {
+        // `number` is `int | float | decimal`, so an operand that *may* be a
+        // float makes the result one. Falling through to `Int` here claimed a
+        // kind the value need not have — `<number> * <int>` was typed `int`,
+        // which a `TYPE number` column can violate at runtime.
+        Kind::Number
     } else {
         Kind::Int
     }

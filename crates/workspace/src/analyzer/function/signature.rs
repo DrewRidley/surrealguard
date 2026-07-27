@@ -71,6 +71,19 @@ pub enum ReturnKind {
     /// The element kind of `args[index]`, when that argument is an `Array`
     /// or `Set` (e.g. `array::first`, `array::pop`).
     ArrayElement(usize),
+    /// A numeric aggregate over `args[index]`: `int` when every element is an
+    /// `int`, `number` otherwise.
+    ///
+    /// Engine-verified on 3.0.5 — `math::sum([1,2,3])` is `6`, not `6f`, and
+    /// `math::sum([])` is `0`; only a float in the column makes the result a
+    /// float (`math::sum([1.5,2.5])` -> `4f`). The distinction is not cosmetic:
+    /// a `number` written into a `TYPE int` field is a contract violation
+    /// (`Couldn't coerce value ...: Expected `int` but found `4.1f``), so
+    /// modelling an int column's total as `number` reported valid schemas.
+    ///
+    /// `math::mean` and `math::median` are deliberately NOT this: both return a
+    /// float over an int column (`math::median([1,2])` -> `1.5`).
+    NumericAggregate(usize),
 }
 
 /// Checks the call against `signature` (emitting findings 5002/5003 for
@@ -268,6 +281,14 @@ pub fn evaluate(signature: &Signature, args: &[Kind]) -> Kind {
         ReturnKind::ArrayElement(index) => match args.get(*index) {
             Some(Kind::Array(element, _) | Kind::Set(element, _)) => (**element).clone(),
             _ => Kind::Any,
+        },
+        ReturnKind::NumericAggregate(index) => match args.get(*index) {
+            Some(Kind::Array(element, _) | Kind::Set(element, _))
+                if matches!(**element, Kind::Int) =>
+            {
+                Kind::Int
+            }
+            _ => Kind::Number,
         },
     }
 }

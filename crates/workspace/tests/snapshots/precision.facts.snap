@@ -747,7 +747,7 @@ table webhook_event  [schemafull]
   diag    29:41 W7005     Warning
 
 == source: queries/40_bindings.surql ==
-  source response       : { arr: array<int, 3>, block: number, count: int, destructured: array<{ place: { city: string, country: string } }>, first: { name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }, names: array<string>, obj: { alpha: int, beta: 'two', gamma: array<bool, 2> }, tiers: array<'free' | 'pro' | 'enterprise'> }
+  source response       : { arr: array<int, 3>, block: int, count: int, destructured: array<{ place: { city: string, country: string } }>, first: { name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }, names: array<string>, obj: { alpha: int, beta: 'two', gamma: array<bool, 2> }, tiers: array<'free' | 'pro' | 'enterprise'> }
   stmt      5:1 let              : (no response)
   stmt      7:1 let              : (no response)
   stmt      9:1 let              : (no response)
@@ -758,7 +758,7 @@ table webhook_event  [schemafull]
   stmt     27:1 let              : (no response)
   stmt     29:1 let              : (no response)
   stmt     31:1 let              : (no response)
-  stmt     33:1 return           : { arr: array<int, 3>, block: number, count: int, destructured: array<{ place: { city: string, country: string } }>, first: { name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }, names: array<string>, obj: { alpha: int, beta: 'two', gamma: array<bool, 2> }, tiers: array<'free' | 'pro' | 'enterprise'> }
+  stmt     33:1 return           : { arr: array<int, 3>, block: int, count: int, destructured: array<{ place: { city: string, country: string } }>, first: { name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }, names: array<string>, obj: { alpha: int, beta: 'two', gamma: array<bool, 2> }, tiers: array<'free' | 'pro' | 'enterprise'> }
   let       5:5 $orgs            : array<{ name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }>
   let       7:5 $count           : int
   let       9:5 $names           : array<string>
@@ -768,8 +768,8 @@ table webhook_event  [schemafull]
   let      16:6 $label           : string
   let      17:6 $inner           : array<string, 1>
   let      22:6 $nested          : array<int>
-  let      23:6 $total           : number
-  let      21:5 $block           : number
+  let      23:6 $total           : int
+  let      21:5 $block           : int
   let      27:5 $destructured    : array<{ place: { city: string, country: string } }>
   let      29:5 $obj             : { alpha: int, beta: 'two', gamma: array<bool, 2> }
   let      31:5 $arr             : array<int, 3>
@@ -988,7 +988,7 @@ table webhook_event  [schemafull]
        modifier group      row_preserving=false
   stmt      6:1 select           : array<{ tier: 'free' | 'pro' | 'enterprise', total: int }>
        modifier group      row_preserving=false
-  stmt      8:1 select           : array<{ heads: number, organization: record<organization> }>
+  stmt      8:1 select           : array<{ heads: int, organization: record<organization> }>
        modifier group      row_preserving=false
   stmt     10:1 select           : array<{ avg_heads: number }>
        modifier group      row_preserving=false
@@ -1095,7 +1095,7 @@ table webhook_event  [schemafull]
 
 == source: queries/95_parens.surql ==
   stmt      9:1 select           : array<{ scaled_length: int }>
-  stmt     14:1 select           : array<{ total_headcount: number }>
+  stmt     14:1 select           : array<{ total_headcount: int }>
        modifier group      row_preserving=false
   stmt     18:1 select           : array<{ name: string, parent: record<organization> }>
        modifier where      row_preserving=true

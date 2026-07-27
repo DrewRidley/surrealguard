@@ -4357,7 +4357,9 @@ mod tests {
             "aggregate over a scalar column should not trip the argument check: {:?}",
             codes(&diagnostics)
         );
-        assert_eq!(kind, Kind::Array(Box::new(Kind::Number), None));
+        // `array<int>` in, `int` out — engine-verified: `math::sum([1,2,3])`
+        // is `6`, not `6f`.
+        assert_eq!(kind, Kind::Array(Box::new(Kind::Int), None));
     }
 
     #[test]
@@ -5260,10 +5262,12 @@ mod tests {
         // produced it, so none of these violate the `array` contract.
         let schema = aggregate_schema();
 
-        for query in [
-            "SELECT math::sum(price * qty) AS a FROM post GROUP ALL;",
-            "SELECT math::mean(qty * 1) AS a FROM post GROUP ALL;",
-            "SELECT math::sum(<float> qty) AS a FROM post GROUP ALL;",
+        // The expected total kind follows the collected column: an `int`
+        // column totals to an `int`, a `float`/`number` one to a `number`.
+        for (query, expected) in [
+            ("SELECT math::sum(price * qty) AS a FROM post GROUP ALL;", Kind::Number),
+            ("SELECT math::mean(qty * 1) AS a FROM post GROUP ALL;", Kind::Number),
+            ("SELECT math::sum(<float> qty) AS a FROM post GROUP ALL;", Kind::Number),
         ] {
             let (kind, diagnostics) = analyze_diagnostics(&schema, query);
             assert!(
@@ -5271,7 +5275,11 @@ mod tests {
                 "`{query}` must not report an argument violation: {:?}",
                 codes(&diagnostics)
             );
-            assert_eq!(object_fields(array_element(&kind))["a"], Kind::Number);
+            assert_eq!(
+                object_fields(array_element(&kind))["a"],
+                expected,
+                "for `{query}`"
+            );
         }
     }
 
