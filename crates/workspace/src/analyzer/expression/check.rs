@@ -388,12 +388,6 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
 
     check_field_after_destructure(ctx, &idiom.parts);
 
-    // An idiom that is nothing but fields is validated whole, by the
-    // `plain_field_segments` + `check_field_path` route each position already
-    // runs (a projection, a WHERE, a SET target…). This walk owns exactly its
-    // complement — every idiom with a traversal, an index, a splat, a filter or
-    // a method in it — so the two together cover all of them and neither
-    // double-reports.
     // Whether a field segment of this idiom is this walk's to check.
     //
     // Not when the idiom is nothing but fields: that shape is validated whole,
@@ -456,10 +450,17 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
             ast::IdiomPart::Index(_) | ast::IdiomPart::Last | ast::IdiomPart::Method { .. } => {
                 false
             }
-            // A traversal answers a fresh array of its own; a filter and a `?`
-            // leave the value as it stands.
+            // A traversal answers a fresh array of its own — `->follows->user
+            // .len()` is the array's length, not its elements'.
             ast::IdiomPart::Graph { .. } => false,
-            _ => flattened,
+            // A filter and a `?` leave the value exactly as it stands; a
+            // recursion, a leading value and an unlowered part leave nothing
+            // resolvable behind them anyway.
+            ast::IdiomPart::Where(_)
+            | ast::IdiomPart::Optional
+            | ast::IdiomPart::Recurse { .. }
+            | ast::IdiomPart::Start(_)
+            | ast::IdiomPart::Partial(_) => flattened,
         };
         let Some(receiver) = receiver else {
             continue;
