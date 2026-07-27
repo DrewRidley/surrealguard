@@ -581,6 +581,154 @@ RETURN $count;
 }
 
 // ---------------------------------------------------------------------------
+// Host files (embedded SurrealQL)
+// ---------------------------------------------------------------------------
+
+/// A SvelteKit route with one bad query inside a `surql` template.
+const HOST_URI: &str = "file:///workspace/src/routes/+page.svelte";
+const HOST: &str = "\
+<script lang=\"ts\">
+  import { surql } from '$lib/db';
+
+  const q = surql`SELECT username, nonExistent FROM account`;
+</script>
+
+<h1>hello</h1>
+";
+
+/// The host text an LSP range covers — the proof a squiggle lands on the
+/// offending token and not on the string, the call, or the line.
+fn text_at(text: &str, range: &Value) -> String {
+    let line_start = |line: usize| {
+        text.split_inclusive('\n')
+            .take(line)
+            .map(str::len)
+            .sum::<usize>()
+    };
+    let at = |end: &Value| {
+        line_start(end["line"].as_u64().expect("line") as usize)
+            + end["character"].as_u64().expect("character") as usize
+    };
+    text[at(&range["start"])..at(&range["end"])].to_string()
+}
+
+#[test]
+fn a_bad_query_in_a_svelte_file_is_flagged_on_the_offending_token() {
+    let mut lsp = Lsp::start();
+    let _ = lsp.did_open(SCHEMA_URI, SCHEMA);
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({"textDocument": {
+            "uri": HOST_URI, "languageId": "svelte", "version": 1, "text": HOST,
+        }}),
+    );
+    let diagnostics = lsp.next_publish(HOST_URI);
+
+    let unknown_field = diagnostics
+        .iter()
+        .find(|d| d["code"] == "E1002")
+        .unwrap_or_else(|| panic!("expected E1002 in the embedded query, got: {diagnostics:?}"));
+    assert_eq!(unknown_field["severity"], 1);
+    // The range is in HOST coordinates, and covers exactly the field name
+    // inside the template literal.
+    assert_eq!(
+        text_at(HOST, &unknown_field["range"]),
+        "nonExistent",
+        "the squiggle covers the offending token, not the whole template"
+    );
+    assert_eq!(unknown_field["range"]["start"]["line"], 3);
+}
+
+#[test]
+fn a_host_file_the_schema_satisfies_publishes_nothing() {
+    let mut lsp = Lsp::start();
+    let _ = lsp.did_open(SCHEMA_URI, SCHEMA);
+
+    // A clean query, and a host file with no SurrealQL in it at all: neither
+    // may put a mark in the editor.
+    for (uri, text) in [
+        (
+            "file:///workspace/src/clean.ts",
+            "const q = surql`SELECT username FROM account`;\n",
+        ),
+        (
+            "file:///workspace/src/plain.ts",
+            "export const answer = 42;\n",
+        ),
+    ] {
+        lsp.notify(
+            "textDocument/didOpen",
+            json!({"textDocument": {
+                "uri": uri, "languageId": "typescript", "version": 1, "text": text,
+            }}),
+        );
+        assert_eq!(
+            lsp.next_publish(uri),
+            Vec::<Value>::new(),
+            "{uri} must publish nothing"
+        );
+    }
+}
+
+#[test]
+fn a_template_substitution_is_a_parameter_not_an_unknown_name() {
+    // `${...}` becomes a `$__hostN` parameter. A parameter the analyzer cannot
+    // resolve is a real finding class, so this asserts the rewrite does not
+    // manufacture one out of ordinary interpolation.
+    let mut lsp = Lsp::start();
+    let _ = lsp.did_open(SCHEMA_URI, SCHEMA);
+    let uri = "file:///workspace/src/interpolated.ts";
+    let text = "const name = 'ada';\n\
+                const q = surql`SELECT username FROM account WHERE username = ${name}`;\n";
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({"textDocument": {
+            "uri": uri, "languageId": "typescript", "version": 1, "text": text,
+        }}),
+    );
+    assert_eq!(lsp.next_publish(uri), Vec::<Value>::new());
+}
+
+#[test]
+fn hover_inside_an_embedded_query_answers_as_the_query() {
+    let mut lsp = Lsp::start();
+    let _ = lsp.did_open(SCHEMA_URI, SCHEMA);
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({"textDocument": {
+            "uri": HOST_URI, "languageId": "svelte", "version": 1, "text": HOST,
+        }}),
+    );
+    let _ = lsp.next_publish(HOST_URI);
+
+    let cursor = HOST.find("username").expect("the field is in the template") + 2;
+    let result = lsp.request(
+        "textDocument/hover",
+        json!({"textDocument": {"uri": HOST_URI}, "position": position_of(HOST, cursor)}),
+    );
+    let markdown = result["contents"]["value"]
+        .as_str()
+        .unwrap_or_else(|| panic!("expected hover inside the embedded query, got: {result}"));
+    assert!(
+        markdown.contains("string"),
+        "hover should report the field's declared type, got: {markdown}"
+    );
+    // And it points at the host token, not at an offset into the query text.
+    assert_eq!(text_at(HOST, &result["range"]), "username");
+
+    // Hovering the surrounding host language is not ours to answer.
+    let outside = HOST.find("import").expect("host code");
+    let result = lsp.request(
+        "textDocument/hover",
+        json!({"textDocument": {"uri": HOST_URI}, "position": position_of(HOST, outside)}),
+    );
+    assert!(
+        result.is_null(),
+        "expected no hover in host code, got {result}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Handshake
 // ---------------------------------------------------------------------------
 

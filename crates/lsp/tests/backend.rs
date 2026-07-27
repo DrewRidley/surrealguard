@@ -381,7 +381,10 @@ async fn the_server_advertises_completion_with_surrealql_trigger_characters() {
     let triggers = completion.trigger_characters.expect("trigger characters");
     // `$` opens a param, `.` a member, `:` completes a `::` function path.
     for expected in ["$", ".", ":"] {
-        assert!(triggers.contains(&expected.to_string()), "missing {expected}");
+        assert!(
+            triggers.contains(&expected.to_string()),
+            "missing {expected}"
+        );
     }
     assert_eq!(completion.resolve_provider, Some(false));
 }

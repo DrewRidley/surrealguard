@@ -68,6 +68,45 @@ impl Backend {
             .await;
     }
 
+    /// Hover for a position inside a host file's embedded query: the cursor is
+    /// translated into the query, answered by the query's own analysis, and the
+    /// resulting span mapped back onto the host text — so a field inside a
+    /// `` surql`…` `` template reports the same type it would in a `.surql`
+    /// file. `None` for `.surql` documents and for a host position outside
+    /// every embedded query, both of which the ordinary path handles.
+    async fn host_hover(&self, uri: &Url, position: Position) -> Option<Hover> {
+        let (host_text, analysis) = {
+            let ws = self.workspace.read().await;
+            let host_text = ws.document_text(uri)?;
+            let offset = crate::text::position_to_offset(&host_text, position);
+            (host_text, ws.host_feature_analysis(uri, offset)?)
+        };
+
+        let info = surrealguard_workspace::hover_at(
+            &analysis.output,
+            &analysis.schema,
+            &analysis.source,
+            &analysis.text,
+            analysis.offset as u32,
+        )?;
+
+        // The span is in embedded coordinates; the editor is looking at the
+        // host file.
+        let range = info.span.range();
+        let host = analysis
+            .query
+            .host_span(range.start() as usize..range.end() as usize);
+        Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: info.markdown,
+            }),
+            range: Some(crate::text::byte_range_to_lsp(
+                &host_text, host.start, host.end,
+            )),
+        })
+    }
+
     /// Publish diagnostics for all tracked documents in a single workspace
     /// analysis pass (avoids re-analyzing the whole workspace once per file).
     async fn publish_all_diagnostics(&self) {
@@ -212,6 +251,9 @@ impl LanguageServer for Backend {
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
+        if let Some(hover) = self.host_hover(&uri, position).await {
+            return Ok(Some(hover));
+        }
         let analysis = {
             let ws = self.workspace.read().await;
             ws.feature_analysis(&uri)
@@ -333,11 +375,8 @@ impl LanguageServer for Backend {
         };
 
         let range = target.span.range();
-        let range = crate::text::byte_range_to_lsp(
-            def_text,
-            range.start() as usize,
-            range.end() as usize,
-        );
+        let range =
+            crate::text::byte_range_to_lsp(def_text, range.start() as usize, range.end() as usize);
 
         Ok(Some(GotoDefinitionResponse::Scalar(Location {
             uri: def_uri.clone(),
@@ -391,7 +430,9 @@ impl LanguageServer for Backend {
             "cache hit"
         };
         let sources = reanalyzed_after.saturating_sub(reanalyzed_before);
-        eprintln!("[surrealguard] edit → {path} in {elapsed_ms:.1}ms ({sources} source(s) re-analyzed)");
+        eprintln!(
+            "[surrealguard] edit → {path} in {elapsed_ms:.1}ms ({sources} source(s) re-analyzed)"
+        );
     }
 
     async fn did_save(&self, _params: DidSaveTextDocumentParams) {

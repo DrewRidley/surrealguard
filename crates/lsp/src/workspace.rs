@@ -112,13 +112,29 @@ impl SurqlCache {
     }
 }
 
-/// Cached diagnostics for a single host (TypeScript/Svelte) document. Keyed by
+/// One embedded query of a host document, with the analysis it produced.
+/// Diagnostics read the output's findings (re-spanned onto the host);
+/// cursor-addressed features map the cursor into `query` and answer from the
+/// same output, so both surfaces see one analysis.
+#[derive(Debug, Clone)]
+struct HostQuery {
+    /// The extraction: query text plus the map back to host offsets.
+    query: surrealguard_embed::EmbeddedQuery,
+    /// The virtual source id the query was analyzed under.
+    source: SourceId,
+    /// The query's analysis output, in *embedded* coordinates.
+    output: AnalysisOutput,
+}
+
+/// Cached analysis for a single host (TypeScript/Svelte) document. Keyed by
 /// the pair `(surql-set hash, host-text hash)` so it stays valid only while
 /// both the schema and the host's own text are unchanged.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct HostCache {
     /// `(surql-set hash, host-text hash)`.
     key: (u64, u64),
+    /// Every embedded query with its own analysis.
+    queries: Vec<HostQuery>,
     /// Findings re-spanned onto the host file.
     diagnostics: Vec<Finding>,
     /// Source-id / host mapping for rendering.
@@ -180,6 +196,11 @@ impl Workspace {
     /// Get all documents.
     pub fn documents(&self) -> impl Iterator<Item = &Document> {
         self.documents.values()
+    }
+
+    /// A tracked document's current text.
+    pub fn document_text(&self, uri: &Url) -> Option<String> {
+        self.documents.get(uri).map(|doc| doc.text.clone())
     }
 
     /// Number of full `analyze_workspace` passes executed so far. Increments
@@ -315,7 +336,8 @@ impl Workspace {
         if let Some(prev) = prev {
             if prev.global_key == global_key {
                 // Query-only edit: the catalog is unchanged.
-                if let Some(fresh) = self.try_incremental(prev, &sources, key, global_key, require) {
+                if let Some(fresh) = self.try_incremental(prev, &sources, key, global_key, require)
+                {
                     return fresh;
                 }
             } else if let Some(fresh) =
@@ -347,9 +369,7 @@ impl Workspace {
 
     /// Parses every document, keyed by source id. Documents that fail to parse
     /// are omitted — exactly the set [`analyze_workspace`] feeds to the catalog.
-    fn parse_all(
-        sources: &[(SourceId, Url, String)],
-    ) -> BTreeMap<SourceId, Arc<ParsedSource>> {
+    fn parse_all(sources: &[(SourceId, Url, String)]) -> BTreeMap<SourceId, Arc<ParsedSource>> {
         sources
             .iter()
             .filter_map(|(id, _uri, text)| {
@@ -416,8 +436,8 @@ impl Workspace {
         for (id, _uri, text) in sources {
             match prev_text.get(id) {
                 Some(previous) if *previous == text.as_str() => continue, // unchanged
-                Some(_) => {}         // same source, new text -> re-analyze
-                None => return None,  // unknown source id -> bail to full
+                Some(_) => {}        // same source, new text -> re-analyze
+                None => return None, // unknown source id -> bail to full
             }
 
             // Re-analyze this dirty (query-only) source against the cached
@@ -441,7 +461,8 @@ impl Workspace {
             .flat_map(|output| output.diagnostics.iter().cloned())
             .collect();
 
-        self.incremental_runs.fetch_add(dirty as u64, Ordering::Relaxed);
+        self.incremental_runs
+            .fetch_add(dirty as u64, Ordering::Relaxed);
         self.reanalyzed_sources
             .fetch_add(dirty as u64, Ordering::Relaxed);
 
@@ -562,8 +583,12 @@ impl Workspace {
 
         // Re-analyze exactly the affected sources against the fresh catalog,
         // reproducing the whole-workspace per-source output for each.
-        let outputs =
-            reanalyze_sources(&ordered, &new_catalog, &affected, require_suppression_reasons);
+        let outputs = reanalyze_sources(
+            &ordered,
+            &new_catalog,
+            &affected,
+            require_suppression_reasons,
+        );
         let reanalyzed = outputs.len() as u64;
 
         let mut analysis = prev.analysis.clone();
@@ -579,7 +604,8 @@ impl Workspace {
             .flat_map(|output| output.diagnostics.iter().cloned())
             .collect();
 
-        self.incremental_runs.fetch_add(reanalyzed, Ordering::Relaxed);
+        self.incremental_runs
+            .fetch_add(reanalyzed, Ordering::Relaxed);
         self.reanalyzed_sources
             .fetch_add(reanalyzed, Ordering::Relaxed);
 
@@ -611,7 +637,12 @@ impl Workspace {
 
         // Host target: keep the host-specific path (embedded extraction).
         if !is_surrealql_uri(uri) {
-            return self.host_diagnostic_analysis(uri, target);
+            let host = self.host_analysis(uri, target)?;
+            return Some(DiagnosticAnalysisResult {
+                diagnostics: host.diagnostics,
+                source: target.text.clone(),
+                texts: host.texts,
+            });
         }
 
         // `.surql` target: reuse the shared whole-workspace analysis.
@@ -632,94 +663,201 @@ impl Workspace {
         })
     }
 
-    /// Diagnostics for a host document. Each embedded query is analyzed against
-    /// the `.surql` schema and its findings re-spanned onto the host file.
-    /// Cached per host URI keyed by `(surql-set hash, host-text hash)`, so an
-    /// unchanged state does not re-run the pass, and a change to either the
-    /// schema or the host text invalidates it.
-    fn host_diagnostic_analysis(
-        &self,
-        uri: &Url,
-        target: &Document,
-    ) -> Option<DiagnosticAnalysisResult> {
-        let surql_key = self.surql_key();
+    /// The analysis of a host document's embedded queries, memoized per host
+    /// URI under `(surql-set hash, host-text hash)`: unchanged state does no
+    /// work, and a change to either the schema or the host's own text
+    /// invalidates. Both the diagnostics surface and the cursor-addressed
+    /// features read this one entry.
+    ///
+    /// A host file with no `surql` template costs an extraction and nothing
+    /// else — it never reaches the `.surql` analysis at all.
+    fn host_analysis(&self, uri: &Url, target: &Document) -> Option<HostCache> {
+        // Only the file types [`surrealguard_embed::extract`] actually knows.
+        // Anything else the client attached us to (JSON, Markdown, a lockfile)
+        // would otherwise be parsed as TypeScript on every keystroke.
+        if !is_host_uri(uri) {
+            return None;
+        }
+
         let host_hash = {
             let mut hasher = DefaultHasher::new();
             target.text.hash(&mut hasher);
             hasher.finish()
         };
-        let key = (surql_key, host_hash);
+
+        let queries = surrealguard_embed::extract(uri.path(), &target.text);
+        if queries.is_empty() {
+            // Nothing embedded: an empty result, keyed so a later edit that
+            // *adds* a query still recomputes. Deliberately keyed on the
+            // `.surql` state we never read (0), so a schema edit alone does
+            // not invalidate a host file that asks nothing of the schema.
+            return Some(HostCache {
+                key: (0, host_hash),
+                queries: Vec::new(),
+                diagnostics: Vec::new(),
+                texts: BTreeMap::new(),
+            });
+        }
+
+        let key = (self.surql_key(), host_hash);
 
         // Cache hit: reuse without re-analyzing.
         if let Ok(cache) = self.host_cache.lock() {
             if let Some(entry) = cache.get(uri) {
                 if entry.key == key {
-                    return Some(DiagnosticAnalysisResult {
-                        diagnostics: entry.diagnostics.clone(),
-                        source: target.text.clone(),
-                        texts: entry.texts.clone(),
-                    });
+                    return Some(entry.clone());
                 }
             }
         }
 
-        // Miss: rebuild the `.surql` schema workspace, add this host's
-        // embedded queries as virtual sources, and analyze once.
+        let host_source = SourceId::new(uri.to_string());
+        let fresh = self.analyze_host_queries(uri, target, key, queries, &host_source);
+
+        if let Ok(mut cache) = self.host_cache.lock() {
+            cache.insert(uri.clone(), fresh.clone());
+        }
+        Some(fresh)
+    }
+
+    /// Analyzes a host document's embedded queries against the workspace
+    /// schema.
+    ///
+    /// Read-only queries — the overwhelming majority of what a client file
+    /// holds — take the same fast path a `.surql` query edit takes: each is
+    /// analyzed alone against the cached [`GlobalCatalog`], so a keystroke in
+    /// a `.svelte` file costs one small query, not one whole-workspace pass.
+    /// A query that could *change* the catalog (a `CREATE`, a `DEFINE`) breaks
+    /// [`analyze_one_source`]'s contract, so those fall back to the full pass
+    /// with the embedded sources registered — exactly the previous behavior.
+    fn analyze_host_queries(
+        &self,
+        uri: &Url,
+        target: &Document,
+        key: (u64, u64),
+        queries: Vec<surrealguard_embed::EmbeddedQuery>,
+        host_source: &SourceId,
+    ) -> HostCache {
+        let source_id =
+            |index: usize| SourceId::new(format!("embedded://{}#{index}", uri.as_str()));
+        let schema_effecting = queries.iter().any(|query| is_schema_relevant(&query.text));
+
+        let (analyzed, mut texts) = if schema_effecting {
+            self.analyze_host_queries_fully(queries, &source_id)
+        } else {
+            self.analyze_host_queries_incrementally(queries, &source_id)
+        };
+        texts.insert(uri.to_string(), (uri.clone(), target.text.clone()));
+
+        let diagnostics = analyzed
+            .iter()
+            .flat_map(|entry| {
+                entry
+                    .output
+                    .diagnostics
+                    .iter()
+                    .map(|finding| respan_to_host(finding, &entry.query, host_source))
+            })
+            .collect();
+
+        HostCache {
+            key,
+            queries: analyzed,
+            diagnostics,
+            texts,
+        }
+    }
+
+    /// The fast path: every embedded query is a pure query, so each analyzes
+    /// alone against the cached catalog. The `.surql` cache is consulted (and
+    /// rebuilt if the schema moved) exactly once for the whole host file.
+    fn analyze_host_queries_incrementally(
+        &self,
+        queries: Vec<surrealguard_embed::EmbeddedQuery>,
+        source_id: &impl Fn(usize) -> SourceId,
+    ) -> (Vec<HostQuery>, BTreeMap<String, (Url, String)>) {
+        let require = AnalysisWorkspace::default()
+            .config()
+            .diagnostics
+            .require_suppression_reasons;
+
+        let (analyzed, texts, parsed_count) = self.with_surql_cache(|cache| {
+            let mut analyzed = Vec::with_capacity(queries.len());
+            let mut parsed_count = 0u64;
+            for (index, query) in queries.into_iter().enumerate() {
+                let source = source_id(index);
+                let Ok(parsed) = parse_source(source.clone(), query.text.as_str()) else {
+                    continue;
+                };
+                let output = analyze_one_source(&cache.catalog, &parsed, require);
+                parsed_count += 1;
+                analyzed.push(HostQuery {
+                    query,
+                    source,
+                    output,
+                });
+            }
+            (analyzed, cache.texts(), parsed_count)
+        });
+
+        self.incremental_runs
+            .fetch_add(parsed_count, Ordering::Relaxed);
+        self.reanalyzed_sources
+            .fetch_add(parsed_count, Ordering::Relaxed);
+        (analyzed, texts)
+    }
+
+    /// The fallback: an embedded query carries a schema effect the catalog
+    /// models (a write, a `DEFINE`), so it has to be analyzed *with* the
+    /// workspace rather than against a snapshot of it.
+    fn analyze_host_queries_fully(
+        &self,
+        queries: Vec<surrealguard_embed::EmbeddedQuery>,
+        source_id: &impl Fn(usize) -> SourceId,
+    ) -> (Vec<HostQuery>, BTreeMap<String, (Url, String)>) {
         let (mut analysis_workspace, surql_sources) = self.build_surql_workspace();
-        let mut texts: BTreeMap<String, (Url, String)> = surql_sources
+        let texts: BTreeMap<String, (Url, String)> = surql_sources
             .iter()
             .map(|(id, doc_uri, text)| (id.to_string(), (doc_uri.clone(), text.clone())))
             .collect();
 
-        let embedded = surrealguard_embed::extract(uri.path(), &target.text);
-        let mut queries = Vec::new();
-        for (index, query) in embedded.into_iter().enumerate() {
-            let source_id = analysis_workspace.add_virtual_source(
-                format!("embedded://{}#{index}", uri.as_str()),
-                query.text.clone(),
-            );
-            queries.push((source_id, query));
-        }
-        texts.insert(uri.to_string(), (uri.clone(), target.text.clone()));
+        let registered: Vec<_> = queries
+            .into_iter()
+            .enumerate()
+            .map(|(index, query)| {
+                let source = analysis_workspace
+                    .add_virtual_source(source_id(index).to_string(), query.text.clone());
+                (source, query)
+            })
+            .collect();
 
         let workspace_output = analyze_workspace(&analysis_workspace);
         self.analyze_runs.fetch_add(1, Ordering::Relaxed);
 
-        let host_source = SourceId::new(uri.to_string());
-        let mut diagnostics = Vec::new();
-        for (source_id, query) in &queries {
-            let Some(source_output) = workspace_output.sources.get(source_id) else {
-                continue;
-            };
-            for finding in &source_output.diagnostics {
-                diagnostics.push(respan_to_host(finding, query, &host_source));
-            }
-        }
-
-        if let Ok(mut cache) = self.host_cache.lock() {
-            cache.insert(
-                uri.clone(),
-                HostCache {
-                    key,
-                    diagnostics: diagnostics.clone(),
-                    texts: texts.clone(),
-                },
-            );
-        }
-
-        Some(DiagnosticAnalysisResult {
-            diagnostics,
-            source: target.text.clone(),
-            texts,
-        })
+        let analyzed = registered
+            .into_iter()
+            .filter_map(|(source, query)| {
+                let output = workspace_output.sources.get(&source)?.clone();
+                Some(HostQuery {
+                    query,
+                    source,
+                    output,
+                })
+            })
+            .collect();
+        (analyzed, texts)
     }
 
-    /// Analyze every tracked `.surql` document and return each document's
-    /// findings keyed by URI. Runs the shared whole-workspace pass at most once
-    /// (through the cache) instead of the per-file [`Self::diagnostic_analysis`]
-    /// which would re-analyze the whole workspace for each file.
+    /// Analyze every tracked document — `.surql` and host alike — and return
+    /// each one's findings keyed by URI. Runs the shared whole-workspace pass
+    /// at most once (through the cache) instead of the per-file
+    /// [`Self::diagnostic_analysis`] which would re-analyze the whole
+    /// workspace for each file.
+    ///
+    /// Host documents belong here for the same reason `.surql` ones do: a
+    /// query embedded in a `.svelte` file reads the schema, so when the schema
+    /// is saved its findings are as stale as any query file's.
     pub fn analyze_all(&self) -> Vec<(Url, DiagnosticAnalysisResult)> {
-        self.with_surql_cache(|cache| {
+        let mut results: Vec<(Url, DiagnosticAnalysisResult)> = self.with_surql_cache(|cache| {
             let texts = cache.texts();
             cache
                 .sources
@@ -741,6 +879,55 @@ impl Workspace {
                     )
                 })
                 .collect()
+        });
+
+        // Outside the closure above: `host_analysis` takes the same cache lock.
+        let mut hosts: Vec<&Document> = self
+            .documents
+            .values()
+            .filter(|doc| is_host_uri(&doc.uri))
+            .collect();
+        hosts.sort_by(|left, right| left.uri.as_str().cmp(right.uri.as_str()));
+        for doc in hosts {
+            let Some(host) = self.host_analysis(&doc.uri, doc) else {
+                continue;
+            };
+            results.push((
+                doc.uri.clone(),
+                DiagnosticAnalysisResult {
+                    diagnostics: host.diagnostics,
+                    source: doc.text.clone(),
+                    texts: host.texts,
+                },
+            ));
+        }
+        results
+    }
+
+    /// The analysis answering a cursor-addressed request inside a host file:
+    /// the embedded query under `offset`, its own analysis output, and the map
+    /// back to host coordinates. `None` when the cursor is outside every
+    /// embedded query — including inside a `${...}` substitution, which names
+    /// no position in the query the analyzer saw.
+    pub fn host_feature_analysis(&self, uri: &Url, offset: usize) -> Option<HostFeatureAnalysis> {
+        let target = self.documents.get(uri)?;
+        if is_surrealql_uri(uri) || target.text.trim().is_empty() {
+            return None;
+        }
+        let host = self.host_analysis(uri, target)?;
+        let entry = host
+            .queries
+            .iter()
+            .find(|entry| entry.query.host_range.contains(&offset))?;
+        let embedded_offset = entry.query.embed_offset(offset)?;
+
+        Some(HostFeatureAnalysis {
+            output: entry.output.clone(),
+            schema: self.with_surql_cache(|cache| cache.analysis.schema.clone()),
+            source: entry.source.clone(),
+            text: entry.query.text.clone(),
+            offset: embedded_offset,
+            query: entry.query.clone(),
         })
     }
 
@@ -833,6 +1020,17 @@ fn is_surrealql_uri(uri: &Url) -> bool {
     path.ends_with(".surql") || path.ends_with(".surrealql")
 }
 
+/// Whether a document is a host file that may carry embedded SurrealQL — the
+/// same extension set `surrealguard check`/`generate` discover, so what the
+/// editor flags and what CI flags can never disagree.
+fn is_host_uri(uri: &Url) -> bool {
+    const EXTENSIONS: [&str; 7] = ["ts", "tsx", "js", "jsx", "svelte", "vue", "astro"];
+    matches!(
+        uri.path().rsplit_once('.'),
+        Some((_, extension)) if EXTENSIONS.contains(&extension)
+    )
+}
+
 /// Whether a document might contribute to the global catalog or the workspace
 /// schema — i.e. contains any statement that a *pure query* file does not. Used
 /// to decide catalog-cache invalidation: if a `.surql` document is NOT
@@ -915,6 +1113,25 @@ pub struct FeatureAnalysis {
     /// (stringified), for resolving a definition span that points into another
     /// file back to its URI and text.
     pub sources: HashMap<String, (Url, String)>,
+}
+
+/// Everything a cursor-addressed request needs to answer *inside* an embedded
+/// query: the query's own analysis in embedded coordinates, plus the mapping
+/// that puts the answer back on the host file.
+pub struct HostFeatureAnalysis {
+    /// The embedded query's analysis output.
+    pub output: AnalysisOutput,
+    /// The schema shared across all `.surql` documents in the workspace.
+    pub schema: SchemaIndex,
+    /// The embedded query's virtual source id.
+    pub source: SourceId,
+    /// The **embedded query's** text, not the host's — the coordinate system
+    /// `output` and `offset` are expressed in.
+    pub text: String,
+    /// The requested host offset, translated into the query text.
+    pub offset: usize,
+    /// The extraction, for mapping a resulting span back to the host file.
+    pub query: surrealguard_embed::EmbeddedQuery,
 }
 
 /// Everything a completion request reads, all of it served from the cache.
@@ -1066,7 +1283,10 @@ mod tests {
         // Editing the pure query document leaves the schema-defining inputs
         // unchanged -> the cached GlobalCatalog is reused and only the query is
         // re-analyzed. No new full workspace pass runs.
-        workspace.upsert(query.clone(), "SELECT name FROM person WHERE name != NONE;".into());
+        workspace.upsert(
+            query.clone(),
+            "SELECT name FROM person WHERE name != NONE;".into(),
+        );
         let _ = workspace
             .diagnostic_analysis(&query)
             .expect("re-analyzed after edit");
@@ -1082,7 +1302,10 @@ mod tests {
         );
 
         // Re-upserting identical text keeps the same hash -> cache hit, no work.
-        workspace.upsert(query.clone(), "SELECT name FROM person WHERE name != NONE;".into());
+        workspace.upsert(
+            query.clone(),
+            "SELECT name FROM person WHERE name != NONE;".into(),
+        );
         let _ = workspace.feature_analysis(&query).expect("features");
         assert_eq!(workspace.analyze_run_count(), 1);
         assert_eq!(
@@ -1247,15 +1470,19 @@ mod tests {
             "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;".into(),
         );
         fresh.upsert(query.clone(), edited.into());
-        let full = fresh
-            .diagnostic_analysis(&query)
-            .expect("full analysis");
+        let full = fresh.diagnostic_analysis(&query).expect("full analysis");
 
         let codes = |result: &DiagnosticAnalysisResult| {
             result
                 .diagnostics
                 .iter()
-                .map(|f| (f.code().to_string(), f.span().range().start(), f.span().range().end()))
+                .map(|f| {
+                    (
+                        f.code().to_string(),
+                        f.span().range().start(),
+                        f.span().range().end(),
+                    )
+                })
                 .collect::<Vec<_>>()
         };
         assert_eq!(
@@ -1297,36 +1524,171 @@ mod tests {
             "const q = surql`SELECT name FROM person`;".into(),
         );
 
-        // Warm the shared `.surql` schema pass so the count below reflects
-        // only host recomputes.
+        // Warm the shared `.surql` schema pass so the counts below reflect
+        // only host recomputes. `analyze_all` now covers the host document
+        // too, so the first host analysis has already happened here.
         let _ = workspace.analyze_all();
-        let base = workspace.analyze_run_count();
-
-        let _ = workspace.diagnostic_analysis(&host).expect("host analyzed");
-        let after_first = workspace.analyze_run_count();
-        assert!(
-            after_first > base,
-            "first host analysis runs a pass ({base} -> {after_first})"
+        let full = workspace.analyze_run_count();
+        let reanalyzed = workspace.reanalyzed_source_count();
+        assert_eq!(
+            reanalyzed, 1,
+            "the host's one embedded query analyzed exactly once"
         );
 
-        // Same host + schema state -> cache hit, no new pass.
+        // Same host + schema state -> cache hit, no work at all.
         let _ = workspace.diagnostic_analysis(&host).expect("host reused");
         assert_eq!(
-            workspace.analyze_run_count(),
-            after_first,
+            (
+                workspace.analyze_run_count(),
+                workspace.reanalyzed_source_count()
+            ),
+            (full, reanalyzed),
             "unchanged host state reuses the cached analysis"
         );
 
-        // Editing the host text invalidates its entry.
+        // Editing the host text invalidates its entry — and costs exactly the
+        // one embedded query, not a whole-workspace pass.
         workspace.upsert(
             host.clone(),
             "const q = surql`SELECT name FROM person WHERE name != NONE`;".into(),
         );
-        let _ = workspace.diagnostic_analysis(&host).expect("host re-analyzed");
+        let _ = workspace
+            .diagnostic_analysis(&host)
+            .expect("host re-analyzed");
         assert_eq!(
             workspace.analyze_run_count(),
-            after_first + 1,
-            "editing the host text forces one recompute"
+            full,
+            "a host edit runs no full workspace pass"
         );
+        assert_eq!(
+            workspace.reanalyzed_source_count(),
+            reanalyzed + 1,
+            "a host edit re-analyzes exactly its embedded queries"
+        );
+    }
+
+    #[test]
+    fn a_host_file_with_no_embedded_query_costs_nothing() {
+        let (mut workspace, _schema, _query) = workspace_with_schema_and_query();
+        let _ = workspace.analyze_all();
+        let counters = (
+            workspace.analyze_run_count(),
+            workspace.incremental_run_count(),
+            workspace.reanalyzed_source_count(),
+        );
+
+        let host = Url::parse("file:///workspace/plain.ts").expect("valid uri");
+        workspace.upsert(host.clone(), "export const answer = 42;\n".into());
+        let result = workspace
+            .diagnostic_analysis(&host)
+            .expect("a host file is still a tracked document");
+
+        assert!(
+            result.diagnostics.is_empty(),
+            "a host file with no `surql` template says nothing"
+        );
+        assert_eq!(
+            (
+                workspace.analyze_run_count(),
+                workspace.incremental_run_count(),
+                workspace.reanalyzed_source_count(),
+            ),
+            counters,
+            "and analyzes nothing to say it"
+        );
+    }
+
+    #[test]
+    fn a_document_we_do_not_understand_is_not_a_host_file() {
+        // The client may attach us to more than we can read. Parsing a
+        // lockfile as TypeScript on every keystroke is pure cost, so those
+        // documents are not analyzed at all.
+        let mut workspace = Workspace::new();
+        let other = Url::parse("file:///workspace/package-lock.json").expect("valid uri");
+        workspace.upsert(other.clone(), "{ \"name\": \"surql\" }\n".into());
+        assert!(workspace.diagnostic_analysis(&other).is_none());
+    }
+
+    #[test]
+    fn host_diagnostics_follow_a_schema_edit() {
+        // The reason host documents belong in `analyze_all`: a query embedded
+        // in a `.svelte` file reads the schema, so a schema edit makes its
+        // findings as stale as any query file's.
+        let mut workspace = Workspace::new();
+        let schema = Url::parse("file:///workspace/schema.surql").expect("valid uri");
+        workspace.upsert(
+            schema.clone(),
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;".into(),
+        );
+        let host = Url::parse("file:///workspace/app.svelte").expect("valid uri");
+        workspace.upsert(
+            host.clone(),
+            "<script>const q = surql`SELECT nickname FROM person`;</script>".into(),
+        );
+
+        // Errors only: the lint about reading a whole table is a matter of
+        // taste and fires either way.
+        let errors = |results: &[(Url, DiagnosticAnalysisResult)], uri: &Url| {
+            results
+                .iter()
+                .find(|(result_uri, _)| result_uri == uri)
+                .map(|(_, result)| {
+                    result
+                        .diagnostics
+                        .iter()
+                        .filter(|finding| {
+                            finding.severity() == surrealguard_diagnostics::Severity::Error
+                        })
+                        .map(|finding| finding.message().to_string())
+                        .collect::<Vec<_>>()
+                })
+        };
+
+        let before = errors(&workspace.analyze_all(), &host);
+        assert_eq!(
+            before,
+            Some(vec!["`person` has no field `nickname`".to_string()]),
+            "the embedded query is checked against the schema"
+        );
+
+        workspace.upsert(
+            schema,
+            "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD name ON person TYPE string;\n\
+             DEFINE FIELD nickname ON person TYPE string;"
+                .into(),
+        );
+        assert_eq!(
+            errors(&workspace.analyze_all(), &host),
+            Some(Vec::new()),
+            "defining the field clears the host file's finding"
+        );
+    }
+
+    #[test]
+    fn a_host_cursor_resolves_through_the_embedded_query() {
+        let mut workspace = Workspace::new();
+        let schema = Url::parse("file:///workspace/schema.surql").expect("valid uri");
+        workspace.upsert(
+            schema,
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;".into(),
+        );
+        let host = Url::parse("file:///workspace/app.svelte").expect("valid uri");
+        let text = "<script lang=\"ts\">\n  const q = surql`SELECT name FROM person`;\n</script>\n";
+        workspace.upsert(host.clone(), text.into());
+
+        let at = text.find("person").expect("host offset of the table name");
+        let analysis = workspace
+            .host_feature_analysis(&host, at)
+            .expect("the cursor is inside the embedded query");
+        assert_eq!(
+            &analysis.text[analysis.offset..analysis.offset + 6],
+            "person",
+            "the host offset names the same token in the query"
+        );
+
+        // A cursor in the surrounding host language is not ours to answer.
+        let outside = text.find("const").expect("host code outside the template");
+        assert!(workspace.host_feature_analysis(&host, outside).is_none());
     }
 }

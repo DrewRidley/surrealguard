@@ -120,7 +120,11 @@ mod tests {
         let source = "LET $age = 42;\nRETURN $age;";
         for offset in [0usize, 4, 8, 15, 22, source.len()] {
             let position = offset_to_position(source, offset);
-            assert_eq!(position_to_offset(source, position), offset, "offset {offset}");
+            assert_eq!(
+                position_to_offset(source, position),
+                offset,
+                "offset {offset}"
+            );
         }
     }
 
@@ -133,6 +137,9 @@ mod tests {
         // A column past a line's end clamps to that line's newline byte.
         assert_eq!(position_to_offset(source, Position::new(0, 99)), 4);
         // A line past the last clamps to end of source.
-        assert_eq!(position_to_offset(source, Position::new(9, 0)), source.len());
+        assert_eq!(
+            position_to_offset(source, Position::new(9, 0)),
+            source.len()
+        );
     }
 }

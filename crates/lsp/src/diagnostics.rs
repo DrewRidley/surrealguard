@@ -68,7 +68,8 @@ pub fn workspace_finding_to_lsp_diagnostic(
     // Dead-code and redundancy findings should render greyed even when the
     // finding itself carries no tag: the code family is the signal. Editors
     // dedupe, but avoid emitting the tag twice.
-    if marks_code_unnecessary(finding.code().number()) && !tags.contains(&DiagnosticTag::UNNECESSARY)
+    if marks_code_unnecessary(finding.code().number())
+        && !tags.contains(&DiagnosticTag::UNNECESSARY)
     {
         tags.push(DiagnosticTag::UNNECESSARY);
     }

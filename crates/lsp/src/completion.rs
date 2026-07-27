@@ -30,9 +30,7 @@ pub fn candidate_to_item(text: &str, candidate: CompletionCandidate) -> Completi
             detail: candidate.detail.clone().map(|detail| format!(" {detail}")),
             description: candidate.documentation.clone(),
         }),
-        documentation: candidate
-            .documentation
-            .map(Documentation::String),
+        documentation: candidate.documentation.map(Documentation::String),
         sort_text: Some(candidate.sort_text),
         // Clients filter the list themselves as typing continues; they must
         // filter on the whole label, not on the edit's replaced text.
@@ -113,7 +111,12 @@ mod tests {
         let mapped: Vec<CompletionItemKind> = classes.into_iter().map(item_kind).collect();
         let unique: std::collections::BTreeSet<i32> = mapped
             .iter()
-            .map(|kind| serde_json::to_value(kind).expect("serializable").as_i64().unwrap_or(0) as i32)
+            .map(|kind| {
+                serde_json::to_value(kind)
+                    .expect("serializable")
+                    .as_i64()
+                    .unwrap_or(0) as i32
+            })
             .collect();
         assert_eq!(unique.len(), classes.len(), "icons must not collide");
     }
