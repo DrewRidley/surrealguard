@@ -38,3 +38,17 @@ SELECT VALUE name FROM organization;
 SELECT name FROM ONLY organization WHERE tier = 'pro' LIMIT 1;
 
 SELECT id, name FROM organization ORDER BY name LIMIT 10 START 5;
+
+-- `.*` on a record link is not an index — it names the row the link points at,
+-- and yields ONE object, not an array (`SELECT author.* AS r FROM ONLY post:p1`
+-- -> `{r: {id, name}}` on 3.0.5). The wrappers a link is reached through are
+-- kept, so `array<record<sector>>` splats to `array<{…}>`.
+SELECT owner.* AS owner_row FROM organization;
+
+SELECT sectors.* AS sector_rows FROM organization;
+
+SELECT owner.*.username AS owner_name FROM organization;
+
+-- A link naming SEVERAL tables splats to the union of their rows: the engine
+-- hands back whichever row the link happens to point at.
+SELECT owner.* AS owner_row FROM document;

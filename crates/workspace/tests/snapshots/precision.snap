@@ -45,6 +45,7 @@ table employee_of  [schemafull, relation account -> organization]
   field status                       : 'invited' | 'active' | 'suspended'  [default]
   field title                        : option<string>
   field unit                         : record<organization_unit>
+table external_record
 table milestone  [schemafull]
   field label                        : string
   field project                      : record<project>  [reference]
@@ -96,6 +97,7 @@ table task  [schemafull]
   field project                      : record<project>  [reference]
   field title                        : string
 table webhook_event  [schemafull]
+  field external                     : record<external_record>
   field headers                      : object
   field payload                      : any
   field provider                     : 'stripe' | 'github'
@@ -219,6 +221,8 @@ table webhook_event  [schemafull]
   stmt     10:1 define_field     : (no response)
   stmt     13:1 define_field     : (no response)
   stmt     16:1 define_field     : (no response)
+  stmt     22:1 define_table     : (no response)
+  stmt     24:1 define_field     : (no response)
 
 == source: schema/06_references_early.surql ==
   stmt     15:1 define_table     : (no response)
@@ -310,6 +314,10 @@ table webhook_event  [schemafull]
        modifier order      row_preserving=true
        modifier limit      row_preserving=true max=10
        modifier start      row_preserving=true
+  stmt     46:1 select           : array<{ owner_row: { active: bool, created_at: datetime, deactivated_reason: option<string | null>, email: string, id: record<account>, person: option<record<person>>, settings: { locale: option<string>, notify: bool, timezone: string }, updated_at: datetime, username: string } }>
+  stmt     48:1 select           : array<{ sector_rows: array<{ id: record<sector>, name: string }> }>
+  stmt     50:1 select           : array<{ owner_name: string }>
+  stmt     54:1 select           : array<{ owner_row: { active: bool, created_at: datetime, deactivated_reason: option<string | null>, email: string, id: record<account>, person: option<record<person>>, settings: { locale: option<string>, notify: bool, timezone: string }, updated_at: datetime, username: string } | { address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' } }>
   diag     4:36 I7014     Hint
   diag     6:51 I7014     Hint
   diag     8:41 I7014     Hint
@@ -327,6 +335,10 @@ table webhook_event  [schemafull]
   diag    32:33 I7014     Hint
   diag    34:49 I7014     Hint
   diag    36:24 I7014     Hint
+  diag    46:34 I7014     Hint
+  diag    48:38 I7014     Hint
+  diag    50:44 I7014     Hint
+  diag    54:34 I7014     Hint
 
 == source: queries/20_graph.surql ==
   stmt      4:1 select           : array<{ orgs: array<record<organization>> }>
@@ -338,6 +350,13 @@ table webhook_event  [schemafull]
   stmt     16:1 select           : array<{ employees: array<record<employee_of>> }>
   stmt     18:1 let              : (no response)
   stmt     20:1 let              : (no response)
+  stmt     26:1 select           : array<{ orgs: array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }> }>
+  stmt     30:1 select           : array<{ memberships: array<{ id: record<employee_of>, in: record<account>, joined_at: datetime, out: record<organization>, role: record<organization_role>, status: 'invited' | 'active' | 'suspended', title: option<string>, unit: record<organization_unit> }> }>
+  stmt     33:1 select           : array<{ members: array<{ active: bool, created_at: datetime, deactivated_reason: option<string | null>, email: string, id: record<account>, person: option<record<person>>, settings: { locale: option<string>, notify: bool, timezone: string }, updated_at: datetime, username: string }> }>
+  stmt     35:1 select           : array<{ active_orgs: array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }> }>
+  stmt     41:1 select           : array<{ org_names: array<string> }>
+  stmt     43:1 select           : array<{ "->employee_of": { "->organization": array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }> } }>
+  stmt     46:1 select           : array<{ orgs: array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }> }>
   let      18:5 $member          : option<array<record<organization>>>
   let      20:5 $edge_titles     : array<array<option<string>>>
   diag     4:49 I7014     Hint
@@ -350,6 +369,13 @@ table webhook_event  [schemafull]
   diag     18:5 W7001     Warning
   diag     20:5 W7001     Warning
   diag    20:59 I7014     Hint
+  diag    26:51 I7014     Hint
+  diag    30:44 I7014     Hint
+  diag    33:49 I7014     Hint
+  diag    35:83 I7014     Hint
+  diag    41:61 I7014     Hint
+  diag    43:43 I7014     Hint
+  diag    46:41 I7014     Hint
 
 == source: queries/30_narrowing.surql ==
   stmt      5:1 let              : (no response)
@@ -1085,9 +1111,12 @@ table webhook_event  [schemafull]
   stmt      6:1 let              : (no response)
   stmt      8:1 let              : (no response)
   stmt     10:1 return           : { headers: option<object>, payload: option<any> }
+  stmt     16:1 select           : array<{ external_row: any }>
   let       6:5 $payload         : option<any>
   let       8:5 $headers         : option<object>
   diag     4:31 I7014     Hint
+  diag    16:17 I7008     Hint
+  diag    16:40 I7014     Hint
 
 == source: queries/95_parens.surql ==
   stmt      9:1 select           : array<{ scaled_length: int }>

@@ -12,7 +12,7 @@
 #
 # Regenerating PRESERVES the `# expected:` notes on sites that still exist.
 #
-# total: 13 any/unknown leaves across 13 site(s)
+# total: 14 any/unknown leaves across 14 site(s)
 
 1  queries/41_iterables.surql/let/$from_range@58:5
 1  queries/41_iterables.surql/let/$from_range_expr@68:5
@@ -24,6 +24,7 @@
 1  queries/41_iterables.surql/stmt/return@84:1
 1  queries/90_opaque.surql/let/$payload@6:5  # expected: binds `webhook_event.payload`, which is declared `any`
 1  queries/90_opaque.surql/stmt/return@10:1  # expected: returns the `any`-declared payload
+1  queries/90_opaque.surql/stmt/select@16:1  # expected: `external.*` splats a link to `external_record`, which declares no fields — there is no row shape to expand to, exactly where `SELECT * FROM external_record` gives up. The site reports 7008 rather than staying silent.
 1  queries/90_opaque.surql/stmt/select@4:1  # expected: projects `webhook_event.payload`, which is declared `any`
 1  schema/field/project.unlinked  # expected: `<~sector` names a real table that carries no `record<project> REFERENCE` field, so the back-link is unprovable from the schema — untyped is the honest answer, and reporting it would be a false positive
 1  schema/field/webhook_event.payload  # expected: declared `TYPE any` — a third-party webhook body the author deliberately did not model

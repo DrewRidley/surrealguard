@@ -14,3 +14,11 @@ DEFINE FIELD payload ON webhook_event TYPE any;
 
 -- Shapeless but at least known to be an object.
 DEFINE FIELD headers ON webhook_event FLEXIBLE TYPE object;
+
+-- A table whose rows an external system owns, so the workspace declares no
+-- fields on it. `SELECT * FROM external_record` gives up here, and so must a
+-- `.*` on a link to it — same wall, same code (7008). The link is what makes
+-- that reachable from a query.
+DEFINE TABLE external_record SCHEMALESS;
+
+DEFINE FIELD external ON webhook_event TYPE record<external_record>;

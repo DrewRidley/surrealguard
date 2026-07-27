@@ -1494,6 +1494,64 @@ mod tests {
         assert!(fires(method, "E5001"), "codes: {:?}", codes(method));
     }
 
+    /// The schema the splat-contract tests share.
+    const LINKS: &str = concat!(
+        "DEFINE TABLE user SCHEMAFULL;\n",
+        "DEFINE FIELD name ON user TYPE string;\n",
+        "DEFINE TABLE post SCHEMAFULL;\n",
+        "DEFINE FIELD title ON post TYPE string;\n",
+        "DEFINE FIELD author ON post TYPE record<user>;\n",
+        "DEFINE FIELD editors ON post TYPE array<record<user>>;\n",
+        "DEFINE FIELD maybe_author ON post TYPE option<record<user>>;\n",
+    );
+
+    #[test]
+    fn splatting_a_record_link_is_not_a_contract_violation() {
+        // `.*` is not an index: on a link it names the row the link points at,
+        // and the engine returns that row (verified on 3.0.5 —
+        // `SELECT author.* FROM ONLY post:p1` -> `{author: {id, name}}`).
+        // Reporting 2030 here refused valid SurrealQL.
+        for tail in ["author.*", "author.*.name", "editors.*", "editors.*.name"] {
+            let query = format!("{LINKS}SELECT VALUE {tail} FROM post;\n");
+            let codes = codes(&query);
+            assert!(
+                !codes.iter().any(|code| code == "E2030"),
+                "codes for {tail:?}: {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn splatting_something_with_no_row_still_fires() {
+        // The boundaries the splat keeps: a scalar has nothing to splat, and —
+        // exactly as an index does — a union with one arm that has no row is a
+        // contract violation, not a shape to guess through.
+        let scalar = format!("{LINKS}SELECT VALUE title.* FROM post;\n");
+        assert!(fires(&scalar, "E2030"), "codes: {:?}", codes(&scalar));
+
+        let optional = format!("{LINKS}SELECT VALUE maybe_author.* FROM post;\n");
+        assert!(fires(&optional, "E2030"), "codes: {:?}", codes(&optional));
+
+        // A splat is the ONLY position a record admits: indexing one is still
+        // a violation (the engine answers NONE).
+        let indexed = format!("{LINKS}SELECT VALUE author[0] FROM post;\n");
+        assert!(fires(&indexed, "E2030"), "codes: {:?}", codes(&indexed));
+    }
+
+    #[test]
+    fn a_splat_with_no_row_shape_says_why() {
+        // Prove-or-stay-silent applies to the type; the author staring at the
+        // resulting `any` still deserves to know which table has nothing to
+        // expand to. Same contract, same code, as a bare `SELECT *` on it.
+        let query = concat!(
+            "DEFINE TABLE opaque SCHEMALESS;\n",
+            "DEFINE TABLE holder SCHEMAFULL;\n",
+            "DEFINE FIELD link ON holder TYPE record<opaque>;\n",
+            "SELECT VALUE link.* FROM holder;\n",
+        );
+        assert!(fires(query, "L7008"), "codes: {:?}", codes(query));
+    }
+
     #[test]
     fn closure_taking_methods_do_not_fire_5001() {
         // Error-severity 5001 on valid SurrealQL: `$rows.map(|$o| …)` was

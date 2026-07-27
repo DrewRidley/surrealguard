@@ -4091,6 +4091,48 @@ mod tests {
     }
 
     #[test]
+    fn a_wildcard_after_a_traversal_expands_the_landed_row() {
+        // The gap this test exists for: `->follows->user.*` inferred `any`,
+        // silently, while `->follows->user.name` after the same hops was
+        // right. The wildcard must expand to the target's field object —
+        // exactly what `SELECT * FROM user` projects. Engine-verified on
+        // 3.0.5: `SELECT ->follows->user.* AS r FROM ONLY user:ada` ->
+        // `{r: [{age, id, name}]}`.
+        let schema = schema_from(concat!(
+            "DEFINE TABLE user SCHEMAFULL;\n",
+            "DEFINE FIELD name ON user TYPE string;\n",
+            "DEFINE FIELD age ON user TYPE int;\n",
+            "DEFINE TABLE follows TYPE RELATION IN user OUT user SCHEMAFULL;\n",
+            "DEFINE FIELD since ON follows TYPE datetime;\n",
+        ));
+
+        let target = analyze(&schema, "SELECT ->follows->user.* AS r FROM user;");
+        let row = object_fields(array_element(&target));
+        let user = object_fields(array_element(&row["r"]));
+        assert_eq!(user["name"], Kind::String);
+        assert_eq!(user["age"], Kind::Int);
+        assert_eq!(user["id"], Kind::Record(vec!["user".into()]));
+
+        // A single hop's wildcard stands on the EDGE, just as `->follows.since`
+        // does — including the implicit `id`/`in`/`out`.
+        let edge = analyze(&schema, "SELECT ->follows.* AS r FROM user;");
+        let row = object_fields(array_element(&edge));
+        let follows = object_fields(array_element(&row["r"]));
+        assert_eq!(follows["since"], Kind::Datetime);
+        assert_eq!(follows["in"], Kind::Record(vec!["user".into()]));
+        assert_eq!(follows["out"], Kind::Record(vec!["user".into()]));
+
+        // `.*` names no path segment: a field after it reads off the row, and
+        // the unaliased key drops the wildcard the way the engine's own key
+        // simplification does.
+        let tail = analyze(&schema, "SELECT ->follows->user.*.name FROM user;");
+        let row = object_fields(array_element(&tail));
+        let follows = object_fields(&row["->follows"]);
+        let user = object_fields(&follows["->user"]);
+        assert_eq!(user["name"], Kind::Array(Box::new(Kind::String), None));
+    }
+
+    #[test]
     fn graph_projection_without_alias_nests_under_traversal_segments() {
         let schema = schema_from(
             "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;\nDEFINE TABLE user SCHEMAFULL;\nDEFINE FIELD name ON user TYPE string;\nDEFINE FIELD age ON user TYPE int;\nDEFINE TABLE friend TYPE RELATION IN person OUT user;",
