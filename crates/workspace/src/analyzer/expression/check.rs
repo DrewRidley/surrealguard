@@ -334,8 +334,17 @@ fn check_cast(
 }
 
 /// Walks an idiom's parts with the kind in hand, enforcing position
-/// contracts: index/filter/splat apply to collections (2030), and method
-/// calls resolve on their receiver's kind (5001).
+/// contracts: every named field exists on the value it is read off (1002),
+/// index/filter/splat apply to collections (2030), and method calls resolve on
+/// their receiver's kind (5001).
+///
+/// **This is the one place a part behind another part is checked**, whatever
+/// the parts are. A traversal is not a wall: `->follows->user` resolves to
+/// `array<record<user>>` like any other step, so `.john` behind it is checked
+/// against `user` by the same code that checks `author.john`. Four separate
+/// "resolves a type, validates nothing" holes lived in the gap that used to be
+/// here, because a graph idiom returned early and every tail form needed its
+/// own hand-written recognizer to be checked at all.
 fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
     use crate::analyzer::expression::infer::idiom_prefix_kinds;
 
@@ -349,37 +358,137 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
     // stepping from `member_of`. That leading value is generally an open
     // record (a session param), so its true origin is unknown; leave it
     // lenient rather than misattribute.
-    if idiom
+    let has_graph = idiom
         .parts
         .iter()
-        .any(|part| matches!(part.node, ast::IdiomPart::Graph { .. }))
-    {
-        let rooted_at_value = matches!(
-            idiom.parts.first().map(|p| &p.node),
-            Some(ast::IdiomPart::Start(_))
-        );
-        if !rooted_at_value {
-            if let Some(table) = ctx.row_table() {
-                let name = table.name.clone();
-                crate::analyzer::data::graph::check_graph_idiom(ctx, &name, idiom);
-            }
+        .any(|part| matches!(part.node, ast::IdiomPart::Graph { .. }));
+    let rooted_at_value = matches!(
+        idiom.parts.first().map(|p| &p.node),
+        Some(ast::IdiomPart::Start(_))
+    );
+    if has_graph {
+        if rooted_at_value {
+            return;
         }
-        return;
+        if let Some(table) = ctx.row_table() {
+            let name = table.name.clone();
+            crate::analyzer::data::graph::check_graph_idiom(ctx, &name, idiom);
+            // The two tail forms that need the *resolved traversal target* to
+            // be checked at all — a `.{…}`'s selected names, and a `.*` whose
+            // row has no declared shape. They stand here, with every other
+            // idiom check, rather than beside the projection type: checking a
+            // traversal must not depend on which caller happened to type it.
+            crate::analyzer::data::select::validate_graph_destructure(ctx, &name, idiom);
+            crate::analyzer::data::select::validate_graph_wildcard(ctx, &name, idiom);
+            // …and the tail forms nothing types at all, which would otherwise
+            // leave the projection a silent `any`.
+            crate::analyzer::data::select::validate_graph_tail(ctx, idiom);
+        }
     }
 
-    // A graph tail's destructure is checked where the traversal is resolved
-    // (`validate_graph_destructure`), which is why this stands after the
-    // early return above rather than before it.
     check_field_after_destructure(ctx, &idiom.parts);
 
+    // An idiom that is nothing but fields is validated whole, by the
+    // `plain_field_segments` + `check_field_path` route each position already
+    // runs (a projection, a WHERE, a SET target…). This walk owns exactly its
+    // complement — every idiom with a traversal, an index, a splat, a filter or
+    // a method in it — so the two together cover all of them and neither
+    // double-reports.
+    // Whether a field segment of this idiom is this walk's to check.
+    //
+    // Not when the idiom is nothing but fields: that shape is validated whole,
+    // by the `plain_field_segments` + `check_field_path` route each position
+    // already runs (a projection, a WHERE, a SET target…). This walk owns
+    // exactly its complement — every idiom with a traversal, an index, a splat,
+    // a filter or a method in it — so the two together cover all of them and
+    // neither double-reports.
+    //
+    // And not when the idiom is rooted at a leading VALUE (`$this.currencies`,
+    // `$after.subject.unit`). No route checks those today, and the reason is
+    // ordering, not oversight: a `DEFINE FIELD … ASSERT $value IN
+    // $this.currencies` reads a sibling field that the incrementally-built
+    // catalog may not hold yet — `currencies` is declared four lines further
+    // down in the real-world corpus, and `folder.path`'s own COMPUTED body
+    // reads `$this.parent.path`, the field it is in the middle of defining.
+    // Checking a value-rooted path needs a catalog that sees the whole
+    // workspace first (the `check_table_defined_anywhere` problem); until then
+    // it stays as silent as it was.
+    let checks_fields = !rooted_at_value
+        && crate::analyzer::expression::infer::plain_field_segments(idiom).is_none();
+
+    // A `.*` is not a path segment: on a record link it yields that record's
+    // ROW, whose fields are the table's, so the field behind it is checked
+    // against the table the splat expanded. (Same rule the traversal tail's own
+    // path resolution uses, engine-verified: `->follows->user.*.name` keys under
+    // `->follows.->user.name`.)
+    let mut splat_source: Option<Kind> = None;
+    // Whether the value in hand is a *flattened* one — the array a field read
+    // over a collection produces. SurrealDB dispatches the next part on its
+    // ELEMENTS, not on the array: on 3.2.3 `->follows->user.name.uppercase()`
+    // is `['BOB']` and `friends.name.uppercase()` is `['BOB']`, while
+    // `->follows->user.len()` and `friends.len()` are the array's own length.
+    // Checking the flattened value as a plain array reports `uppercase` as a
+    // missing array method, which is how a correct query became a 5001.
+    let mut flattened = false;
+
     for (part, receiver) in idiom_prefix_kinds(idiom, ctx) {
+        let was_collection = receiver
+            .as_ref()
+            .map(|kind| {
+                crate::analyzer::expression::infer::collection_element_kind(kind).is_some()
+            })
+            .unwrap_or(false);
+        let field_receiver = splat_source.take().or_else(|| receiver.clone());
+        splat_source = match &part.node {
+            ast::IdiomPart::All => receiver
+                .as_ref()
+                .filter(|kind| crate::kinds::record_link_shape(kind).is_some())
+                .cloned(),
+            _ => None,
+        };
+        let distributing = flattened;
+        flattened = match &part.node {
+            // Distributing a read over a collection flattens it.
+            ast::IdiomPart::Field(_) | ast::IdiomPart::All | ast::IdiomPart::Destructure(_) => {
+                was_collection
+            }
+            // These consume the collection, or replace the value outright.
+            ast::IdiomPart::Index(_) | ast::IdiomPart::Last | ast::IdiomPart::Method { .. } => {
+                false
+            }
+            // A traversal answers a fresh array of its own; a filter and a `?`
+            // leave the value as it stands.
+            ast::IdiomPart::Graph { .. } => false,
+            _ => flattened,
+        };
         let Some(receiver) = receiver else {
             continue;
         };
         if receiver == Kind::Any {
             continue;
         }
+        // On a flattened value the position contracts answer to the element,
+        // because that is what the engine dispatches on.
+        let receiver = if distributing {
+            match crate::analyzer::expression::infer::collection_element_kind(&receiver) {
+                Some(element) if element != Kind::Any => element,
+                Some(_) => continue,
+                None => receiver,
+            }
+        } else {
+            receiver
+        };
         match &part.node {
+            // A field read off a value whose table is known: the field must be
+            // one the table declares. Routed into `check_field_path`, the same
+            // function every other position uses, so the message, the "did you
+            // mean" and the schemaless leniency are identical wherever a field
+            // is named.
+            ast::IdiomPart::Field(name) if checks_fields => {
+                if let Some(kind) = &field_receiver {
+                    check_field_on_receiver(ctx, kind, name, part.span);
+                }
+            }
             // Index/filter needs a collection — and a union of
             // collections is one: `[[1, 2], [3]]` is
             // `array<int, 2> | array<int, 1>`, indexable on every arm.
@@ -461,6 +570,33 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
             _ => {}
         }
     }
+}
+
+/// One field segment, checked against the value it is read off.
+///
+/// The receiver has to name a single table for there to be anything to check —
+/// `record<user>` and every `option`/`array`/`set` wrapping of it do, a
+/// multi-table link and an open `record` do not. From there this is the ordinary
+/// unknown-field check ([`crate::analyzer::data::check_field_path`]): same code,
+/// same 1002, same "did you mean", same schemaless leniency as a field named
+/// anywhere else. Reusing it is the point — a traversal tail's field is not a
+/// different kind of field.
+fn check_field_on_receiver(
+    ctx: &mut AnalysisContext<'_>,
+    receiver: &Kind,
+    name: &str,
+    span: surrealguard_syntax::span::ByteRange,
+) {
+    let Some((_, targets)) = crate::kinds::record_link_shape(receiver) else {
+        return;
+    };
+    let [target] = targets.as_slice() else {
+        return;
+    };
+    let Some(table) = ctx.schema().tables.get(&target.to_string()) else {
+        return;
+    };
+    crate::analyzer::data::check_field_path(ctx, table, &[name.to_string()], span, 1002);
 }
 
 fn check_binary(
@@ -1843,5 +1979,195 @@ mod tests {
             "SELECT * FROM post WHERE $needle @@ 'hello';\n",
         );
         assert!(!fires(query, "E1027"), "codes: {:?}", codes(query));
+    }
+    // ---- a traversal is not a wall: every tail form is checked ----
+
+    /// A small graph schema: `user` with three fields, a `follows` self-edge,
+    /// a `wrote` edge onto `post`, and a `post.author` link back to `user`.
+    const GRAPH_SCHEMA: &str = concat!(
+        "DEFINE TABLE user SCHEMAFULL;\n",
+        "DEFINE FIELD name ON user TYPE string;\n",
+        "DEFINE FIELD age ON user TYPE int;\n",
+        "DEFINE FIELD email ON user TYPE string;\n",
+        "DEFINE TABLE post SCHEMAFULL;\n",
+        "DEFINE FIELD title ON post TYPE string;\n",
+        "DEFINE FIELD author ON post TYPE record<user>;\n",
+        "DEFINE TABLE follows SCHEMAFULL TYPE RELATION FROM user TO user;\n",
+        "DEFINE FIELD since ON follows TYPE datetime;\n",
+        "DEFINE TABLE wrote SCHEMAFULL TYPE RELATION FROM user TO post;\n",
+    );
+
+    fn graph_codes(query: &str) -> Vec<String> {
+        codes(&format!("{GRAPH_SCHEMA}{query}"))
+    }
+
+    fn graph_fires(query: &str, code: &str) -> bool {
+        graph_codes(query).iter().any(|c| c == code)
+    }
+
+    #[test]
+    fn every_tail_form_behind_a_traversal_validates_the_field_it_names() {
+        // Each of these resolved a type for the site and checked nothing. The
+        // engine agrees they are wrong: every one yields NONE on 3.2.3, the
+        // same answer `SELECT john FROM user` gives — which has always been an
+        // E1002. The route is now literally the same code
+        // (`data::check_field_path`), so the two cannot drift apart again.
+        for query in [
+            // a plain field, on the landed row and on the edge
+            "SELECT ->follows->user.john AS x FROM user;",
+            "SELECT ->follows.john AS x FROM user;",
+            // a dotted chain, crossing a declared link and an implicit one
+            "SELECT ->wrote->post.author.john AS x FROM user;",
+            "SELECT ->follows.out.john AS x FROM user;",
+            // behind a splat — `.*` names no path segment
+            "SELECT ->follows->user.*.john AS x FROM user;",
+            // behind an index, `[$]`, and a step-local filter
+            "SELECT ->follows->user[0].john AS x FROM user;",
+            "SELECT ->follows->user[$].john AS x FROM user;",
+            "SELECT ->follows->user[WHERE name = 'a'].john AS x FROM user;",
+            // in front of a method call
+            "SELECT ->follows->user.john.len() AS x FROM user;",
+            // a destructure's selection, and a field read out of it
+            "SELECT ->follows->user.{john} AS x FROM user;",
+            "SELECT ->follows->user.{name}.age AS x FROM user;",
+            // unaliased, in a WHERE, and from a leading record link
+            "SELECT ->follows->user.john FROM user;",
+            "SELECT name FROM user WHERE ->follows->user.john = 1;",
+            "SELECT author->follows->user.john AS x FROM post;",
+        ] {
+            assert!(
+                graph_fires(query, "E1002"),
+                "{query} — codes: {:?}",
+                graph_codes(query)
+            );
+        }
+    }
+
+    #[test]
+    fn a_valid_tail_behind_a_traversal_reports_nothing() {
+        // The other half of the contract: the same forms, spelled right.
+        for query in [
+            "SELECT ->follows->user.name AS x FROM user;",
+            "SELECT ->follows.since AS x FROM user;",
+            "SELECT ->wrote->post.author.name AS x FROM user;",
+            "SELECT ->follows.out.name AS x FROM user;",
+            "SELECT ->follows->user.*.name AS x FROM user;",
+            "SELECT ->follows->user[0].name AS x FROM user;",
+            "SELECT ->follows->user[WHERE name = 'a'].name AS x FROM user;",
+            "SELECT ->follows->user.{name}.name AS x FROM user;",
+            "SELECT name FROM user WHERE ->follows->user.name = 'a';",
+            "SELECT author->follows->user.name AS x FROM post;",
+        ] {
+            for code in ["E1002", "E2030", "E3001", "E3002", "E5001"] {
+                assert!(
+                    !graph_fires(query, code),
+                    "{query} raised {code} — codes: {:?}",
+                    graph_codes(query)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_traversal_resuming_after_a_field_tail_steps_from_what_the_field_names() {
+        // `post.author` is a `record<user>`, so `->follows->user` behind it
+        // steps from `user`. The step walk kept standing on `post` and reported
+        // a valid query (3.2.3 answers `[[user:bob]]`) as two graph violations.
+        let query = "SELECT ->wrote->post.author->follows->user AS x FROM user;";
+        for code in ["E3001", "E3002", "E3009"] {
+            assert!(
+                !graph_fires(query, code),
+                "{query} raised {code} — codes: {:?}",
+                graph_codes(query)
+            );
+        }
+    }
+
+    #[test]
+    fn a_traversal_from_a_value_that_holds_no_records_still_reports() {
+        // The other side of the same rebase: `post.title` is a `string`, and a
+        // `->` cannot start from one (3009). This used to be checked only when
+        // the field prefix LED the idiom.
+        assert!(
+            graph_fires(
+                "SELECT ->wrote->post.title->follows->user AS x FROM user;",
+                "E3009"
+            ),
+            "codes: {:?}",
+            graph_codes("SELECT ->wrote->post.title->follows->user AS x FROM user;")
+        );
+    }
+
+    #[test]
+    fn a_tail_form_the_traversal_cannot_type_says_so_instead_of_staying_any() {
+        // Prove-or-stay-silent's other half: a site left `any` must say why.
+        // 6003 is the analyzer-limitation code, hint-severity and
+        // allow-by-default — it costs a default run nothing and makes the
+        // silence legible to anyone who turns it on.
+        for query in [
+            "SELECT ->follows->user[0] AS x FROM user;",
+            "SELECT ->follows->user[$] AS x FROM user;",
+            "SELECT ->follows->user.len() AS x FROM user;",
+            "SELECT ->follows->user.{1..3} AS x FROM user;",
+            "SELECT ->wrote->post.author->follows->user AS x FROM user;",
+            // A destructure entry SurrealDB itself rejects ("expected a `*` or
+            // a destructuring", 3.2.3), which our grammar admits and nothing
+            // could type.
+            "SELECT ->wrote->post.{author.name} AS x FROM user;",
+        ] {
+            assert!(
+                graph_fires(query, "E6003"),
+                "{query} — codes: {:?}",
+                graph_codes(query)
+            );
+        }
+    }
+
+    #[test]
+    fn a_method_behind_a_traversal_dispatches_on_what_the_engine_dispatches_on() {
+        // The traversal itself is an array, so `->follows->user.nosuchmethod()`
+        // is an array method that does not exist ("no such method found for the
+        // array type", 3.2.3) — 5001.
+        assert!(
+            graph_fires(
+                "SELECT ->follows->user.nosuchmethod() AS x FROM user;",
+                "E5001"
+            ),
+            "codes: {:?}",
+            graph_codes("SELECT ->follows->user.nosuchmethod() AS x FROM user;")
+        );
+        // A field read behind it FLATTENS, and the engine then dispatches on
+        // the elements: `->follows->user.name.uppercase()` is `['BOB']` on
+        // 3.2.3, not an error. Checking the flattened array as a plain array
+        // makes `uppercase` a missing array method — a false 5001 on a correct
+        // query.
+        for query in [
+            "SELECT ->follows->user.name.uppercase() AS x FROM user;",
+            "SELECT ->wrote->post.author.name.uppercase() AS x FROM user;",
+        ] {
+            assert!(
+                !graph_fires(query, "E5001"),
+                "{query} — codes: {:?}",
+                graph_codes(query)
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_rooted_path_is_still_left_to_its_own_route() {
+        // `$this.x` inside a DEFINE FIELD body reads a sibling the
+        // incrementally-built catalog may not hold yet — `currencies` below is
+        // declared after the field that asserts against it, which is how the
+        // real-world corpus spells it. Checking value-rooted paths needs a
+        // whole-workspace catalog first; until then this stays as silent as it
+        // was, and this test is what says that is a decision.
+        let query = concat!(
+            "DEFINE TABLE country SCHEMAFULL;\n",
+            "DEFINE FIELD currency ON country TYPE option<record<currency>>\n",
+            "  ASSERT $value IN $this.currencies;\n",
+            "DEFINE FIELD currencies ON country TYPE array<record<currency>> DEFAULT [];\n",
+            "DEFINE TABLE currency SCHEMAFULL;\n",
+        );
+        assert!(!fires(query, "E1002"), "codes: {:?}", codes(query));
     }
 }

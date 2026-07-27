@@ -37,3 +37,38 @@ SELECT ->employee_of->(organization.*) AS o FROM account;
 -- acceptable — the engine rejects both outright.
 SELECT ->employee_of->(organization LIMIT -1) AS o FROM account;
 SELECT ->employee_of->(organization START -2) AS o FROM account;
+
+-- A traversal resolves a type for its tail; nothing validated what the tail
+-- NAMED. Every form below resolved cleanly and reported nothing.
+
+-- A plain field on the landed row, and on the edge.
+SELECT ->employee_of->organization.nope AS o FROM account;
+SELECT ->employee_of.nope AS o FROM account;
+
+-- A dotted chain that crosses the landed row's own link, and the edge's
+-- implicit `out` link.
+SELECT ->employee_of->organization.owner.nope AS o FROM account;
+SELECT ->employee_of.out.nope AS o FROM account;
+
+-- A field read off a splatted row: `.*` names no path segment, so `nope` is
+-- still `organization`'s field to have.
+SELECT ->employee_of->organization.*.nope AS o FROM account;
+
+-- Behind an index, behind `[$]`, and behind a step's own filter — none of them
+-- change which table the field belongs to.
+SELECT ->employee_of->organization[0].nope AS o FROM account;
+SELECT ->employee_of->organization[$].nope AS o FROM account;
+SELECT ->employee_of[WHERE status = 'active']->organization.nope AS o FROM account;
+
+-- In front of a method call: the receiver is wrong before the method is.
+SELECT ->employee_of->organization.nope.len() AS o FROM account;
+
+-- A method the receiver's kind does not have. The traversal is an array, and
+-- SurrealDB says so: "no such method found for the array type" (3.2.3).
+SELECT ->employee_of->organization.nosuchmethod() AS o FROM account;
+
+-- In a WHERE, not a projection: the same tail, the same contract.
+SELECT username FROM account WHERE ->employee_of->organization.nope = 1;
+
+-- A traversal that resumes after a field tail whose field does not exist.
+SELECT ->employee_of->organization.nope->employee_of->organization AS o FROM account;

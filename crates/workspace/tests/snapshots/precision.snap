@@ -380,6 +380,12 @@ table webhook_event  [schemafull]
   stmt     71:1 select           : array<{ statuses: array<'invited' | 'active' | 'suspended'> }>
   stmt     74:1 select           : array<{ members: array<{ username: string }> }>
   stmt     76:1 select           : array<{ active: array<string> }>
+  stmt     83:1 select           : array<{ org_names: array<string> }>
+  stmt     85:1 select           : array<{ owners: array<string> }>
+  stmt     88:1 select           : array<{ org_names: array<string> }>
+  stmt     92:1 select           : array<{ org_names: array<string> }>
+  stmt     98:1 select           : array<{ peers: any }>
+  stmt    101:1 select           : array<{ active_names: array<string> }>
   let      18:5 $member          : option<array<record<organization>>>
   let      20:5 $edge_titles     : array<array<option<string>>>
   diag     4:49 I7014     Hint
@@ -408,6 +414,13 @@ table webhook_event  [schemafull]
   diag    71:57 I7014     Hint
   diag    74:60 I7014     Hint
   diag    76:90 I7014     Hint
+  diag    83:59 I7014     Hint
+  diag    85:66 I7014     Hint
+  diag    88:49 I7014     Hint
+  diag    92:61 I7014     Hint
+  diag    98:41 I6003     Hint
+  diag    98:83 I7014     Hint
+  diag   101:87 I7014     Hint
 
 == source: queries/30_narrowing.surql ==
   stmt      5:1 let              : (no response)

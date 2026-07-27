@@ -1219,6 +1219,48 @@ fn graph_hop_target(
     reaches.then(|| next.to_string())
 }
 
+/// The kind ONE graph step reaches from the value standing in front of it.
+///
+/// This is what lets the *general* idiom walk
+/// ([`crate::analyzer::expression::infer::idiom_prefix_kinds`]) cross a
+/// traversal instead of stopping at it. Before it existed, every part behind a
+/// `->` was outside the walk's reach, so the only thing that could validate a
+/// traversal tail was a hand-written recognizer — and one had to be written per
+/// tail form, which is why four of them were missing.
+///
+/// A step lands on an array: `SELECT ->follows->user FROM user:ada` yields
+/// `[user:bob]` even from a single record (3.2.3). Wrappers on the receiver are
+/// peeled first — stepping from `array<record<user>>` gives
+/// `array<record<follows>>`, not an array of arrays.
+///
+/// `None` — prove-or-stay-silent — when the step names no single table (`?`,
+/// `->(a, b)`, unmodeled syntax, a `<~` reference step), when the receiver is
+/// not a record of exactly one table, or when the schema proves no such
+/// connection. The step's own findings come from [`super::graph`]; this
+/// resolves only the type.
+pub(crate) fn graph_step_kind(
+    current: &Kind,
+    dir: ast::GraphDir,
+    step: &ast::GraphStep,
+    schema: &SchemaIndex,
+) -> Option<Kind> {
+    if step.reference || step.wildcard || !step.unmodeled.is_empty() {
+        return None;
+    }
+    let [target] = step.targets.as_slice() else {
+        return None;
+    };
+    let (_, sources) = crate::kinds::record_link_shape(current)?;
+    let [source] = sources.as_slice() else {
+        return None;
+    };
+    let landed = graph_hop_target(&source.to_string(), dir, target.node.as_str(), schema)?;
+    Some(Kind::Array(
+        Box::new(Kind::Record(vec![landed.as_str().into()])),
+        None,
+    ))
+}
+
 /// A graph part's direction and single target table. Multi-target steps
 /// (`->(a, b)`) do not resolve to one table and stay unresolved — and neither
 /// does a step carrying syntax the AST did not model, because whatever that
@@ -1354,6 +1396,34 @@ fn is_graph_projection(projection: &ast::Projection) -> bool {
 // Projections
 // ---------------------------------------------------------------------------
 
+/// Checks a graph projection — **unconditionally**, before anything tries to
+/// type it.
+///
+/// This used to be three calls inline in each projection branch, followed by
+/// `if let Some(kind) = graph_projection_kind(…) { … return; }`. That `return`
+/// is what made checking conditional on typing: a traversal whose type resolved
+/// left the branch before the ordinary expression check ran, so the *better* a
+/// projection was understood the *less* it was checked. `->wrote->post.author`
+/// resolved (to `array<any>`), returned early, and took `.nope` behind it with
+/// it; `->follows->user.john` did not resolve, fell through, and was checked.
+/// Exactly inverted.
+///
+/// Everything a traversal's parts must satisfy is reached from here, through
+/// [`crate::analyzer::expression::check::check_value_expression`] — the same
+/// entry point every other projected expression goes through.
+fn check_graph_projection(
+    ctx: &mut AnalysisContext<'_>,
+    table: &TableDef,
+    expr: &ast::Spanned<ast::Expr>,
+) {
+    // Re-resolve the table from the schema so the borrow carries the context's
+    // lifetime rather than the caller's (as `computed_kind` does).
+    let row = ctx.schema().tables.get(&table.name);
+    ctx.with_row_table(row, |ctx| {
+        crate::analyzer::expression::check::check_value_expression(ctx, expr)
+    });
+}
+
 /// `SELECT VALUE <expr>` — the row type is the projected value itself.
 fn value_projection_kind(
     stmt: &ast::SelectStmt,
@@ -1370,9 +1440,7 @@ fn value_projection_kind(
 
     match &expr.node {
         ast::Expr::Idiom(idiom) if starts_with_graph(idiom) => {
-            crate::analyzer::data::graph::check_graph_idiom(ctx, row_table_name, idiom);
-            validate_graph_destructure(ctx, row_table_name, idiom);
-            validate_graph_wildcard(ctx, row_table_name, idiom);
+            check_graph_projection(ctx, table, expr);
             graph_projection_kind(row_table_name, idiom, ctx.schema(), false)
         }
         // `SELECT VALUE author.{name}` is the destructured OBJECT itself, not
@@ -1509,11 +1577,7 @@ fn project_expr(
 
     if let ast::Expr::Idiom(idiom) = &expr.node {
         if starts_with_graph(idiom) {
-            crate::analyzer::data::graph::check_graph_idiom(ctx, row_table_name, idiom);
-            // A `.{…}` destructure tail selects fields on the resolved graph
-            // target; each must exist there (E1002), independent of alias.
-            validate_graph_destructure(ctx, row_table_name, idiom);
-            validate_graph_wildcard(ctx, row_table_name, idiom);
+            check_graph_projection(ctx, table, expr);
             // An aliased graph target materializes when FETCHed by alias.
             let materialize = alias_name
                 .as_ref()
@@ -2106,7 +2170,13 @@ fn graph_tail_receiver<'i>(
     let reached = if segments.is_empty() {
         Kind::Record(vec![name.as_str().into()])
     } else {
-        kind_for_path(table, &segments)?
+        // Schema-aware, so a tail that crosses the landed row's own link
+        // resolves rather than stopping at it: `->employee_of->organization
+        // .owner.username` is a `string`, and `->employee_of.out.name` reads
+        // through the edge's implicit `out`. `kind_for_path` answers `Any` past
+        // any link, which is a silent `any` at exactly the sites this walk is
+        // meant to type.
+        resolve_field_path(schema, table, &segments)?
     };
     Some((reached, wildcard))
 }
@@ -2371,13 +2441,77 @@ fn destructure_kinds(
     Some((wrappers, outputs))
 }
 
+/// Names the tail part that stopped the traversal from being typed.
+///
+/// [`graph_projection_kind`] models exactly three kinds of tail part — a field,
+/// a `.*`, and a `.{…}` — and answers `None` for everything else, which reaches
+/// the author as a bare `any` with no finding: the projection *looks* analyzed.
+/// Every other reason a traversal cannot be typed already says so (6003 at the
+/// step, 3001/3002 at the edge); this is the tail's half of the same contract.
+///
+/// The match is exhaustive on purpose. The three modelled forms are listed as
+/// themselves rather than caught by a wildcard, so a new `IdiomPart` cannot be
+/// added without someone deciding which side of this line it falls on — and the
+/// unmodelled side is *reported*, never silent.
+pub(crate) fn validate_graph_tail(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
+    // `graph_split` only means anything for an idiom that starts with a step.
+    if !starts_with_graph(idiom) {
+        return;
+    }
+    let (_, tail) = graph_split(idiom);
+    for part in tail {
+        let unmodelled = match &part.node {
+            // Modelled: these resolve, and their contents are checked.
+            ast::IdiomPart::Field(_) | ast::IdiomPart::All => continue,
+            // A destructure is modelled when every entry is a plain field
+            // path. `.{author.name}` is not one: SurrealDB rejects it outright
+            // ("expected a `*` or a destructuring", 3.2.3) and our own grammar
+            // lowers the `.name` to an unmodelled subscript, so the whole
+            // projection came back `any` with nothing said.
+            ast::IdiomPart::Destructure(selected) => {
+                if selected
+                    .iter()
+                    .all(|sub| plain_field_segments(&sub.node).is_some())
+                {
+                    continue;
+                }
+                "a destructure entry that is not a plain field name"
+            }
+            ast::IdiomPart::Index(_) => "an index",
+            ast::IdiomPart::Last => "`[$]`",
+            ast::IdiomPart::Where(_) => "a filter behind a field",
+            ast::IdiomPart::Method { .. } => "a method call",
+            ast::IdiomPart::Recurse { .. } => "a recursion",
+            ast::IdiomPart::Optional => "`?`",
+            ast::IdiomPart::Graph { .. } => "a further traversal step",
+            ast::IdiomPart::Start(_) => "a leading value",
+            ast::IdiomPart::Partial(_) => "syntax that did not lower",
+        };
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), part.span),
+                6003,
+                format!(
+                    "surrealguard can't type what follows this traversal — {unmodelled} is not modelled here"
+                ),
+            )
+            .with_help(
+                "a field path, `.*` and `.{…}` after a traversal are typed; the rest is left open",
+            ),
+        );
+        // One finding per traversal: the first unmodelled part is why the
+        // whole projection is `any`, and the parts behind it are moot.
+        return;
+    }
+}
+
 /// Reports a `.*` on a traversal whose row has no declared shape
 /// (`->wrote->page.*` where `page` declares no fields): the projection's type
 /// is `any`, and a bare `any` with no finding reads as "analyzed
 /// successfully". Same contract, same code (7008) as a bare `SELECT *` on
 /// that table. Silent when the traversal resolves to a shaped row, and when
 /// it does not resolve at all — that already has its own findings.
-fn validate_graph_wildcard(
+pub(crate) fn validate_graph_wildcard(
     ctx: &mut AnalysisContext<'_>,
     row_table_name: &str,
     idiom: &ast::Idiom,
@@ -2398,7 +2532,7 @@ fn validate_graph_wildcard(
 /// the row the destructure stands on and checks each field there (E1002),
 /// crossing record links. Silent when that row can't be resolved or isn't in
 /// the schema (no false positives).
-fn validate_graph_destructure(
+pub(crate) fn validate_graph_destructure(
     ctx: &mut AnalysisContext<'_>,
     row_table_name: &str,
     idiom: &ast::Idiom,

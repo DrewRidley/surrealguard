@@ -74,3 +74,28 @@ SELECT ->employee_of.{ status }.status AS statuses FROM account;
 SELECT <-employee_of<-account.{ username } AS members FROM organization;
 
 SELECT ->employee_of[WHERE status = 'active']->organization.{ name }.name AS active FROM account;
+
+-- Every part BEHIND a traversal is checked against the value it stands on —
+-- these are the valid spellings of the forms that used to resolve a type and
+-- validate nothing. A regression shows up here as a false finding.
+
+-- A plain field, and a dotted chain that crosses the landed row's own link.
+SELECT ->employee_of->organization.name AS org_names FROM account;
+
+SELECT ->employee_of->organization.owner.username AS owners FROM account;
+
+-- The edge's implicit `out` link, crossed into the node it names.
+SELECT ->employee_of.out.name AS org_names FROM account;
+
+-- A field read off a splatted row: `.*` names no path segment, so the field
+-- behind it belongs to the row the splat expanded.
+SELECT ->employee_of->organization.*.name AS org_names FROM account;
+
+-- A traversal that RESUMES after a field tail: `owner` is a `record<account>`,
+-- so the second traversal steps from `account`, not from `organization`.
+-- Checking it against `organization` reported this valid query as two graph
+-- violations (3001 + 3002).
+SELECT ->employee_of->organization.owner->employee_of->organization AS peers FROM account;
+
+-- A step-local filter does not change which table the tail reads from.
+SELECT ->employee_of[WHERE status = 'active']->organization.name AS active_names FROM account;

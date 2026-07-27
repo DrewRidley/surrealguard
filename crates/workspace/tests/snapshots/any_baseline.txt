@@ -12,8 +12,9 @@
 #
 # Regenerating PRESERVES the `# expected:` notes on sites that still exist.
 #
-# total: 14 any/unknown leaves across 14 site(s)
+# total: 15 any/unknown leaves across 15 site(s)
 
+1  queries/20_graph.surql/stmt/select@98:1  # expected: a traversal that RESUMES after a field tail. The engine nests rather than flattening — `SELECT ->wrote->post.author->follows->user` is `[[user:bob]]` on 3.2.3, one level per distribution — and how deep the nesting goes is not modelled, so a resolved-looking `array<record<organization>>` would be wrong where `any` is merely imprecise. The site reports 6003 rather than staying silent.
 1  queries/41_iterables.surql/let/$from_range@58:5
 1  queries/41_iterables.surql/let/$from_range_expr@68:5
 1  queries/41_iterables.surql/let/$from_range_inclusive@63:5

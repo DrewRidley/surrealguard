@@ -47,39 +47,6 @@ pub(crate) fn check_graph_idiom_at(
     idiom: &ast::Idiom,
     require_landing: bool,
 ) {
-    // A traversal must start from records: a leading field prefix that
-    // resolves to a non-record kind cannot step anywhere (3009); a record
-    // link rebases the traversal onto the link's table.
-    let mut source_table = source_table.to_string();
-    if let Some((prefix, first_graph)) = leading_field_prefix(idiom) {
-        if !prefix.is_empty() {
-            if let Some(table) = ctx.schema().tables.get(&source_table) {
-                if let Some(kind) = crate::analyzer::data::select::kind_for_path(table, &prefix) {
-                    if kind != Kind::Any && !kind_is_recordish(&kind) {
-                        let mut finding = surrealguard_diagnostics::catalog::finding(
-                            SourceSpan::new(ctx.source().clone(), first_graph),
-                            3009,
-                            format!(
-                                "a graph step can't start from `{}` — `{}` holds no records",
-                                prefix.join("."),
-                                crate::render_kind(&kind)
-                            ),
-                        );
-                        finding = finding.with_help(
-                            "`->`/`<-` traverse from records; this field is not a record link",
-                        );
-                        ctx.emit(finding);
-                        return;
-                    }
-                    if let Some(target) = single_record_target(&kind) {
-                        source_table = target;
-                    }
-                }
-            }
-        }
-    }
-    let source_table = source_table.as_str();
-
     // `current` is the table the traversal stands on before each part;
     // `None` after a step that failed to resolve (stop checking — one
     // finding per broken chain, not a cascade).
@@ -90,10 +57,35 @@ pub(crate) fn check_graph_idiom_at(
     // The edge of the previous step, for verifying the landing half of a
     // hop pair (`->likes->comment` when `likes` only reaches `post`).
     let mut pending_edge: Option<(String, ast::GraphDir)> = None;
+    // Field segments read since the last graph step. A traversal must start
+    // from records, so they are resolved — once — the moment another `->`
+    // arrives: `author->follows->user` and `->wrote->post.author->follows->user`
+    // are the SAME question asked in two places, and only the leading spelling
+    // used to be asked at all.
+    let mut pending_fields: Vec<String> = Vec::new();
 
-    for part in &idiom.parts {
+    // In a `FROM` target the leading name is the SOURCE TABLE, not a field of
+    // one (`FROM user->follows->user`): the caller already resolved it into
+    // `source_table`, so walking it again as a field would look for a `user`
+    // field on `user`. Every other position's leading name really is a field.
+    let parts = match (require_landing, idiom.parts.first().map(|part| &part.node)) {
+        (true, Some(ast::IdiomPart::Field(_))) => &idiom.parts[1..],
+        _ => &idiom.parts[..],
+    };
+
+    for part in parts {
         match &part.node {
             ast::IdiomPart::Graph { dir, step } => {
+                if !pending_fields.is_empty() {
+                    current = rebase_through_fields(
+                        ctx,
+                        current.as_deref(),
+                        &pending_fields,
+                        part.span,
+                    );
+                    pending_edge = None;
+                    pending_fields.clear();
+                }
                 let Some(source) = current.clone() else {
                     return;
                 };
@@ -162,21 +154,48 @@ pub(crate) fn check_graph_idiom_at(
                     check_filter(ctx, &table, cond);
                 }
             }
-            ast::IdiomPart::Recurse { bounded } if !bounded => {
-                ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
-                        SourceSpan::new(ctx.source().clone(), part.span),
-                        3011,
-                        "this recursion has no upper bound and can walk the entire graph"
-                            .to_string(),
-                    )
-                    .with_help("give the range an upper bound, e.g. `{1..5}`"),
-                );
+            ast::IdiomPart::Recurse { bounded } => {
+                if !bounded {
+                    ctx.emit(
+                        surrealguard_diagnostics::catalog::finding(
+                            SourceSpan::new(ctx.source().clone(), part.span),
+                            3011,
+                            "this recursion has no upper bound and can walk the entire graph"
+                                .to_string(),
+                        )
+                        .with_help("give the range an upper bound, e.g. `{1..5}`"),
+                    );
+                }
+                current = None;
+                filter_table = None;
+                pending_edge = None;
+                pending_fields.clear();
             }
-            // A field hop after a graph step projects off the current
-            // table; the projection resolvers own its kind. Later graph
-            // parts continue from wherever the traversal stands.
-            _ => {}
+            // Every other part is here because it answers one question: what
+            // does the NEXT graph step traverse from? An exhaustive match is
+            // the whole point — a new `IdiomPart` cannot be added without
+            // someone deciding, and a wrong answer here is a false 3001/3002 on
+            // a valid query rather than a missing one.
+            //
+            // A field read moves the walk onto whatever it names (resolved when
+            // the next step arrives); `.*`, an index, `[$]` and `?` all leave it
+            // standing on the same rows; a `.{…}`, a method and an unlowered
+            // part replace the value with something no traversal can continue
+            // from.
+            ast::IdiomPart::Field(name) => pending_fields.push(name.clone()),
+            ast::IdiomPart::All
+            | ast::IdiomPart::Index(_)
+            | ast::IdiomPart::Last
+            | ast::IdiomPart::Optional => {}
+            ast::IdiomPart::Destructure(_)
+            | ast::IdiomPart::Method { .. }
+            | ast::IdiomPart::Partial(_)
+            | ast::IdiomPart::Start(_) => {
+                current = None;
+                filter_table = None;
+                pending_edge = None;
+                pending_fields.clear();
+            }
         }
     }
 
@@ -261,18 +280,41 @@ fn report_unresolved_step(ctx: &mut AnalysisContext<'_>, span: ByteRange, step: 
     }
 }
 
-/// The plain-field segments before the first graph part, with that graph
-/// part's span.
-fn leading_field_prefix(idiom: &ast::Idiom) -> Option<(Vec<String>, ByteRange)> {
-    let mut prefix = Vec::new();
-    for part in &idiom.parts {
-        match &part.node {
-            ast::IdiomPart::Field(name) => prefix.push(name.clone()),
-            ast::IdiomPart::Graph { .. } => return Some((prefix, part.span)),
-            _ => return None,
-        }
+/// The table a graph step traverses from, after a run of field reads.
+///
+/// A traversal must start from records. A path that lands on a single record
+/// link rebases the walk onto that link's table (`post.author->follows->user`
+/// steps from `user`); one that lands on a value which provably holds no
+/// records cannot step at all (3009); and one that cannot be resolved at all
+/// hands back `None`, which stops the checking of this chain rather than
+/// letting it continue against a table it has already left. That last case is
+/// where the false `3001`/`3002` on a perfectly valid
+/// `->wrote->post.author->follows->user` came from: the walk kept `post` and
+/// asked whether `follows` steps off it.
+fn rebase_through_fields(
+    ctx: &mut AnalysisContext<'_>,
+    current: Option<&str>,
+    fields: &[String],
+    graph_span: ByteRange,
+) -> Option<String> {
+    let table = ctx.schema().tables.get(current?)?;
+    let kind = crate::analyzer::data::select::resolve_field_path(ctx.schema(), table, fields)?;
+    if kind != Kind::Any && !kind_is_recordish(&kind) {
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                SourceSpan::new(ctx.source().clone(), graph_span),
+                3009,
+                format!(
+                    "a graph step can't start from `{}` — `{}` holds no records",
+                    fields.join("."),
+                    crate::render_kind(&kind)
+                ),
+            )
+            .with_help("`->`/`<-` traverse from records; this field is not a record link"),
+        );
+        return None;
     }
-    None
+    single_record_target(&kind)
 }
 
 /// The single table a record-ish kind links to, when unambiguous.

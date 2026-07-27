@@ -365,6 +365,12 @@ pub fn plain_field_segments(idiom: &ast::Idiom) -> Option<Vec<String>> {
 /// The receiver kind standing before each idiom part, for the
 /// checking-side position contracts: `(part, kind-before-part)` pairs.
 /// `None` receivers mean the prefix didn't resolve; checking skips them.
+///
+/// **Every** part is reported, including the first. A leading `Field` and a
+/// leading `Graph` both have a receiver — the row — so `john.len()` and
+/// `->follows->user` are parts standing on `record<user>` exactly as
+/// `author.john` is. Only a leading `Start` has nothing in front of it (it *is*
+/// the value), and it is the one part reported with no receiver.
 pub fn idiom_prefix_kinds<'i>(
     idiom: &'i ast::Idiom,
     ctx: &mut AnalysisContext<'_>,
@@ -376,11 +382,19 @@ pub fn idiom_prefix_kinds<'i>(
     };
     let mut place = start_place(&first.node);
     let mut current: Option<Kind> = match &first.node {
-        ast::IdiomPart::Start(expr) => infer_expression_fact(expr, ctx).kind,
-        ast::IdiomPart::Field(name) => ctx.row_table().and_then(|table| {
-            crate::analyzer::data::select::kind_for_path(table, std::slice::from_ref(name))
-        }),
-        _ => None,
+        ast::IdiomPart::Start(expr) => {
+            result.push((first, None));
+            infer_expression_fact(expr, ctx).kind
+        }
+        // The row is the receiver of a leading field or traversal step; a
+        // leading value is its own receiver-less start.
+        _ => {
+            let receiver = ctx
+                .row_table()
+                .map(|table| Kind::Record(vec![table.name.as_str().into()]));
+            result.push((first, receiver.clone()));
+            receiver.and_then(|kind| step_part_kind(&kind, &first.node, ctx))
+        }
     };
     if let Some(narrowed) = narrowed_kind(place.as_ref(), ctx.env()) {
         current = Some(narrowed);
@@ -580,8 +594,17 @@ fn step_part_kind(
             }
             Some(Kind::Literal(KindLiteral::Object(fields)))
         }
+        // A traversal step is a step like any other: it takes the records in
+        // hand and answers the records it reaches. Modelling it here is what
+        // puts everything BEHIND a `->` inside the walk — and therefore inside
+        // every check the walk drives — instead of behind a per-form
+        // recognizer that has to be remembered.
+        ast::IdiomPart::Graph { dir, step } => {
+            crate::analyzer::data::select::graph_step_kind(current, dir.node, step, ctx.schema())
+        }
+        // `Start` is a value, not a step off one; `Recurse` and `Partial` name
+        // no single reachable shape.
         ast::IdiomPart::Start(_)
-        | ast::IdiomPart::Graph { .. }
         | ast::IdiomPart::Recurse { .. }
         | ast::IdiomPart::Partial(_) => None,
     }
