@@ -1,6 +1,6 @@
 {
   "name": "@surrealguard/next",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Next.js / React bindings for SurrealGuard: typed live queries as hooks, App Router SSR seeding.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
@@ -39,8 +39,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@surrealguard/client": "0.5.1",
-    "@surrealguard/query": "0.5.1"
+    "@surrealguard/client": "0.5.2",
+    "@surrealguard/query": "0.5.2"
   },
   "peerDependencies": {
     "react": ">=18",

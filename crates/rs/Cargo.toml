@@ -18,7 +18,7 @@ default = ["runtime"]
 runtime = ["dep:surrealdb"]
 
 [dependencies]
-surrealguard-macros = { path = "../macros", version = "0.5.1" }
+surrealguard-macros = { path = "../macros", version = "0.5.2" }
 # Not optional: generated result types implement `SurrealValue`, which is what
 # the SDK's `take` requires. This crate is small and carries no engine.
 surrealdb-types.workspace = true
