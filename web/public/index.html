@@ -730,7 +730,10 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
       onPick: (statement) => queryEd.reveal(statement.start, statement.end),
       onHover: (i) => queryEd.setActiveMarker(i),
     });
-    const markCaret = () => types.setCaret(queryIn.selectionStart);
+    // Only while the query pane has focus. An active row on a page nobody has
+    // touched yet reads as a selection the reader did not make.
+    const markCaret = () =>
+      document.activeElement === queryIn ? types.setCaret(queryIn.selectionStart) : types.setActive(-1);
     document.addEventListener("selectionchange", () => {
       if (document.activeElement === queryIn) markCaret();
     });

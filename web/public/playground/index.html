@@ -40,7 +40,12 @@
          column, and the inferred type sits directly under it in a region of
          its own (`.sg-types`, types-panel.css) that can take as many lines as
          a type needs. */
-      .grid { display: grid; gap: 24px; max-width: 1200px; }
+      /* `minmax(0, 1fr)`, never a bare `auto` track: an `auto` column is sized
+         by its content's max-content width, and the type region contains a
+         one-line `nowrap` echo of the statement. On a phone that echo would
+         widen the column past the viewport and give the whole page a
+         horizontal scrollbar. */
+      .grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; max-width: 1200px; }
       label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
       .results {
         max-width: 1200px;
@@ -274,7 +279,10 @@ DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
       // Moving the caret marks the row for the statement it sits in. This is
       // how the mapping works on a touch device, where there is no hover but
       // there is always a caret.
-      const markCaret = () => types.setCaret(queryEl.selectionStart);
+      // Only while the query pane has focus. An active row on a page nobody
+      // has touched yet reads as a selection the reader did not make.
+      const markCaret = () =>
+        document.activeElement === queryEl ? types.setCaret(queryEl.selectionStart) : types.setActive(-1);
       document.addEventListener("selectionchange", () => {
         if (document.activeElement === queryEl) markCaret();
       });

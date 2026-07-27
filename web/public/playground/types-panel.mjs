@@ -39,6 +39,21 @@ function excerpt(text, start, end) {
 }
 
 /**
+ * Splits the excerpt into the leading statement keyword and the rest, so the
+ * keyword can carry the weight and the rest can recede.
+ *
+ * The analyzer's `kind` is derived from that keyword, so printing it as a
+ * separate tag *and* quoting the statement gives you `SELECT` twice on the
+ * same line. Emphasising it in place says the same thing once.
+ */
+function splitKeyword(text, label) {
+  if (label && text.slice(0, label.length).toUpperCase() === label) {
+    return [text.slice(0, label.length), text.slice(label.length)];
+  }
+  return ["", text];
+}
+
+/**
  * Builds the region and returns a handle for it.
  *
  * @param {HTMLElement} host an empty element under the query editor
@@ -87,18 +102,24 @@ export function createTypePanel(host, options = {}) {
     const rows = statements.map((s, i) => {
       const label = kindLabel(s.kind);
       const text = excerpt(source, s.charStart, s.charEnd);
+      const [keyword, rest] = splitKeyword(text, label);
       const typed = typeof s.response === "string" && s.response.length;
       const body = typed
         ? `<pre class="sg-type"><code>${formatKind(s.response, width)}</code></pre>`
         : '<div class="sg-type sg-type-void">no response value</div>';
       return (
-        `<li class="sg-type-row${typed ? "" : " is-void"}" data-i="${i}" role="button" tabindex="0"` +
-        ` title="Select this statement in the editor">` +
+        `<li class="sg-type-row${typed ? "" : " is-void"}" data-i="${i}" data-kind="${escapeHtml(
+          label || "?"
+        )}" role="button" tabindex="0" title="Select this statement in the editor">` +
         `<div class="sg-type-meta">` +
         (statements.length > 1 ? `<span class="sg-type-idx">${i + 1}</span>` : "") +
-        (label ? `<span class="sg-type-kind">${escapeHtml(label)}</span>` : "") +
-        `<span class="sg-type-src" title="${escapeHtml(text)}">${highlight(text)}</span>` +
-        `</div>${body}</li>`
+        // A kind the excerpt does not already open with (`unknown`, or anything
+        // the engine names differently) still gets said, as its own tag.
+        (label && !keyword ? `<span class="sg-type-kind">${escapeHtml(label)}</span>` : "") +
+        `<span class="sg-type-src" title="${escapeHtml(text)}">` +
+        (keyword ? `<b class="sg-type-kw">${escapeHtml(keyword)}</b>` : "") +
+        highlight(rest) +
+        `</span></div>${body}</li>`
       );
     });
 

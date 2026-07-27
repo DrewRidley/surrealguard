@@ -29,6 +29,7 @@
 /* --- the region below the query ---------------------------------------- */
 .sg-types {
   margin-top: 16px;
+  min-width: 0;
   background: #0a0c10;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -82,11 +83,15 @@
   border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px;
 }
 /* The statement's own opening words, so a row identifies itself among three
-   SELECTs without anyone counting badges. Clipped to one line on purpose. */
+   SELECTs without anyone counting badges. Clipped to one line on purpose —
+   this is a quotation of the query, not the type. The leading keyword carries
+   the weight so the rows stay scannable down the left edge. */
 .sg-type-src {
   flex: 1; min-width: 0; font-size: 11.5px; color: #5f6878;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.sg-type-kw { color: var(--muted); font-weight: 600; letter-spacing: .02em; }
+.sg-type-row.is-active .sg-type-kw, .sg-type-row.is-hot .sg-type-kw { color: var(--text); }
 
 /* The type itself. Wraps, never clips: `pre-wrap` keeps the formatter's line
    breaks and indentation, `anywhere` is the backstop for a single token longer
