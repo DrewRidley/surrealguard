@@ -386,6 +386,7 @@ table webhook_event  [schemafull]
   stmt     92:1 select           : array<{ org_names: array<string> }>
   stmt     98:1 select           : array<{ peers: any }>
   stmt    101:1 select           : array<{ active_names: array<string> }>
+  stmt    105:1 select           : array<{ name: string }>
   let      18:5 $member          : option<array<record<organization>>>
   let      20:5 $edge_titles     : array<array<option<string>>>
   diag     4:49 I7014     Hint

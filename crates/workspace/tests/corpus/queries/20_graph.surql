@@ -99,3 +99,7 @@ SELECT ->employee_of->organization.owner->employee_of->organization AS peers FRO
 
 -- A step-local filter does not change which table the tail reads from.
 SELECT ->employee_of[WHERE status = 'active']->organization.name AS active_names FROM account;
+
+-- The valid FROM spelling: the leading name is the SOURCE TABLE, not a field
+-- of itself, and the traversal off it lands on a table.
+SELECT name FROM account->employee_of->organization;

@@ -72,3 +72,8 @@ SELECT username FROM account WHERE ->employee_of->organization.nope = 1;
 
 -- A traversal that resumes after a field tail whose field does not exist.
 SELECT ->employee_of->organization.nope->employee_of->organization AS o FROM account;
+
+-- FROM resolves its own idiom rather than walking it, so a field named in a
+-- FROM traversal is checked there or nowhere. Both spellings were silent.
+SELECT username FROM account->employee_of->organization.nope;
+SELECT username FROM account->employee_of.nope;

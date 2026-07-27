@@ -2170,4 +2170,37 @@ mod tests {
         );
         assert!(!fires(query, "E1002"), "codes: {:?}", codes(query));
     }
+    #[test]
+    fn a_field_named_in_a_from_traversal_is_checked_too() {
+        // FROM is the one position that resolves its idiom itself rather than
+        // walking it, so its field segments are checked in the graph walk or
+        // nowhere. `FROM user->follows->user.john` is legal and degenerate: on
+        // 3.2.3 it yields `[]` where `.name` yields `['Bob']`.
+        for query in [
+            "SELECT name FROM user->follows->user.john;",
+            "SELECT name FROM user->follows.john;",
+            "SELECT name FROM post.john->follows->user;",
+        ] {
+            assert!(
+                graph_fires(query, "E1002"),
+                "{query} — codes: {:?}",
+                graph_codes(query)
+            );
+        }
+        // And the valid spellings stay clean — including the leading name,
+        // which is the SOURCE TABLE and not a field of itself.
+        for query in [
+            "SELECT name FROM user->follows->user;",
+            "SELECT name FROM user->follows->user.name;",
+            "SELECT name FROM post.author->follows->user;",
+        ] {
+            for code in ["E1002", "E3001", "E3002"] {
+                assert!(
+                    !graph_fires(query, code),
+                    "{query} raised {code} — codes: {:?}",
+                    graph_codes(query)
+                );
+            }
+        }
+    }
 }

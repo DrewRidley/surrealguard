@@ -62,7 +62,7 @@ pub(crate) fn check_graph_idiom_at(
     // arrives: `author->follows->user` and `->wrote->post.author->follows->user`
     // are the SAME question asked in two places, and only the leading spelling
     // used to be asked at all.
-    let mut pending_fields: Vec<String> = Vec::new();
+    let mut pending_fields: Vec<(String, ByteRange)> = Vec::new();
 
     // In a `FROM` target the leading name is the SOURCE TABLE, not a field of
     // one (`FROM user->follows->user`): the caller already resolved it into
@@ -77,6 +77,7 @@ pub(crate) fn check_graph_idiom_at(
         match &part.node {
             ast::IdiomPart::Graph { dir, step } => {
                 if !pending_fields.is_empty() {
+                    check_source_fields(ctx, require_landing, current.as_deref(), &pending_fields);
                     current = rebase_through_fields(
                         ctx,
                         current.as_deref(),
@@ -182,7 +183,7 @@ pub(crate) fn check_graph_idiom_at(
             // standing on the same rows; a `.{…}`, a method and an unlowered
             // part replace the value with something no traversal can continue
             // from.
-            ast::IdiomPart::Field(name) => pending_fields.push(name.clone()),
+            ast::IdiomPart::Field(name) => pending_fields.push((name.clone(), part.span)),
             ast::IdiomPart::All
             | ast::IdiomPart::Index(_)
             | ast::IdiomPart::Last
@@ -198,6 +199,11 @@ pub(crate) fn check_graph_idiom_at(
             }
         }
     }
+
+    // A field tail with no step behind it. `FROM user->follows->user.john`
+    // reads a field like any other position does — and this is the only
+    // position where saying so is this function's job.
+    check_source_fields(ctx, require_landing, current.as_deref(), &pending_fields);
 
     if require_landing {
         if let Some((edge, _)) = &pending_edge {
@@ -280,6 +286,45 @@ fn report_unresolved_step(ctx: &mut AnalysisContext<'_>, span: ByteRange, step: 
     }
 }
 
+fn field_names(fields: &[(String, ByteRange)]) -> Vec<String> {
+    fields.iter().map(|(name, _)| name.clone()).collect()
+}
+
+/// The field segments of a `FROM` traversal, checked against the table they are
+/// read off (1002).
+///
+/// `FROM` is the one position whose idiom is *not* walked by
+/// [`crate::analyzer::expression::check::check_idiom_positions`] — it resolves
+/// its source table here instead — so a field named in it is checked here or
+/// nowhere. `FROM user->follows->user.john` is a legal, degenerate target: on
+/// 3.2.3 it yields `[]` where `.name` yields `['Bob']`, exactly the difference
+/// a missing field makes anywhere else.
+///
+/// Every other position leaves this to the idiom walk, which checks each
+/// segment against the value in front of it — so this is guarded rather than
+/// unconditional, and the guard is the position, not a heuristic.
+fn check_source_fields(
+    ctx: &mut AnalysisContext<'_>,
+    require_landing: bool,
+    current: Option<&str>,
+    fields: &[(String, ByteRange)],
+) {
+    if !require_landing || fields.is_empty() {
+        return;
+    }
+    let Some(table) = current.and_then(|name| ctx.schema().tables.get(name)) else {
+        return;
+    };
+    let span = match (fields.first(), fields.last()) {
+        (Some((_, first)), Some((_, last))) => ByteRange::new(first.start(), last.end()).ok(),
+        _ => None,
+    };
+    let Some(span) = span else {
+        return;
+    };
+    crate::analyzer::data::select::validate_field_path(ctx, table, &field_names(fields), span, 1002);
+}
+
 /// The table a graph step traverses from, after a run of field reads.
 ///
 /// A traversal must start from records. A path that lands on a single record
@@ -294,10 +339,11 @@ fn report_unresolved_step(ctx: &mut AnalysisContext<'_>, span: ByteRange, step: 
 fn rebase_through_fields(
     ctx: &mut AnalysisContext<'_>,
     current: Option<&str>,
-    fields: &[String],
+    fields: &[(String, ByteRange)],
     graph_span: ByteRange,
 ) -> Option<String> {
     let table = ctx.schema().tables.get(current?)?;
+    let fields = &field_names(fields);
     let kind = crate::analyzer::data::select::resolve_field_path(ctx.schema(), table, fields)?;
     if kind != Kind::Any && !kind_is_recordish(&kind) {
         ctx.emit(
