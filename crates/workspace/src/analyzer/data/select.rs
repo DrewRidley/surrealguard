@@ -533,6 +533,66 @@ fn walk_projections_for_findings(stmt: &ast::SelectStmt, ctx: &mut AnalysisConte
     Kind::Any
 }
 
+/// One row-count clause value — `LIMIT`/`START`, wherever it is written. The
+/// contract does not change with the position: it takes a non-negative integer
+/// (2018), and an unbound param in the slot is constrained to one.
+///
+/// A graph step spells the same two clauses inside its parentheses
+/// (`->(likes LIMIT 3)`), and the step is not a place where `LIMIT -1` becomes
+/// acceptable — so it calls this rather than growing a second opinion.
+pub(crate) fn check_row_count_clause(
+    ctx: &mut AnalysisContext<'_>,
+    expr: &ast::Spanned<ast::Expr>,
+    name: &str,
+    position: Position,
+) {
+    if let ast::Expr::Param(param) = &expr.node {
+        if ctx.env().let_fact(param).is_none() {
+            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
+            ctx.constrain_param(
+                param,
+                span,
+                Kind::Int,
+                Some(crate::analysis::ValueDomain::Range {
+                    min: Some(0),
+                    max: None,
+                }),
+            );
+            return;
+        }
+    }
+    let fact = infer_expression_fact(expr, ctx);
+    if let Some(kind) = &fact.kind {
+        // `number` is admitted alongside `int` because that is what an
+        // arithmetic or `math::` result infers as, and the clause takes it.
+        if Contract::possible(position, Kind::either(vec![Kind::Int, Kind::Number]))
+            .decide(kind)
+            .is_violation()
+        {
+            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                span,
+                2018,
+                format!(
+                    "{name} needs an integer, but this is a `{}`",
+                    crate::render::render_offending(kind, Some(&Kind::Int))
+                ),
+            ));
+            return;
+        }
+    }
+    if let Some(surrealdb_types::Value::Number(surrealdb_types::Number::Int(value))) = &fact.value {
+        if *value < 0 {
+            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
+            ctx.emit(surrealguard_diagnostics::catalog::finding(
+                span,
+                2018,
+                format!("{name} can't be negative"),
+            ));
+        }
+    }
+}
+
 /// Clause-value invariants: LIMIT/START must be integers (2018) and
 /// non-negative when constant (2024); TIMEOUT takes a duration (2019).
 fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
@@ -540,58 +600,8 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
         (&stmt.limit, "LIMIT", Position::Limit),
         (&stmt.start, "START", Position::Start),
     ] {
-        let Some(expr) = clause else {
-            continue;
-        };
-        if let ast::Expr::Param(param) = &expr.node {
-            if ctx.env().let_fact(param).is_none() {
-                let span =
-                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
-                ctx.constrain_param(
-                    param,
-                    span,
-                    Kind::Int,
-                    Some(crate::analysis::ValueDomain::Range {
-                        min: Some(0),
-                        max: None,
-                    }),
-                );
-                continue;
-            }
-        }
-        let fact = infer_expression_fact(expr, ctx);
-        if let Some(kind) = &fact.kind {
-            // `number` is admitted alongside `int` because that is what an
-            // arithmetic or `math::` result infers as, and the clause takes it.
-            if Contract::possible(position, Kind::either(vec![Kind::Int, Kind::Number]))
-                .decide(kind)
-                .is_violation()
-            {
-                let span =
-                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
-                    span,
-                    2018,
-                    format!(
-                        "{name} needs an integer, but this is a `{}`",
-                        crate::render::render_offending(kind, Some(&Kind::Int))
-                    ),
-                ));
-                continue;
-            }
-        }
-        if let Some(surrealdb_types::Value::Number(surrealdb_types::Number::Int(value))) =
-            &fact.value
-        {
-            if *value < 0 {
-                let span =
-                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
-                    span,
-                    2018,
-                    format!("{name} can't be negative"),
-                ));
-            }
+        if let Some(expr) = clause {
+            check_row_count_clause(ctx, expr, name, position);
         }
     }
     if let Some(expr) = &stmt.timeout {

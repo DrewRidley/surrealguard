@@ -31,3 +31,9 @@ SELECT ->employee_of->(SELECT nope FROM organization) AS o FROM account;
 -- closing paren, not inside it. Each was silently `any`.
 SELECT ->employee_of->(organization.{ name }) AS o FROM account;
 SELECT ->employee_of->(organization.*) AS o FROM account;
+
+-- A step's own LIMIT/START is the statement's clause written somewhere else,
+-- and the parentheses are not a place where a negative row count becomes
+-- acceptable — the engine rejects both outright.
+SELECT ->employee_of->(organization LIMIT -1) AS o FROM account;
+SELECT ->employee_of->(organization START -2) AS o FROM account;

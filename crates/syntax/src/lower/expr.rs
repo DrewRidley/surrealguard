@@ -558,6 +558,8 @@ impl Lowerer<'_> {
         let mut step = GraphStep {
             targets: Vec::new(),
             where_clause: None,
+            limit: None,
+            start: None,
             reference: false,
             wildcard: false,
             unmodeled: Vec::new(),
@@ -697,7 +699,7 @@ impl Lowerer<'_> {
                     }
                 }
                 "WhereClause" => {
-                    if let Some(expr_node) = where_clause_expr(child) {
+                    if let Some(expr_node) = clause_value(child) {
                         step.where_clause = Some(Box::new(self.expr(expr_node)));
                     }
                 }
@@ -705,6 +707,21 @@ impl Lowerer<'_> {
                 // append the path parts it is equivalent to *after* the step.
                 "GraphFieldSelection" => {
                     selection = first_child_of_kind(child, "Fields");
+                }
+                // `(likes LIMIT 3 START 1)` — the same two clauses a SELECT
+                // writes, under the same contract, so they are kept for the
+                // same check rather than dropped as decoration.
+                "GraphLimitStartComboClause" => {
+                    for clause in named_children(child) {
+                        let target = match clause.kind() {
+                            "LimitClause" => &mut step.limit,
+                            "StartClause" => &mut step.start,
+                            _ => continue,
+                        };
+                        if let Some(value) = clause_value(clause) {
+                            *target = Some(Box::new(self.expr(value)));
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -715,7 +732,7 @@ impl Lowerer<'_> {
     fn filter_part(&self, node: Node<'_>) -> IdiomPart {
         let children = named_children(node);
         match children.as_slice() {
-            [child] if child.kind() == "WhereClause" => match where_clause_expr(*child) {
+            [child] if child.kind() == "WhereClause" => match clause_value(*child) {
                 Some(expr_node) => IdiomPart::Where(Box::new(self.expr(expr_node))),
                 None => IdiomPart::Partial(partial(node)),
             },
@@ -732,16 +749,15 @@ impl Lowerer<'_> {
 /// position and which therefore names no traversal target.
 fn record_range_table<'tree>(record_id: Node<'tree>) -> Option<Node<'tree>> {
     let children = named_children(record_id);
-    let is_range = children
-        .iter()
-        .any(|child| child.kind() == "RecordIdRange");
+    let is_range = children.iter().any(|child| child.kind() == "RecordIdRange");
     is_range
         .then(|| children.into_iter().find(|c| c.kind() == "RecordTbIdent"))
         .flatten()
 }
 
-/// The expression of a `WHERE <expr>` clause (the last named non-keyword child).
-fn where_clause_expr(clause: Node<'_>) -> Option<Node<'_>> {
+/// The value of a keyword-led clause — `LIMIT 3` → `3`, `WHERE a = b` → the
+/// comparison: the last named child that is not the keyword itself.
+fn clause_value<'tree>(clause: Node<'tree>) -> Option<Node<'tree>> {
     named_children(clause)
         .into_iter()
         .rfind(|child| child.kind() != "Keyword")

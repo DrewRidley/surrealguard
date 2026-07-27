@@ -127,6 +127,27 @@ pub(crate) fn check_graph_idiom_at(
                     check_filter(ctx, &table, cond);
                 }
 
+                // A step's own `LIMIT`/`START` is the statement's clause
+                // written somewhere else; the contract does not move with it.
+                for (clause, name, position) in [
+                    (
+                        &step.limit,
+                        "LIMIT",
+                        crate::analyzer::contract::Position::Limit,
+                    ),
+                    (
+                        &step.start,
+                        "START",
+                        crate::analyzer::contract::Position::Start,
+                    ),
+                ] {
+                    if let Some(expr) = clause {
+                        crate::analyzer::data::select::check_row_count_clause(
+                            ctx, expr, name, position,
+                        );
+                    }
+                }
+
                 pending_edge = if step_result.violated {
                     None
                 } else {
@@ -707,6 +728,28 @@ DEFINE FIELD since ON wrote TYPE datetime;
         assert_eq!(
             findings("SELECT ->wrote->(post).{nope} AS p FROM user;"),
             vec!["E1002 `post` has no field `nope`"]
+        );
+    }
+
+    #[test]
+    fn a_steps_own_limit_start_answers_to_the_same_contract_as_a_statements() {
+        // The engine enforces it in both places — "LIMIT must be a
+        // non-negative integer" on `->(post LIMIT -1)` as much as on a
+        // statement's own clause (3.2.3) — so the step reads the same check
+        // rather than treating the parentheses as a place the rule relaxes.
+        assert_eq!(
+            findings("SELECT ->wrote->(post LIMIT -1) FROM user;"),
+            vec!["E2018 LIMIT can't be negative"]
+        );
+        assert_eq!(
+            findings("SELECT ->wrote->(post LIMIT 3 START -2) FROM user;"),
+            vec!["E2018 START can't be negative"]
+        );
+        assert!(findings("SELECT ->wrote->(post LIMIT 3 START 1) FROM user;").is_empty());
+        // And it narrows how many rows come back, never their shape.
+        assert_eq!(
+            projected("SELECT ->wrote->(post LIMIT 3) AS p FROM user;"),
+            "array<{ p: array<record<post>> }>"
         );
     }
 

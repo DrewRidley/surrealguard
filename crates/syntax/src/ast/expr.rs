@@ -191,6 +191,11 @@ pub struct GraphStep {
     pub targets: Vec<Spanned<String>>,
     /// `->(likes WHERE since > $x)` / `->likes[WHERE ...]`.
     pub where_clause: Option<Box<Spanned<Expr>>>,
+    /// `->(likes LIMIT 3)` — how many of the reached rows the step keeps.
+    /// Narrows the traversal's cardinality, never its shape.
+    pub limit: Option<Box<Spanned<Expr>>>,
+    /// `->(likes START 3)`, the same clause's other half.
+    pub start: Option<Box<Spanned<Expr>>>,
     /// The step is a record-reference traversal (`<~`), not a graph-edge
     /// traversal (`<-`/`->`/`<->`). Reference steps follow `REFERENCE` fields
     /// rather than relation tables, so typing resolves them differently.
