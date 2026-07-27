@@ -77,7 +77,7 @@ pub fn expr_fact(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) 
     let fact = infer::infer_expression_fact(expr, ctx);
     check::check_value_expression(ctx, expr);
     for param in &fact.dependencies.params {
-        if CONTEXT_ONLY_PARAMS.contains(&param.as_str()) {
+        if is_context_only_param(param) {
             ctx.emit(surrealguard_diagnostics::catalog::finding(
                 fact.span.clone(),
                 6005,
@@ -88,9 +88,17 @@ pub fn expr_fact(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) 
     fact
 }
 
-/// Context parameters exist only where their construct binds them (events,
-/// field clauses); loose uses are 6005, never host parameters.
-pub(crate) const CONTEXT_ONLY_PARAMS: &[&str] = &["before", "after", "event", "value", "input"];
+/// Whether a use of `$name` that nothing in scope bound is a finding rather
+/// than a host parameter.
+///
+/// A *document* param exists only where a construct establishes a document, so
+/// outside one it names nothing the caller could supply. A *session* param is
+/// seeded everywhere and so is never unbound; a *positional* one (`$parent`)
+/// is bound by a nesting this analyzer does not model, and claiming it unbound
+/// would be inventing a fact.
+pub(crate) fn is_context_only_param(name: &str) -> bool {
+    crate::context_params::is_document_param(name)
+}
 
 #[cfg(test)]
 mod tests {

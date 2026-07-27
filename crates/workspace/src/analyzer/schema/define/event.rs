@@ -41,6 +41,15 @@ pub(crate) fn analyze_define_event(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
                 Kind::Literal(KindLiteral::String("DELETE".into())),
             ])),
         );
+        // The base document set, from `context_params`' one table.
+        // `$this`/`$self`/`$input` were bound by nobody here, while the hover
+        // map inside the same body offered all of them.
+        for (name, kind) in crate::context_params::document_param_bindings(&stmt.table.node) {
+            bind(ctx, name, Some(kind));
+        }
+        bind(ctx, "input", row_kind.clone());
+        // The event knows a better kind for these three than the base record:
+        // the row's full field object. Bound last, so it wins.
         bind(ctx, "before", row_kind.clone());
         bind(ctx, "after", row_kind.clone());
         bind(ctx, "value", row_kind);

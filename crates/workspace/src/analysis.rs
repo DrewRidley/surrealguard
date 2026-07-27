@@ -3457,6 +3457,71 @@ INSERT INTO person { name: 'Ada' };
         assert!(params.iter().all(|param| param.kind.is_none()));
     }
 
+    /// One table, four disagreements it used to have.
+    ///
+    /// Every name SurrealDB binds itself is protected from `LET` (6007) and is
+    /// never a host parameter. A *document* name used where no construct binds
+    /// one is 6005; a *positional* one (`$parent`) is bound by a nesting this
+    /// analyzer does not model, so it is neither a finding nor a host param.
+    #[test]
+    fn engine_bound_params_are_never_host_params() {
+        let mut workspace = Workspace::default();
+        let source = workspace.add_virtual_source(
+            "query".into(),
+            "RETURN $this; RETURN $parent; RETURN $self; RETURN $scope; \
+             RETURN $value; RETURN $real;"
+                .into(),
+        );
+
+        let output = analyze_workspace(&workspace);
+        let names: Vec<_> = output.sources[&source]
+            .inferred_params
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["real"],
+            "only a name the engine does not bind is a host parameter"
+        );
+
+        let codes: Vec<_> = output.sources[&source]
+            .diagnostics
+            .iter()
+            .map(|finding| finding.code().number())
+            .collect();
+        // `$this`, `$self` and `$value` are document params used outside any
+        // document — the same finding `$value` alone used to get. `$parent`
+        // and `$scope` are not: nothing here proves them unbound.
+        assert_eq!(
+            codes.iter().filter(|code| **code == 6005).count(),
+            3,
+            "expected 6005 for $this/$self/$value: {:?}",
+            output.sources[&source].diagnostics
+        );
+    }
+
+    #[test]
+    fn every_engine_bound_param_is_protected_from_let() {
+        for name in [
+            "auth", "session", "token", "access", "scope", "this", "self", "parent", "event",
+            "value", "before", "after", "input",
+        ] {
+            let mut workspace = Workspace::default();
+            let source =
+                workspace.add_virtual_source("query".into(), format!("LET ${name} = 1;"));
+            let output = analyze_workspace(&workspace);
+            assert!(
+                output.sources[&source]
+                    .diagnostics
+                    .iter()
+                    .any(|finding| finding.code().number() == 6007),
+                "expected 6007 for `${name}`: {:?}",
+                output.sources[&source].diagnostics
+            );
+        }
+    }
+
     #[test]
     fn analyze_workspace_infers_param_kind_from_select_where_field_comparison() {
         let mut workspace = Workspace::default();

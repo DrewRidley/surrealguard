@@ -27,10 +27,12 @@ pub fn infer_expression_fact(
         ast::Expr::Literal(literal) => literal_fact(literal, span),
         ast::Expr::Param(name) => {
             // Host-facing parameter uses are recorded at their own site
-            // with their exact span — bound and context-only names are
-            // not host parameters.
+            // with their exact span. A name the engine binds itself is never
+            // one, whatever scope binds it — that is why `$this`, `$parent`,
+            // `$self` and `$scope` were being demanded from the caller and
+            // emitted by codegen.
             if ctx.env().let_fact(name).is_none()
-                && !super::CONTEXT_ONLY_PARAMS.contains(&name.as_str())
+                && !crate::context_params::is_engine_param(name)
             {
                 ctx.record_param_use(name.clone(), span.clone());
             }

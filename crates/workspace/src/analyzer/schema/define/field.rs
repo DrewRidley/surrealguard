@@ -38,7 +38,7 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
         let Some(expr) = clause else {
             continue;
         };
-        let fact = with_value_bound(ctx, declared.clone(), |ctx| {
+        let fact = with_value_bound(ctx, declared.clone(), &stmt.table.node, |ctx| {
             let fact = crate::analyzer::expression::infer::infer_expression_fact(expr, ctx);
             crate::analyzer::expression::check::check_value_expression(ctx, expr);
             fact
@@ -74,7 +74,7 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
     }
 
     if let Some(assert) = &stmt.assert {
-        let kind = with_value_bound(ctx, declared.clone(), |ctx| {
+        let kind = with_value_bound(ctx, declared.clone(), &stmt.table.node, |ctx| {
             let fact = crate::analyzer::expression::infer::infer_expression_fact(assert, ctx);
             crate::analyzer::expression::check::check_value_expression(ctx, assert);
             fact.kind
@@ -333,28 +333,32 @@ pub(crate) fn infer_field_clause_kind(
     expr: &ast::Spanned<ast::Expr>,
     this_table: &str,
 ) -> Option<Kind> {
-    with_value_bound(ctx, None, |ctx| {
-        // `$this` is the record being written/computed, so `$this.field`
-        // resolves against the owning table. (Bare field references and graph
-        // traversals resolve through the row-table context the caller sets.)
-        let span = surrealguard_syntax::span::SourceSpan::new(
-            ctx.source().clone(),
-            surrealguard_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered"),
-        );
-        let mut this_fact = ExpressionFact::new(span, ExpressionValueClass::Variable);
-        this_fact.kind = Some(Kind::Record(vec![this_table.into()]));
-        ctx.define_local("this".to_string(), this_fact);
+    // `$this` is the record being written/computed, so `$this.field` resolves
+    // against the owning table — and so do its four siblings, which
+    // `with_value_bound` now binds from the same table. (Bare field references
+    // and graph traversals resolve through the row-table context the caller
+    // sets.)
+    with_value_bound(ctx, None, this_table, |ctx| {
         crate::analyzer::expression::infer::infer_expression_fact(expr, ctx).kind
     })
 }
 
-/// Runs `f` with `$value` (and `$input`) bound: `$value` carries the
-/// declared type inside `ASSERT`/`VALUE`/`DEFAULT` bodies.
+/// Runs `f` with the document context a field clause sees bound: `$value`
+/// carries the declared type inside `ASSERT`/`VALUE`/`DEFAULT`/`COMPUTED`
+/// bodies, and `$this`/`$self`/`$before`/`$after`/`$input` name the record
+/// being written.
+///
+/// The document set comes from `context_params`' one table. It used to be a
+/// two-name copy (`$value`, `$input`), which is why `$this` had to be bound
+/// again by hand one function below and `$self`/`$before`/`$after` were bound
+/// by nobody — while the hover map offered all five.
 fn with_value_bound<T>(
     ctx: &mut AnalysisContext<'_>,
     declared: Option<Kind>,
+    table: &str,
     f: impl FnOnce(&mut AnalysisContext<'_>) -> T,
 ) -> T {
+    let document = crate::context_params::document_param_bindings(table);
     ctx.with_child_env(|ctx| {
         // A field's `ASSERT`/`VALUE`/`DEFAULT` is evaluated at write time, where
         // the session is not statically known. The top-level
@@ -369,7 +373,15 @@ fn with_value_bound<T>(
         );
         let mut fact = ExpressionFact::new(span.clone(), ExpressionValueClass::Variable);
         fact.kind = declared;
+        for (name, kind) in document {
+            let mut bound = ExpressionFact::new(span.clone(), ExpressionValueClass::Variable);
+            bound.kind = Some(kind);
+            ctx.define_local(name.to_string(), bound);
+        }
         ctx.define_local("value".to_string(), fact);
+        // `$input` is the value being written into *this field*, not the record
+        // containing it, and its kind before coercion is not the declared one —
+        // so `any` is the honest answer rather than a guess.
         let mut input = ExpressionFact::new(span, ExpressionValueClass::Variable);
         input.kind = Some(Kind::Any);
         ctx.define_local("input".to_string(), input);

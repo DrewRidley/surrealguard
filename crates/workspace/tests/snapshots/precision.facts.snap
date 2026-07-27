@@ -34,6 +34,15 @@ table document  [schemafull]
   field title                        : string
   field word_count                   : option<int>
   field word_count_or_zero           : int  [computed, default]
+table document_audit  [schemafull]
+  field note                         : record<document_note>
+table document_note  [schemafull]
+  field author                       : record<account>
+  field before_body                  : string  [computed, default]
+  field body                         : string
+  field self_body                    : string  [computed, default]
+  field this_body                    : string  [computed, default]
+  field trimmed                      : string  [computed, default]
 table employee_of  [schemafull, relation account -> organization]
   field joined_at                    : datetime  [default]
   field role                         : record<organization_role>
@@ -263,6 +272,23 @@ table webhook_event  [schemafull]
   stmt    170:1 define_function  : (no response)
   let     131:6 $alias           : option<string>
   let     139:6 $alias           : string
+
+== source: schema/09_document_context.surql ==
+  stmt     15:1 define_table     : (no response)
+  stmt     17:1 define_field     : (no response)
+  stmt     19:1 define_field     : (no response)
+  stmt     23:1 define_field     : (no response)
+  stmt     25:1 define_field     : (no response)
+  stmt     28:1 define_field     : (no response)
+  stmt     32:1 define_field     : (no response)
+  stmt     37:1 define_event     : (no response)
+  stmt     47:1 define_table     : (no response)
+  stmt     50:1 define_field     : (no response)
+  let      38:6 $event_before    : string
+  let      39:6 $event_after     : string
+  let      40:6 $event_this      : string
+  let      41:6 $event_self      : string
+  let      42:6 $event_input     : string
 
 == source: queries/10_select.surql ==
   stmt      4:1 select           : array<{ created_at: datetime, name: string, tier: 'free' | 'pro' | 'enterprise' }>

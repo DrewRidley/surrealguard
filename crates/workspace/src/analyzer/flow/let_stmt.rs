@@ -10,11 +10,6 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 
 pub(crate) fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) -> Kind {
-    // SurrealDB rejects assignment to its context parameters at runtime.
-    const PROTECTED: &[&str] = &[
-        "auth", "session", "token", "access", "this", "parent", "event", "value", "before",
-        "after", "input",
-    ];
     if ctx.env().would_shadow(&stmt.name.node) {
         let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.name.span);
         ctx.emit(
@@ -30,7 +25,11 @@ pub(crate) fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) ->
             .with_help("silence with `W7002 = \"allow\"`"),
         );
     }
-    if PROTECTED.contains(&stmt.name.node.as_str()) {
+    // SurrealDB rejects assignment to a parameter it binds itself. The set is
+    // `context_params`' one table, not a copy of it: the copy that used to
+    // stand here was missing `$scope` and `$self`, both of which the engine
+    // binds and this check silently allowed.
+    if crate::context_params::is_engine_param(&stmt.name.node) {
         let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.name.span);
         ctx.emit(
             surrealguard_diagnostics::catalog::finding(

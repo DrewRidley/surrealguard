@@ -26,7 +26,7 @@
 //! context and fires on table-level predicates regardless; and every
 //! field-level predicate resolves fully against the fields declared before it.
 
-use surrealdb_types::{Kind, Table};
+use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
@@ -91,13 +91,13 @@ pub(crate) fn analyze_permission_predicates(
 /// (`$auth`/`$token`/`$session`/`$access`/`$scope`). Session params stay open
 /// shapes so member access on them (`$auth.role`) is never flagged.
 fn bind_row_params(ctx: &mut AnalysisContext<'_>, table_name: &str, value_kind: Kind) {
-    let record = Kind::Record(vec![Table::from(table_name)]);
     define(ctx, "value", value_kind);
-    define(ctx, "this", record.clone());
-    define(ctx, "self", record.clone());
-    define(ctx, "before", record.clone());
-    define(ctx, "after", record.clone());
-    define(ctx, "input", record);
+    // The document set, from `context_params`' one table rather than a copy of
+    // it — a name the hover map offers and this binder omits is a name the
+    // editor types and the analyzer then reports as unbound.
+    for (name, kind) in crate::context_params::document_param_bindings(table_name) {
+        define(ctx, name, kind);
+    }
     // Session/access params: `$auth` is a record whose table depends on the
     // access method (unmodeled), so it stays a bare open record; the rest are
     // generic shapes.

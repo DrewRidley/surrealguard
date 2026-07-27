@@ -23,23 +23,117 @@ use surrealguard_syntax::span::ByteRange;
 
 use crate::schema::SchemaIndex;
 
-/// Whether `name` (without the leading `$`) is a reserved *session* param —
-/// one SurrealDB binds from the authenticated session (`$auth`) or access
-/// token, available in every schema-time context and never a host-supplied
-/// query parameter. These are externally typed by the runtime (the concrete
-/// `$auth` record depends on the access method), so a *value comparison*
-/// against one (`$auth = NONE`, `in = $auth`) must never pin or conflict its
-/// kind.
+/// Where SurrealDB binds a parameter it supplies itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParamScope {
+    /// Bound in every context, from the session and the access method
+    /// (`core/src/dbs/session.rs`). Externally typed by the runtime, so a value
+    /// comparison against one must never pin or conflict its kind.
+    Session,
+    /// Bound by the *document* context a `DEFINE FIELD` clause, a `DEFINE
+    /// EVENT` body or a `PERMISSIONS` predicate establishes. Outside one there
+    /// is no document, so a use is a finding (6005) rather than a host param.
+    Document,
+    /// Bound by an enclosing subquery's outer row (`$parent`). The analyzer
+    /// does not model that nesting, so it can never prove one *un*bound — the
+    /// name is engine-supplied, and that is all this layer is entitled to say.
+    Positional,
+}
+
+/// Every parameter SurrealDB binds itself, and where.
 ///
-/// Only the session set is unconditional: document-context params
-/// (`$before`/`$after`/`$value`/...) are context-bound *inside* `DEFINE
-/// FIELD`/`EVENT` bodies but are ordinary host params at the top level, so
-/// they are deliberately excluded here — comparison-derived reconciliation
-/// ([`unify_comparable`](crate::statement_env)) already keeps their record/none
-/// comparisons from conflicting without suppressing legitimate host inference.
+/// **The one table.** Five overlapping hand-written lists used to answer this
+/// question — `PROTECTED` (`flow/let_stmt.rs`), `CONTEXT_ONLY_PARAMS`
+/// (`expression/mod.rs`), `is_reserved_session_param`, the hover maps below,
+/// and `permissions.rs`'s `bind_row_params` — and no two agreed. The
+/// disagreements were the bugs: `$this` was protected but not context-only, so
+/// a top-level `RETURN $this.x` was silently recorded as a *required host
+/// parameter* while the identical `$value` correctly reported 6005; `$parent`
+/// was protected and bound by nothing, so a correlated subquery demanded it
+/// from the caller and codegen emitted it; `$self` was bound in three contexts
+/// and absent from `PROTECTED`; `$scope` was seeded but shadowable with no
+/// 6007.
+///
+/// Every question about an engine-supplied name is now derived from this one
+/// list. Adding a name is one row, and the row states where it lives.
+const ENGINE_PARAMS: &[(&str, ParamScope)] = &[
+    // Session / access method.
+    ("auth", ParamScope::Session),
+    ("token", ParamScope::Session),
+    ("session", ParamScope::Session),
+    ("access", ParamScope::Session),
+    // The pre-2.0 spelling of `$access`; still accepted.
+    ("scope", ParamScope::Session),
+    // The document context.
+    ("value", ParamScope::Document),
+    ("before", ParamScope::Document),
+    ("after", ParamScope::Document),
+    ("input", ParamScope::Document),
+    ("this", ParamScope::Document),
+    ("self", ParamScope::Document),
+    ("event", ParamScope::Document),
+    // The enclosing subquery's row.
+    ("parent", ParamScope::Positional),
+];
+
+/// Where `name` (without the leading `$`) is engine-bound, or `None` when the
+/// engine does not bind it at all.
+pub fn engine_param_scope(name: &str) -> Option<ParamScope> {
+    ENGINE_PARAMS
+        .iter()
+        .find(|(param, _)| *param == name)
+        .map(|(_, scope)| *scope)
+}
+
+/// Whether the engine binds `name` itself.
+///
+/// Two consequences, and they are the same fact: assigning it is 6007 (the
+/// engine rejects the assignment at runtime), and it is never a host parameter
+/// — nothing the caller could supply would be read.
+pub fn is_engine_param(name: &str) -> bool {
+    engine_param_scope(name).is_some()
+}
+
+/// Whether `name` is bound by a *document* context, and therefore exists only
+/// inside the construct that establishes one.
+pub fn is_document_param(name: &str) -> bool {
+    engine_param_scope(name) == Some(ParamScope::Document)
+}
+
+/// Whether `name` is a reserved *session* param — one SurrealDB binds from the
+/// authenticated session (`$auth`) or access token, available in every
+/// schema-time context.
+///
+/// These are externally typed by the runtime (the concrete `$auth` record
+/// depends on the access method), so a *value comparison* against one
+/// (`$auth = NONE`, `in = $auth`) must never pin or conflict its kind. The
+/// document set is deliberately excluded: comparison-derived reconciliation
+/// ([`unify_comparable`](crate::statement_env)) already keeps their
+/// record/none comparisons from conflicting.
 pub fn is_reserved_session_param(name: &str) -> bool {
-    // Mirrors `insert_session_params`.
-    matches!(name, "auth" | "token" | "session" | "access" | "scope")
+    engine_param_scope(name) == Some(ParamScope::Session)
+}
+
+/// The document params whose kind is *the base record*, for `table`.
+///
+/// One list, read by the hover maps and by all three analyzer binders, so an
+/// editor cannot offer a name the analyzer then reports as unbound. It is the
+/// **base**: a construct that knows a better kind for one of these (a
+/// `DEFINE EVENT` types `$before`/`$after` as the row's full field object)
+/// binds it after and wins.
+///
+/// `$value`, `$input` and `$event` are not here on purpose — their kind is the
+/// construct's, not the table's, and guessing one for them is how a
+/// `DEFINE FIELD`'s `$input` (the value being written) came to be described as
+/// the record containing it.
+pub(crate) fn document_param_bindings(table: &str) -> Vec<(&'static str, Kind)> {
+    let record = Kind::Record(vec![Table::from(table)]);
+    vec![
+        ("after", record.clone()),
+        ("before", record.clone()),
+        ("this", record.clone()),
+        ("self", record),
+    ]
 }
 
 /// The context params bound by the DEFINE construct enclosing `offset`,
@@ -163,14 +257,12 @@ fn field_value_kind(schema: &SchemaIndex, table: &str, name_span: ByteRange) -> 
 /// Params bound in a `DEFINE FIELD` body (`VALUE`/`ASSERT`/`DEFAULT`/
 /// `PERMISSIONS`).
 fn field_map(table: &str, value_kind: Kind) -> BTreeMap<String, Kind> {
-    let record = Kind::Record(vec![Table::from(table)]);
     let mut map = BTreeMap::new();
     map.insert("value".to_string(), value_kind);
-    map.insert("after".to_string(), record.clone());
-    map.insert("before".to_string(), record.clone());
-    map.insert("input".to_string(), record.clone());
-    map.insert("this".to_string(), record.clone());
-    map.insert("self".to_string(), record);
+    map.insert("input".to_string(), Kind::Record(vec![Table::from(table)]));
+    for (name, kind) in document_param_bindings(table) {
+        map.insert(name.to_string(), kind);
+    }
     insert_session_params(&mut map);
     map
 }
@@ -189,11 +281,10 @@ fn event_map(table: &str) -> BTreeMap<String, Kind> {
         ]),
     );
     map.insert("value".to_string(), record.clone());
-    map.insert("after".to_string(), record.clone());
-    map.insert("before".to_string(), record.clone());
-    map.insert("input".to_string(), record.clone());
-    map.insert("this".to_string(), record.clone());
-    map.insert("self".to_string(), record);
+    map.insert("input".to_string(), record);
+    for (name, kind) in document_param_bindings(table) {
+        map.insert(name.to_string(), kind);
+    }
     insert_session_params(&mut map);
     map
 }
