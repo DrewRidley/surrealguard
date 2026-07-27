@@ -597,10 +597,7 @@ fn step_idiom_kind(idiom: &ast::Idiom, ctx: &mut AnalysisContext<'_>) -> Option<
         // A narrowing at this prefix supersedes the stepped kind — and stands
         // in for it when stepping failed, which is how an optional
         // intermediate segment stops killing the whole path.
-        current = narrowed_kind(place.as_ref(), ctx.env()).or(stepped);
-        if current.is_none() {
-            return None;
-        }
+        current = Some(narrowed_kind(place.as_ref(), ctx.env()).or(stepped)?);
     }
     current
 }
