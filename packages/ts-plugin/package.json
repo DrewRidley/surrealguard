@@ -1,7 +1,7 @@
 {
   "name": "@surrealguard/ts-plugin",
   "version": "0.5.3",
-  "description": "TypeScript language service plugin: SurrealQL diagnostics and highlighting inside db.query(\"…\"), reported as TypeScript's own.",
+  "description": "TypeScript language service plugin: SurrealQL diagnostics and highlighting inside db.query(\"\u2026\"), reported as TypeScript's own.",
   "license": "MIT OR Apache-2.0",
   "author": "Drew Ridley",
   "repository": {
@@ -35,7 +35,7 @@
     "typescript": "^5.6.0"
   },
   "scripts": {
-    "prepare": "node scripts/sync-wasm.mjs",
+    "prepare": "node scripts/sync-wasm.mjs && tsc -p tsconfig.build.json",
     "build": "node scripts/sync-wasm.mjs && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "pretest": "node scripts/sync-wasm.mjs",

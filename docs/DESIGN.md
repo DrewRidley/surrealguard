@@ -163,9 +163,46 @@ Future LSP features should only be added when the shared analysis output exposes
 - inlay hints
 - signature help
 
+## Editor surfaces
+
+There are two, and they answer from the same analysis.
+
+`surrealguard-lsp` is the general one: it speaks LSP over stdio and serves
+`.surql` files and every host language the extractor knows.
+
+`@surrealguard/ts-plugin` is the TypeScript-specific one: a language service
+plugin that proxies `getSemanticDiagnostics`,
+`getEncodedSemanticClassifications` and `getQuickInfoAtPosition`. It exists
+because a second language server *competes* with TypeScript for the byte ranges
+inside a query string — both classify them, and the editor resolves that
+differently on every keystroke, which reads as flicker. A plugin's answers are
+TypeScript's answers, so there is nothing to merge.
+
+Two rules keep them from drifting:
+
+- **The classification is shared code.** `surrealguard_syntax::highlight` says
+  what a byte is; the LSP encodes that as semantic tokens and the plugin
+  encodes it as TypeScript classifications. Neither owns the vocabulary.
+- **The analysis is shared code.** The plugin runs the `wasm32-wasip1` build of
+  the workspace and calls one export (`sg_host`) that does extraction, analysis
+  and span mapping in Rust. Nothing about what a query *means* is reimplemented
+  in TypeScript — only the marshalling and the editor's own conventions
+  (UTF-16 offsets, diagnostic codes) live there.
+
+The plugin does not load in `tsc`, by TypeScript's design. That is the right
+split rather than a limitation: CI runs `surrealguard check`, which sees the
+whole workspace at once.
+
 ## Embedded-source model
 
 Embedded queries should not be special cases inside semantic analysis.
+
+The host convention is a **string literal** passed to a query sink:
+`db.query("…")`, `defineQuery("…")`, `defineLive("…")`. Not a tagged template.
+`TemplateStringsArray` has no generic parameter (TypeScript#33304), so a
+`` surql`…` `` erases its query text before inference can read it and the
+generated registry has nothing to key on — a form that can be checked but never
+typed is a form whose findings have no fix.
 
 Host adapters should eventually produce sources with:
 

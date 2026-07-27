@@ -253,6 +253,26 @@ Zed users can install the
 [`DrewRidley/zed-surreal`](https://github.com/DrewRidley/zed-surreal) extension;
 any other LSP-capable editor can point at the binary directly.
 
+For TypeScript and JavaScript files there is a second, lighter option:
+[`@surrealguard/ts-plugin`](packages/ts-plugin), a TypeScript **language service
+plugin**. One entry in `tsconfig.json` —
+
+```jsonc
+{ "compilerOptions": { "plugins": [{ "name": "@surrealguard/ts-plugin" }] } }
+```
+
+— and the findings inside your `db.query("…")` strings come back as
+TypeScript's own diagnostics, with TypeScript's own classifications on the
+query's tokens. That matters beyond convenience: the standalone LSP is a
+*second* server answering about the same bytes as TypeScript, and the editor
+resolves that competition differently on every keystroke, so an inline query
+flickers between highlighted and plain string. A plugin has nothing to race —
+its answers *are* TypeScript's. It does not load in `tsc` (that is TypeScript's
+design), which is the right split: CI keeps running `surrealguard check`, which
+sees the whole workspace instead of one file at a time. `.svelte` and `.vue`
+still need the LSP; the tools that own those files build their TypeScript
+service directly and never read `compilerOptions.plugins`.
+
 ## What it analyzes
 
 - **Full statement coverage** — SELECT (projections, graph traversals,

@@ -68,10 +68,10 @@ importers:
     dependencies:
       '@surrealguard/client':
         specifier: 0.5.3
-        version: 0.5.3(surrealdb@2.0.8(tslib@2.8.1)(typescript@5.9.3))
+        version: link:../client
       '@surrealguard/query':
         specifier: 0.5.3
-        version: 0.5.3(surrealdb@2.0.8(tslib@2.8.1)(typescript@5.9.3))
+        version: link:../query
     devDependencies:
       '@testing-library/react':
         specifier: ^14
@@ -99,7 +99,7 @@ importers:
     dependencies:
       '@surrealguard/client':
         specifier: 0.5.3
-        version: 0.5.3(surrealdb@2.0.8(tslib@2.8.1)(typescript@5.9.3))
+        version: link:../client
     devDependencies:
       surrealdb:
         specifier: 2.0.8
@@ -109,10 +109,10 @@ importers:
     dependencies:
       '@surrealguard/client':
         specifier: 0.5.3
-        version: 0.5.3(surrealdb@2.0.8(tslib@2.8.1)(typescript@5.9.3))
+        version: link:../client
       '@surrealguard/query':
         specifier: 0.5.3
-        version: 0.5.3(surrealdb@2.0.8(tslib@2.8.1)(typescript@5.9.3))
+        version: link:../query
       '@sveltejs/kit':
         specifier: ^2
         version: 2.70.1(@sveltejs/vite-plugin-svelte@4.0.4(svelte@5.56.7)(vite@5.4.21(@types/node@22.20.1)))(svelte@5.56.7)(typescript@5.9.3)(vite@5.4.21(@types/node@22.20.1))
@@ -656,16 +656,6 @@ packages:
     peerDependencies:
       tslib: ^2.6.3
       typescript: ^5.0.0
-
-  '@surrealguard/client@0.5.3':
-    resolution: {integrity: sha512-Tg96zZfo2AZsbri3hKVCb70W98zy1cGu2RM3hrQGdJh3UP5IL1zu53HJDsasRsFiygsWlXh0lELOY4PwzoEq7w==}
-    peerDependencies:
-      surrealdb: ^2.0.8
-
-  '@surrealguard/query@0.5.3':
-    resolution: {integrity: sha512-x01nqHhSv7sYU+l9ZwZeEoQERI60oBWjuGjs2QE+/+WGjH0Yzw36yOhCR3vnmQo0oFMBYymsuvAcyERU3XGUHg==}
-    peerDependencies:
-      surrealdb: ^2.0.8
 
   '@sveltejs/acorn-typescript@1.0.11':
     resolution: {integrity: sha512-LFuZUkjJ9iF7JZye/aG5XM0SFcQ5VyL0oVX4WJ9dc0Va3R3s0OauX1BESVCb+YN/ol8TAfqGDDAQsTG627Y5kw==}
@@ -2026,15 +2016,6 @@ snapshots:
       tslib: 2.8.1
       typescript: 5.9.3
       uuidv7: 1.2.1
-
-  '@surrealguard/client@0.5.3(surrealdb@2.0.8(tslib@2.8.1)(typescript@5.9.3))':
-    dependencies:
-      surrealdb: 2.0.8(tslib@2.8.1)(typescript@5.9.3)
-
-  '@surrealguard/query@0.5.3(surrealdb@2.0.8(tslib@2.8.1)(typescript@5.9.3))':
-    dependencies:
-      '@surrealguard/client': 0.5.3(surrealdb@2.0.8(tslib@2.8.1)(typescript@5.9.3))
-      surrealdb: 2.0.8(tslib@2.8.1)(typescript@5.9.3)
 
   '@sveltejs/acorn-typescript@1.0.11(acorn@8.17.0)':
     dependencies:

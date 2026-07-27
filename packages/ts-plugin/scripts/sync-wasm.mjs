@@ -9,8 +9,9 @@
 //
 // The copy is not committed. An 8 MB binary in git twice is 8 MB too many, and
 // the copy is reproducible from a file that *is* committed. This script runs
-// from `prepare` (so a fresh `pnpm install` has it) and from `build` and
-// `pretest` (so neither can run against a stale or missing one).
+// from `prepare` — which pnpm runs on install and npm runs before packing, so
+// neither a fresh clone nor a publish can end up without it — and from `build`
+// and `pretest`, so neither can run against a stale one.
 
 import { copyFileSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";

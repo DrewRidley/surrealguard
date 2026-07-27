@@ -11,7 +11,8 @@
 //! delta-encoded against their predecessor, so they must be emitted in
 //! ascending position order.
 
-use surrealguard_syntax::highlight::TokenKind;
+use std::ops::Range;
+
 use tower_lsp::lsp_types::{SemanticToken, SemanticTokenType};
 
 pub use surrealguard_syntax::highlight::{tokens, Token};
@@ -153,6 +154,7 @@ fn utf16_len(text: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use surrealguard_syntax::highlight::TokenKind;
     use surrealguard_syntax::parse::{parse_source, ParsedSource};
     use surrealguard_syntax::source::SourceId;
 

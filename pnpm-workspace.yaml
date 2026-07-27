@@ -1,3 +1,12 @@
+# `chore(release)` rewrites every cross-package dependency to an exact
+# version (`"@surrealguard/client": "0.5.3"`) so the published tarballs pin
+# each other. Inside the workspace those must still resolve to the sibling
+# directory: pnpm 10 defaults this to false, and with it off `packages/svelte`
+# gets the registry copy of the client while `examples/*` (which ask for
+# `workspace:*`) get the local one — two identities for one type, and every
+# `SurqlQuery` handed across the boundary stops being assignable to itself.
+linkWorkspacePackages: true
+
 packages:
   - "packages/*"
   # The `surrealguard` CLI shim. Outside packages/, so `pnpm -r` skipped it
