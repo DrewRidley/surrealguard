@@ -107,16 +107,6 @@ fn corpus_is_free_of_error_findings() {
 
 fn render_snapshot(corpus: &Corpus) -> String {
     let mut out = String::from(HEADER);
-    // Appended rather than folded into `HEADER`, so the recognizer path's file
-    // stays byte-identical to the one committed before the fact layer existed.
-    if surrealguard_workspace::use_fact_layer() {
-        out.push_str(
-            "#\n\
-             # This is the SG_FACT_LAYER=1 variant: the same corpus, narrowed by the\n\
-             # expression-fact layer instead of the hand-written recognizers. Diff it\n\
-             # against `precision.snap` to read what the layer buys.\n",
-        );
-    }
     render_schema(corpus, &mut out);
     render_sources(corpus, &mut out);
     out
