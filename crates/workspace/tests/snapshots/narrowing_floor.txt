@@ -1,0 +1,527 @@
+# The recognizer floor — what `flow/narrow.rs`'s hand-written recognizers
+# inferred at every corpus site, on the last commit before they were deleted.
+#
+# THIS FILE IS AN UPPER BOUND, NOT AN EXPECTATION. Inference may infer anything
+# narrower than the type recorded here, and does at many sites. It may not infer
+# anything WIDER, and may not lose a site that has a type here.
+#
+# That is the property the deleted both-ways test (`tests/fact_layer.rs`) proved
+# by running both paths at once. With one path left, the other path's answers
+# are pinned here instead. Unlike `precision.snap` this file does not move when
+# precision improves, so it still catches a widening that a regenerated snapshot
+# would bless.
+#
+# Format:  <site id> TAB <rendered type> TAB <serialized Kind>
+#
+# The rendered type is for reading; the serialized Kind is what is compared.
+# Both are written from the same value, so they cannot disagree.
+schema/field/account.active	bool	"Bool"
+schema/field/account.created_at	datetime	"Datetime"
+schema/field/account.deactivated_reason	option<string | null>	{"Either":["None","String","Null"]}
+schema/field/account.email	string	"String"
+schema/field/account.person	option<record<person>>	{"Either":["None",{"Record":["person"]}]}
+schema/field/account.settings	{ locale: option<string>, notify: bool, timezone: string }	{"Literal":{"Object":{"locale":{"Either":["None","String"]},"notify":"Bool","timezone":"String"}}}
+schema/field/account.updated_at	datetime	"Datetime"
+schema/field/account.username	string	"String"
+schema/field/assigned_to.weight	int	"Int"
+schema/field/document.keywords	set<string>	{"Set":["String",null]}
+schema/field/document.length_band	string	"String"
+schema/field/document.length_band_eq	string	"String"
+schema/field/document.owner	record<account | organization>	{"Record":["account","organization"]}
+schema/field/document.reviewer	option<record<account | organization>>	{"Either":["None",{"Record":["account","organization"]}]}
+schema/field/document.stage	'draft' | 'review' | 'published'	{"Either":[{"Literal":{"String":"draft"}},{"Literal":{"String":"review"}},{"Literal":{"String":"published"}}]}
+schema/field/document.summary	option<string | null>	{"Either":["None","String","Null"]}
+schema/field/document.tags	option<array<string>>	{"Either":["None",{"Array":["String",null]}]}
+schema/field/document.title	string	"String"
+schema/field/document.word_count	option<int>	{"Either":["None","Int"]}
+schema/field/document.word_count_or_zero	int	"Int"
+schema/field/document_audit.note	record<document_note>	{"Record":["document_note"]}
+schema/field/document_note.author	record<account>	{"Record":["account"]}
+schema/field/document_note.before_body	string	"String"
+schema/field/document_note.body	string	"String"
+schema/field/document_note.self_body	string	"String"
+schema/field/document_note.this_body	string	"String"
+schema/field/document_note.trimmed	string	"String"
+schema/field/employee_of.joined_at	datetime	"Datetime"
+schema/field/employee_of.role	record<organization_role>	{"Record":["organization_role"]}
+schema/field/employee_of.status	'invited' | 'active' | 'suspended'	{"Either":[{"Literal":{"String":"invited"}},{"Literal":{"String":"active"}},{"Literal":{"String":"suspended"}}]}
+schema/field/employee_of.title	option<string>	{"Either":["None","String"]}
+schema/field/employee_of.unit	record<organization_unit>	{"Record":["organization_unit"]}
+schema/field/milestone.label	string	"String"
+schema/field/milestone.project	record<project>	{"Record":["project"]}
+schema/field/organization.address	{ city: string, country: string, line1: string, line2: option<string> }	{"Literal":{"Object":{"city":"String","country":"String","line1":"String","line2":{"Either":["None","String"]}}}}
+schema/field/organization.contacts	array<{ email: string, label: string, primary: bool }>	{"Array":[{"Literal":{"Object":{"email":"String","label":"String","primary":"Bool"}}},null]}
+schema/field/organization.created_at	datetime	"Datetime"
+schema/field/organization.employees	array<record<employee_of>>	{"Array":[{"Record":["employee_of"]},null]}
+schema/field/organization.legal_name	string	"String"
+schema/field/organization.logo	option<string>	{"Either":["None","String"]}
+schema/field/organization.name	string	"String"
+schema/field/organization.owner	record<account>	{"Record":["account"]}
+schema/field/organization.parent	option<record<organization>>	{"Either":["None",{"Record":["organization"]}]}
+schema/field/organization.sectors	array<record<sector>>	{"Array":[{"Record":["sector"]},null]}
+schema/field/organization.subsidiaries	array<record<organization>>	{"Array":[{"Record":["organization"]},null]}
+schema/field/organization.tier	'free' | 'pro' | 'enterprise'	{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}
+schema/field/organization_permission.name	string	"String"
+schema/field/organization_role.name	string	"String"
+schema/field/organization_role.organization	record<organization>	{"Record":["organization"]}
+schema/field/organization_role.permissions	array<record<organization_permission>>	{"Array":[{"Record":["organization_permission"]},null]}
+schema/field/organization_settings.data_region	'us' | 'eu'	{"Either":[{"Literal":{"String":"us"}},{"Literal":{"String":"eu"}}]}
+schema/field/organization_settings.organization	record<organization>	{"Record":["organization"]}
+schema/field/organization_settings.retention_days	30 | 90 | 365	{"Either":[{"Literal":{"Integer":30}},{"Literal":{"Integer":90}},{"Literal":{"Integer":365}}]}
+schema/field/organization_settings.security	{ byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }	{"Literal":{"Object":{"byok":{"Literal":{"Object":{"kms_provider":{"Either":["None","String"]},"mode":{"Either":[{"Literal":{"String":"lazy"}},{"Literal":{"String":"immediate"}}]},"progress":"Int","status":{"Either":[{"Literal":{"String":"not_started"}},{"Literal":{"String":"running"}},{"Literal":{"String":"completed"}},{"Literal":{"String":"failed"}}]}}}}}}}
+schema/field/organization_settings.updated_at	datetime	"Datetime"
+schema/field/organization_unit.headcount	int	"Int"
+schema/field/organization_unit.name	string	"String"
+schema/field/organization_unit.organization	record<organization>	{"Record":["organization"]}
+schema/field/organization_unit.parent	option<record<organization_unit>>	{"Either":["None",{"Record":["organization_unit"]}]}
+schema/field/person.created_at	datetime	"Datetime"
+schema/field/person.date_of_birth	option<datetime>	{"Either":["None","Datetime"]}
+schema/field/person.first_name	string	"String"
+schema/field/person.full_name	string	"String"
+schema/field/person.last_name	string	"String"
+schema/field/person.middle_name	option<string>	{"Either":["None","String"]}
+schema/field/project.milestones	array<record<milestone>>	{"Array":[{"Record":["milestone"]},null]}
+schema/field/project.name	string	"String"
+schema/field/project.tasks	array<record<task>>	{"Array":[{"Record":["task"]},null]}
+schema/field/project.unlinked	unknown	unknown
+schema/field/sector.name	string	"String"
+schema/field/task.project	record<project>	{"Record":["project"]}
+schema/field/task.title	string	"String"
+schema/field/webhook_event.headers	object	"Object"
+schema/field/webhook_event.payload	any	"Any"
+schema/field/webhook_event.provider	'stripe' | 'github'	{"Either":[{"Literal":{"String":"stripe"}},{"Literal":{"String":"github"}}]}
+schema/field/webhook_event.received_at	datetime	"Datetime"
+schema/fn/fn::account::reason_or_default	string	"String"
+schema/fn/fn::account::reason_set	string | null	{"Either":["String","Null"]}
+schema/fn/fn::account::reason_uncleared	option<string>	{"Either":["None","String"]}
+schema/fn/fn::facts::guard_alias	option<string>	{"Either":["None","String"]}
+schema/fn/fn::facts::guard_alias_after	string	"String"
+schema/fn/fn::facts::guard_field_path	string	"String"
+schema/fn/fn::facts::guard_is_none	string	"String"
+schema/fn/fn::facts::guard_is_not_none	string	"String"
+schema/fn/fn::facts::guard_not	option<string>	{"Either":["None","String"]}
+schema/fn/fn::facts::guard_paren	string	"String"
+schema/fn/fn::facts::guard_return	string	"String"
+schema/fn/fn::facts::guard_throw_block	string	"String"
+schema/fn/fn::facts::guard_throw_then	string	"String"
+schema/fn/fn::facts::guard_truthy	option<string>	{"Either":["None","String"]}
+schema/fn/fn::facts::guard_type_is_none	option<string>	{"Either":["None","String"]}
+schema/fn/fn::facts::guard_type_is_string	option<string>	{"Either":["None","String"]}
+schema/fn/fn::facts::is_none_guard	string | null	{"Either":["String","Null"]}
+schema/fn/fn::facts::is_null_guard	option<string>	{"Either":["None","String"]}
+schema/fn/fn::facts::not_ne_none_guard	option<string | null>	{"Either":["None","String","Null"]}
+schema/fn/fn::facts::not_ne_null_guard	option<string | null>	{"Either":["None","String","Null"]}
+schema/fn/fn::org::display_name	string	"String"
+schema/fn/fn::org::headcount	int	"Int"
+schema/fn/fn::org::is_pro	bool	"Bool"
+schema/fn/fn::org::label	string	"String"
+schema/fn/fn::org::owner	record<account>	{"Record":["account"]}
+schema/fn/fn::person::initials	string	"String"
+schema/04_functions.surql/let/$a@24:6	string	"String"
+schema/04_functions.surql/let/$b@25:6	string	"String"
+schema/08_facts.surql/let/$alias@131:6	option<string>	{"Either":["None","String"]}
+schema/08_facts.surql/let/$alias@139:6	string	"String"
+schema/09_document_context.surql/let/$event_before@38:6	string	"String"
+schema/09_document_context.surql/let/$event_after@39:6	string	"String"
+schema/09_document_context.surql/let/$event_this@40:6	string	"String"
+schema/09_document_context.surql/let/$event_self@41:6	string	"String"
+schema/09_document_context.surql/let/$event_input@42:6	string	"String"
+queries/10_select.surql/stmt/select@4:1	array<{ created_at: datetime, name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"created_at":"Datetime","name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/10_select.surql/stmt/select@6:1	array<{ legal: string, org_name: string }>	{"Array":[{"Literal":{"Object":{"legal":"String","org_name":"String"}}},null]}
+queries/10_select.surql/stmt/select@8:1	array<{ address: { city: string, line2: option<string> } }>	{"Array":[{"Literal":{"Object":{"address":{"Literal":{"Object":{"city":"String","line2":{"Either":["None","String"]}}}}}}},null]}
+queries/10_select.surql/stmt/select@10:1	array<{ address: { city: string, country: string } }>	{"Array":[{"Literal":{"Object":{"address":{"Literal":{"Object":{"city":"String","country":"String"}}}}}},null]}
+queries/10_select.surql/stmt/select@12:1	array<{ contacts: { email: array<string> } }>	{"Array":[{"Literal":{"Object":{"contacts":{"Literal":{"Object":{"email":{"Array":["String",null]}}}}}}},null]}
+queries/10_select.surql/stmt/select@14:1	array<{ contacts: { label: array<string> } }>	{"Array":[{"Literal":{"Object":{"contacts":{"Literal":{"Object":{"label":{"Array":["String",null]}}}}}}},null]}
+queries/10_select.surql/stmt/select@16:1	array<{ owner: { settings: { timezone: string }, username: string } }>	{"Array":[{"Literal":{"Object":{"owner":{"Literal":{"Object":{"settings":{"Literal":{"Object":{"timezone":"String"}}},"username":"String"}}}}}},null]}
+queries/10_select.surql/stmt/select@18:1	array<{ person: { first_name: option<string>, last_name: option<string> } }>	{"Array":[{"Literal":{"Object":{"person":{"Literal":{"Object":{"first_name":{"Either":["None","String"]},"last_name":{"Either":["None","String"]}}}}}}},null]}
+queries/10_select.surql/stmt/select@20:1	array<{ data_region: 'us' | 'eu', id: record<organization_settings>, organization: record<organization>, retention_days: 30 | 90 | 365, security: { byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }, updated_at: datetime }>	{"Array":[{"Literal":{"Object":{"data_region":{"Either":[{"Literal":{"String":"us"}},{"Literal":{"String":"eu"}}]},"id":{"Record":["organization_settings"]},"organization":{"Record":["organization"]},"retention_days":{"Either":[{"Literal":{"Integer":30}},{"Literal":{"Integer":90}},{"Literal":{"Integer":365}}]},"security":{"Literal":{"Object":{"byok":{"Literal":{"Object":{"kms_provider":{"Either":["None","String"]},"mode":{"Either":[{"Literal":{"String":"lazy"}},{"Literal":{"String":"immediate"}}]},"progress":"Int","status":{"Either":[{"Literal":{"String":"not_started"}},{"Literal":{"String":"running"}},{"Literal":{"String":"completed"}},{"Literal":{"String":"failed"}}]}}}}}}},"updated_at":"Datetime"}}},null]}
+queries/10_select.surql/stmt/select@24:1	array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, org_name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"address":{"Literal":{"Object":{"city":"String","country":"String","line1":"String","line2":{"Either":["None","String"]}}}},"contacts":{"Array":[{"Literal":{"Object":{"email":"String","label":"String","primary":"Bool"}}},null]},"created_at":"Datetime","employees":{"Array":[{"Record":["employee_of"]},null]},"id":{"Record":["organization"]},"legal_name":"String","logo":{"Either":["None","String"]},"org_name":"String","owner":{"Record":["account"]},"parent":{"Either":["None",{"Record":["organization"]}]},"sectors":{"Array":[{"Record":["sector"]},null]},"subsidiaries":{"Array":[{"Record":["organization"]},null]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/10_select.surql/stmt/select@26:1	array<{ active: bool, created_at: datetime, deactivated_reason: option<string | null>, email: string, id: record<account>, memberships: array<record<employee_of>>, person: option<record<person>>, settings: { locale: option<string>, notify: bool, timezone: string }, updated_at: datetime, username: string }>	{"Array":[{"Literal":{"Object":{"active":"Bool","created_at":"Datetime","deactivated_reason":{"Either":["None","String","Null"]},"email":"String","id":{"Record":["account"]},"memberships":{"Array":[{"Record":["employee_of"]},null]},"person":{"Either":["None",{"Record":["person"]}]},"settings":{"Literal":{"Object":{"locale":{"Either":["None","String"]},"notify":"Bool","timezone":"String"}}},"updated_at":"Datetime","username":"String"}}},null]}
+queries/10_select.surql/stmt/select@28:1	array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, name_length: int, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"address":{"Literal":{"Object":{"city":"String","country":"String","line1":"String","line2":{"Either":["None","String"]}}}},"contacts":{"Array":[{"Literal":{"Object":{"email":"String","label":"String","primary":"Bool"}}},null]},"created_at":"Datetime","employees":{"Array":[{"Record":["employee_of"]},null]},"id":{"Record":["organization"]},"legal_name":"String","logo":{"Either":["None","String"]},"name":"String","name_length":"Int","owner":{"Record":["account"]},"parent":{"Either":["None",{"Record":["organization"]}]},"sectors":{"Array":[{"Record":["sector"]},null]},"subsidiaries":{"Array":[{"Record":["organization"]},null]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/10_select.surql/stmt/select@30:1	array<{ address: { city: string, country: string, line1: string, line2: option<string> }, city: string, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"address":{"Literal":{"Object":{"city":"String","country":"String","line1":"String","line2":{"Either":["None","String"]}}}},"city":"String","contacts":{"Array":[{"Literal":{"Object":{"email":"String","label":"String","primary":"Bool"}}},null]},"created_at":"Datetime","employees":{"Array":[{"Record":["employee_of"]},null]},"id":{"Record":["organization"]},"legal_name":"String","logo":{"Either":["None","String"]},"name":"String","owner":{"Record":["account"]},"parent":{"Either":["None",{"Record":["organization"]}]},"sectors":{"Array":[{"Record":["sector"]},null]},"subsidiaries":{"Array":[{"Record":["organization"]},null]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/10_select.surql/stmt/select@32:1	array<{ address: { city: string }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"address":{"Literal":{"Object":{"city":"String"}}},"contacts":{"Array":[{"Literal":{"Object":{"email":"String","label":"String","primary":"Bool"}}},null]},"created_at":"Datetime","employees":{"Array":[{"Record":["employee_of"]},null]},"id":{"Record":["organization"]},"legal_name":"String","logo":{"Either":["None","String"]},"name":"String","owner":{"Record":["account"]},"parent":{"Either":["None",{"Record":["organization"]}]},"sectors":{"Array":[{"Record":["sector"]},null]},"subsidiaries":{"Array":[{"Record":["organization"]},null]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/10_select.surql/stmt/select@34:1	array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, org_owner: record<account>, parent: option<record<organization>>, plan: 'free' | 'pro' | 'enterprise', sectors: array<record<sector>>, subsidiaries: array<record<organization>> }>	{"Array":[{"Literal":{"Object":{"address":{"Literal":{"Object":{"city":"String","country":"String","line1":"String","line2":{"Either":["None","String"]}}}},"contacts":{"Array":[{"Literal":{"Object":{"email":"String","label":"String","primary":"Bool"}}},null]},"created_at":"Datetime","employees":{"Array":[{"Record":["employee_of"]},null]},"id":{"Record":["organization"]},"legal_name":"String","logo":{"Either":["None","String"]},"name":"String","org_owner":{"Record":["account"]},"parent":{"Either":["None",{"Record":["organization"]}]},"plan":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]},"sectors":{"Array":[{"Record":["sector"]},null]},"subsidiaries":{"Array":[{"Record":["organization"]},null]}}}},null]}
+queries/10_select.surql/stmt/select@36:1	array<string>	{"Array":["String",null]}
+queries/10_select.surql/stmt/select@38:1	option<{ name: string }>	{"Either":["None",{"Literal":{"Object":{"name":"String"}}}]}
+queries/10_select.surql/stmt/select@40:1	array<{ id: record<organization>, name: string }, 10>	{"Array":[{"Literal":{"Object":{"id":{"Record":["organization"]},"name":"String"}}},10]}
+queries/20_graph.surql/stmt/select@4:1	array<{ orgs: array<record<organization>> }>	{"Array":[{"Literal":{"Object":{"orgs":{"Array":[{"Record":["organization"]},null]}}}},null]}
+queries/20_graph.surql/stmt/select@6:1	array<{ titles: array<option<string>> }>	{"Array":[{"Literal":{"Object":{"titles":{"Array":[{"Either":["None","String"]},null]}}}},null]}
+queries/20_graph.surql/stmt/select@8:1	array<{ members: array<record<account>> }>	{"Array":[{"Literal":{"Object":{"members":{"Array":[{"Record":["account"]},null]}}}},null]}
+queries/20_graph.surql/stmt/select@10:1	array<{ org_names: array<string> }>	{"Array":[{"Literal":{"Object":{"org_names":{"Array":["String",null]}}}},null]}
+queries/20_graph.surql/stmt/select@12:1	array<{ active_orgs: array<record<organization>> }>	{"Array":[{"Literal":{"Object":{"active_orgs":{"Array":[{"Record":["organization"]},null]}}}},null]}
+queries/20_graph.surql/stmt/select@14:1	array<{ roles: array<record<organization_role>> }>	{"Array":[{"Literal":{"Object":{"roles":{"Array":[{"Record":["organization_role"]},null]}}}},null]}
+queries/20_graph.surql/stmt/select@16:1	array<{ employees: array<record<employee_of>> }>	{"Array":[{"Literal":{"Object":{"employees":{"Array":[{"Record":["employee_of"]},null]}}}},null]}
+queries/20_graph.surql/let/$member@18:5	option<array<record<organization>>>	{"Either":["None",{"Array":[{"Record":["organization"]},null]}]}
+queries/20_graph.surql/let/$edge_titles@20:5	array<array<option<string>>>	{"Array":[{"Array":[{"Either":["None","String"]},null]},null]}
+queries/30_narrowing.surql/stmt/if_else@7:1	none	"None"
+queries/30_narrowing.surql/stmt/return@23:1	{ after_guard: string, unit_name: string, with_default: string }	{"Literal":{"Object":{"after_guard":"String","unit_name":"String","with_default":"String"}}}
+queries/30_narrowing.surql/let/$org@5:5	option<{ name: string, parent: option<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>	{"Either":["None",{"Literal":{"Object":{"name":"String","parent":{"Either":["None",{"Record":["organization"]}]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}}]}
+queries/30_narrowing.surql/let/$after_guard@9:5	string	"String"
+queries/30_narrowing.surql/let/$maybe@11:5	option<string>	{"Either":["None","String"]}
+queries/30_narrowing.surql/let/$with_default@13:5	string	"String"
+queries/30_narrowing.surql/let/$unit@15:5	option<{ headcount: int, name: string, parent: option<record<organization_unit>> }>	{"Either":["None",{"Literal":{"Object":{"headcount":"Int","name":"String","parent":{"Either":["None",{"Record":["organization_unit"]}]}}}}]}
+queries/30_narrowing.surql/let/$unit_name@17:5	string	"String"
+queries/30_narrowing.surql/let/$link@19:5	option<record<person>>	{"Either":["None",{"Record":["person"]}]}
+queries/30_narrowing.surql/let/$person_id@21:5	option<record<person>>	{"Either":[{"Record":["person"]},"None"]}
+queries/31_guard_subjects.surql/stmt/if_else@23:1	none	"None"
+queries/31_guard_subjects.surql/stmt/if_else@31:1	none	"None"
+queries/31_guard_subjects.surql/stmt/return@57:1	{ alias: string, alias_cross: option<string>, alias_cross_back: option<string>, bare: string, deep: string, paren: string, path: string }	{"Literal":{"Object":{"alias":"String","alias_cross":{"Either":["None","String"]},"alias_cross_back":{"Either":["None","String"]},"bare":"String","deep":"String","paren":"String","path":"String"}}}
+queries/31_guard_subjects.surql/let/$bare@14:5	option<string>	{"Either":["None","String"]}
+queries/31_guard_subjects.surql/let/$bare_narrowed@16:5	string	"String"
+queries/31_guard_subjects.surql/let/$row@21:5	option<{ logo: option<string>, name: string }>	{"Either":["None",{"Literal":{"Object":{"logo":{"Either":["None","String"]},"name":"String"}}}]}
+queries/31_guard_subjects.surql/let/$path_narrowed@25:5	string	"String"
+queries/31_guard_subjects.surql/let/$settings@29:5	option<{ locale: option<string>, notify: bool, timezone: string }>	{"Either":["None",{"Literal":{"Object":{"locale":{"Either":["None","String"]},"notify":"Bool","timezone":"String"}}}]}
+queries/31_guard_subjects.surql/let/$deep_narrowed@33:5	string	"String"
+queries/31_guard_subjects.surql/let/$alias_src@38:5	option<string>	{"Either":["None","String"]}
+queries/31_guard_subjects.surql/let/$alias@40:5	option<string>	{"Either":["None","String"]}
+queries/31_guard_subjects.surql/let/$alias_narrowed@42:5	string	"String"
+queries/31_guard_subjects.surql/let/$alias_cross@47:5	option<string>	{"Either":["None","String"]}
+queries/31_guard_subjects.surql/let/$alias_cross_back@51:5	option<string>	{"Either":["None","String"]}
+queries/31_guard_subjects.surql/let/$paren_narrowed@55:5	string	"String"
+queries/32_guard_placement.surql/stmt/if_else@14:1	none	"None"
+queries/32_guard_placement.surql/stmt/return@55:1	{ block: string, outer: option<string>, scoped: int, top: string }	{"Literal":{"Object":{"block":"String","outer":{"Either":["None","String"]},"scoped":"Int","top":"String"}}}
+queries/32_guard_placement.surql/let/$top@12:5	option<string>	{"Either":["None","String"]}
+queries/32_guard_placement.surql/let/$top_after@16:5	string	"String"
+queries/32_guard_placement.surql/let/$inner@21:6	option<string>	{"Either":["None","String"]}
+queries/32_guard_placement.surql/let/$block_after@20:5	string	"String"
+queries/32_guard_placement.surql/let/$logos@28:5	array<option<string>>	{"Array":[{"Either":["None","String"]},null]}
+queries/32_guard_placement.surql/let/$logo@30:5	option<string>	{"Either":["None","String"]}
+queries/32_guard_placement.surql/let/$for_after@32:6	string	"String"
+queries/32_guard_placement.surql/let/$logo2@36:5	option<string>	{"Either":["None","String"]}
+queries/32_guard_placement.surql/let/$nested_after@37:6	string	"String"
+queries/32_guard_placement.surql/let/$outer@46:5	option<string>	{"Either":["None","String"]}
+queries/32_guard_placement.surql/let/$scoped@48:5	int	"Int"
+queries/32_guard_placement.surql/let/$outer_after@53:5	option<string>	{"Either":["None","String"]}
+queries/33_guard_forms.surql/stmt/if_else@16:1	none	"None"
+queries/33_guard_forms.surql/stmt/if_else@23:1	none	"None"
+queries/33_guard_forms.surql/stmt/if_else@81:1	option<array<{ id: record<organization_role>, name: string, organization: record<organization>, permissions: array<record<organization_permission>> }>>	{"Either":[{"Array":[{"Literal":{"Object":{"id":{"Record":["organization_role"]},"name":"String","organization":{"Record":["organization"]},"permissions":{"Array":[{"Record":["organization_permission"]},null]}}}},null]},"None"]}
+queries/33_guard_forms.surql/stmt/return@85:1	{ both_diverge: string, non_diverging: option<string>, return_block: string, return_then: string, throw_block: string, throw_then: string }	{"Literal":{"Object":{"both_diverge":"String","non_diverging":{"Either":["None","String"]},"return_block":"String","return_then":"String","throw_block":"String","throw_then":"String"}}}
+queries/33_guard_forms.surql/let/$a@14:5	option<string>	{"Either":["None","String"]}
+queries/33_guard_forms.surql/let/$after_throw_then@18:5	string	"String"
+queries/33_guard_forms.surql/let/$b@21:5	option<string>	{"Either":["None","String"]}
+queries/33_guard_forms.surql/let/$after_throw_block@25:5	string	"String"
+queries/33_guard_forms.surql/let/$c@30:6	option<string>	{"Either":["None","String"]}
+queries/33_guard_forms.surql/let/$after_return_block@29:5	string	"String"
+queries/33_guard_forms.surql/let/$d@37:6	option<string>	{"Either":["None","String"]}
+queries/33_guard_forms.surql/let/$after_return_then@36:5	string	"String"
+queries/33_guard_forms.surql/let/$e@44:5	option<string>	{"Either":["None","String"]}
+queries/33_guard_forms.surql/let/$both_diverge@46:5	string	"String"
+queries/33_guard_forms.surql/let/$logos@51:5	array<option<string>>	{"Array":[{"Either":["None","String"]},null]}
+queries/33_guard_forms.surql/let/$l@53:5	option<string>	{"Either":["None","String"]}
+queries/33_guard_forms.surql/let/$after_continue_then@55:6	string	"String"
+queries/33_guard_forms.surql/let/$l2@59:5	option<string>	{"Either":["None","String"]}
+queries/33_guard_forms.surql/let/$after_continue_block@61:6	string	"String"
+queries/33_guard_forms.surql/let/$l3@66:5	option<string>	{"Either":["None","String"]}
+queries/33_guard_forms.surql/let/$after_break_then@68:6	string	"String"
+queries/33_guard_forms.surql/let/$l4@72:5	option<string>	{"Either":["None","String"]}
+queries/33_guard_forms.surql/let/$after_break_block@74:6	string	"String"
+queries/33_guard_forms.surql/let/$f@79:5	option<string>	{"Either":["None","String"]}
+queries/33_guard_forms.surql/let/$after_non_diverging@83:5	option<string>	{"Either":["None","String"]}
+queries/34_guard_verdicts.surql/stmt/if_else@32:1	none	"None"
+queries/34_guard_verdicts.surql/stmt/if_else@40:1	none	"None"
+queries/34_guard_verdicts.surql/stmt/if_else@49:1	none	"None"
+queries/34_guard_verdicts.surql/stmt/if_else@57:1	none	"None"
+queries/34_guard_verdicts.surql/stmt/if_else@71:1	none	"None"
+queries/34_guard_verdicts.surql/stmt/if_else@80:1	none	"None"
+queries/34_guard_verdicts.surql/stmt/if_else@107:1	none	"None"
+queries/34_guard_verdicts.surql/stmt/return@119:1	{ dead_conjunction: int | string, dead_discriminant: string, dead_else: int, dead_literal_else: int | string, dead_then: string, live_after_none: int | string, live_base: int | string, live_declared: int | string, live_disjunction: int | string, live_kind_predicate: int | string, live_ordering: int | string }	{"Literal":{"Object":{"dead_conjunction":{"Either":["Int","String"]},"dead_discriminant":"String","dead_else":"Int","dead_literal_else":{"Either":["Int","String"]},"dead_then":"String","live_after_none":{"Either":["Int","String"]},"live_base":{"Either":["Int","String"]},"live_declared":{"Either":["Int","String"]},"live_disjunction":{"Either":["Int","String"]},"live_kind_predicate":{"Either":["Int","String"]},"live_ordering":{"Either":["Int","String"]}}}}
+queries/34_guard_verdicts.surql/let/$r@30:5	option<record<account | organization>>	{"Either":["None",{"Record":["account","organization"]}]}
+queries/34_guard_verdicts.surql/let/$dead_then@34:5	string	"String"
+queries/34_guard_verdicts.surql/let/$r2@38:5	option<record<account | organization>>	{"Either":["None",{"Record":["account","organization"]}]}
+queries/34_guard_verdicts.surql/let/$dead_else@42:5	int	"Int"
+queries/34_guard_verdicts.surql/let/$s@47:5	option<string | null>	{"Either":["None","String","Null"]}
+queries/34_guard_verdicts.surql/let/$live_after_none@51:5	int | string	{"Either":["Int","String"]}
+queries/34_guard_verdicts.surql/let/$o@55:5	option<record<account | organization>>	{"Either":["None",{"Record":["account","organization"]}]}
+queries/34_guard_verdicts.surql/let/$dead_discriminant@59:5	string	"String"
+queries/34_guard_verdicts.surql/let/$g@69:5	option<'draft' | 'review' | 'published'>	{"Either":["None",{"Literal":{"String":"draft"}},{"Literal":{"String":"review"}},{"Literal":{"String":"published"}}]}
+queries/34_guard_verdicts.surql/let/$dead_literal_else@73:5	int | string	{"Either":["Int","String"]}
+queries/34_guard_verdicts.surql/let/$c@78:5	option<record<account | organization>>	{"Either":["None",{"Record":["account","organization"]}]}
+queries/34_guard_verdicts.surql/let/$dead_conjunction@82:5	int | string	{"Either":["Int","String"]}
+queries/34_guard_verdicts.surql/let/$base@91:5	option<record<account | organization>>	{"Either":["None",{"Record":["account","organization"]}]}
+queries/34_guard_verdicts.surql/let/$live_base@93:5	int | string	{"Either":["Int","String"]}
+queries/34_guard_verdicts.surql/let/$declared@97:5	option<string>	{"Either":["None","String"]}
+queries/34_guard_verdicts.surql/let/$live_declared@99:5	int | string	{"Either":["Int","String"]}
+queries/34_guard_verdicts.surql/let/$w@105:5	option<int>	{"Either":["None","Int"]}
+queries/34_guard_verdicts.surql/let/$live_kind_predicate@109:5	int | string	{"Either":["Int","String"]}
+queries/34_guard_verdicts.surql/let/$live_ordering@113:5	int | string	{"Either":["Int","String"]}
+queries/34_guard_verdicts.surql/let/$live_disjunction@117:5	int | string	{"Either":["Int","String"]}
+queries/35_sentinels.surql/stmt/select@11:1	array<{ deactivated_reason: string | null }>	{"Array":[{"Literal":{"Object":{"deactivated_reason":{"Either":["String","Null"]}}}},null]}
+queries/35_sentinels.surql/stmt/select@13:1	array<{ deactivated_reason: option<string> }>	{"Array":[{"Literal":{"Object":{"deactivated_reason":{"Either":["None","String"]}}}},null]}
+queries/35_sentinels.surql/stmt/return@26:1	{ after_none_guard: string | null, after_null_guard: option<string>, coalesced: string }	{"Literal":{"Object":{"after_none_guard":{"Either":["String","Null"]},"after_null_guard":{"Either":["None","String"]},"coalesced":"String"}}}
+queries/35_sentinels.surql/let/$reason@17:5	option<string | null>	{"Either":["None","String","Null"]}
+queries/35_sentinels.surql/let/$after_none_guard@19:5	string | null	{"Either":["String","Null"]}
+queries/35_sentinels.surql/let/$after_null_guard@21:5	option<string>	{"Either":["None","String"]}
+queries/35_sentinels.surql/let/$coalesced@24:5	string	"String"
+queries/36_sentinel_spellings.surql/stmt/select@68:1	array<{ summary: string | null }>	{"Array":[{"Literal":{"Object":{"summary":{"Either":["String","Null"]}}}},null]}
+queries/36_sentinel_spellings.surql/stmt/select@70:1	array<{ summary: string | null }>	{"Array":[{"Literal":{"Object":{"summary":{"Either":["String","Null"]}}}},null]}
+queries/36_sentinel_spellings.surql/stmt/select@72:1	array<{ summary: option<string> }>	{"Array":[{"Literal":{"Object":{"summary":{"Either":["None","String"]}}}},null]}
+queries/36_sentinel_spellings.surql/stmt/select@74:1	array<{ summary: option<string> }>	{"Array":[{"Literal":{"Object":{"summary":{"Either":["None","String"]}}}},null]}
+queries/36_sentinel_spellings.surql/stmt/select@76:1	array<{ logo: string }>	{"Array":[{"Literal":{"Object":{"logo":"String"}}},null]}
+queries/36_sentinel_spellings.surql/stmt/select@78:1	array<{ logo: string }>	{"Array":[{"Literal":{"Object":{"logo":"String"}}},null]}
+queries/36_sentinel_spellings.surql/stmt/return@80:1	{ on_both: string, on_coalesced: string, on_eq_none: string | null, on_eq_null: option<string>, on_is_none: string | null, on_is_not_none: string | null, on_is_not_null: option<string>, on_is_null: option<string>, on_ne_none: string | null, on_ne_null: option<string>, opt_eq_none: string, opt_is_none: string, opt_is_not_none: string, opt_is_not_null: option<string>, opt_ne_none: string, opt_ne_null: option<string> }	{"Literal":{"Object":{"on_both":"String","on_coalesced":"String","on_eq_none":{"Either":["String","Null"]},"on_eq_null":{"Either":["String","None"]},"on_is_none":{"Either":["String","Null"]},"on_is_not_none":{"Either":["String","Null"]},"on_is_not_null":{"Either":["None","String"]},"on_is_null":{"Either":["String","None"]},"on_ne_none":{"Either":["String","Null"]},"on_ne_null":{"Either":["None","String"]},"opt_eq_none":"String","opt_is_none":"String","opt_is_not_none":"String","opt_is_not_null":{"Either":["None","String"]},"opt_ne_none":"String","opt_ne_null":{"Either":["None","String"]}}}}
+queries/36_sentinel_spellings.surql/let/$opt@14:5	option<string>	{"Either":["None","String"]}
+queries/36_sentinel_spellings.surql/let/$optnull@16:5	option<string | null>	{"Either":["None","String","Null"]}
+queries/36_sentinel_spellings.surql/let/$opt_ne_none@19:5	string	"String"
+queries/36_sentinel_spellings.surql/let/$opt_is_not_none@21:5	string	"String"
+queries/36_sentinel_spellings.surql/let/$opt_eq_none@25:5	string	"String"
+queries/36_sentinel_spellings.surql/let/$opt_is_none@27:5	string	"String"
+queries/36_sentinel_spellings.surql/let/$opt_ne_null@32:5	option<string>	{"Either":["None","String"]}
+queries/36_sentinel_spellings.surql/let/$opt_is_not_null@34:5	option<string>	{"Either":["None","String"]}
+queries/36_sentinel_spellings.surql/let/$on_ne_none@39:5	string | null	{"Either":["String","Null"]}
+queries/36_sentinel_spellings.surql/let/$on_is_not_none@41:5	string | null	{"Either":["String","Null"]}
+queries/36_sentinel_spellings.surql/let/$on_eq_none@43:5	string | null	{"Either":["String","Null"]}
+queries/36_sentinel_spellings.surql/let/$on_is_none@45:5	string | null	{"Either":["String","Null"]}
+queries/36_sentinel_spellings.surql/let/$on_ne_null@50:5	option<string>	{"Either":["None","String"]}
+queries/36_sentinel_spellings.surql/let/$on_is_not_null@52:5	option<string>	{"Either":["None","String"]}
+queries/36_sentinel_spellings.surql/let/$on_eq_null@54:5	option<string>	{"Either":["String","None"]}
+queries/36_sentinel_spellings.surql/let/$on_is_null@56:5	option<string>	{"Either":["String","None"]}
+queries/36_sentinel_spellings.surql/let/$on_both@61:5	string	"String"
+queries/36_sentinel_spellings.surql/let/$on_coalesced@63:5	string	"String"
+queries/37_discriminants.surql/stmt/if_else@20:1	none	"None"
+queries/37_discriminants.surql/stmt/if_else@47:1	none	"None"
+queries/37_discriminants.surql/stmt/select@56:1	array<{ name: 'acme' }>	{"Array":[{"Literal":{"Object":{"name":{"Literal":{"String":"acme"}}}}},null]}
+queries/37_discriminants.surql/stmt/select@61:1	array<{ stage: 'draft' | 'review' | 'published' }>	{"Array":[{"Literal":{"Object":{"stage":{"Either":[{"Literal":{"String":"draft"}},{"Literal":{"String":"review"}},{"Literal":{"String":"published"}}]}}}},null]}
+queries/37_discriminants.surql/stmt/select@63:1	array<{ tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/37_discriminants.surql/stmt/select@66:1	array<{ tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/37_discriminants.surql/stmt/select@68:1	array<{ tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/37_discriminants.surql/stmt/select@71:1	array<{ owner: record<account> }>	{"Array":[{"Literal":{"Object":{"owner":{"Record":["account"]}}}},null]}
+queries/37_discriminants.surql/stmt/select@73:1	array<{ owner: record<account | organization> }>	{"Array":[{"Literal":{"Object":{"owner":{"Record":["account","organization"]}}}},null]}
+queries/37_discriminants.surql/stmt/select@75:1	array<{ owner: record<account | organization> }>	{"Array":[{"Literal":{"Object":{"owner":{"Record":["account","organization"]}}}},null]}
+queries/37_discriminants.surql/stmt/return@77:1	{ is_record: option<record<account>>, mt: option<record<account | organization>>, rt: option<record<account | organization>>, stage_eq: 'draft' | 'review' | 'published' | string, stage_in: 'draft' | 'review' | 'published' | string, tt: option<record<account>>, tt_flipped: option<record<account>>, tt_negative: option<record<account>>, tt_paren: option<record<account>> }	{"Literal":{"Object":{"is_record":{"Either":[{"Record":["account"]},"None"]},"mt":{"Either":[{"Record":["account","organization"]},"None"]},"rt":{"Either":[{"Record":["account","organization"]},"None"]},"stage_eq":{"Either":[{"Literal":{"String":"draft"}},{"Literal":{"String":"review"}},{"Literal":{"String":"published"}},"String"]},"stage_in":{"Either":[{"Literal":{"String":"draft"}},{"Literal":{"String":"review"}},{"Literal":{"String":"published"}},"String"]},"tt":{"Either":[{"Record":["account"]},"None"]},"tt_flipped":{"Either":[{"Record":["account"]},"None"]},"tt_negative":{"Either":["None",{"Record":["account"]}]},"tt_paren":{"Either":[{"Record":["account"]},"None"]}}}}
+queries/37_discriminants.surql/let/$doc@18:5	option<{ owner: record<account | organization>, reviewer: option<record<account | organization>>, stage: 'draft' | 'review' | 'published' }>	{"Either":["None",{"Literal":{"Object":{"owner":{"Record":["account","organization"]},"reviewer":{"Either":["None",{"Record":["account","organization"]}]},"stage":{"Either":[{"Literal":{"String":"draft"}},{"Literal":{"String":"review"}},{"Literal":{"String":"published"}}]}}}}]}
+queries/37_discriminants.surql/let/$tt_positive@23:5	option<record<account>>	{"Either":[{"Record":["account"]},"None"]}
+queries/37_discriminants.surql/let/$rt_positive@26:5	option<record<account | organization>>	{"Either":[{"Record":["account","organization"]},"None"]}
+queries/37_discriminants.surql/let/$mt_positive@29:5	option<record<account | organization>>	{"Either":[{"Record":["account","organization"]},"None"]}
+queries/37_discriminants.surql/let/$tt_flipped@32:5	option<record<account>>	{"Either":[{"Record":["account"]},"None"]}
+queries/37_discriminants.surql/let/$tt_negative@36:5	option<record<account>>	{"Either":["None",{"Record":["account"]}]}
+queries/37_discriminants.surql/let/$tt_paren@39:5	option<record<account>>	{"Either":[{"Record":["account"]},"None"]}
+queries/37_discriminants.surql/let/$is_record_positive@42:5	option<record<account>>	{"Either":[{"Record":["account"]},"None"]}
+queries/37_discriminants.surql/let/$stage@45:5	option<'draft' | 'review' | 'published'>	{"Either":["None",{"Literal":{"String":"draft"}},{"Literal":{"String":"review"}},{"Literal":{"String":"published"}}]}
+queries/37_discriminants.surql/let/$stage_eq@49:5	'draft' | 'review' | 'published' | string	{"Either":[{"Literal":{"String":"draft"}},{"Literal":{"String":"review"}},{"Literal":{"String":"published"}},"String"]}
+queries/37_discriminants.surql/let/$stage_in@52:5	'draft' | 'review' | 'published' | string	{"Either":[{"Literal":{"String":"draft"}},{"Literal":{"String":"review"}},{"Literal":{"String":"published"}},"String"]}
+queries/38_membership.surql/stmt/select@53:1	array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/38_membership.surql/stmt/select@55:1	array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/38_membership.surql/stmt/select@57:1	array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/38_membership.surql/stmt/select@60:1	array<{ logo: option<string>, name: string }>	{"Array":[{"Literal":{"Object":{"logo":{"Either":["None","String"]},"name":"String"}}},null]}
+queries/38_membership.surql/stmt/select@62:1	array<{ logo: option<string>, name: string }>	{"Array":[{"Literal":{"Object":{"logo":{"Either":["None","String"]},"name":"String"}}},null]}
+queries/38_membership.surql/stmt/return@64:1	{ contains_param: option<string>, in_field: option<string>, in_literal: option<string>, in_param: string, in_paren: string, in_set: option<string>, in_subquery: option<string>, inside_param: option<string>, not_in: option<string> }	{"Literal":{"Object":{"contains_param":{"Either":["None","String"]},"in_field":{"Either":["None","String"]},"in_literal":{"Either":["None","String"]},"in_param":"String","in_paren":"String","in_set":{"Either":["None","String"]},"in_subquery":{"Either":["None","String"]},"inside_param":{"Either":["None","String"]},"not_in":{"Either":["String","None"]}}}}
+queries/38_membership.surql/let/$names@12:5	array<string>	{"Array":["String",null]}
+queries/38_membership.surql/let/$maybe@14:5	option<string>	{"Either":["None","String"]}
+queries/38_membership.surql/let/$in_param@17:5	string	"String"
+queries/38_membership.surql/let/$inside_param@20:5	option<string>	{"Either":["None","String"]}
+queries/38_membership.surql/let/$contains_param@23:5	option<string>	{"Either":["None","String"]}
+queries/38_membership.surql/let/$in_literal@27:5	option<string>	{"Either":["None","String"]}
+queries/38_membership.surql/let/$in_subquery@30:5	option<string>	{"Either":["None","String"]}
+queries/38_membership.surql/let/$holder@33:5	{ pool: array<string> }	{"Literal":{"Object":{"pool":{"Array":["String",null]}}}}
+queries/38_membership.surql/let/$in_field@35:5	option<string>	{"Either":["None","String"]}
+queries/38_membership.surql/let/$in_paren@38:5	string	"String"
+queries/38_membership.surql/let/$not_in@43:5	option<string>	{"Either":["String","None"]}
+queries/38_membership.surql/let/$keywords@48:5	option<set<string>>	{"Either":["None",{"Set":["String",null]}]}
+queries/38_membership.surql/let/$in_set@50:5	option<string>	{"Either":["None","String"]}
+queries/39_composition.surql/stmt/select@82:1	array<{ logo: string, name: string, parent: record<organization> }>	{"Array":[{"Literal":{"Object":{"logo":"String","name":"String","parent":{"Record":["organization"]}}}},null]}
+queries/39_composition.surql/stmt/select@84:1	array<{ logo: option<string>, name: string, parent: option<record<organization>> }>	{"Array":[{"Literal":{"Object":{"logo":{"Either":["None","String"]},"name":"String","parent":{"Either":["None",{"Record":["organization"]}]}}}},null]}
+queries/39_composition.surql/stmt/select@86:1	array<{ logo: option<string>, name: string, parent: option<record<organization>> }>	{"Array":[{"Literal":{"Object":{"logo":{"Either":["None","String"]},"name":"String","parent":{"Either":["None",{"Record":["organization"]}]}}}},null]}
+queries/39_composition.surql/stmt/select@88:1	array<{ logo: option<string>, name: string }>	{"Array":[{"Literal":{"Object":{"logo":{"Either":["None","String"]},"name":"String"}}},null]}
+queries/39_composition.surql/stmt/select@90:1	array<{ logo: string, name: string }>	{"Array":[{"Literal":{"Object":{"logo":"String","name":"String"}}},null]}
+queries/39_composition.surql/stmt/select@92:1	array<{ logo: string, name: string }>	{"Array":[{"Literal":{"Object":{"logo":"String","name":"String"}}},null]}
+queries/39_composition.surql/stmt/return@94:1	{ and_both: string, and_flipped: string, and_same_place: string, and_short_circuit: string, andand_both: string, demorgan_and: string, demorgan_not_and: option<string>, demorgan_not_or: option<string>, demorgan_or: string, not_eq: option<string>, not_ne: option<string>, not_not: option<string>, or_else: string, or_mixed: option<string>, or_same_fact: option<string>, oror_else: string, paren_conjunct: string, paren_leaf: string, paren_twice: string, paren_whole: string }	{"Literal":{"Object":{"and_both":"String","and_flipped":"String","and_same_place":"String","and_short_circuit":"String","andand_both":"String","demorgan_and":"String","demorgan_not_and":{"Either":["String","None"]},"demorgan_not_or":{"Either":["None","String"]},"demorgan_or":"String","not_eq":{"Either":["None","String"]},"not_ne":{"Either":["String","None"]},"not_not":{"Either":["None","String"]},"or_else":"String","or_mixed":{"Either":["None","String"]},"or_same_fact":{"Either":["None","String"]},"oror_else":"String","paren_conjunct":"String","paren_leaf":"String","paren_twice":"String","paren_whole":"String"}}}
+queries/39_composition.surql/let/$p@15:5	option<string>	{"Either":["None","String"]}
+queries/39_composition.surql/let/$q@17:5	option<string>	{"Either":["None","String"]}
+queries/39_composition.surql/let/$and_both@20:5	string	"String"
+queries/39_composition.surql/let/$andand_both@23:5	string	"String"
+queries/39_composition.surql/let/$and_flipped@26:5	string	"String"
+queries/39_composition.surql/let/$and_same_place@29:5	string	"String"
+queries/39_composition.surql/let/$and_short_circuit@33:5	string	"String"
+queries/39_composition.surql/let/$or_mixed@38:5	option<string>	{"Either":["None","String"]}
+queries/39_composition.surql/let/$or_else@41:5	string	"String"
+queries/39_composition.surql/let/$or_same_fact@45:5	option<string>	{"Either":["None","String"]}
+queries/39_composition.surql/let/$oror_else@48:5	string	"String"
+queries/39_composition.surql/let/$not_eq@52:5	option<string>	{"Either":["None","String"]}
+queries/39_composition.surql/let/$not_ne@55:5	option<string>	{"Either":["String","None"]}
+queries/39_composition.surql/let/$not_not@58:5	option<string>	{"Either":["None","String"]}
+queries/39_composition.surql/let/$demorgan_and@62:5	string	"String"
+queries/39_composition.surql/let/$demorgan_not_or@64:5	option<string>	{"Either":["None","String"]}
+queries/39_composition.surql/let/$demorgan_or@67:5	string	"String"
+queries/39_composition.surql/let/$demorgan_not_and@69:5	option<string>	{"Either":["String","None"]}
+queries/39_composition.surql/let/$paren_leaf@73:5	string	"String"
+queries/39_composition.surql/let/$paren_twice@75:5	string	"String"
+queries/39_composition.surql/let/$paren_conjunct@77:5	string	"String"
+queries/39_composition.surql/let/$paren_whole@79:5	string	"String"
+queries/40_bindings.surql/stmt/return@33:1	{ arr: array<int, 3>, block: int, count: int, destructured: array<{ place: { city: string, country: string } }>, first: { name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }, names: array<string>, obj: { alpha: int, beta: 'two', gamma: array<bool, 2> }, tiers: array<'free' | 'pro' | 'enterprise'> }	{"Literal":{"Object":{"arr":{"Array":["Int",3]},"block":"Int","count":"Int","destructured":{"Array":[{"Literal":{"Object":{"place":{"Literal":{"Object":{"city":"String","country":"String"}}}}}},null]},"first":{"Literal":{"Object":{"name":"String","owner":{"Record":["account"]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},"names":{"Array":["String",null]},"obj":{"Literal":{"Object":{"alpha":"Int","beta":{"Literal":{"String":"two"}},"gamma":{"Array":["Bool",2]}}}},"tiers":{"Array":[{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]},null]}}}}
+queries/40_bindings.surql/let/$orgs@5:5	array<{ name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"name":"String","owner":{"Record":["account"]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/40_bindings.surql/let/$count@7:5	int	"Int"
+queries/40_bindings.surql/let/$names@9:5	array<string>	{"Array":["String",null]}
+queries/40_bindings.surql/let/$first@11:5	{ name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }	{"Literal":{"Object":{"name":"String","owner":{"Record":["account"]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}}
+queries/40_bindings.surql/let/$tiers@13:5	array<'free' | 'pro' | 'enterprise'>	{"Array":[{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]},null]}
+queries/40_bindings.surql/let/$org@15:5	{ name: string, owner: record<account>, tier: 'free' | 'pro' | 'enterprise' }	{"Literal":{"Object":{"name":"String","owner":{"Record":["account"]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}}
+queries/40_bindings.surql/let/$label@16:6	string	"String"
+queries/40_bindings.surql/let/$inner@17:6	array<string, 1>	{"Array":["String",1]}
+queries/40_bindings.surql/let/$nested@22:6	array<int>	{"Array":["Int",null]}
+queries/40_bindings.surql/let/$total@23:6	int	"Int"
+queries/40_bindings.surql/let/$block@21:5	int	"Int"
+queries/40_bindings.surql/let/$destructured@27:5	array<{ place: { city: string, country: string } }>	{"Array":[{"Literal":{"Object":{"place":{"Literal":{"Object":{"city":"String","country":"String"}}}}}},null]}
+queries/40_bindings.surql/let/$obj@29:5	{ alpha: int, beta: 'two', gamma: array<bool, 2> }	{"Literal":{"Object":{"alpha":"Int","beta":{"Literal":{"String":"two"}},"gamma":{"Array":["Bool",2]}}}}
+queries/40_bindings.surql/let/$arr@31:5	array<int, 3>	{"Array":["Int",3]}
+queries/41_iterables.surql/stmt/if_else@51:1	none	"None"
+queries/41_iterables.surql/stmt/return@84:1	{ mapped: array<string>, mapped_option: array<string>, mapped_set: any }	{"Literal":{"Object":{"mapped":{"Array":["String",null]},"mapped_option":{"Array":["String",null]},"mapped_set":"Any"}}}
+queries/41_iterables.surql/let/$names@14:5	array<string>	{"Array":["String",null]}
+queries/41_iterables.surql/let/$keywords@16:5	option<set<string>>	{"Either":["None",{"Set":["String",null]}]}
+queries/41_iterables.surql/let/$tags@18:5	option<array<string>>	{"Either":["None",{"Array":["String",null]}]}
+queries/41_iterables.surql/let/$from_array@21:5	string	"String"
+queries/41_iterables.surql/let/$array_elem@22:6	string	"String"
+queries/41_iterables.surql/let/$from_literal@26:5	string	"String"
+queries/41_iterables.surql/let/$literal_elem@27:6	string	"String"
+queries/41_iterables.surql/let/$from_subquery@31:5	string	"String"
+queries/41_iterables.surql/let/$subquery_elem@32:6	string	"String"
+queries/41_iterables.surql/let/$from_paren@36:5	string	"String"
+queries/41_iterables.surql/let/$paren_elem@37:6	string	"String"
+queries/41_iterables.surql/let/$from_set@41:5	string	"String"
+queries/41_iterables.surql/let/$set_elem@42:6	string	"String"
+queries/41_iterables.surql/let/$from_option@46:5	string	"String"
+queries/41_iterables.surql/let/$option_elem@47:6	string	"String"
+queries/41_iterables.surql/let/$from_guarded_option@53:5	string	"String"
+queries/41_iterables.surql/let/$guarded_option_elem@54:6	string	"String"
+queries/41_iterables.surql/let/$from_range@58:5	unknown	unknown
+queries/41_iterables.surql/let/$range_elem@59:6	unknown	unknown
+queries/41_iterables.surql/let/$from_range_inclusive@63:5	unknown	unknown
+queries/41_iterables.surql/let/$range_inclusive_elem@64:6	unknown	unknown
+queries/41_iterables.surql/let/$from_range_expr@68:5	unknown	unknown
+queries/41_iterables.surql/let/$range_expr_elem@69:6	unknown	unknown
+queries/41_iterables.surql/let/$mapped_array@78:5	array<string>	{"Array":["String",null]}
+queries/41_iterables.surql/let/$mapped_set@80:5	any	"Any"
+queries/41_iterables.surql/let/$mapped_option@82:5	array<string>	{"Array":["String",null]}
+queries/42_subquery_values.surql/stmt/select@51:1	array<{ doubled: int }>	{"Array":[{"Literal":{"Object":{"doubled":"Int"}}},null]}
+queries/42_subquery_values.surql/stmt/select@53:1	array<{ doubled: int }>	{"Array":[{"Literal":{"Object":{"doubled":"Int"}}},null]}
+queries/42_subquery_values.surql/stmt/select@58:1	array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/42_subquery_values.surql/stmt/select@60:1	array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/42_subquery_values.surql/stmt/select@63:1	array<{ name: string }>	{"Array":[{"Literal":{"Object":{"name":"String"}}},null]}
+queries/42_subquery_values.surql/stmt/return@65:1	{ count: int, count_or_zero: int, count_paren: int, one: option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>, one_indexed: { name: string, tier: 'free' | 'pro' | 'enterprise' }, one_unique: option<{ title: 'spec' }>, one_unique_paren: option<{ title: 'spec' }>, rows: array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>, rows_alias: array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>, rows_paren: array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }> }	{"Literal":{"Object":{"count":"Int","count_or_zero":"Int","count_paren":"Int","one":{"Either":["None",{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}}]},"one_indexed":{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},"one_unique":{"Either":["None",{"Literal":{"Object":{"title":{"Literal":{"String":"spec"}}}}}]},"one_unique_paren":{"Either":["None",{"Literal":{"Object":{"title":{"Literal":{"String":"spec"}}}}}]},"rows":{"Array":[{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]},"rows_alias":{"Array":[{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]},"rows_paren":{"Array":[{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}}}}
+queries/42_subquery_values.surql/let/$rows@10:5	array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/42_subquery_values.surql/let/$rows_paren@13:5	array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/42_subquery_values.surql/let/$rows_alias@16:5	array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/42_subquery_values.surql/let/$one@20:5	option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Either":["None",{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}}]}
+queries/42_subquery_values.surql/let/$one_indexed@29:5	{ name: string, tier: 'free' | 'pro' | 'enterprise' }	{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}}
+queries/42_subquery_values.surql/let/$one_unique@32:5	option<{ title: 'spec' }>	{"Either":["None",{"Literal":{"Object":{"title":{"Literal":{"String":"spec"}}}}}]}
+queries/42_subquery_values.surql/let/$one_unique_paren@36:5	option<{ title: 'spec' }>	{"Either":["None",{"Literal":{"Object":{"title":{"Literal":{"String":"spec"}}}}}]}
+queries/42_subquery_values.surql/let/$count@39:5	int	"Int"
+queries/42_subquery_values.surql/let/$count_paren@42:5	int	"Int"
+queries/42_subquery_values.surql/let/$count_or_zero@46:5	int	"Int"
+queries/43_expression_forms.surql/stmt/select@67:1	array<{ coalesced: string }>	{"Array":[{"Literal":{"Object":{"coalesced":"String"}}},null]}
+queries/43_expression_forms.surql/stmt/select@69:1	array<{ cast: string }>	{"Array":[{"Literal":{"Object":{"cast":"String"}}},null]}
+queries/43_expression_forms.surql/stmt/select@71:1	array<{ coalesced_paren: string }>	{"Array":[{"Literal":{"Object":{"coalesced_paren":"String"}}},null]}
+queries/43_expression_forms.surql/stmt/return@73:1	{ cast_guarded: string, cast_identity: string, cast_int: int, cast_option: string, cast_paren: int, coalesce: string, coalesce_after_guard: string, coalesce_as_if: string, coalesce_chain: string, coalesce_paren: string, if_block: string, if_chain: string, if_expr: string, if_no_else: option<string>, if_paren: string }	{"Literal":{"Object":{"cast_guarded":"String","cast_identity":"String","cast_int":"Int","cast_option":"String","cast_paren":"Int","coalesce":"String","coalesce_after_guard":"String","coalesce_as_if":"String","coalesce_chain":"String","coalesce_paren":"String","if_block":"String","if_chain":"String","if_expr":"String","if_no_else":{"Either":["String","None"]},"if_paren":"String"}}}
+queries/43_expression_forms.surql/let/$p@10:5	option<string>	{"Either":["None","String"]}
+queries/43_expression_forms.surql/let/$n@12:5	option<int>	{"Either":["None","Int"]}
+queries/43_expression_forms.surql/let/$if_expr@15:5	string	"String"
+queries/43_expression_forms.surql/let/$if_block@18:5	string	"String"
+queries/43_expression_forms.surql/let/$if_chain@22:5	string	"String"
+queries/43_expression_forms.surql/let/$if_no_else@25:5	option<string>	{"Either":["String","None"]}
+queries/43_expression_forms.surql/let/$if_paren@28:5	string	"String"
+queries/43_expression_forms.surql/let/$coalesce@32:5	string	"String"
+queries/43_expression_forms.surql/let/$coalesce_as_if@35:5	string	"String"
+queries/43_expression_forms.surql/let/$coalesce_paren@38:5	string	"String"
+queries/43_expression_forms.surql/let/$coalesce_chain@41:5	string	"String"
+queries/43_expression_forms.surql/let/$coalesce_after_guard@45:5	string	"String"
+queries/43_expression_forms.surql/let/$cast_int@48:5	int	"Int"
+queries/43_expression_forms.surql/let/$cast_paren@51:5	int	"Int"
+queries/43_expression_forms.surql/let/$cast_guarded@55:5	string	"String"
+queries/43_expression_forms.surql/let/$cast_option@59:5	string	"String"
+queries/43_expression_forms.surql/let/$cast_identity@62:5	string	"String"
+queries/44_closure_guards.surql/stmt/return@52:1	{ kept: array<{ person: option<record<person>>, username: string }>, kept_and: array<{ person: option<record<person>>, username: string }>, kept_is_not: array<{ person: option<record<person>>, username: string }>, kept_method: array<{ person: option<record<person>>, username: string }>, kept_negated: array<{ person: option<record<person>>, username: string }>, kept_opaque: array<{ person: option<record<person>>, username: string }>, kept_paren: array<{ person: option<record<person>>, username: string }>, non_null_reasons: array<option<string | null>>, set_reasons: array<option<string | null>>, where_rows: array<{ person: record<person>, username: string }> }	{"Literal":{"Object":{"kept":{"Array":[{"Literal":{"Object":{"person":{"Either":["None",{"Record":["person"]}]},"username":"String"}}},null]},"kept_and":{"Array":[{"Literal":{"Object":{"person":{"Either":["None",{"Record":["person"]}]},"username":"String"}}},null]},"kept_is_not":{"Array":[{"Literal":{"Object":{"person":{"Either":["None",{"Record":["person"]}]},"username":"String"}}},null]},"kept_method":{"Array":[{"Literal":{"Object":{"person":{"Either":["None",{"Record":["person"]}]},"username":"String"}}},null]},"kept_negated":{"Array":[{"Literal":{"Object":{"person":{"Either":["None",{"Record":["person"]}]},"username":"String"}}},null]},"kept_opaque":{"Array":[{"Literal":{"Object":{"person":{"Either":["None",{"Record":["person"]}]},"username":"String"}}},null]},"kept_paren":{"Array":[{"Literal":{"Object":{"person":{"Either":["None",{"Record":["person"]}]},"username":"String"}}},null]},"non_null_reasons":{"Array":[{"Either":["None","String","Null"]},null]},"set_reasons":{"Array":[{"Either":["None","String","Null"]},null]},"where_rows":{"Array":[{"Literal":{"Object":{"person":{"Record":["person"]},"username":"String"}}},null]}}}}
+queries/44_closure_guards.surql/let/$rows@15:5	array<{ person: option<record<person>>, username: string }>	{"Array":[{"Literal":{"Object":{"person":{"Either":["None",{"Record":["person"]}]},"username":"String"}}},null]}
+queries/44_closure_guards.surql/let/$where_rows@18:5	array<{ person: record<person>, username: string }>	{"Array":[{"Literal":{"Object":{"person":{"Record":["person"]},"username":"String"}}},null]}
+queries/44_closure_guards.surql/let/$kept@21:5	array<{ person: option<record<person>>, username: string }>	{"Array":[{"Literal":{"Object":{"person":{"Either":["None",{"Record":["person"]}]},"username":"String"}}},null]}
+queries/44_closure_guards.surql/let/$kept_is_not@24:5	array<{ person: option<record<person>>, username: string }>	{"Array":[{"Literal":{"Object":{"person":{"Either":["None",{"Record":["person"]}]},"username":"String"}}},null]}
+queries/44_closure_guards.surql/let/$kept_negated@27:5	array<{ person: option<record<person>>, username: string }>	{"Array":[{"Literal":{"Object":{"person":{"Either":["None",{"Record":["person"]}]},"username":"String"}}},null]}
+queries/44_closure_guards.surql/let/$kept_paren@30:5	array<{ person: option<record<person>>, username: string }>	{"Array":[{"Literal":{"Object":{"person":{"Either":["None",{"Record":["person"]}]},"username":"String"}}},null]}
+queries/44_closure_guards.surql/let/$kept_and@33:5	array<{ person: option<record<person>>, username: string }>	{"Array":[{"Literal":{"Object":{"person":{"Either":["None",{"Record":["person"]}]},"username":"String"}}},null]}
+queries/44_closure_guards.surql/let/$kept_method@36:5	array<{ person: option<record<person>>, username: string }>	{"Array":[{"Literal":{"Object":{"person":{"Either":["None",{"Record":["person"]}]},"username":"String"}}},null]}
+queries/44_closure_guards.surql/let/$kept_opaque@40:5	array<{ person: option<record<person>>, username: string }>	{"Array":[{"Literal":{"Object":{"person":{"Either":["None",{"Record":["person"]}]},"username":"String"}}},null]}
+queries/44_closure_guards.surql/let/$reasons@44:5	array<option<string | null>>	{"Array":[{"Either":["None","String","Null"]},null]}
+queries/44_closure_guards.surql/let/$set_reasons@46:5	array<option<string | null>>	{"Array":[{"Either":["None","String","Null"]},null]}
+queries/44_closure_guards.surql/let/$non_null_reasons@50:5	array<option<string | null>>	{"Array":[{"Either":["None","String","Null"]},null]}
+queries/45_divergence.surql/stmt/if_else@13:1	none	"None"
+queries/45_divergence.surql/stmt/if_else@22:1	none	"None"
+queries/45_divergence.surql/stmt/if_else@32:1	none	"None"
+queries/45_divergence.surql/stmt/if_else@41:1	none	"None"
+queries/45_divergence.surql/stmt/if_else@48:1	none	"None"
+queries/45_divergence.surql/stmt/return@52:1	{ constant: string, nested: string, parenthesised: string, plain: string, trailing: string }	{"Literal":{"Object":{"constant":"String","nested":"String","parenthesised":"String","plain":"String","trailing":"String"}}}
+queries/45_divergence.surql/let/$plain@11:5	option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Either":["None",{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}}]}
+queries/45_divergence.surql/let/$plain_name@15:5	string	"String"
+queries/45_divergence.surql/let/$trailing@20:5	option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Either":["None",{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}}]}
+queries/45_divergence.surql/let/$trailing_name@24:5	string	"String"
+queries/45_divergence.surql/let/$constant@30:5	option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Either":["None",{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}}]}
+queries/45_divergence.surql/let/$constant_name@34:5	string	"String"
+queries/45_divergence.surql/let/$parenthesised@39:5	option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Either":["None",{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}}]}
+queries/45_divergence.surql/let/$parenthesised_name@43:5	string	"String"
+queries/45_divergence.surql/let/$nested@46:5	option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Either":["None",{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}}]}
+queries/45_divergence.surql/let/$nested_name@50:5	string	"String"
+queries/50_aggregates.surql/stmt/select@4:1	array<{ count: int }>	{"Array":[{"Literal":{"Object":{"count":"Int"}}},null]}
+queries/50_aggregates.surql/stmt/select@6:1	array<{ tier: 'free' | 'pro' | 'enterprise', total: int }>	{"Array":[{"Literal":{"Object":{"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]},"total":"Int"}}},null]}
+queries/50_aggregates.surql/stmt/select@8:1	array<{ heads: int, organization: record<organization> }>	{"Array":[{"Literal":{"Object":{"heads":"Int","organization":{"Record":["organization"]}}}},null]}
+queries/50_aggregates.surql/stmt/select@10:1	array<{ avg_heads: number }>	{"Array":[{"Literal":{"Object":{"avg_heads":"Number"}}},null]}
+queries/50_aggregates.surql/stmt/select@12:1	array<{ names: array<string>, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"names":{"Array":["String",null]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/50_aggregates.surql/stmt/select@14:1	array<{ n: int, status: 'invited' | 'active' | 'suspended' }>	{"Array":[{"Literal":{"Object":{"n":"Int","status":{"Either":[{"Literal":{"String":"invited"}},{"Literal":{"String":"active"}},{"Literal":{"String":"suspended"}}]}}}},null]}
+queries/50_aggregates.surql/stmt/select@16:1	array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: { email: string, label: string, primary: bool }, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"address":{"Literal":{"Object":{"city":"String","country":"String","line1":"String","line2":{"Either":["None","String"]}}}},"contacts":{"Literal":{"Object":{"email":"String","label":"String","primary":"Bool"}}},"created_at":"Datetime","employees":{"Array":[{"Record":["employee_of"]},null]},"id":{"Record":["organization"]},"legal_name":"String","logo":{"Either":["None","String"]},"name":"String","owner":{"Record":["account"]},"parent":{"Either":["None",{"Record":["organization"]}]},"sectors":{"Array":[{"Record":["sector"]},null]},"subsidiaries":{"Array":[{"Record":["organization"]},null]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/50_aggregates.surql/stmt/select@18:1	array<{ name: string, year: int }>	{"Array":[{"Literal":{"Object":{"name":"String","year":"Int"}}},null]}
+queries/50_aggregates.surql/stmt/select@22:1	array<{ names: array<string>, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"names":{"Array":["String",null]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/60_mutations.surql/stmt/create@4:1	array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"address":{"Literal":{"Object":{"city":"String","country":"String","line1":"String","line2":{"Either":["None","String"]}}}},"contacts":{"Array":[{"Literal":{"Object":{"email":"String","label":"String","primary":"Bool"}}},null]},"created_at":"Datetime","employees":{"Array":[{"Record":["employee_of"]},null]},"id":{"Record":["organization"]},"legal_name":"String","logo":{"Either":["None","String"]},"name":"String","owner":{"Record":["account"]},"parent":{"Either":["None",{"Record":["organization"]}]},"sectors":{"Array":[{"Record":["sector"]},null]},"subsidiaries":{"Array":[{"Record":["organization"]},null]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/60_mutations.surql/stmt/create@7:1	{ headcount: int, id: record<organization_unit>, name: string, organization: record<organization>, parent: option<record<organization_unit>> }	{"Literal":{"Object":{"headcount":"Int","id":{"Record":["organization_unit"]},"name":"String","organization":{"Record":["organization"]},"parent":{"Either":["None",{"Record":["organization_unit"]}]}}}}
+queries/60_mutations.surql/stmt/create@9:1	array<{ id: record<organization_role>, name: string, organization: record<organization>, permissions: array<record<organization_permission>> }>	{"Array":[{"Literal":{"Object":{"id":{"Record":["organization_role"]},"name":"String","organization":{"Record":["organization"]},"permissions":{"Array":[{"Record":["organization_permission"]},null]}}}},null]}
+queries/60_mutations.surql/stmt/update@11:1	array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"address":{"Literal":{"Object":{"city":"String","country":"String","line1":"String","line2":{"Either":["None","String"]}}}},"contacts":{"Array":[{"Literal":{"Object":{"email":"String","label":"String","primary":"Bool"}}},null]},"created_at":"Datetime","employees":{"Array":[{"Record":["employee_of"]},null]},"id":{"Record":["organization"]},"legal_name":"String","logo":{"Either":["None","String"]},"name":"String","owner":{"Record":["account"]},"parent":{"Either":["None",{"Record":["organization"]}]},"sectors":{"Array":[{"Record":["sector"]},null]},"subsidiaries":{"Array":[{"Record":["organization"]},null]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/60_mutations.surql/stmt/update@13:1	{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }	{"Literal":{"Object":{"address":{"Literal":{"Object":{"city":"String","country":"String","line1":"String","line2":{"Either":["None","String"]}}}},"contacts":{"Array":[{"Literal":{"Object":{"email":"String","label":"String","primary":"Bool"}}},null]},"created_at":"Datetime","employees":{"Array":[{"Record":["employee_of"]},null]},"id":{"Record":["organization"]},"legal_name":"String","logo":{"Either":["None","String"]},"name":"String","owner":{"Record":["account"]},"parent":{"Either":["None",{"Record":["organization"]}]},"sectors":{"Array":[{"Record":["sector"]},null]},"subsidiaries":{"Array":[{"Record":["organization"]},null]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}}
+queries/60_mutations.surql/stmt/upsert@15:1	array<{ data_region: 'us' | 'eu', id: record<organization_settings>, organization: record<organization>, retention_days: 30 | 90 | 365, security: { byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }, updated_at: datetime }>	{"Array":[{"Literal":{"Object":{"data_region":{"Either":[{"Literal":{"String":"us"}},{"Literal":{"String":"eu"}}]},"id":{"Record":["organization_settings"]},"organization":{"Record":["organization"]},"retention_days":{"Either":[{"Literal":{"Integer":30}},{"Literal":{"Integer":90}},{"Literal":{"Integer":365}}]},"security":{"Literal":{"Object":{"byok":{"Literal":{"Object":{"kms_provider":{"Either":["None","String"]},"mode":{"Either":[{"Literal":{"String":"lazy"}},{"Literal":{"String":"immediate"}}]},"progress":"Int","status":{"Either":[{"Literal":{"String":"not_started"}},{"Literal":{"String":"running"}},{"Literal":{"String":"completed"}},{"Literal":{"String":"failed"}}]}}}}}}},"updated_at":"Datetime"}}},null]}
+queries/60_mutations.surql/stmt/delete@17:1	array<{ headcount: int, id: record<organization_unit>, name: string, organization: record<organization>, parent: option<record<organization_unit>> }>	{"Array":[{"Literal":{"Object":{"headcount":"Int","id":{"Record":["organization_unit"]},"name":"String","organization":{"Record":["organization"]},"parent":{"Either":["None",{"Record":["organization_unit"]}]}}}},null]}
+queries/60_mutations.surql/stmt/delete@19:1	array<{ id: record<organization_role>, name: string, organization: record<organization>, permissions: array<record<organization_permission>> }>	{"Array":[{"Literal":{"Object":{"id":{"Record":["organization_role"]},"name":"String","organization":{"Record":["organization"]},"permissions":{"Array":[{"Record":["organization_permission"]},null]}}}},null]}
+queries/60_mutations.surql/stmt/relate@21:1	array<{ id: record<employee_of>, in: record<account>, joined_at: datetime, out: record<organization>, role: record<organization_role>, status: 'invited' | 'active' | 'suspended', title: option<string>, unit: record<organization_unit> }>	{"Array":[{"Literal":{"Object":{"id":{"Record":["employee_of"]},"in":{"Record":["account"]},"joined_at":"Datetime","out":{"Record":["organization"]},"role":{"Record":["organization_role"]},"status":{"Either":[{"Literal":{"String":"invited"}},{"Literal":{"String":"active"}},{"Literal":{"String":"suspended"}}]},"title":{"Either":["None","String"]},"unit":{"Record":["organization_unit"]}}}},null]}
+queries/60_mutations.surql/stmt/insert@23:1	array<{ id: record<sector>, name: string }>	{"Array":[{"Literal":{"Object":{"id":{"Record":["sector"]},"name":"String"}}},null]}
+queries/60_mutations.surql/stmt/insert@25:1	array<{ id: record<sector>, name: string }>	{"Array":[{"Literal":{"Object":{"id":{"Record":["sector"]},"name":"String"}}},null]}
+queries/60_mutations.surql/stmt/update@27:1	array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/60_mutations.surql/stmt/update@31:1	array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, plan: 'free' | 'pro' | 'enterprise', sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"address":{"Literal":{"Object":{"city":"String","country":"String","line1":"String","line2":{"Either":["None","String"]}}}},"contacts":{"Array":[{"Literal":{"Object":{"email":"String","label":"String","primary":"Bool"}}},null]},"created_at":"Datetime","employees":{"Array":[{"Record":["employee_of"]},null]},"id":{"Record":["organization"]},"legal_name":"String","logo":{"Either":["None","String"]},"name":"String","owner":{"Record":["account"]},"parent":{"Either":["None",{"Record":["organization"]}]},"plan":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]},"sectors":{"Array":[{"Record":["sector"]},null]},"subsidiaries":{"Array":[{"Record":["organization"]},null]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/70_params.surql/stmt/select@4:1	array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/70_params.surql/stmt/select@6:1	array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"address":{"Literal":{"Object":{"city":"String","country":"String","line1":"String","line2":{"Either":["None","String"]}}}},"contacts":{"Array":[{"Literal":{"Object":{"email":"String","label":"String","primary":"Bool"}}},null]},"created_at":"Datetime","employees":{"Array":[{"Record":["employee_of"]},null]},"id":{"Record":["organization"]},"legal_name":"String","logo":{"Either":["None","String"]},"name":"String","owner":{"Record":["account"]},"parent":{"Either":["None",{"Record":["organization"]}]},"sectors":{"Array":[{"Record":["sector"]},null]},"subsidiaries":{"Array":[{"Record":["organization"]},null]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/70_params.surql/stmt/select@8:1	option<{ name: string }>	{"Either":["None",{"Literal":{"Object":{"name":"String"}}}]}
+queries/70_params.surql/stmt/create@13:1	array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"address":{"Literal":{"Object":{"city":"String","country":"String","line1":"String","line2":{"Either":["None","String"]}}}},"contacts":{"Array":[{"Literal":{"Object":{"email":"String","label":"String","primary":"Bool"}}},null]},"created_at":"Datetime","employees":{"Array":[{"Record":["employee_of"]},null]},"id":{"Record":["organization"]},"legal_name":"String","logo":{"Either":["None","String"]},"name":"String","owner":{"Record":["account"]},"parent":{"Either":["None",{"Record":["organization"]}]},"sectors":{"Array":[{"Record":["sector"]},null]},"subsidiaries":{"Array":[{"Record":["organization"]},null]},"tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/70_params.surql/stmt/update@18:1	array<{ headcount: int, id: record<organization_unit>, name: string, organization: record<organization>, parent: option<record<organization_unit>> }>	{"Array":[{"Literal":{"Object":{"headcount":"Int","id":{"Record":["organization_unit"]},"name":"String","organization":{"Record":["organization"]},"parent":{"Either":["None",{"Record":["organization_unit"]}]}}}},null]}
+queries/70_params.surql/stmt/select@20:1	array<{ id: record<employee_of>, in: record<account>, joined_at: datetime, out: record<organization>, role: record<organization_role>, status: 'invited' | 'active' | 'suspended', title: option<string>, unit: record<organization_unit> }>	{"Array":[{"Literal":{"Object":{"id":{"Record":["employee_of"]},"in":{"Record":["account"]},"joined_at":"Datetime","out":{"Record":["organization"]},"role":{"Record":["organization_role"]},"status":{"Either":[{"Literal":{"String":"invited"}},{"Literal":{"String":"active"}},{"Literal":{"String":"suspended"}}]},"title":{"Either":["None","String"]},"unit":{"Record":["organization_unit"]}}}},null]}
+queries/70_params.surql/let/$tier_default@16:5	string	"String"
+queries/70_params.surql/param/$city	string	"String"
+queries/70_params.surql/param/$default_tier	string	"String"
+queries/70_params.surql/param/$headcount	int	"Int"
+queries/70_params.surql/param/$line1	string	"String"
+queries/70_params.surql/param/$new_legal	string	"String"
+queries/70_params.surql/param/$new_name	string	"String"
+queries/70_params.surql/param/$org_id	record<organization>	{"Record":["organization"]}
+queries/70_params.surql/param/$org_name	string	"String"
+queries/70_params.surql/param/$owner_id	record<account>	{"Record":["account"]}
+queries/70_params.surql/param/$page_size	int	"Int"
+queries/70_params.surql/param/$since	datetime	"Datetime"
+queries/70_params.surql/param/$tier	'free' | 'pro' | 'enterprise'	{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}
+queries/80_functions.surql/stmt/select@4:1	array<{ label: string }>	{"Array":[{"Literal":{"Object":{"label":"String"}}},null]}
+queries/80_functions.surql/stmt/return@24:1	{ heads: int, initials: string, joined: string, label: string, owner: record<account>, parsed: int, pro: bool, upper: string, when: datetime }	{"Literal":{"Object":{"heads":"Int","initials":"String","joined":"String","label":"String","owner":{"Record":["account"]},"parsed":"Int","pro":"Bool","upper":"String","when":"Datetime"}}}
+queries/80_functions.surql/let/$owner@6:5	record<account>	{"Record":["account"]}
+queries/80_functions.surql/let/$heads@8:5	int	"Int"
+queries/80_functions.surql/let/$initials@10:5	string	"String"
+queries/80_functions.surql/let/$pro@12:5	bool	"Bool"
+queries/80_functions.surql/let/$label@14:5	string	"String"
+queries/80_functions.surql/let/$upper@16:5	string	"String"
+queries/80_functions.surql/let/$joined@18:5	string	"String"
+queries/80_functions.surql/let/$when@20:5	datetime	"Datetime"
+queries/80_functions.surql/let/$parsed@22:5	int	"Int"
+queries/90_opaque.surql/stmt/select@4:1	array<{ payload: any, provider: 'stripe' | 'github' }>	{"Array":[{"Literal":{"Object":{"payload":"Any","provider":{"Either":[{"Literal":{"String":"stripe"}},{"Literal":{"String":"github"}}]}}}},null]}
+queries/90_opaque.surql/stmt/return@10:1	{ headers: option<object>, payload: option<any> }	{"Literal":{"Object":{"headers":{"Either":["None","Object"]},"payload":{"Either":["None","Any"]}}}}
+queries/90_opaque.surql/let/$payload@6:5	option<any>	{"Either":["None","Any"]}
+queries/90_opaque.surql/let/$headers@8:5	option<object>	{"Either":["None","Object"]}
+queries/95_parens.surql/stmt/select@9:1	array<{ scaled_length: int }>	{"Array":[{"Literal":{"Object":{"scaled_length":"Int"}}},null]}
+queries/95_parens.surql/stmt/select@14:1	array<{ total_headcount: int }>	{"Array":[{"Literal":{"Object":{"total_headcount":"Int"}}},null]}
+queries/95_parens.surql/stmt/select@18:1	array<{ name: string, parent: record<organization> }>	{"Array":[{"Literal":{"Object":{"name":"String","parent":{"Record":["organization"]}}}},null]}
+queries/95_parens.surql/stmt/select@22:1	array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Array":[{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}},null]}
+queries/95_parens.surql/stmt/if_else@33:1	none	"None"
+queries/95_parens.surql/stmt/return@37:1	{ grouped: int, one_name: string, rows: array<{ name: string }> }	{"Literal":{"Object":{"grouped":"Int","one_name":"String","rows":{"Array":[{"Literal":{"Object":{"name":"String"}}},null]}}}}
+queries/95_parens.surql/let/$grouped@25:5	int	"Int"
+queries/95_parens.surql/let/$grouped_rows@27:5	array<{ name: string }>	{"Array":[{"Literal":{"Object":{"name":"String"}}},null]}
+queries/95_parens.surql/let/$one@31:5	option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>	{"Either":["None",{"Literal":{"Object":{"name":"String","tier":{"Either":[{"Literal":{"String":"free"}},{"Literal":{"String":"pro"}},{"Literal":{"String":"enterprise"}}]}}}}]}
+queries/95_parens.surql/let/$one_name@35:5	string	"String"
+queries/96_references.surql/stmt/select@13:1	array<{ tasks: array<record<task>> }>	{"Array":[{"Literal":{"Object":{"tasks":{"Array":[{"Record":["task"]},null]}}}},null]}
+queries/96_references.surql/stmt/select@16:1	array<{ milestones: array<record<milestone>> }>	{"Array":[{"Literal":{"Object":{"milestones":{"Array":[{"Record":["milestone"]},null]}}}},null]}
+queries/96_references.surql/stmt/select@19:1	array<{ milestones: array<record<milestone>>, name: string, tasks: array<record<task>> }>	{"Array":[{"Literal":{"Object":{"milestones":{"Array":[{"Record":["milestone"]},null]},"name":"String","tasks":{"Array":[{"Record":["task"]},null]}}}},null]}

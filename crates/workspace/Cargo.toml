@@ -18,5 +18,8 @@ surrealguard-syntax = { path = "../syntax", version = "0.4.1" }
 surrealdb-types.workspace = true
 toml = "0.8"
 
+[dev-dependencies]
+serde_json = "1"
+
 [lints]
 workspace = true

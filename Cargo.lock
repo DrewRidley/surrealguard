@@ -4279,6 +4279,7 @@ name = "surrealguard-workspace"
 version = "0.4.1"
 dependencies = [
  "serde",
+ "serde_json",
  "surrealdb-types",
  "surrealguard-diagnostics",
  "surrealguard-syntax",
