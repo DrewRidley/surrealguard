@@ -5,5 +5,6 @@
 pub mod backend;
 pub mod completion;
 pub mod diagnostics;
+pub mod semantic;
 pub mod text;
 pub mod workspace;

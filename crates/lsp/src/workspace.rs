@@ -989,6 +989,38 @@ impl Workspace {
         })
     }
 
+    /// A `.surql` document's text and its **cached** parse tree — everything a
+    /// syntax-only surface (semantic tokens) reads, without running or
+    /// touching any analysis.
+    pub fn parsed_surql(&self, uri: &Url) -> Option<(String, Arc<ParsedSource>)> {
+        let target = self.documents.get(uri)?;
+        if !is_surrealql_uri(uri) {
+            return None;
+        }
+        let text = target.text.clone();
+        self.with_surql_cache(|cache| {
+            let parsed = cache.parsed.get(cache.source_for(uri)?)?.clone();
+            (parsed.text() == text).then_some((text, parsed))
+        })
+    }
+
+    /// A host document's text and the queries embedded in it. Extraction only:
+    /// no schema, no analysis, no cache — what a query *is* does not depend on
+    /// what the workspace knows about it.
+    pub fn host_queries(
+        &self,
+        uri: &Url,
+    ) -> Option<(String, Vec<surrealguard_embed::EmbeddedQuery>)> {
+        let target = self.documents.get(uri)?;
+        if !is_host_uri(uri) {
+            return None;
+        }
+        Some((
+            target.text.clone(),
+            surrealguard_embed::extract(uri.path(), &target.text),
+        ))
+    }
+
     /// Scan workspace folders for `.surql` and `.surrealql` files and load them.
     pub fn scan_folders(&mut self) {
         for root in &self.roots.clone() {

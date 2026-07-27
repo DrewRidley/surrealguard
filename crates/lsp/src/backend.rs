@@ -3,6 +3,8 @@
 use std::path::Path;
 
 use surrealguard_diagnostics::PolicyConfig;
+use surrealguard_syntax::parse::parse_source;
+use surrealguard_syntax::source::SourceId;
 use surrealguard_workspace::config::WorkspaceConfig;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
@@ -10,7 +12,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 use crate::workspace::Workspace;
-use crate::{completion, diagnostics};
+use crate::{completion, diagnostics, semantic};
 
 /// The language server: holds the LSP client handle, the tracked workspace,
 /// and the severity policy resolved from `surrealguard.toml`. Implements
@@ -175,6 +177,24 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
+                // Highlighting inside a host file's template can only come
+                // from here: the editor's grammar for a `.svelte` or `.ts`
+                // file sees the query as one string, and the injection that
+                // would fix that has to be declared by the host language, not
+                // by us. Advertised for `.surql` too so both agree.
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        SemanticTokensOptions {
+                            legend: SemanticTokensLegend {
+                                token_types: semantic::TOKEN_TYPES.to_vec(),
+                                token_modifiers: Vec::new(),
+                            },
+                            full: Some(SemanticTokensFullOptions::Bool(true)),
+                            range: Some(false),
+                            ..SemanticTokensOptions::default()
+                        },
+                    ),
+                ),
                 inlay_hint_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
@@ -287,6 +307,42 @@ impl LanguageServer for Backend {
             }),
             range: Some(range),
         }))
+    }
+
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let uri = params.text_document.uri;
+        let ws = self.workspace.read().await;
+
+        // A `.surql` document is tokenized whole, from the parse the analysis
+        // cache already holds.
+        if let Some((text, parsed)) = ws.parsed_surql(&uri) {
+            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: semantic::encode(&text, &semantic::tokens(&parsed)),
+            })));
+        }
+
+        // A host document is tokenized only where a query actually is; the
+        // surrounding TypeScript belongs to whichever server owns it.
+        let Some((text, queries)) = ws.host_queries(&uri) else {
+            return Ok(None);
+        };
+        let mut tokens = Vec::new();
+        for (index, query) in queries.iter().enumerate() {
+            let source = SourceId::new(format!("embedded://{}#{index}", uri.as_str()));
+            let Ok(parsed) = parse_source(source, query.text.as_str()) else {
+                continue;
+            };
+            tokens.extend(semantic::map_to_host(query, semantic::tokens(&parsed)));
+        }
+
+        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+            result_id: None,
+            data: semantic::encode(&text, &tokens),
+        })))
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {

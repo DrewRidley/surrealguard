@@ -51,6 +51,9 @@ struct Lsp {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next_id: i64,
+    /// The `initialize` result, kept so a test can assert on what the server
+    /// advertised without a second (illegal) handshake.
+    capabilities: Value,
 }
 
 impl Drop for Lsp {
@@ -78,6 +81,7 @@ impl Lsp {
             stdin,
             stdout,
             next_id: 1,
+            capabilities: Value::Null,
         };
 
         // 1. initialize — and WAIT for the response before anything else.
@@ -86,9 +90,23 @@ impl Lsp {
             result["serverInfo"]["name"], "surrealguard-lsp",
             "handshake must reach our server, got: {result}"
         );
+        lsp.capabilities = result["capabilities"].clone();
         // 2. only now is the server allowed to accept notifications.
         lsp.notify("initialized", json!({}));
         lsp
+    }
+
+    /// The semantic-token legend the server advertised at handshake.
+    fn token_legend(&self) -> Vec<Value> {
+        self.capabilities["semanticTokensProvider"]["legend"]["tokenTypes"]
+            .as_array()
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!(
+                    "the server must advertise a legend, got: {}",
+                    self.capabilities
+                )
+            })
     }
 
     fn send(&mut self, message: &Value) {
@@ -725,6 +743,108 @@ fn hover_inside_an_embedded_query_answers_as_the_query() {
     assert!(
         result.is_null(),
         "expected no hover in host code, got {result}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Semantic tokens
+// ---------------------------------------------------------------------------
+
+/// Decodes a `semanticTokens/full` response back into `(covered text, token
+/// type)` pairs. The delta encoding is exactly where a highlighting bug hides,
+/// so the assertions are on the text the editor would actually paint.
+fn decode_tokens(text: &str, legend: &[Value], data: &[u64]) -> Vec<(String, String)> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut decoded = Vec::new();
+    let (mut line, mut start) = (0usize, 0usize);
+    for token in data.chunks(5) {
+        let [delta_line, delta_start, length, token_type, _modifiers] = token else {
+            panic!("semantic token data comes in fives, got {token:?}");
+        };
+        line += *delta_line as usize;
+        start = if *delta_line == 0 {
+            start + *delta_start as usize
+        } else {
+            *delta_start as usize
+        };
+        // The corpus is ASCII, so a UTF-16 column is a byte column.
+        let covered = &lines[line][start..start + *length as usize];
+        decoded.push((
+            covered.to_string(),
+            legend[*token_type as usize]
+                .as_str()
+                .expect("legend entry")
+                .to_string(),
+        ));
+    }
+    decoded
+}
+
+#[test]
+fn a_query_inside_a_svelte_file_comes_back_syntax_highlighted() {
+    let mut lsp = Lsp::start();
+    let legend = lsp.token_legend();
+    let _ = lsp.did_open(SCHEMA_URI, SCHEMA);
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({"textDocument": {
+            "uri": HOST_URI, "languageId": "svelte", "version": 1, "text": HOST,
+        }}),
+    );
+    let _ = lsp.next_publish(HOST_URI);
+
+    let result = lsp.request(
+        "textDocument/semanticTokens/full",
+        json!({"textDocument": {"uri": HOST_URI}}),
+    );
+    let data: Vec<u64> = result["data"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected semantic tokens, got: {result}"))
+        .iter()
+        .map(|value| value.as_u64().expect("token datum"))
+        .collect();
+
+    // Only the query is tokenized — the `import` line and the markup around
+    // it belong to whichever server owns Svelte.
+    assert_eq!(
+        decode_tokens(HOST, &legend, &data),
+        vec![
+            ("SELECT".to_string(), "keyword".to_string()),
+            ("username".to_string(), "variable".to_string()),
+            ("nonExistent".to_string(), "variable".to_string()),
+            ("FROM".to_string(), "keyword".to_string()),
+            ("account".to_string(), "variable".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn semantic_tokens_cover_a_surql_file_the_same_way() {
+    let mut lsp = Lsp::start();
+    let legend = lsp.token_legend();
+    let query = "SELECT username FROM account WHERE username = $name;\n";
+    let _ = lsp.did_open(SCHEMA_URI, SCHEMA);
+    let _ = lsp.did_open(QUERY_URI, query);
+
+    let result = lsp.request(
+        "textDocument/semanticTokens/full",
+        json!({"textDocument": {"uri": QUERY_URI}}),
+    );
+    let data: Vec<u64> = result["data"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected semantic tokens, got: {result}"))
+        .iter()
+        .map(|value| value.as_u64().expect("token datum"))
+        .collect();
+    let decoded = decode_tokens(query, &legend, &data);
+
+    assert_eq!(
+        decoded.first().map(|(text, _)| text.as_str()),
+        Some("SELECT")
+    );
+    assert!(
+        decoded.contains(&("$name".to_string(), "parameter".to_string())),
+        "a parameter is a parameter in a .surql file too, got: {decoded:?}"
     );
 }
 

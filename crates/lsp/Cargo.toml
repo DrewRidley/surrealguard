@@ -22,6 +22,9 @@ surrealguard-syntax = { path = "../syntax", version = "0.5.3" }
 surrealguard-workspace = { path = "../workspace", version = "0.5.3" }
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync"] }
+# Semantic tokens read the grammar's node kinds straight off the parse tree
+# `surrealguard-syntax` already produced.
+tree-sitter.workspace = true
 walkdir = "2"
 
 [dev-dependencies]
