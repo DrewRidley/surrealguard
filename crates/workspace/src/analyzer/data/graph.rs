@@ -10,6 +10,13 @@
 //! (the edge, or the node table once a hop lands): unknown fields are
 //! 1003, operator misuse inside them is the usual expression checking.
 //!
+//! Parentheses around a target are not a wall: `->(likes)` is `->likes`,
+//! and everything the parenthesized form can add — a filter, several
+//! targets, `?`, a record range, a `SELECT … FROM` projection — resolves
+//! and is checked through the same code the bare form goes through. A step
+//! that names no single table stops the traversal's type, and says which
+//! of those it was (6003) rather than leaving the site a silent `any`.
+//!
 //! The kind of a traversal comes from [`super::select`]'s resolvers; this
 //! module is the checking-side twin, invoked from the same sites.
 
@@ -180,17 +187,32 @@ pub(crate) fn check_graph_idiom_at(
 /// allow-by-default: the query may well be right, we just cannot type it.
 fn report_unresolved_step(ctx: &mut AnalysisContext<'_>, span: ByteRange, step: &ast::GraphStep) {
     for unmodeled in &step.unmodeled {
+        // `Fields` is the step's own `SELECT … FROM` projection; anything
+        // else stood where the table name goes.
+        let (message, help) = if unmodeled.cst_kind == "Fields" {
+            (
+                "surrealguard can't type what this graph selection projects",
+                "plain field names, `*`, and `VALUE <path>` are modeled here; \
+                 an alias or a dotted key is not"
+                    .to_string(),
+            )
+        } else {
+            (
+                "surrealguard can't resolve this graph target",
+                format!(
+                    "SurrealDB accepts a table name, `?`, or a record range after `->`/`<-`, \
+                     not a `{}`",
+                    unmodeled.cst_kind
+                ),
+            )
+        };
         ctx.emit(
             surrealguard_diagnostics::catalog::finding(
                 SourceSpan::new(ctx.source().clone(), unmodeled.span),
                 6003,
-                "surrealguard can't resolve this graph target".to_string(),
+                message.to_string(),
             )
-            .with_help(format!(
-                "SurrealDB accepts a table name, `?`, or a record range after `->`/`<-`, \
-                 not a `{}`",
-                unmodeled.cst_kind
-            )),
+            .with_help(help),
         );
     }
     if step.wildcard {
@@ -686,5 +708,49 @@ DEFINE FIELD since ON wrote TYPE datetime;
             findings("SELECT ->wrote->(post).{nope} AS p FROM user;"),
             vec!["E1002 `post` has no field `nope`"]
         );
+    }
+
+    #[test]
+    fn a_graph_selection_projects_rows_and_is_typed_as_what_it_projects() {
+        // `->(SELECT a, b FROM t)` hands back projected objects, not links —
+        // it used to come back as `array<record<post>>`, which is not a
+        // shape the engine ever returns for it (3.2.3). Each spelling types
+        // as its path equivalent: `SELECT a, b` is `.{a, b}`, `SELECT *` is
+        // `.*`, and `SELECT VALUE a` is `.a`.
+        assert_eq!(
+            projected("SELECT ->wrote->(SELECT title FROM post) AS p FROM user;"),
+            "array<{ p: array<{ title: string }> }>"
+        );
+        assert_eq!(
+            projected("SELECT ->wrote->post.{title} AS p FROM user;"),
+            "array<{ p: array<{ title: string }> }>"
+        );
+        assert_eq!(
+            projected("SELECT ->wrote->(SELECT VALUE title FROM post) AS p FROM user;"),
+            "array<{ p: array<string> }>"
+        );
+        assert_eq!(
+            projected("SELECT ->wrote->(SELECT * FROM post) AS p FROM user;"),
+            "array<{ p: array<{ id: record<post>, title: string }> }>"
+        );
+        // The projected fields are checked against the table they come off.
+        assert_eq!(
+            findings("SELECT ->wrote->(SELECT nope FROM post) AS p FROM user;"),
+            vec!["E1002 `post` has no field `nope`"]
+        );
+        // A selection with no path equivalent is not guessed at: an alias has
+        // no destructure form, and `SELECT author.name` nests under `author`
+        // rather than making the flat key a destructure would.
+        for query in [
+            "SELECT ->wrote->(SELECT title AS t FROM post) AS p FROM user;",
+            "SELECT ->wrote->(SELECT string::len(title) FROM post) AS p FROM user;",
+        ] {
+            assert_eq!(
+                findings(query),
+                vec!["E6003 surrealguard can't type what this graph selection projects"],
+                "for {query}"
+            );
+            assert_eq!(projected(query), "array<{ p: any }>", "for {query}");
+        }
     }
 }

@@ -1198,11 +1198,19 @@ fn graph_hop_target(
 }
 
 /// A graph part's direction and single target table. Multi-target steps
-/// (`->(a, b)`) do not resolve to one table and stay unresolved.
+/// (`->(a, b)`) do not resolve to one table and stay unresolved — and neither
+/// does a step carrying syntax the AST did not model, because whatever that
+/// syntax meant, it was not "the records of this table": a graph selection
+/// this lowering could not turn into path parts (`->(SELECT a AS b FROM t)`)
+/// hands back projected objects, not links. Resolving it to the target anyway
+/// is how that projection came out typed `array<record<t>>`.
 fn single_graph_target(part: &ast::IdiomPart) -> Option<(ast::GraphDir, &str)> {
     let ast::IdiomPart::Graph { dir, step } = part else {
         return None;
     };
+    if !step.unmodeled.is_empty() {
+        return None;
+    }
     match step.targets.as_slice() {
         [only] => Some((dir.node, only.node.as_str())),
         _ => None,

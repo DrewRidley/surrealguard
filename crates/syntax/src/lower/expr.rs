@@ -12,8 +12,12 @@
 //!   `Ident` (row field) or a value node like `VariableName` (`$user.name`).
 //! - `Subscript` carries `.field`, `.{destructure}`, or `.method()`.
 //! - `Filter` carries `[index-expr]` or `[WHERE …]` — one node, two meanings.
-//! - `Lookup` is one graph step: direction token plus a bare edge `Ident` or
-//!   a `LookupSelection` (`(edge WHERE …)` with `GraphPredicate` targets).
+//! - `Lookup` is one graph step: direction token plus a bare edge `Ident`,
+//!   `Any` (`->?`), or a `LookupSelection` (`(edge WHERE …)`, whose
+//!   `GraphPredicate` children carry the targets). A `LookupSelection` may
+//!   also hold a `GraphFieldSelection` (`(SELECT a FROM edge)`), which
+//!   reshapes the rows the step reached — so one `Lookup` can lower to a
+//!   graph part *plus* the path parts that reshape it.
 
 use tree_sitter::Node;
 
@@ -465,7 +469,10 @@ impl Lowerer<'_> {
                     );
                 }
                 "Subscript" => self.subscript_parts(child, &mut parts),
-                "Lookup" => parts.push(self.spanned(child, self.graph_part(child))),
+                // One `Lookup` can lower to more than one part: a `SELECT …
+                // FROM` inside it reshapes what the step reached, and that is
+                // a path part of its own.
+                "Lookup" => self.graph_parts(child, &mut parts),
                 "Filter" => parts.push(self.spanned(child, self.filter_part(child))),
                 // `Idiom` nodes carry `[*]` as a bare `Any` child rather than
                 // the `Filter`/`Subscript` wrapper a `Path` uses — this is the
@@ -546,7 +553,7 @@ impl Lowerer<'_> {
         IdiomPart::Method { name, args }
     }
 
-    fn graph_part(&self, node: Node<'_>) -> IdiomPart {
+    fn graph_parts(&self, node: Node<'_>, parts: &mut Vec<Spanned<IdiomPart>>) {
         let mut dir = None;
         let mut step = GraphStep {
             targets: Vec::new(),
@@ -555,6 +562,7 @@ impl Lowerer<'_> {
             wildcard: false,
             unmodeled: Vec::new(),
         };
+        let mut selection = None;
 
         for child in named_children(node) {
             match child.kind() {
@@ -573,18 +581,95 @@ impl Lowerer<'_> {
                 // Unparenthesized `->?` — the same wildcard the parenthesized
                 // `->(?)` spells.
                 "Any" => step.wildcard = true,
-                "LookupSelection" => self.lookup_selection(child, &mut step),
+                "LookupSelection" => selection = self.lookup_selection(child, &mut step),
                 _ => {}
             }
         }
 
-        match dir {
-            Some(dir) => IdiomPart::Graph { dir, step },
-            None => IdiomPart::Partial(partial(node)),
-        }
+        let Some(dir) = dir else {
+            parts.push(self.spanned(node, IdiomPart::Partial(partial(node))));
+            return;
+        };
+        // The selection reshapes what the step *reached*, so it lowers to the
+        // path parts that follow the step — and it may add to `unmodeled`,
+        // which is why the step is built before it is pushed.
+        let selected = selection
+            .map(|fields| self.graph_selection_parts(fields, &mut step))
+            .unwrap_or_default();
+        parts.push(self.spanned(node, IdiomPart::Graph { dir, step }));
+        parts.extend(selected);
     }
 
-    fn lookup_selection(&self, node: Node<'_>, step: &mut GraphStep) {
+    /// `->(SELECT a, b FROM t)` projects fields off the rows the step reached,
+    /// which is what `->t.{a, b}` does — the same result, key for key
+    /// (SurrealDB 3.2.3). `SELECT *` is `.*` and `SELECT VALUE a` is `.a`, on
+    /// the same evidence. Lowering the three to the path parts they are
+    /// equivalent to routes them through the resolvers and checks the
+    /// unparenthesized spellings already go through, instead of teaching those
+    /// a second spelling. Without it the projection kept the *link* type the
+    /// step would have had without a selection, which is simply the wrong type.
+    ///
+    /// A projection with no path equivalent is left unmodeled rather than
+    /// guessed at: an alias (`a AS b`) or a computed value has no destructure
+    /// form, and a dotted projection is not the flat key a destructure would
+    /// make of it (`SELECT author.name` nests under `author`; `.{author.name}`
+    /// is not even valid SurrealQL).
+    fn graph_selection_parts(
+        &self,
+        fields: Node<'_>,
+        step: &mut GraphStep,
+    ) -> Vec<Spanned<IdiomPart>> {
+        let mut value = false;
+        let mut wildcard = None;
+        let mut selected: Vec<Spanned<Idiom>> = Vec::new();
+        let mut modeled = true;
+
+        for child in named_children(fields) {
+            match child.kind() {
+                "Keyword" if self.node_text(child).eq_ignore_ascii_case("value") => value = true,
+                "Keyword" => {}
+                "Any" => wildcard = Some(child),
+                "Predicate" => match single_named_child(child) {
+                    Some(inner) if inner.kind() == "Ident" => selected.push(self.spanned(
+                        inner,
+                        Idiom {
+                            parts: vec![self.spanned(
+                                inner,
+                                IdiomPart::Field(self.node_text(inner).to_string()),
+                            )],
+                        },
+                    )),
+                    // A multi-part path only survives under `VALUE`, which
+                    // hands the value back whole rather than keying it.
+                    Some(inner) if value && matches!(inner.kind(), "Path" | "Idiom") => {
+                        selected.push(self.spanned(inner, self.idiom(inner)));
+                    }
+                    _ => modeled = false,
+                },
+                _ => modeled = false,
+            }
+        }
+
+        let parts = match (modeled, value, wildcard, selected.as_slice()) {
+            (true, false, Some(star), []) => vec![self.spanned(star, IdiomPart::All)],
+            (true, true, None, [only]) => only.node.parts.clone(),
+            (true, false, None, [_, ..]) => {
+                vec![self.spanned(fields, IdiomPart::Destructure(selected.clone()))]
+            }
+            _ => {
+                step.unmodeled.push(partial(fields));
+                Vec::new()
+            }
+        };
+        parts
+    }
+
+    fn lookup_selection<'tree>(
+        &self,
+        node: Node<'tree>,
+        step: &mut GraphStep,
+    ) -> Option<Node<'tree>> {
+        let mut selection = None;
         for child in named_children(node) {
             match child.kind() {
                 "GraphPredicate" => {
@@ -616,9 +701,15 @@ impl Lowerer<'_> {
                         step.where_clause = Some(Box::new(self.expr(expr_node)));
                     }
                 }
+                // `(SELECT a, b FROM t …)` — handed back so the caller can
+                // append the path parts it is equivalent to *after* the step.
+                "GraphFieldSelection" => {
+                    selection = first_child_of_kind(child, "Fields");
+                }
                 _ => {}
             }
         }
+        selection
     }
 
     fn filter_part(&self, node: Node<'_>) -> IdiomPart {
@@ -1001,6 +1092,63 @@ mod tests {
             assert!(step.targets.is_empty(), "for {query}");
             assert_eq!(step.unmodeled.len(), 1, "for {query}");
             assert_eq!(step.unmodeled[0].cst_kind, cst, "for {query}");
+        }
+    }
+
+    /// A `SELECT … FROM` inside a graph step projects the rows the step
+    /// reached, so it lowers to the path parts that do the same thing —
+    /// verified against SurrealDB 3.2.3, where `->wrote->(SELECT title FROM
+    /// post)` and `->wrote->post.{title}` return the identical value.
+    #[test]
+    fn lowers_a_graph_field_selection_to_the_path_it_is_equivalent_to() {
+        fn parts_of(query: &str) -> Vec<IdiomPart> {
+            let parsed = parse(query);
+            let path = lower_first(&parsed, "Path");
+            idiom_parts(&path)
+                .iter()
+                .map(|part| part.node.clone())
+                .collect()
+        }
+
+        // `SELECT a, b` is `.{a, b}` — one step, then the shape it projects.
+        let parts = parts_of("SELECT ->likes->(SELECT title, id FROM post) FROM person;");
+        assert!(matches!(parts[0], IdiomPart::Graph { .. }));
+        assert!(matches!(parts[1], IdiomPart::Graph { .. }));
+        let IdiomPart::Destructure(selected) = &parts[2] else {
+            panic!("expected destructure, got {:?}", parts[2]);
+        };
+        let names: Vec<_> = selected
+            .iter()
+            .map(|idiom| match &idiom.node.parts[0].node {
+                IdiomPart::Field(name) => name.clone(),
+                other => panic!("expected field, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(names, vec!["title", "id"]);
+
+        // `SELECT *` is `.*`; `SELECT VALUE a.b` is `.a.b`.
+        let parts = parts_of("SELECT ->likes->(SELECT * FROM post) FROM person;");
+        assert!(matches!(parts[2], IdiomPart::All));
+        let parts = parts_of("SELECT ->likes->(SELECT VALUE author.name FROM post) FROM person;");
+        assert!(matches!(&parts[2], IdiomPart::Field(f) if f == "author"));
+        assert!(matches!(&parts[3], IdiomPart::Field(f) if f == "name"));
+
+        // An alias, a computed projection, and a dotted key have no path
+        // equivalent, so the step says it did not model them rather than
+        // leaving behind the link type it would have had with no selection.
+        for query in [
+            "SELECT ->likes->(SELECT title AS t FROM post) FROM person;",
+            "SELECT ->likes->(SELECT string::len(title) FROM post) FROM person;",
+            "SELECT ->likes->(SELECT author.name FROM post) FROM person;",
+        ] {
+            let parts = parts_of(query);
+            assert_eq!(parts.len(), 2, "for {query}");
+            let IdiomPart::Graph { step, .. } = &parts[1] else {
+                panic!("expected graph part for {query}");
+            };
+            assert_eq!(step.targets[0].node, "post", "for {query}");
+            assert_eq!(step.unmodeled.len(), 1, "for {query}");
+            assert_eq!(step.unmodeled[0].cst_kind, "Fields", "for {query}");
         }
     }
 
