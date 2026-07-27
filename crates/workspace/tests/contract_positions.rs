@@ -325,7 +325,6 @@ const SITES: &[Site] = &[
 /// with `"*"` meaning every case. **This list may only shrink.** A line here is
 /// a committed, countable hole rather than a paragraph in a design document.
 const KNOWN_GAPS: &[(Position, &str)] = &[
-    (Position::FieldComputed, "*"), // no contract at all: absent from the clause loop
     (Position::ParamDefault, "*"),  // no declared type to check against
 ];
 

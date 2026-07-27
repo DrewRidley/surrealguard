@@ -31,9 +31,14 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
     check_record_targets(ctx, stmt, declared.as_ref());
     check_reference_back_target(ctx, stmt);
 
+    // `COMPUTED` is the third clause that supplies the field's value, and it
+    // was absent from this loop — so `DEFINE FIELD c ON t TYPE int COMPUTED
+    // 'notanint'` was silent while the identical `VALUE 'notanint'` reported.
+    // Same contract, same code, one missing row.
     for (position, clause) in [
         (Position::FieldDefault, &stmt.default),
         (Position::FieldValue, &stmt.value),
+        (Position::FieldComputed, &stmt.computed),
     ] {
         let Some(expr) = clause else {
             continue;
