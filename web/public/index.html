@@ -25,7 +25,10 @@
     </a>
     <div class="nav-links">
       <a href="/docs/">Docs</a>
-      <a href="#playground">Playground</a>
+      <!-- The page, not the section below. Every other nav on the site means
+           /playground/ by "Playground", and pointing this one at an anchor was
+           how the real playground became unreachable from the front door. -->
+      <a href="/playground/">Playground</a>
       <a href="#install">Install</a>
       <div class="ai" id="aiMenu">
         <button class="ai-btn" id="aiBtn" aria-haspopup="true" aria-expanded="false">
@@ -55,7 +58,12 @@
     <p class="lead reveal">SurrealGuard infers the type of every SurrealQL statement and reports contract violations — unknown fields, kind mismatches, bad graph traversals — with fully typed results in Rust and TypeScript.</p>
     <div class="hero-cta reveal">
       <a class="btn btn-primary" href="/docs/">Get started</a>
-      <a class="btn btn-ghost" href="#playground">Try it live</a>
+      <!-- Down the page, not off it. "Try it live" is a promise of something
+           immediate, and the demo two screens below is already running the
+           real engine with no navigation and no 4.7 MB download; the section
+           itself ends with the link to the full playground for anyone who
+           wants the tool rather than the taste. -->
+      <a class="btn btn-ghost" href="#demo">Try it live</a>
     </div>
     <div class="cmd reveal"><span class="dollar">$</span> npx surrealguard check <button data-copy="npx surrealguard check">Copy</button></div>
 
@@ -83,8 +91,10 @@
   </div>
 </section>
 
-<!-- interactive playground -->
-<section class="sec grid-bg" id="playground">
+<!-- the inline demo. `id="demo"`, not `id="playground"`: the playground is a
+     page, and while this anchor carried that name every link meaning the tool
+     could land here instead. -->
+<section class="sec grid-bg" id="demo">
   <div class="wrap">
     <div class="sec-head">
       <div class="kicker">// try it</div>
@@ -754,7 +764,7 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
     }
     // lazy-load the ~4MB engine only when the playground scrolls into view
     const lio = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { load(); lio.disconnect(); } }), { rootMargin: "300px" });
-    lio.observe(document.getElementById("playground"));
+    lio.observe(document.getElementById("demo"));
   })();
 </script>
 </body>
