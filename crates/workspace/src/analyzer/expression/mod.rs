@@ -20,7 +20,15 @@ use crate::expression::ExpressionFact;
 /// unresolved external parameters are recorded on the environment.
 pub fn analyze_expr(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) -> Kind {
     if let ast::Expr::Call(call) = &expr.node {
-        let args: Vec<Kind> = call.args.iter().map(|arg| analyze_expr(ctx, arg)).collect();
+        // The third walk that reaches a call's arguments, and it must mark the
+        // cardinality position exactly as the inference and checking walks do
+        // — a marker any one walk forgets is a finding the other two suppressed
+        // in vain.
+        let cardinality =
+            crate::analyzer::data::select::reads_only_cardinality(call.path.node.as_str());
+        let args: Vec<Kind> = ctx.with_cardinality_position(cardinality, |ctx| {
+            call.args.iter().map(|arg| analyze_expr(ctx, arg)).collect()
+        });
         return crate::analyzer::function::analyze_builtin_function(ctx, call, &args);
     }
 

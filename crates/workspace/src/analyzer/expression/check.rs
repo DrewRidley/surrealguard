@@ -109,9 +109,16 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
             check_geometry_shape(ctx, expr, fields);
         }
         ast::Expr::Call(call) => {
-            for arg in &call.args {
-                check_value_expression(ctx, arg);
-            }
+            // Same argument position the inference side marks: the checking
+            // walk reaches the argument's SELECT too, and both must agree or
+            // the finding comes back from whichever path did not know.
+            let cardinality =
+                crate::analyzer::data::select::reads_only_cardinality(call.path.node.as_str());
+            ctx.with_cardinality_position(cardinality, |ctx| {
+                for arg in &call.args {
+                    check_value_expression(ctx, arg);
+                }
+            });
         }
         ast::Expr::Cast { ty, expr: inner } => {
             check_value_expression(ctx, inner);

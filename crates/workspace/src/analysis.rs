@@ -2143,6 +2143,74 @@ INSERT INTO person { name: 'Ada' };
         );
     }
 
+    /// The consumer decides. `array::is_empty(SELECT count() …)` is an
+    /// existence test, and the two spellings are **not** interchangeable
+    /// there — engine-verified on 3.0.5:
+    ///
+    /// ```text
+    /// array::is_empty(SELECT count() FROM ea WHERE <no match>)            -> true
+    /// array::is_empty(SELECT count() FROM ea WHERE <no match> GROUP ALL)  -> false
+    /// ```
+    ///
+    /// So 4023's advice ("add GROUP ALL for a total") inverts this guard
+    /// rather than fixing it. The corpus shape it was firing on is
+    /// `fn::entity::permissible`, the workshop database's central ACL check.
+    #[test]
+    fn ungrouped_count_consumed_by_is_empty_does_not_fire_4023() {
+        for query in [
+            "RETURN array::is_empty(SELECT count() FROM person WHERE age > 18) = false;",
+            "RETURN array::is_empty(SELECT count() FROM person);",
+            "RETURN array::len(SELECT count() FROM person) > 0;",
+            "RETURN count(SELECT count() FROM person);",
+            "IF (SELECT count() FROM person) { RETURN 1; };",
+        ] {
+            let mut workspace = Workspace::default();
+            workspace.add_virtual_source(
+                "schema".into(),
+                "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD age ON person TYPE int;".into(),
+            );
+            let output = analyze_query(&mut workspace, query);
+            assert!(
+                !output
+                    .diagnostics
+                    .iter()
+                    .any(|f| f.code().number() == 4023),
+                "4023 must not fire in a cardinality position: {query}\n{:?}",
+                output.diagnostics
+            );
+        }
+    }
+
+    /// …and it must keep firing where it is right. `SELECT count()` read as a
+    /// *number* is the real footgun: N rows of `{count: 1}`, never one row of
+    /// `{count: N}`, so the guard below never fires.
+    #[test]
+    fn ungrouped_count_compared_to_a_number_still_fires_4023() {
+        for query in [
+            "LET $n = (SELECT count() FROM person); IF $n = 0 { THROW 'none'; };",
+            "RETURN (SELECT count() FROM person);",
+            // The marker names one position: a nested SELECT inside the
+            // consumed one is read as a number and still reports.
+            "RETURN array::is_empty(SELECT count() FROM person \
+             WHERE age = (SELECT count() FROM person));",
+        ] {
+            let mut workspace = Workspace::default();
+            workspace.add_virtual_source(
+                "schema".into(),
+                "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD age ON person TYPE int;".into(),
+            );
+            let output = analyze_query(&mut workspace, query);
+            assert!(
+                output
+                    .diagnostics
+                    .iter()
+                    .any(|f| f.code().number() == 4023),
+                "expected 4023 for {query}: {:?}",
+                output.diagnostics
+            );
+        }
+    }
+
     #[test]
     fn unique_and_plain_index_over_the_same_fields_are_not_redundant() {
         let mut workspace = Workspace::default();

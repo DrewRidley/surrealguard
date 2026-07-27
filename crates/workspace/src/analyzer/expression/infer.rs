@@ -1075,11 +1075,17 @@ fn call_fact(call: &ast::Call, span: SourceSpan, ctx: &mut AnalysisContext<'_>) 
     let mut fact = ExpressionFact::new(span, ExpressionValueClass::FunctionCall);
     fact.dependencies.function = Some(call.path.node.clone());
 
-    let args: Vec<Kind> = call
-        .args
-        .iter()
-        .map(|arg| infer_expression_fact(arg, ctx).kind.unwrap_or(Kind::Any))
-        .collect();
+    // A function that reads only its argument's cardinality puts that argument
+    // in a position where an ungrouped `SELECT count()` is right and `GROUP
+    // ALL` is not the same query — see `reads_only_cardinality`.
+    let cardinality =
+        crate::analyzer::data::select::reads_only_cardinality(call.path.node.as_str());
+    let args: Vec<Kind> = ctx.with_cardinality_position(cardinality, |ctx| {
+        call.args
+            .iter()
+            .map(|arg| infer_expression_fact(arg, ctx).kind.unwrap_or(Kind::Any))
+            .collect()
+    });
     let kind = crate::analyzer::function::analyze_builtin_function(ctx, call, &args);
     fact.with_kind(kind)
 }

@@ -11,7 +11,7 @@
 #
 # Regenerate with `scripts/oracle.py update` (existing verdicts are preserved).
 
-# total: 45 finding(s)
+# total: 43 finding(s)
 
 E1001  schema/apps/commerce/discount.surql
     `record<loyalty_tier>` targets a table that's never defined
@@ -176,14 +176,6 @@ E5002  schema/auth/entity_access.surql
 E5002  schema/organization/billing/organization_billing.surql
     argument 1 to `fn::stripe::customer::delete` is a `none | string`, but `$stripe_id` is declared `string`
     verdict: genuine — engine-verified: `organization_billing.stripe` is `option<string>` and `fn::stripe::customer::delete($stripe_id: string)` rejects NONE ("Incorrect arguments ... Expected `string` but found `NONE`"). Deleting a billing row that never reached Stripe throws.
-
-W4023  schema/@functions.surql
-    count() without GROUP BY yields 1 per row, not a total; add GROUP ALL for a total
-    verdict: BUG — false positive. Both sites consume the SELECT as `array::is_empty(SELECT count() FROM ...) = false`, an existence test, not a total; the code is correct as written. Engine-verified that the suggested remedy is actively harmful: with no matching rows `SELECT count() FROM t WHERE ...` yields `[]` (is_empty -> true) but `... GROUP ALL` yields `[{count: 0}]` (is_empty -> false), which would make fn::entity::permissible return true for everyone. See docs/plans/2026-07-26-oracle-triage.md, BUG-1.
-
-W4023  schema/@functions.surql
-    count() without GROUP BY yields 1 per row, not a total; add GROUP ALL for a total
-    verdict: BUG — false positive. Both sites consume the SELECT as `array::is_empty(SELECT count() FROM ...) = false`, an existence test, not a total; the code is correct as written. Engine-verified that the suggested remedy is actively harmful: with no matching rows `SELECT count() FROM t WHERE ...` yields `[]` (is_empty -> true) but `... GROUP ALL` yields `[{count: 0}]` (is_empty -> false), which would make fn::entity::permissible return true for everyone. See docs/plans/2026-07-26-oracle-triage.md, BUG-1.
 
 W7005  schema/@functions.surql
     `!=` between `record<organization_unit>` and `none` is always true

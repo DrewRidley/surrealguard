@@ -36,6 +36,12 @@ pub struct AnalysisContext<'a> {
     /// fall-through narrowing established here stops holding. `None` means the
     /// source's top level, whose sequence ends with the source text.
     scope_end: Option<u32>,
+    /// Whether the value produced at this position is read for its
+    /// *cardinality* — its emptiness or its length — and never as a scalar
+    /// total. `array::is_empty(<here>)` sets it; the position it names is the
+    /// one expression directly beneath, so the constructs that consume it
+    /// clear it before descending any further.
+    cardinality_position: bool,
 }
 
 impl<'a> AnalysisContext<'a> {
@@ -57,6 +63,7 @@ impl<'a> AnalysisContext<'a> {
             row_table: None,
             loop_depth: 0,
             scope_end: None,
+            cardinality_position: false,
         }
     }
 
@@ -81,6 +88,7 @@ impl<'a> AnalysisContext<'a> {
             row_table,
             loop_depth: 0,
             scope_end: None,
+            cardinality_position: false,
         }
     }
 
@@ -124,6 +132,37 @@ impl<'a> AnalysisContext<'a> {
     /// Whether the current statement sits inside a `FOR` body.
     pub fn in_loop(&self) -> bool {
         self.loop_depth > 0
+    }
+
+    /// Whether the value produced here is read only for its cardinality —
+    /// `array::is_empty(<here>)`, `array::len(<here>)`, `count(<here>)`.
+    ///
+    /// The distinction matters to exactly one contract: an ungrouped bare
+    /// `count()` is a footgun *as a total* (`N` rows of `{count: 1}`, never one
+    /// row of `{count: N}`), and `GROUP ALL` is the remedy. In a cardinality
+    /// position the two are **not** interchangeable — with no matching rows the
+    /// ungrouped form yields `[]` and the grouped form yields `[{count: 0}]` —
+    /// so the same advice inverts the caller's test.
+    pub(crate) fn in_cardinality_position(&self) -> bool {
+        self.cardinality_position
+    }
+
+    /// Runs `f` with the cardinality-position marker set to `reads_cardinality`.
+    ///
+    /// Scoped rather than sticky: the marker describes one position, so the
+    /// construct that occupies it reads the marker and then clears it for
+    /// everything nested inside — a `count()` in a *clause* of the consumed
+    /// SELECT is in no such position and must keep reporting.
+    pub(crate) fn with_cardinality_position<T>(
+        &mut self,
+        reads_cardinality: bool,
+        f: impl FnOnce(&mut AnalysisContext<'a>) -> T,
+    ) -> T {
+        let previous = self.cardinality_position;
+        self.cardinality_position = reads_cardinality;
+        let result = f(self);
+        self.cardinality_position = previous;
+        result
     }
 
     /// Runs `f` with the loop depth incremented (a `FOR` body).
@@ -386,6 +425,7 @@ impl<'a> AnalysisContext<'a> {
             row_table: self.row_table,
             loop_depth: self.loop_depth,
             scope_end: self.scope_end,
+            cardinality_position: self.cardinality_position,
         };
         let result = f(&mut child);
         self.loop_depth = child.loop_depth;

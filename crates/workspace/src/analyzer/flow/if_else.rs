@@ -53,7 +53,15 @@ pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::If
         // Conditions are analyzed for their facts (params, dependencies),
         // not their value — but a condition whose kind can never be a bool
         // is worth a warning (truthiness makes it run regardless).
-        let condition_fact = crate::analyzer::expression::expr_fact(ctx, &branch.condition);
+        //
+        // A condition is a truthiness test, and truthiness of a collection is
+        // its emptiness — engine-verified on 3.0.5: `IF []` takes the ELSE,
+        // `IF [{count: 1}]` takes the THEN. So a `SELECT count()` read here is
+        // read for its cardinality, and `GROUP ALL` (whose empty result is
+        // `[{count: 0}]`, i.e. truthy) would invert the test rather than fix it.
+        let condition_fact = ctx.with_cardinality_position(true, |ctx| {
+            crate::analyzer::expression::expr_fact(ctx, &branch.condition)
+        });
         if condition_fact.value.is_some() {
             let span = surrealguard_syntax::span::SourceSpan::new(
                 ctx.source().clone(),

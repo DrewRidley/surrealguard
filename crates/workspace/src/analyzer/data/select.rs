@@ -26,9 +26,47 @@ pub(crate) fn analyze_select(ctx: &mut AnalysisContext<'_>, stmt: &ast::SelectSt
     select_response_kind(stmt, ctx)
 }
 
+/// Whether a function reads its argument's *cardinality* only — its emptiness
+/// or its length — rather than any value inside it.
+///
+/// This is the consumer half of 4023's contract. In one of these positions an
+/// ungrouped `SELECT count()` is correct and `GROUP ALL` is not an equivalent
+/// spelling of it: engine-verified on 3.0.5, with no matching rows the
+/// ungrouped form yields `[]` while the grouped form yields `[{count: 0}]`, so
+/// `array::is_empty(…)` flips from true to false. Advising the grouped form
+/// there does not improve the query; it inverts it.
+pub(crate) fn reads_only_cardinality(path: &str) -> bool {
+    matches!(
+        path,
+        "array::is_empty"
+            | "array::is_not_empty"
+            | "array::len"
+            // `count(x)` counts what it is given; it never reads a total out
+            // of it.
+            | "count"
+            | "count::count"
+    )
+}
+
 /// Pure core: infers the response type of a lowered `SELECT`.
 pub(crate) fn select_response_kind(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
-    check_select_statement_shape(stmt, ctx);
+    // The marker names *this* SELECT's result. Everything nested inside its
+    // clauses occupies its own position, so clear it before descending —
+    // otherwise `array::is_empty(SELECT count() FROM t WHERE n = (SELECT
+    // count() FROM u))` would silence the inner SELECT too, and that one is
+    // read as a number.
+    let cardinality_only = ctx.in_cardinality_position();
+    ctx.with_cardinality_position(false, |ctx| {
+        select_response_kind_inner(stmt, ctx, cardinality_only)
+    })
+}
+
+fn select_response_kind_inner(
+    stmt: &ast::SelectStmt,
+    ctx: &mut AnalysisContext<'_>,
+    cardinality_only: bool,
+) -> Kind {
+    check_select_statement_shape(stmt, ctx, cardinality_only);
     if stmt.explain.is_some() {
         return explain_response_kind();
     }
@@ -731,9 +769,13 @@ fn is_row_independent(expr: &ast::Expr) -> bool {
 /// `SingleOnlyOutput` runtime error) and duplicate projection keys (4011).
 /// (VALUE's single-projection rule needs no finding: both SurrealDB's
 /// parser and ours reject the syntax.)
-fn check_select_statement_shape(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
+fn check_select_statement_shape(
+    stmt: &ast::SelectStmt,
+    ctx: &mut AnalysisContext<'_>,
+    cardinality_only: bool,
+) {
     check_clause_values(stmt, ctx);
-    check_count_without_group(stmt, ctx);
+    check_count_without_group(stmt, ctx, cardinality_only);
     check_wildcard_under_group(stmt, ctx);
     check_group_key_projection(stmt, ctx);
 
@@ -997,8 +1039,17 @@ fn projected_name_covers(names: &std::collections::BTreeSet<String>, name: &str)
 /// intended. A guard built on the result (`IF $rows = 0 { THROW ... }`) then
 /// silently never fires (4023). `GROUP ALL` / `GROUP BY` make it a real
 /// aggregate and clear the finding.
-fn check_count_without_group(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
-    if stmt.group.is_some() {
+///
+/// The contract is about the *total*, so it needs the consumer as well as the
+/// SELECT: where the result is read only for its cardinality
+/// (`cardinality_only`, from [`reads_only_cardinality`]) the ungrouped form is
+/// the correct one and the suggested remedy inverts the test.
+fn check_count_without_group(
+    stmt: &ast::SelectStmt,
+    ctx: &mut AnalysisContext<'_>,
+    cardinality_only: bool,
+) {
+    if stmt.group.is_some() || cardinality_only {
         return;
     }
     for projection in &stmt.projections {
