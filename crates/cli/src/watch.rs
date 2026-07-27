@@ -1,8 +1,16 @@
-//! `--watch` support for `surrealguard check` and `surrealguard generate`.
+//! The watch loop behind `surrealguard watch`, `check --watch` and
+//! `generate --watch`.
 //!
 //! Generated types go stale silently: you edit a `.surql` file or a host file
-//! and nothing re-runs. `--watch` closes that loop — run once, then re-run on
+//! and nothing re-runs. Watching closes that loop — run once, then re-run on
 //! every change to an input the analysis actually consumes.
+//!
+//! # Output
+//!
+//! See [`report`]. The short version: a watch is a display of the workspace's
+//! current state, not a log of its history, so each run repaints the screen
+//! rather than scrolling the last one away, and the verdict is a coloured band
+//! that reads as PASS or FAIL without being read.
 //!
 //! # What is watched
 //!
@@ -47,6 +55,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 use surrealguard_workspace::config::WorkspaceConfig;
+
+use crate::style::{Outcome, Styles};
 
 /// How long the loop waits for the change stream to go quiet before re-running.
 /// Editors emit several events per save; 150ms is comfortably longer than the
@@ -248,10 +258,10 @@ pub(crate) fn coalesce(
 
 /// The result of one watched run, in the shape the log line needs.
 pub(crate) struct RunOutcome {
-    /// Whether the run did what it was asked to do.
-    pub(crate) ok: bool,
-    /// One line: `wrote surrealguard.generated.ts (3 queries)`, `42
-    /// diagnostic(s), 39 error(s)`, …
+    /// Clean, warned, or failed — what the status band shows.
+    pub(crate) outcome: Outcome,
+    /// One line: `12 sources · no diagnostics · wrote
+    /// surrealguard.generated.ts (3 queries)`.
     pub(crate) summary: String,
     /// Rendered diagnostic blocks (or an error message) printed beneath.
     pub(crate) detail: String,
@@ -274,14 +284,43 @@ fn describe(root: &Path, changes: &ChangeSet, known: &BTreeSet<PathBuf>) -> Stri
     }
 }
 
-/// Prints one run: what triggered it, how it went, how long it took.
-fn report(run: usize, reason: &str, outcome: &RunOutcome, elapsed: Duration) {
-    let status = if outcome.ok { "ok" } else { "FAIL" };
+/// Prints one run, replacing the previous one.
+///
+/// A watch is not a log — it is a *display*, and the only thing that matters is
+/// the current state of the workspace. So on a terminal the screen is cleared
+/// first and each run repaints it, which is why the answer is always at the
+/// same place on the screen instead of scrolling away under the last twelve
+/// runs. Piped output cannot be cleared, so it gets a rule between runs
+/// instead; either way one run is one visually bounded block.
+///
+/// The scrollback (`\x1b[3J`) is deliberately *not* cleared — a run whose
+/// diagnostics were longer than the window still has to be scrollable.
+fn report(
+    root: &Path,
+    run: usize,
+    reason: &str,
+    outcome: &RunOutcome,
+    elapsed: Duration,
+    styles: Styles,
+) {
+    if styles.is_colored() {
+        // Erase the display and home the cursor.
+        print!("\x1b[2J\x1b[H");
+    } else if run > 1 {
+        println!("{}", "-".repeat(72));
+    }
+
     println!(
-        "[{run}] {reason} -> {status}: {} [{}ms]",
-        outcome.summary,
-        elapsed.as_millis()
+        "{} {}",
+        styles.message("surrealguard watch"),
+        styles.dim(&root.display().to_string())
     );
+    println!(
+        "{}",
+        styles.dim(&format!("run {run} · {reason} · {}ms", elapsed.as_millis()))
+    );
+    println!();
+
     if !outcome.detail.is_empty() {
         // Both streams go to stdout in watch mode: a terminal reading a live
         // log needs the blocks interleaved with their run line, and split
@@ -290,7 +329,19 @@ fn report(run: usize, reason: &str, outcome: &RunOutcome, elapsed: Duration) {
         if !outcome.detail.ends_with('\n') {
             println!();
         }
+        println!();
     }
+
+    println!(
+        "{} {}",
+        styles.badge(outcome.outcome.word(), outcome.outcome),
+        crate::style::tint(styles, outcome.outcome, &outcome.summary)
+    );
+    println!();
+    println!(
+        "{}",
+        styles.dim("watching .surql, host files and surrealguard.toml — Ctrl-C to stop")
+    );
     let _ = std::io::stdout().flush();
 }
 
@@ -334,6 +385,7 @@ fn sync_watches(
 pub(crate) fn watch_loop(
     root: &Path,
     exclude: Option<&Path>,
+    styles: Styles,
     mut run: impl FnMut() -> RunOutcome,
 ) -> Result<(), Box<dyn Error>> {
     let mut config = workspace_config(root);
@@ -348,18 +400,20 @@ pub(crate) fn watch_loop(
     let mut watched = BTreeSet::new();
     sync_watches(&mut debouncer, root, &config.sources.ignore, &mut watched);
 
-    println!(
-        "watching {} for .surql, host-file and config changes (Ctrl-C to stop)",
-        root.display()
-    );
-
     // The inputs that existed at the last run — what makes "created" mean
     // created rather than "the event kind said so".
     let mut known = input_paths(root, &config);
     let mut run_index = 1usize;
     let started = Instant::now();
     let outcome = run();
-    report(run_index, "initial run", &outcome, started.elapsed());
+    report(
+        root,
+        run_index,
+        "initial run",
+        &outcome,
+        started.elapsed(),
+        styles,
+    );
 
     while let Some(batch) = coalesce(&rx, DEBOUNCE, MAX_COALESCE) {
         // A config edit can change the ignore patterns and the source globs;
@@ -383,7 +437,14 @@ pub(crate) fn watch_loop(
         run_index += 1;
         let started = Instant::now();
         let outcome = run();
-        report(run_index, &reason, &outcome, started.elapsed());
+        report(
+            root,
+            run_index,
+            &reason,
+            &outcome,
+            started.elapsed(),
+            styles,
+        );
         known = input_paths(root, &config);
     }
 

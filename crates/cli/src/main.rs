@@ -17,10 +17,20 @@
 //! - `surrealguard generate [--out PATH] [--watch]` — emit the typed TypeScript
 //!   client and literal-keyed query registry (defaults to
 //!   `surrealguard.generated.ts` at the workspace root).
+//! - `surrealguard watch [--out PATH] [--check-only]` — the development loop:
+//!   check, then regenerate, on every change. See [`watch`].
 //!
-//! `--watch` turns either verb into a loop: run once, then re-run on every
+//! `--watch` turns either verb into a loop too: run once, then re-run on every
 //! change to an input the analysis consumes (`.surql` sources, host files
-//! carrying embedded queries, and `surrealguard.toml`). See [`watch`].
+//! carrying embedded queries, and `surrealguard.toml`).
+//!
+//! # Output
+//!
+//! Human output is coloured when — and only when — it is going to a terminal
+//! that wants colour: `--no-color`, `NO_COLOR`, `TERM=dumb` and a redirected
+//! stream each turn it off, so `surrealguard check > report.txt` is clean text.
+//! See [`style`]. `--json` is a machine contract (one document, one exit code)
+//! and is never decorated.
 //!
 //! # `surrealguard.toml`
 //!
@@ -32,6 +42,8 @@
 //! commented example.
 
 mod render;
+mod spinner;
+mod style;
 mod watch;
 
 use clap::{Parser, Subcommand};
@@ -40,7 +52,10 @@ use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
+use style::{count, tint, Outcome, Styles};
 use surrealguard_diagnostics::{render_code, Finding, Severity};
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
@@ -53,6 +68,14 @@ use walkdir::{DirEntry, WalkDir};
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    /// Never emit ANSI colour, even on a terminal.
+    ///
+    /// Colour is already off when the output is not a terminal, when `NO_COLOR`
+    /// is set, and when `TERM=dumb`; this is the explicit override for a
+    /// terminal that reports colour support it does not have.
+    #[arg(long, global = true)]
+    no_color: bool,
 }
 
 #[derive(Subcommand)]
@@ -87,6 +110,25 @@ enum Commands {
         /// `surrealguard.toml`. Runs once first, then blocks until interrupted.
         #[arg(long)]
         watch: bool,
+    },
+
+    /// Check and regenerate on every change — the loop to run beside a dev server
+    ///
+    /// Equivalent to `check --watch` and `generate --watch` in one process,
+    /// which is what a development session actually needs: `check` alone leaves
+    /// the generated types stale, and `generate` alone reports only the
+    /// findings of the queries it embeds, so a broken `.surql` file passes
+    /// unmentioned. A run that fails the check does not write the registry.
+    Watch {
+        /// Output path for the generated module (default:
+        /// surrealguard.generated.ts at the workspace root).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+
+        /// Only check. Nothing is written, so this is the safe mode for a
+        /// workspace whose registry is committed and reviewed.
+        #[arg(long)]
+        check_only: bool,
     },
 }
 
@@ -211,7 +253,54 @@ impl fmt::Display for CheckFailed {
 
 impl Error for CheckFailed {}
 
-fn run_check(start_dir: &Path) -> Result<CheckPassed, CheckFailed> {
+/// Analyzes the workspace containing `start_dir` and renders every surviving
+/// finding.
+///
+/// `styles` decorates the rendered blocks. Both streams are handed in because
+/// the destination — stderr on a failing run, stdout on a passing one — is what
+/// decides whether an escape sequence is safe to write, and this function is
+/// the first place that knows which one it will be.
+/// The embedded queries a `check` analyzes, keyed by the virtual source id they
+/// were added under, with the host file each came from.
+type EmbeddedQueries =
+    std::collections::BTreeMap<String, (surrealguard_embed::EmbeddedQuery, String)>;
+
+/// Adds every `surql` template found in a host file to `workspace` as a virtual
+/// source, and records the host file's text so findings can be rendered against
+/// real source.
+///
+/// Embedded queries in host files (`surql` tagged templates in `.ts`/`.svelte`/…)
+/// are part of the workspace: they are the queries the client actually runs.
+/// `generate` has always analyzed them, so a `check` that ignored them would
+/// pass a workspace whose `generate` then fails with errors — CI green, build
+/// broken. Their findings are remapped to `host_file:line` by the caller.
+fn add_embedded_queries(
+    workspace: &mut Workspace,
+    root: &Path,
+    config: &WorkspaceConfig,
+    source_texts: &mut std::collections::BTreeMap<String, String>,
+) -> EmbeddedQueries {
+    let mut embedded = EmbeddedQueries::new();
+    for path in discover_host_sources(root, config) {
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let host_id = path.display().to_string();
+        let queries = surrealguard_embed::extract(&host_id, &text);
+        if queries.is_empty() {
+            continue;
+        }
+        for (index, query) in queries.into_iter().enumerate() {
+            let source_id = workspace
+                .add_virtual_source(format!("embedded://{host_id}#{index}"), query.text.clone());
+            embedded.insert(source_id.to_string(), (query, host_id.clone()));
+        }
+        source_texts.insert(host_id, text);
+    }
+    embedded
+}
+
+fn run_check(start_dir: &Path, styles: StylePair) -> Result<CheckPassed, CheckFailed> {
     let root = find_workspace_root(start_dir);
     let config = load_workspace_config(&root).map_err(|error| CheckFailed {
         summary: CheckSummary {
@@ -243,29 +332,7 @@ fn run_check(start_dir: &Path) -> Result<CheckPassed, CheckFailed> {
         source_texts.insert(source_id.to_string(), text);
     }
 
-    // Embedded queries in host files (`surql` tagged templates in .ts/.svelte/…)
-    // are part of the workspace: they are the queries the client actually runs.
-    // `generate` has always analyzed them, so a `check` that ignored them would
-    // pass a workspace whose `generate` then fails with errors — CI green, build
-    // broken. Their findings are remapped to `host_file:line` below.
-    let mut embedded: std::collections::BTreeMap<String, (surrealguard_embed::EmbeddedQuery, String)> =
-        std::collections::BTreeMap::new();
-    for path in discover_host_sources(&root, &config) {
-        let Ok(text) = fs::read_to_string(&path) else {
-            continue;
-        };
-        let host_id = path.display().to_string();
-        let queries = surrealguard_embed::extract(&host_id, &text);
-        if queries.is_empty() {
-            continue;
-        }
-        for (index, query) in queries.into_iter().enumerate() {
-            let source_id = workspace
-                .add_virtual_source(format!("embedded://{host_id}#{index}"), query.text.clone());
-            embedded.insert(source_id.to_string(), (query, host_id.clone()));
-        }
-        source_texts.insert(host_id, text);
-    }
+    let embedded = add_embedded_queries(&mut workspace, &root, &config, &mut source_texts);
 
     let analysis = analyze_workspace(&workspace);
 
@@ -324,14 +391,17 @@ fn run_check(start_dir: &Path) -> Result<CheckPassed, CheckFailed> {
             }
         })
         .collect();
-    let rendered: Vec<String> = resolved
-        .iter()
-        .map(|(finding, severity)| render::render_finding(finding, *severity, &source_texts))
-        .collect();
     let errors = resolved
         .iter()
         .filter(|(_, severity)| *severity == Severity::Error)
         .count();
+    let block_styles = styles.for_check(errors > 0);
+    let rendered: Vec<String> = resolved
+        .iter()
+        .map(|(finding, severity)| {
+            render::render_finding(finding, *severity, &source_texts, block_styles)
+        })
+        .collect();
     let summary = CheckSummary {
         sources_checked: analysis.sources.len(),
         diagnostics: resolved.len(),
@@ -373,6 +443,93 @@ struct GenerateReport {
     /// How many embedded queries landed in the registry. `--watch` prints it so
     /// a repeating line still shows the run did something.
     queries: usize,
+    /// The rendered "`@surrealguard/client` is not installed" block, when the
+    /// package the written module augments cannot be resolved from its
+    /// directory. See [`client_package_is_resolvable`] for why this is fatal in
+    /// practice and silent without it.
+    missing_client: Option<String>,
+}
+
+/// The npm package the generated module imports from and augments.
+const CLIENT_PACKAGE: &str = "@surrealguard/client";
+
+/// Whether Node/TypeScript would resolve [`CLIENT_PACKAGE`] from `dir`, by the
+/// rule they both use: walk up from the importing file's directory and take the
+/// first `node_modules` that contains the package.
+///
+/// This is the difference between a generated file that types everything and
+/// one that types nothing. The module ends in
+/// `declare module "@surrealguard/client" { … }`, and a module augmentation is
+/// only an augmentation if the target resolves. When it does not, TypeScript
+/// reports `TS2664: Invalid module name in augmentation` **inside the generated
+/// file** and drops the block — so the user's own `db.query(…)` keeps
+/// compiling, silently as `any`, with no error anywhere near it. Nothing about
+/// that failure points at the missing dependency, which is why `generate` has
+/// to say it out loud.
+///
+/// `package.json` is the marker rather than the directory, because a leftover
+/// empty `node_modules/@surrealguard/client/` resolves for neither tool.
+fn client_package_is_resolvable(dir: &Path) -> bool {
+    let scope_path: PathBuf = CLIENT_PACKAGE.split('/').collect();
+    let mut current = Some(dir);
+    while let Some(directory) = current {
+        if directory
+            .join("node_modules")
+            .join(&scope_path)
+            .join("package.json")
+            .exists()
+        {
+            return true;
+        }
+        current = directory.parent();
+    }
+    false
+}
+
+/// The warning printed when the written module augments a package that is not
+/// installed. Shaped like a finding — header, location, explanation, fix — so
+/// it reads in the same language as everything else `generate` prints.
+fn missing_client_warning(out_path: &Path, styles: Styles) -> String {
+    let bar = styles.frame("  |");
+    let mut out = format!(
+        "{}: {}\n",
+        styles.severity(Severity::Warning, "warning"),
+        styles.message(&format!("`{CLIENT_PACKAGE}` is not installed"))
+    );
+    out.push_str(&format!(
+        "  {} {}\n",
+        styles.frame("-->"),
+        styles.path(&display_path(out_path))
+    ));
+    out.push_str(&format!("{bar}\n"));
+    out.push_str(&format!(
+        "{bar} this file augments `declare module \"{CLIENT_PACKAGE}\"`, and an\n"
+    ));
+    out.push_str(&format!(
+        "{bar} augmentation whose target does not resolve is silently dropped —\n"
+    ));
+    out.push_str(&format!(
+        "{bar} TypeScript reports TS2664 here, and every query typed through it\n"
+    ));
+    out.push_str(&format!("{bar} degrades to `any` with no error on it.\n"));
+    out.push_str(&format!("{bar}\n"));
+    out.push_str(&format!(
+        "  {} {} npm install {CLIENT_PACKAGE} surrealdb\n",
+        styles.frame("="),
+        styles.label("help:"),
+    ));
+    out
+}
+
+/// A path relative to the working directory when it is under it, so output
+/// reads `src/surrealguard.generated.ts` rather than an absolute path.
+fn display_path(path: &Path) -> String {
+    env::current_dir()
+        .ok()
+        .and_then(|cwd| path.strip_prefix(cwd).ok())
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 /// `generate` refused to write because an embedded query has an error-severity
@@ -444,7 +601,11 @@ fn remap_finding_to_host(
 /// embedded queries are reported at their host `file:line`: warnings/hints are
 /// printed but do not block generation, while any error-severity finding
 /// aborts before writing so a broken registry never overwrites a good one.
-fn run_generate(root: &Path, out: Option<&Path>) -> Result<GenerateReport, Box<dyn Error>> {
+fn run_generate(
+    root: &Path,
+    out: Option<&Path>,
+    styles: Styles,
+) -> Result<GenerateReport, Box<dyn Error>> {
     let config = load_workspace_config(root)?;
     let mut workspace = surrealguard_workspace::analysis::Workspace::new(config.clone());
     for path in discover_surrealql_sources(root, &config) {
@@ -492,7 +653,7 @@ fn run_generate(root: &Path, out: Option<&Path>) -> Result<GenerateReport, Box<d
                 continue;
             };
             let host_finding = remap_finding_to_host(finding, query, source_id, host_id);
-            let block = render::render_finding(&host_finding, severity, &host_texts);
+            let block = render::render_finding(&host_finding, severity, &host_texts, styles);
             if severity == Severity::Error {
                 rendered_errors.push(block);
             } else {
@@ -544,11 +705,21 @@ fn run_generate(root: &Path, out: Option<&Path>) -> Result<GenerateReport, Box<d
         .collect();
 
     let out_path = generated_registry_path(root, out);
-    fs::write(&out_path, surrealguard_codegen::render_registry(&entries))?;
+    let module = surrealguard_codegen::render_registry(&entries);
+    fs::write(&out_path, &module)?;
+
+    // Resolution is asked from the *written module's* directory, not the
+    // workspace root: that is the directory TypeScript resolves the import
+    // from, and in a monorepo the two are routinely different packages.
+    let missing_client = (module.contains(CLIENT_PACKAGE)
+        && !client_package_is_resolvable(out_path.parent().unwrap_or(root)))
+    .then(|| missing_client_warning(&out_path, styles));
+
     Ok(GenerateReport {
         path: out_path,
         warnings: rendered_warnings,
         queries: entries.len(),
+        missing_client,
     })
 }
 
@@ -556,35 +727,40 @@ fn run_generate(root: &Path, out: Option<&Path>) -> Result<GenerateReport, Box<d
 ///
 /// A failure is reported and returned, never propagated: a transient error —
 /// the syntax error you are halfway through typing — must not end the watch.
-fn generate_outcome(root: &Path, out: Option<&Path>) -> watch::RunOutcome {
-    match run_generate(root, out) {
-        Ok(report) => watch::RunOutcome {
-            ok: true,
-            summary: format!(
-                "wrote {} ({} quer{})",
-                report
-                    .path
-                    .strip_prefix(root)
-                    .unwrap_or(&report.path)
-                    .display(),
-                report.queries,
-                if report.queries == 1 { "y" } else { "ies" }
-            ),
-            detail: report.warnings.concat(),
-        },
+fn generate_outcome(root: &Path, out: Option<&Path>, styles: Styles) -> watch::RunOutcome {
+    match run_generate(root, out, styles) {
+        Ok(report) => {
+            let mut summary = format!(
+                "wrote {} · {}",
+                display_relative(root, &report.path),
+                count(report.queries, "query")
+            );
+            let mut detail = report.warnings.join("\n");
+            let mut outcome = Outcome::of(report.warnings.len(), 0);
+            if let Some(warning) = report.missing_client {
+                summary.push_str(&format!(" · {CLIENT_PACKAGE} not installed"));
+                detail.push_str(&warning);
+                outcome = Outcome::Warned;
+            }
+            watch::RunOutcome {
+                outcome,
+                summary,
+                detail,
+            }
+        }
         // The findings already say everything the trailing "generate failed:"
         // line would, and the run line above carries the count — so print the
         // blocks only, and keep the line short enough to scan when it repeats.
         Err(error) => match error.downcast_ref::<GenerateFailed>() {
             Some(failed) => watch::RunOutcome {
-                ok: false,
-                summary: format!("{} error(s), registry not written", failed.errors),
-                detail: failed.rendered.concat(),
+                outcome: Outcome::Failed,
+                summary: format!("{} · registry not written", count(failed.errors, "error")),
+                detail: failed.rendered.join("\n"),
             },
             // Not an analysis failure: an unreadable source, an unparseable
             // config. Report it and keep watching — the fix is a save away.
             None => watch::RunOutcome {
-                ok: false,
+                outcome: Outcome::Failed,
                 summary: "generate failed".into(),
                 detail: format!("{error}\n"),
             },
@@ -592,22 +768,104 @@ fn generate_outcome(root: &Path, out: Option<&Path>) -> watch::RunOutcome {
     }
 }
 
+/// One watched run of the bare `watch` verb: check the whole workspace, then —
+/// only if it passed — regenerate.
+///
+/// The ordering is the justification for the pairing. `check` is the surface
+/// that sees every input, including `.surql` query files that never reach the
+/// registry; `generate` is what keeps the TypeScript honest. Running generate
+/// second and only on a clean check means a broken save never overwrites a
+/// working registry, and the editor keeps the last types that compiled.
+///
+/// `generate`'s own findings are not printed here: they are the embedded-query
+/// subset of the findings `check` just printed, so re-emitting them would
+/// double every diagnostic in a host file.
+fn watch_outcome(
+    root: &Path,
+    start_dir: &Path,
+    out: Option<&Path>,
+    check_only: bool,
+    styles: Styles,
+) -> watch::RunOutcome {
+    let mut checked = check_outcome(start_dir, styles);
+    if check_only || checked.outcome == Outcome::Failed {
+        if !check_only {
+            checked.summary.push_str(" · registry not written");
+        }
+        return checked;
+    }
+    match run_generate(root, out, styles) {
+        Ok(report) => {
+            checked.summary = format!(
+                "{} · wrote {} ({})",
+                checked.summary,
+                display_relative(root, &report.path),
+                count(report.queries, "query")
+            );
+            if let Some(warning) = report.missing_client {
+                checked
+                    .summary
+                    .push_str(&format!(" · {CLIENT_PACKAGE} not installed"));
+                checked.detail.push_str(&warning);
+                checked.outcome = Outcome::Warned;
+            }
+            checked
+        }
+        Err(error) => watch::RunOutcome {
+            outcome: Outcome::Failed,
+            summary: format!("{} · generate failed", checked.summary),
+            detail: format!("{}\n{error}\n", checked.detail),
+        },
+    }
+}
+
 /// One watched `check` run, reduced to the log line `--watch` prints. Warnings
 /// and hints are shown on a passing run too — that is what `check` reports, and
 /// a watch that hid them would disagree with the one-shot command.
-fn check_outcome(start_dir: &Path) -> watch::RunOutcome {
-    let (ok, summary, rendered) = match run_check(start_dir) {
-        Ok(passed) => (true, passed.summary, passed.rendered),
-        Err(failed) => (false, failed.summary, failed.rendered),
+fn check_outcome(start_dir: &Path, styles: Styles) -> watch::RunOutcome {
+    // The watch loop prints every stream to stdout, so both halves of the pair
+    // are the same styling — a split would reorder the blocks the moment the
+    // log is piped.
+    let (summary, rendered) = match run_check(start_dir, StylePair::both(styles)) {
+        Ok(passed) => (passed.summary, passed.rendered),
+        Err(failed) => (failed.summary, failed.rendered),
     };
     watch::RunOutcome {
-        ok,
+        outcome: Outcome::of(summary.diagnostics, summary.errors),
         summary: format!(
-            "{} source(s), {} diagnostic(s), {} error(s)",
-            summary.sources_checked, summary.diagnostics, summary.errors
+            "{} · {}",
+            count(summary.sources_checked, "source"),
+            finding_tally(&summary)
         ),
+        // Joined, not concatenated: each rendered block ends in a newline, so
+        // concatenation would run one diagnostic straight into the next.
         detail: rendered.join("\n"),
     }
+}
+
+/// `no diagnostics` / `2 warnings` / `3 errors, 1 warning` — the phrase that
+/// has to make "clean" and "broken" different at a glance.
+///
+/// Subtracting is exact rather than approximate: policy resolution collapses
+/// every surviving finding to `Warning` or `Error` (a `Hint`-class code is
+/// graded by its lint level like everything else), so the non-errors are all
+/// warnings.
+fn finding_tally(summary: &CheckSummary) -> String {
+    let warnings = summary.diagnostics.saturating_sub(summary.errors);
+    match (summary.errors, warnings) {
+        (0, 0) => "no diagnostics".into(),
+        (0, w) => count(w, "warning"),
+        (e, 0) => count(e, "error"),
+        (e, w) => format!("{}, {}", count(e, "error"), count(w, "warning")),
+    }
+}
+
+/// A path shown relative to the workspace root when it lives under it.
+fn display_relative(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 /// Where `generate` writes the registry. Shared with `--watch`, which must know
@@ -745,96 +1003,253 @@ fn is_surrealql_source(path: &Path) -> bool {
     )
 }
 
+/// The styling for each of the two output streams.
+///
+/// Two, not one, because the destination is what decides whether an escape
+/// sequence is safe: `surrealguard check > report.txt` must write clean text to
+/// the file while the errors that stay on the terminal keep their colour, and
+/// `2>/dev/null` is the same argument in reverse.
+#[derive(Clone, Copy)]
+struct StylePair {
+    stdout: Styles,
+    stderr: Styles,
+}
+
+impl StylePair {
+    fn resolve(no_color: bool) -> Self {
+        Self {
+            stdout: Styles::for_stream(std::io::stdout().is_terminal(), no_color),
+            stderr: Styles::for_stream(std::io::stderr().is_terminal(), no_color),
+        }
+    }
+
+    /// Both streams styled the same. The watch loop prints everything to
+    /// stdout, and `--json` and the tests want no styling at all.
+    const fn both(styles: Styles) -> Self {
+        Self {
+            stdout: styles,
+            stderr: styles,
+        }
+    }
+
+    /// The styling for the stream a check's blocks will land on: stderr when
+    /// the run failed, stdout when it passed.
+    const fn for_check(self, failed: bool) -> Styles {
+        if failed {
+            self.stderr
+        } else {
+            self.stdout
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
+    let styles = StylePair::resolve(cli.no_color);
 
     match cli.command {
-        Commands::Init => {
-            let config_path = env::current_dir()?.join("surrealguard.toml");
-            if config_path.exists() {
-                println!("Config file already exists at {}", config_path.display());
-                return Ok(());
-            }
+        Commands::Init => command_init(styles.stdout),
+        Commands::Generate { out, watch } => command_generate(out, watch, styles),
+        Commands::Check { json, watch } => command_check(json, watch, styles),
+        Commands::Watch { out, check_only } => command_watch(out, check_only, styles.stdout),
+    }
+}
 
-            fs::write(&config_path, EXAMPLE_CONFIG)?;
-            println!("Created surrealguard.toml");
+fn command_init(styles: Styles) -> Result<(), Box<dyn Error>> {
+    let config_path = env::current_dir()?.join("surrealguard.toml");
+    if config_path.exists() {
+        println!(
+            "{} surrealguard.toml already exists at {}",
+            styles.warn("skipped"),
+            styles.path(&display_path(&config_path))
+        );
+        return Ok(());
+    }
+
+    fs::write(&config_path, EXAMPLE_CONFIG)?;
+    println!(
+        "{} {}",
+        styles.ok("created"),
+        styles.path("surrealguard.toml")
+    );
+    println!(
+        "{}",
+        styles.dim("next: point [sources] at your .surql files, then run `surrealguard check`")
+    );
+    Ok(())
+}
+
+fn command_generate(
+    out: Option<PathBuf>,
+    watch_mode: bool,
+    styles: StylePair,
+) -> Result<(), Box<dyn Error>> {
+    let root = find_workspace_root(&env::current_dir()?);
+    if watch_mode {
+        // Resolved, not merely computed: `--out` may be relative or may
+        // point inside a watched directory, and an exclusion that doesn't
+        // match the watcher's spelling of the path means `generate` sees
+        // its own write and re-runs forever.
+        let registry =
+            watch::resolve_output(&root, &generated_registry_path(&root, out.as_deref()));
+        let watch_root = root.clone();
+        return watch::watch_loop(&root, Some(&registry), styles.stdout, move || {
+            generate_outcome(&watch_root, out.as_deref(), styles.stdout)
+        });
+    }
+
+    let started = Instant::now();
+    let spinner = spinner::Spinner::start("Generating", styles.stdout.is_colored());
+    let result = run_generate(&root, out.as_deref(), styles.stderr);
+    spinner.finish();
+
+    match result {
+        Ok(report) => {
+            // Warnings/hints don't block generation; surface them on stderr
+            // so the written registry stays the only thing on stdout.
+            for block in &report.warnings {
+                eprint!("{block}");
+            }
+            if let Some(warning) = &report.missing_client {
+                eprint!("{warning}");
+            }
+            let styles = styles.stdout;
+            println!(
+                "{} {} {}",
+                styles.ok("generated"),
+                styles.path(&display_relative(&root, &report.path)),
+                styles.dim(&format!(
+                    "({}, {})",
+                    count(report.queries, "query"),
+                    elapsed(started)
+                ))
+            );
             Ok(())
         }
-        Commands::Generate { out, watch: true } => {
-            let root = find_workspace_root(&env::current_dir()?);
-            // Resolved, not merely computed: `--out` may be relative or may
-            // point inside a watched directory, and an exclusion that doesn't
-            // match the watcher's spelling of the path means `generate` sees
-            // its own write and re-runs forever.
-            let registry =
-                watch::resolve_output(&root, &generated_registry_path(&root, out.as_deref()));
-            let watch_root = root.clone();
-            watch::watch_loop(&root, Some(&registry), move || {
-                generate_outcome(&watch_root, out.as_deref())
-            })
-        }
-        Commands::Generate { out, watch: false } => {
-            let root = find_workspace_root(&env::current_dir()?);
-            match run_generate(&root, out.as_deref()) {
-                Ok(report) => {
-                    // Warnings/hints don't block generation; surface them on stderr
-                    // so the written registry stays the only thing on stdout.
-                    for block in &report.warnings {
-                        eprint!("{block}");
+        Err(error) => {
+            let styles = styles.stderr;
+            match error.downcast_ref::<GenerateFailed>() {
+                Some(failed) => {
+                    for block in &failed.rendered {
+                        eprintln!("{block}");
                     }
-                    println!("Generated {}", report.path.display());
-                    Ok(())
+                    eprintln!(
+                        "{} {}",
+                        styles.fail(&count(failed.errors, "error")),
+                        styles.dim("in embedded queries — registry not written")
+                    );
                 }
-                Err(error) => {
-                    eprintln!("{error}");
-                    std::process::exit(1);
-                }
+                None => eprintln!("{} {error}", styles.fail("error:")),
             }
+            std::process::exit(1);
         }
-        Commands::Check { watch: true, .. } => {
-            let cwd = env::current_dir()?;
-            let root = find_workspace_root(&cwd);
-            // `check` writes nothing, so nothing needs excluding.
-            watch::watch_loop(&root, None, move || check_outcome(&cwd))
-        }
-        Commands::Check { json, watch: false } => {
-            if !json {
-                println!("Checking SurrealQL sources...");
-            }
-            match run_check(&env::current_dir()?) {
-                Ok(passed) => {
-                    if json {
-                        println!(
-                            "{}",
-                            render_check_json(&passed.summary, &passed.diagnostics)
-                                .expect("json serialization should not fail")
-                        );
-                    } else {
-                        for block in &passed.rendered {
-                            println!("{block}");
-                        }
-                        println!(
-                            "Checked {} source(s), found {} diagnostic(s)",
-                            passed.summary.sources_checked, passed.summary.diagnostics
-                        );
-                        println!("All checks passed!");
-                    }
-                    Ok(())
+    }
+}
+
+fn command_check(json: bool, watch_mode: bool, styles: StylePair) -> Result<(), Box<dyn Error>> {
+    let cwd = env::current_dir()?;
+    if watch_mode {
+        let root = find_workspace_root(&cwd);
+        // `check` writes nothing, so nothing needs excluding.
+        return watch::watch_loop(&root, None, styles.stdout, move || {
+            check_outcome(&cwd, styles.stdout)
+        });
+    }
+
+    // `--json` is a machine contract: one document, one exit code, and no
+    // decoration anywhere near it — not a spinner, not an escape sequence.
+    let render_styles = if json {
+        StylePair::both(Styles::plain())
+    } else {
+        styles
+    };
+
+    let started = Instant::now();
+    let spinner = spinner::Spinner::start(
+        "Checking SurrealQL sources",
+        !json && styles.stdout.is_colored(),
+    );
+    let result = run_check(&cwd, render_styles);
+    spinner.finish();
+
+    match result {
+        Ok(passed) => {
+            if json {
+                println!(
+                    "{}",
+                    render_check_json(&passed.summary, &passed.diagnostics)
+                        .expect("json serialization should not fail")
+                );
+            } else {
+                for block in &passed.rendered {
+                    println!("{block}");
                 }
-                Err(error) => {
-                    if json {
-                        println!(
-                            "{}",
-                            render_check_json(&error.summary, &error.diagnostics)
-                                .expect("json serialization should not fail")
-                        );
-                    } else {
-                        eprintln!("{error}");
-                    }
-                    std::process::exit(1);
-                }
+                println!("{}", check_summary(&passed.summary, started, styles.stdout));
             }
+            Ok(())
         }
+        Err(failed) => {
+            if json {
+                println!(
+                    "{}",
+                    render_check_json(&failed.summary, &failed.diagnostics)
+                        .expect("json serialization should not fail")
+                );
+            } else {
+                for block in &failed.rendered {
+                    eprintln!("{block}");
+                }
+                eprintln!("{}", check_summary(&failed.summary, started, styles.stderr));
+            }
+            std::process::exit(1);
+        }
+    }
+}
+
+/// The two closing lines of a `check`: what was read, and what was found.
+///
+/// Split in two on purpose. The first is bookkeeping and stays dim; the second
+/// is the answer, and it carries the run's colour — green when there is nothing
+/// to fix, red when there is. That is the line someone reads from three feet
+/// away, so it must not look the same in both cases.
+fn check_summary(summary: &CheckSummary, started: Instant, styles: Styles) -> String {
+    let bookkeeping = styles.dim(&format!(
+        "checked {} in {}",
+        count(summary.sources_checked, "source"),
+        elapsed(started)
+    ));
+    let outcome = Outcome::of(summary.diagnostics, summary.errors);
+    let verdict = match outcome {
+        Outcome::Clean => "no issues found".to_string(),
+        _ => format!("found {}", finding_tally(summary)),
+    };
+    format!("{bookkeeping}\n{}", tint(styles, outcome, &verdict))
+}
+
+fn command_watch(
+    out: Option<PathBuf>,
+    check_only: bool,
+    styles: Styles,
+) -> Result<(), Box<dyn Error>> {
+    let cwd = env::current_dir()?;
+    let root = find_workspace_root(&cwd);
+    // Nothing is written in `--check-only`, so nothing needs excluding; the
+    // registry does, and for the same reason `generate --watch` excludes it.
+    let registry = (!check_only)
+        .then(|| watch::resolve_output(&root, &generated_registry_path(&root, out.as_deref())));
+    let watch_root = root.clone();
+    watch::watch_loop(&root, registry.as_deref(), styles, move || {
+        watch_outcome(&watch_root, &cwd, out.as_deref(), check_only, styles)
+    })
+}
+
+/// A duration a human reads: milliseconds until they stop being small.
+fn elapsed(started: Instant) -> String {
+    let millis = started.elapsed().as_millis();
+    if millis < 1000 {
+        format!("{millis}ms")
+    } else {
+        format!("{:.2}s", started.elapsed().as_secs_f64())
     }
 }
 
@@ -884,7 +1299,8 @@ mod tests {
         .expect("write schema");
         fs::write(root.join("queries/bad.surql"), "SELECT nope FROM user;").expect("write query");
 
-        let failed = run_check(&root).expect_err("the unknown field should fail the check");
+        let failed = run_check(&root, StylePair::both(Styles::plain()))
+            .expect_err("the unknown field should fail the check");
         let codes: Vec<&str> = failed.diagnostics.iter().map(|d| d.code.as_str()).collect();
         assert!(
             codes.iter().any(|c| c.starts_with("E1002")),
@@ -903,7 +1319,8 @@ mod tests {
         fs::write(root.join("surrealguard.toml"), "").expect("write config");
         fs::write(root.join("schema/person.surql"), "DEFINE TABLE person;").expect("write schema");
 
-        let summary = run_check(&root).expect("valid workspace should check");
+        let summary = run_check(&root, StylePair::both(Styles::plain()))
+            .expect("valid workspace should check");
 
         assert_eq!(summary.summary.sources_checked, 1);
         assert_eq!(summary.summary.diagnostics, 0);
@@ -917,7 +1334,8 @@ mod tests {
         fs::write(root.join("surrealguard.toml"), "").expect("write config");
         fs::write(root.join("queries/bad.surql"), "SELECT * FROM ;").expect("write query");
 
-        let err = run_check(&root).expect_err("syntax diagnostics should fail check");
+        let err = run_check(&root, StylePair::both(Styles::plain()))
+            .expect_err("syntax diagnostics should fail check");
 
         assert!(err.to_string().contains("S0001"));
         assert!(err.to_string().contains("bad.surql"));
@@ -931,7 +1349,8 @@ mod tests {
         fs::write(root.join("surrealguard.toml"), "").expect("write config");
         fs::write(root.join("person.surql"), "DEFINE TABLE person;").expect("write schema");
 
-        let summary = run_check(&child).expect("valid parent workspace should check");
+        let summary = run_check(&child, StylePair::both(Styles::plain()))
+            .expect("valid parent workspace should check");
 
         assert_eq!(summary.summary.sources_checked, 1);
     }
@@ -943,7 +1362,8 @@ mod tests {
         fs::write(root.join("surrealguard.toml"), "").expect("write config");
         fs::write(root.join("queries/bad.surql"), "SELECT * FROM ;").expect("write query");
 
-        let err = run_check(&root).expect_err("syntax diagnostics should fail check");
+        let err = run_check(&root, StylePair::both(Styles::plain()))
+            .expect_err("syntax diagnostics should fail check");
         let json = render_check_json(&err.summary, &err.diagnostics).expect("json renders");
         let value: serde_json::Value = serde_json::from_str(&json).expect("valid json");
 
@@ -977,12 +1397,105 @@ mod tests {
     #[test]
     fn codegen_commands_are_not_part_of_the_rewrite_cli() {
         assert!(Cli::try_parse_from(["surrealguard", "run"]).is_err());
-        // Still not a subcommand — and now deliberately so. Watching is a
-        // *mode* of the two verbs that read the workspace, not a third verb
-        // with its own semantics: `surrealguard watch` would have to answer
-        // "watch and do what?" and would duplicate every flag of whichever
-        // answer it picked. `check --watch` / `generate --watch` say it once.
-        assert!(Cli::try_parse_from(["surrealguard", "watch"]).is_err());
+    }
+
+    #[test]
+    fn bare_watch_is_a_verb_and_it_means_check_then_generate() {
+        // It used to not exist, on the argument that watching is a *mode* of
+        // the two verbs rather than a verb of its own. That argument was about
+        // the implementation; the cost landed on users, who did not find
+        // `--watch` at all. The question it was said to be unable to answer —
+        // "watch and do what?" — has an answer, and it is the one a dev server
+        // needs: check everything, then regenerate what compiles.
+        let cli = Cli::try_parse_from(["surrealguard", "watch"]).expect("watch is a verb");
+        match cli.command {
+            Commands::Watch { out, check_only } => {
+                assert!(out.is_none());
+                assert!(!check_only, "bare watch generates as well as checks");
+            }
+            _ => panic!("expected watch command"),
+        }
+    }
+
+    #[test]
+    fn watch_takes_the_generate_output_path_and_a_check_only_mode() {
+        let cli = Cli::try_parse_from(["surrealguard", "watch", "--out", "gen.ts"])
+            .expect("watch --out parses");
+        match cli.command {
+            Commands::Watch { out, .. } => assert_eq!(out, Some(PathBuf::from("gen.ts"))),
+            _ => panic!("expected watch command"),
+        }
+
+        let cli = Cli::try_parse_from(["surrealguard", "watch", "--check-only"])
+            .expect("watch --check-only parses");
+        match cli.command {
+            Commands::Watch { check_only, .. } => assert!(check_only),
+            _ => panic!("expected watch command"),
+        }
+    }
+
+    #[test]
+    fn the_existing_watch_flags_keep_working() {
+        // Adding the verb must not retire the flags: they are in scripts,
+        // CI configs and READMEs already.
+        for args in [
+            vec!["surrealguard", "check", "--watch"],
+            vec!["surrealguard", "generate", "--watch"],
+            vec!["surrealguard", "generate", "--watch", "--out", "gen.ts"],
+        ] {
+            assert!(
+                Cli::try_parse_from(&args).is_ok(),
+                "{args:?} must still parse"
+            );
+        }
+    }
+
+    #[test]
+    fn no_color_is_accepted_on_every_verb() {
+        // A global flag, because the user who wants plain output wants it from
+        // whichever command they happened to type.
+        for verb in ["check", "generate", "watch"] {
+            let cli = Cli::try_parse_from(["surrealguard", verb, "--no-color"])
+                .unwrap_or_else(|error| panic!("{verb} --no-color: {error}"));
+            assert!(cli.no_color);
+        }
+    }
+
+    #[test]
+    fn a_watched_run_separates_its_diagnostic_blocks() {
+        // Each rendered block ends in a newline; concatenating them runs one
+        // diagnostic's caret line straight into the next one's header.
+        let root = temp_project_dir("watch-detail-spacing");
+        fs::write(root.join("surrealguard.toml"), "").expect("write config");
+        fs::write(
+            root.join("q.surql"),
+            "SELECT * FROM ghost;\nSELECT * FROM phantom;",
+        )
+        .expect("write source");
+
+        let outcome = check_outcome(&root, Styles::plain());
+        assert_eq!(outcome.outcome, Outcome::Failed);
+        assert!(
+            outcome.detail.contains("\n\nerror["),
+            "blocks must be separated by a blank line:\n{}",
+            outcome.detail
+        );
+    }
+
+    #[test]
+    fn the_tally_distinguishes_clean_from_warned_from_failed() {
+        // The one phrase that has to be unmistakable at a glance.
+        let tally = |diagnostics, errors| {
+            finding_tally(&CheckSummary {
+                sources_checked: 1,
+                diagnostics,
+                errors,
+            })
+        };
+        assert_eq!(tally(0, 0), "no diagnostics");
+        assert_eq!(tally(2, 0), "2 warnings");
+        assert_eq!(tally(1, 1), "1 error");
+        assert_eq!(tally(3, 2), "2 errors, 1 warning");
     }
 
     #[test]
@@ -1037,7 +1550,7 @@ mod tests {
         fs::write(root.join("q.surql"), "DEFINE TABLE t;").expect("write source");
 
         let expected = generated_registry_path(&root, None);
-        let report = run_generate(&root, None).expect("clean workspace generates");
+        let report = run_generate(&root, None, Styles::plain()).expect("clean workspace generates");
         assert_eq!(report.path, expected);
         assert_eq!(expected, root.join("surrealguard.generated.ts"));
 
@@ -1065,7 +1578,8 @@ mod tests {
         )
         .expect("write source");
 
-        let err = run_check(&root).expect_err("promoted warning should fail the check");
+        let err = run_check(&root, StylePair::both(Styles::plain()))
+            .expect_err("promoted warning should fail the check");
 
         assert_eq!(err.summary.errors, 1);
         assert!(err
@@ -1086,7 +1600,8 @@ mod tests {
 
         // The 4022 warning is reported but keeps the check clean: it counts
         // as a diagnostic, not an error.
-        let summary = run_check(&root).expect("warning-only source should pass");
+        let summary = run_check(&root, StylePair::both(Styles::plain()))
+            .expect("warning-only source should pass");
         assert_eq!(summary.summary.diagnostics, 1);
         assert_eq!(summary.summary.errors, 0);
     }
@@ -1098,7 +1613,8 @@ mod tests {
         // An unknown table is an error-class finding (E1001).
         fs::write(root.join("query.surql"), "SELECT * FROM ghost;").expect("write source");
 
-        let err = run_check(&root).expect_err("error finding should fail the check");
+        let err = run_check(&root, StylePair::both(Styles::plain()))
+            .expect_err("error finding should fail the check");
 
         assert!(err.summary.errors >= 1);
         assert!(err
@@ -1131,7 +1647,7 @@ mod tests {
         .expect("write host source");
 
         let out = root.join("surrealguard.generated.ts");
-        let err = run_generate(&root, Some(&out))
+        let err = run_generate(&root, Some(&out), Styles::plain())
             .expect_err("an error-severity embedded query must fail generate");
         let message = err.to_string();
         // The finding must map back to the host file at a real line:col (not the
@@ -1186,8 +1702,8 @@ mod tests {
         .expect("write host source");
 
         let out = root.join("surrealguard.generated.ts");
-        let report =
-            run_generate(&root, Some(&out)).expect("a clean embedded query should generate");
+        let report = run_generate(&root, Some(&out), Styles::plain())
+            .expect("a clean embedded query should generate");
         assert_eq!(report.path, out);
         let written = fs::read_to_string(&out).expect("registry file written");
         assert!(
@@ -1220,7 +1736,8 @@ mod tests {
         )
         .expect("write host source");
 
-        let err = run_check(&root).expect_err("an embedded unknown table must fail the check");
+        let err = run_check(&root, StylePair::both(Styles::plain()))
+            .expect_err("an embedded unknown table must fail the check");
         assert!(
             err.diagnostics.iter().any(|d| d.code.starts_with("E1001")),
             "expected unknown-table E1001, got {:?}",
@@ -1263,7 +1780,8 @@ mod tests {
         )
         .expect("write host source");
 
-        let passed = run_check(&root).expect("a valid embedded query must pass");
+        let passed = run_check(&root, StylePair::both(Styles::plain()))
+            .expect("a valid embedded query must pass");
         assert_eq!(passed.summary.errors, 0);
     }
 
@@ -1280,7 +1798,8 @@ mod tests {
         )
         .expect("write source");
 
-        let passed = run_check(&root).expect("warning-only source should pass");
+        let passed = run_check(&root, StylePair::both(Styles::plain()))
+            .expect("warning-only source should pass");
         assert_eq!(passed.summary.errors, 0);
         assert_eq!(passed.summary.diagnostics, 1);
         let json = render_check_json(&passed.summary, &passed.diagnostics).expect("json renders");
@@ -1291,6 +1810,107 @@ mod tests {
             "a passing run must still list its warnings: {json}"
         );
         assert_eq!(value["diagnostics"][0]["severity"], "warning");
+    }
+
+    /// Writes a resolvable `@surrealguard/client` under `dir/node_modules`.
+    fn install_client(dir: &Path) {
+        let package = dir.join("node_modules/@surrealguard/client");
+        fs::create_dir_all(&package).expect("create package dir");
+        fs::write(
+            package.join("package.json"),
+            "{\"name\":\"@surrealguard/client\"}",
+        )
+        .expect("write package.json");
+    }
+
+    /// The workspace `generate` needs to produce a module at all: a schema and
+    /// one clean embedded query.
+    fn generatable_project(name: &str) -> std::path::PathBuf {
+        let root = temp_project_dir(name);
+        fs::create_dir_all(root.join("schema")).expect("schema dir");
+        fs::create_dir_all(root.join("src")).expect("src dir");
+        fs::write(
+            root.join("surrealguard.toml"),
+            "[sources]\nschema = [\"schema/**/*.surql\"]\n",
+        )
+        .expect("write config");
+        fs::write(
+            root.join("schema/person.surql"),
+            "DEFINE TABLE person SCHEMAFULL;\nDEFINE FIELD name ON person TYPE string;",
+        )
+        .expect("write schema");
+        fs::write(
+            root.join("src/app.ts"),
+            "const [rows] = await db.query(\"SELECT name FROM person\");",
+        )
+        .expect("write host source");
+        root
+    }
+
+    #[test]
+    fn generate_warns_when_the_augmented_package_is_not_installed() {
+        // The worst failure a type generator has: the module augments
+        // `@surrealguard/client`, the package is absent, TypeScript reports
+        // TS2664 *inside the generated file*, drops the augmentation, and every
+        // query in the user's own code silently becomes `any` with no error on
+        // it. Nothing in that chain points at the missing dependency, so
+        // `generate` has to.
+        let root = generatable_project("generate-missing-client");
+
+        let report = run_generate(&root, None, Styles::plain()).expect("generate writes");
+        let warning = report
+            .missing_client
+            .expect("an unresolvable augmentation target must be reported");
+
+        assert!(warning.contains("`@surrealguard/client` is not installed"));
+        assert!(
+            warning.contains("npm install @surrealguard/client surrealdb"),
+            "the warning must name the command that fixes it: {warning}"
+        );
+        assert!(
+            warning.contains("TS2664"),
+            "naming the error TypeScript reports is what makes it searchable: {warning}"
+        );
+        assert!(
+            warning.contains("`any`"),
+            "the consequence is the reason this warning exists: {warning}"
+        );
+    }
+
+    #[test]
+    fn generate_is_silent_when_the_package_resolves() {
+        let root = generatable_project("generate-client-present");
+        install_client(&root);
+
+        let report = run_generate(&root, None, Styles::plain()).expect("generate writes");
+        assert!(
+            report.missing_client.is_none(),
+            "an installed package must not warn: {:?}",
+            report.missing_client
+        );
+    }
+
+    #[test]
+    fn resolution_walks_up_from_the_output_directory_the_way_node_does() {
+        // The module is resolved from the directory it is written to, not from
+        // the workspace root — a hoisted install two directories up resolves,
+        // and in a monorepo those are routinely different packages.
+        let root = generatable_project("generate-client-hoisted");
+        let nested = root.join("packages/app/src");
+        fs::create_dir_all(&nested).expect("nested dirs");
+        install_client(&root);
+
+        assert!(client_package_is_resolvable(&nested), "hoisted install");
+        assert!(
+            !client_package_is_resolvable(Path::new("/")),
+            "a tree with no node_modules must not resolve"
+        );
+
+        // An empty package directory is not an install: neither Node nor
+        // TypeScript resolves one, so neither does this.
+        let bare = temp_project_dir("generate-client-empty-dir");
+        fs::create_dir_all(bare.join("node_modules/@surrealguard/client")).expect("empty package");
+        assert!(!client_package_is_resolvable(&bare));
     }
 
     pub(crate) fn temp_project_dir(name: &str) -> std::path::PathBuf {
