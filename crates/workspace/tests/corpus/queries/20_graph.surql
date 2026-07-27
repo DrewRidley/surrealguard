@@ -44,3 +44,33 @@ SELECT ->employee_of->organization.* FROM account;
 
 -- `.*` at the END of a field tail, on the edge's implicit `out` link.
 SELECT ->employee_of.out.* AS orgs FROM account;
+
+-- A `.{…}` destructure after a traversal selects off the LANDED ROW, and names
+-- no output key of its own: the selected object lands whole under the traversal
+-- key, one per traversed record. Engine-verified on SurrealDB 3.0.5:
+--   SELECT ->follows->user.{name, age} FROM user
+--     -> {"->follows": {"->user": [{age, name}]}}
+SELECT ->employee_of->organization.{ name, tier } AS orgs FROM account;
+
+SELECT ->employee_of->organization.{ name, tier } FROM account;
+
+-- The empty destructure survives a traversal too (`[{}]` per traversed record).
+SELECT ->employee_of->organization.{} AS orgs FROM account;
+
+-- A field read out of the destructured object. The destructure contributes no
+-- key, the field behind it does — the unaliased spelling keys under
+-- `->employee_of.->organization.name`, verified on 3.0.5.
+SELECT ->employee_of->organization.{ name }.name AS org_names FROM account;
+
+SELECT ->employee_of->organization.{ name }.name FROM account;
+
+-- A destructure on the EDGE (a single hop with a tail reads off the edge
+-- table), and a field out of it.
+SELECT ->employee_of.{ title, status } AS memberships FROM account;
+
+SELECT ->employee_of.{ status }.status AS statuses FROM account;
+
+-- Backward traversal and a step-local filter change neither.
+SELECT <-employee_of<-account.{ username } AS members FROM organization;
+
+SELECT ->employee_of[WHERE status = 'active']->organization.{ name }.name AS active FROM account;

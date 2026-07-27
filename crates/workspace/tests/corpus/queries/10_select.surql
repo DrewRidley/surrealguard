@@ -52,3 +52,28 @@ SELECT owner.*.username AS owner_name FROM organization;
 -- A link naming SEVERAL tables splats to the union of their rows: the engine
 -- hands back whichever row the link happens to point at.
 SELECT owner.* AS owner_row FROM document;
+
+-- An EMPTY destructure is valid SurrealQL and evaluates to the empty object.
+-- It used to be a parse error, which is fatal to a whole source rather than to
+-- one expression. Engine-verified on SurrealDB 3.0.5:
+--   SELECT id.{} FROM user:ada            -> [{id: {}}]
+--   SELECT VALUE id.{} FROM ONLY user:ada -> {}
+--   SELECT *, author.{} FROM post         -> [{author: {}, id, title}]
+SELECT id.{} FROM organization;
+
+SELECT owner.{} AS anonymous FROM organization;
+
+SELECT *, address.{} FROM organization;
+
+SELECT VALUE address.{} FROM organization;
+
+-- `SELECT VALUE <path>.{…}` is the destructured OBJECT, not a row keyed by the
+-- path it was read from (3.0.5: `SELECT VALUE author.{name} FROM post` ->
+-- `[{name: 'Ada'}]`).
+SELECT VALUE address.{ city } FROM organization;
+
+-- A field read out of what a destructure built: the selected key resolves
+-- through the object, exactly as it would through the row.
+SELECT address.{ city }.city AS city FROM organization;
+
+SELECT owner.{ username }.username AS owner_name FROM organization;

@@ -877,6 +877,29 @@ mod tests {
         assert_eq!(names, vec!["title", "id"]);
     }
 
+    /// `.{}` is valid SurrealQL — `SELECT VALUE id.{} FROM ONLY user:ada`
+    /// returns `{}` on 3.0.5. The grammar used to require at least one selected
+    /// entry, so every such expression was a *parse* error, and a parse error
+    /// is fatal to the whole source rather than to one expression.
+    #[test]
+    fn lowers_an_empty_destructure_without_a_parse_error() {
+        let query = "SELECT id.{} FROM user;";
+        let parsed = parse(query);
+        assert!(
+            !parsed.has_error(),
+            "an empty destructure must parse: {:?}",
+            parsed.syntax_diagnostics()
+        );
+
+        let path = lower_first(&parsed, "Path");
+        let parts = idiom_parts(&path);
+
+        let IdiomPart::Destructure(fields) = &parts[1].node else {
+            panic!("expected destructure, got {:?}", parts[1].node);
+        };
+        assert!(fields.is_empty(), "nothing was selected");
+    }
+
     #[test]
     fn lowers_filtered_graph_step_with_inline_where() {
         let parsed = parse("SELECT ->(likes WHERE since > $x)->post FROM person;");

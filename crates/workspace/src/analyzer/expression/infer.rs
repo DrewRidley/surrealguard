@@ -560,15 +560,20 @@ fn step_part_kind(
                 .collect();
             method_return_kind(current, &name.node, &arg_kinds, args, ctx)
         }
+        // A destructure names its own keys, so the object it builds is known
+        // even when a selected path is not: the key is there, its kind is
+        // `any`, and the missing field is reported on its own (1002). Losing
+        // the whole object over one unresolved key was how `author.{nope}`
+        // came back as a bare `any`.
         ast::IdiomPart::Destructure(selected) => {
             let mut fields = std::collections::BTreeMap::new();
             for sub in selected {
                 let segments = plain_field_segments(&sub.node)?;
-                let mut kind = current.clone();
+                let mut kind = Some(current.clone());
                 for segment in &segments {
-                    kind = field_of_kind(&kind, segment, ctx.schema())?;
+                    kind = kind.and_then(|kind| field_of_kind(&kind, segment, ctx.schema()));
                 }
-                fields.insert(segments.join("."), kind);
+                fields.insert(segments.join("."), kind.unwrap_or(Kind::Any));
             }
             Some(Kind::Literal(KindLiteral::Object(fields)))
         }

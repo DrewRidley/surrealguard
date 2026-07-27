@@ -1348,6 +1348,21 @@ fn value_projection_kind(
             validate_graph_wildcard(ctx, row_table_name, idiom);
             graph_projection_kind(row_table_name, idiom, ctx.schema(), false)
         }
+        // `SELECT VALUE author.{name}` is the destructured OBJECT itself, not
+        // a row keyed by `author`. Without this arm the whole projection fell
+        // through to the object path and kept the key: `SELECT VALUE id.{}
+        // FROM ONLY user:ada` is `{}` on 3.0.5, not `{id: {}}`.
+        ast::Expr::Idiom(idiom)
+            if idiom
+                .parts
+                .iter()
+                .any(|part| matches!(part.node, ast::IdiomPart::Destructure(_))) =>
+        {
+            if let Some((prefix, selected)) = row_destructure_head(idiom) {
+                validate_row_destructure(ctx, table, &prefix, selected);
+            }
+            Some(computed_kind(expr, table, ctx))
+        }
         ast::Expr::Idiom(idiom) => {
             let segments = plain_field_segments(idiom)?;
             // Resolve (crossing record links); validate only when it resolves,
@@ -1472,18 +1487,6 @@ fn project_expr(
             // target; each must exist there (E1002), independent of alias.
             validate_graph_destructure(ctx, row_table_name, idiom);
             validate_graph_wildcard(ctx, row_table_name, idiom);
-            // `->likes->post.{title, id}` without an alias fans out into
-            // nested per-field arrays.
-            if alias_name.is_none() {
-                if let Some(outputs) = graph_destructure_output(row_table_name, idiom, ctx.schema())
-                {
-                    for (segments, kind) in outputs {
-                        insert_kind_at_path(fields, &segments, kind);
-                    }
-                    return;
-                }
-            }
-
             // An aliased graph target materializes when FETCHed by alias.
             let materialize = alias_name
                 .as_ref()
@@ -1538,6 +1541,12 @@ fn project_expr(
                         let object = assemble(outputs);
                         insert_kind_at_path(fields, &prefix, object);
                     }
+                    // An EMPTY selection has no sub-field to land, but the key
+                    // is still projected: `SELECT author.{} FROM post` is
+                    // `{author: {}}` on 3.0.5, not a row with no `author`.
+                    None if outputs.is_empty() => {
+                        insert_kind_at_path(fields, &prefix, object_literal(BTreeMap::new()));
+                    }
                     None => {
                         for (segments, kind) in outputs {
                             insert_kind_at_path(fields, &segments, kind);
@@ -1563,6 +1572,17 @@ fn project_expr(
             // was already emitted by `validate_field_path`).
             fields.insert(alias_name.unwrap_or_else(|| segments.join(".")), Kind::Any);
             return;
+        }
+
+        // A `.{…}` with something behind it (`author.{name}.age`) projects
+        // through the generic inference below, which knows nothing of the
+        // schema the selection is read against — so its fields are validated
+        // here. Guarded on the destructure not being last, because that shape
+        // was already validated by the branch above.
+        if row_destructure_parts(idiom).is_none() {
+            if let Some((prefix, selected)) = row_destructure_head(idiom) {
+                validate_row_destructure(ctx, table, &prefix, selected);
+            }
         }
 
         // Idioms with parts the branches above don't project (Start/Index/
@@ -2007,14 +2027,37 @@ fn graph_steps(
         .collect()
 }
 
-/// The kind a traversal's field tail reaches, *before* any `.*` is applied,
-/// paired with the wildcard part when the tail writes one.
+/// Where a traversal tail stops being a *path* and starts being a *shape*.
+///
+/// Everything up to the first `.{…}` reads fields off a table; the destructure
+/// then replaces the value with an object of its own, and every part after it
+/// steps into that object rather than into the table. Splitting once, here,
+/// is what keeps the two halves from being resolved by two different rules.
+fn tail_split(
+    tail: &[ast::Spanned<ast::IdiomPart>],
+) -> (
+    &[ast::Spanned<ast::IdiomPart>],
+    &[ast::Spanned<ast::IdiomPart>],
+) {
+    match tail
+        .iter()
+        .position(|part| matches!(part.node, ast::IdiomPart::Destructure(_)))
+    {
+        Some(at) => tail.split_at(at),
+        None => (tail, &[]),
+    }
+}
+
+/// The kind a traversal's field tail reaches, *before* any `.*` is applied and
+/// before any `.{…}` reshapes it, paired with the wildcard part when the tail
+/// writes one.
 ///
 /// `->likes.since` reads off the *edge*, `->likes->post.title` off the landed
-/// target, and a tail that is nothing but the wildcard stands on the row
-/// itself (`record<post>`) — which is exactly what the splat then expands.
-/// Sharing this between the type and its check is what keeps the reported
-/// table and the inferred kind from drifting apart.
+/// target, and a tail that is nothing but the wildcard — or nothing but a
+/// destructure — stands on the row itself (`record<post>`), which is exactly
+/// what the splat expands and what the destructure selects from. Sharing this
+/// between the type and its check is what keeps the reported table and the
+/// inferred kind from drifting apart.
 fn graph_tail_receiver<'i>(
     row_table_name: &str,
     idiom: &'i ast::Idiom,
@@ -2022,23 +2065,19 @@ fn graph_tail_receiver<'i>(
 ) -> Option<(Kind, Option<&'i ast::Spanned<ast::IdiomPart>>)> {
     let (graphs, tail) = graph_split(idiom);
     let steps = graph_steps(graphs);
-    let segments = tail_path_segments(tail)?;
-    let wildcard = tail
+    let (path, _) = tail_split(tail);
+    let segments = tail_path_segments(path)?;
+    let wildcard = path
         .iter()
         .find(|part| matches!(part.node, ast::IdiomPart::All));
 
     // A single hop *with* a tail reads off the edge; a wildcard changes what
-    // is projected, not which table it comes from.
-    let (table, name) = if steps.len() == 1 && !tail.is_empty() {
-        let (dir, edge) = single_graph_target(&steps[0].node)?;
-        if !relation_accepts_source(row_table_name, dir, edge, schema) {
-            return None;
-        }
-        (schema.tables.get(edge)?, edge.to_string())
-    } else {
-        let target_name = resolve_graph_chain(row_table_name, graphs, schema)?;
-        (schema.tables.get(&target_name)?, target_name)
-    };
+    // is projected, not which table it comes from. When the hop is not onto an
+    // edge at all — `->user.{name}` standing on a `follows` row already steps
+    // off the edge onto its far side — the ordinary chain resolution answers.
+    let (table, name) = single_hop_edge(row_table_name, &steps, tail, schema)
+        .or_else(|| resolve_graph_chain(row_table_name, graphs, schema))
+        .and_then(|name| Some((schema.tables.get(&name)?, name)))?;
 
     let reached = if segments.is_empty() {
         Kind::Record(vec![name.as_str().into()])
@@ -2048,9 +2087,78 @@ fn graph_tail_receiver<'i>(
     Some((reached, wildcard))
 }
 
+/// The edge table a single-hop traversal with a tail reads off (`->likes.since`
+/// is `likes`'s `since`), when the hop really is onto an edge that admits the
+/// row.
+fn single_hop_edge(
+    row_table_name: &str,
+    steps: &[&ast::Spanned<ast::IdiomPart>],
+    tail: &[ast::Spanned<ast::IdiomPart>],
+    schema: &SchemaIndex,
+) -> Option<String> {
+    if steps.len() != 1 || tail.is_empty() {
+        return None;
+    }
+    let (dir, edge) = single_graph_target(&steps[0].node)?;
+    relation_accepts_source(row_table_name, dir, edge, schema).then(|| edge.to_string())
+}
+
+/// Steps one *reshaping* tail part over the kind in hand, schema-only.
+///
+/// This is the half of the idiom walk a traversal tail can do without an
+/// analysis context: a `.{…}` builds an object from the value it stands on, a
+/// `.*` expands it, a field reads into it. Anything else (an index, a filter,
+/// a method) is not resolved here and leaves the caller with `None`.
+fn step_reshaping_part(
+    current: &Kind,
+    part: &ast::IdiomPart,
+    schema: &SchemaIndex,
+) -> Option<Kind> {
+    match part {
+        ast::IdiomPart::Destructure(selected) => {
+            let mut object = BTreeMap::new();
+            for sub in selected {
+                let segments = plain_field_segments(&sub.node)?;
+                // A field absent on the target still projects (as `Any`);
+                // `validate_graph_destructure` reports it separately.
+                object.insert(
+                    segments.join("."),
+                    kind_at_sub_path(current, &segments, schema).unwrap_or(Kind::Any),
+                );
+            }
+            Some(object_literal(object))
+        }
+        ast::IdiomPart::Field(name) => {
+            crate::analyzer::expression::infer::field_of_kind(current, name, schema)
+        }
+        ast::IdiomPart::All => Some(
+            crate::analyzer::expression::infer::splat_kind(current, schema).unwrap_or(Kind::Any),
+        ),
+        _ => None,
+    }
+}
+
+/// A destructure's sub-path resolved off whatever the destructure stands on: a
+/// record link resolves against its table (crossing further links), and an
+/// object — the value a *nested* destructure leaves behind — is read key by
+/// key.
+fn kind_at_sub_path(current: &Kind, segments: &[String], schema: &SchemaIndex) -> Option<Kind> {
+    if let Kind::Record(targets) = current {
+        if let [target] = targets.as_slice() {
+            let table = schema.tables.get(&target.to_string())?;
+            return resolve_field_path(schema, table, segments);
+        }
+    }
+    let mut kind = current.clone();
+    for segment in segments {
+        kind = crate::analyzer::expression::infer::field_of_kind(&kind, segment, schema)?;
+    }
+    Some(kind)
+}
+
 /// The type of one graph projection (`->likes->post`, `->likes.since`,
-/// `->likes->post.*`, `->likes->post.{a}` when aliased), wrapped in the
-/// traversal's array.
+/// `->likes->post.*`, `->likes->post.{a}`, `->likes->post.{a}.a`), wrapped in
+/// the traversal's array.
 pub(crate) fn graph_projection_kind(
     row_table_name: &str,
     idiom: &ast::Idiom,
@@ -2059,28 +2167,8 @@ pub(crate) fn graph_projection_kind(
 ) -> Option<Kind> {
     let (graphs, tail) = graph_split(idiom);
 
-    // A `.{…}` destructure tail is a shape of its own, not a path.
-    if let [part] = tail {
-        if let ast::IdiomPart::Destructure(selected) = &part.node {
-            let target_name = resolve_graph_chain(row_table_name, graphs, schema)?;
-            let target = schema.tables.get(&target_name)?;
-            let mut object = BTreeMap::new();
-            for sub in selected {
-                let segments = plain_field_segments(&sub.node)?;
-                let name = segments.join(".");
-                // A field absent on the target still projects (as `Any`);
-                // validation reports it separately.
-                object.insert(
-                    name,
-                    resolve_field_path(schema, target, &segments).unwrap_or(Kind::Any),
-                );
-            }
-            return Some(Kind::Array(Box::new(object_literal(object)), None));
-        }
-    }
-
     let (reached, wildcard) = graph_tail_receiver(row_table_name, idiom, schema)?;
-    let projected = if wildcard.is_some() {
+    let mut projected = if wildcard.is_some() {
         // `.*` expands the row the tail stands on, exactly as `SELECT *` does.
         // A row with no declared shape leaves the projection `any`, which
         // `validate_graph_wildcard` reports.
@@ -2093,39 +2181,16 @@ pub(crate) fn graph_projection_kind(
         reached
     };
 
-    Some(Kind::Array(Box::new(projected), None))
-}
-
-/// `->likes->post.{title, id}` without an alias: one nested output field per
-/// selected column, each an array, keyed under the traversal segments.
-fn graph_destructure_output(
-    row_table_name: &str,
-    idiom: &ast::Idiom,
-    schema: &SchemaIndex,
-) -> Option<Vec<(Vec<String>, Kind)>> {
-    let (graphs, tail) = graph_split(idiom);
-    let [tail_part] = tail else {
-        return None;
-    };
-    let ast::IdiomPart::Destructure(selected) = &tail_part.node else {
-        return None;
-    };
-
-    let target_name = resolve_graph_chain(row_table_name, graphs, schema)?;
-    let target = schema.tables.get(&target_name)?;
-    let graph_segments = graph_segments_of(graphs)?;
-
-    let mut outputs = Vec::new();
-    for sub in selected {
-        let segments = plain_field_segments(&sub.node)?;
-        // A field absent on the target still projects (as `Any`); the field
-        // validation runs separately via `validate_graph_destructure`.
-        let selected_kind = resolve_field_path(schema, target, &segments).unwrap_or(Kind::Any);
-        let mut output_segments = graph_segments.clone();
-        output_segments.extend(segments);
-        outputs.push((output_segments, Kind::Array(Box::new(selected_kind), None)));
+    // `.{…}` and everything after it: the destructure builds an object off the
+    // row the path reached, and a field after it reads out of *that* object.
+    // Falling out of this loop with `None` is what used to happen to the whole
+    // projection the moment a destructure appeared with anything behind it.
+    let (_, reshaping) = tail_split(tail);
+    for part in reshaping {
+        projected = step_reshaping_part(&projected, &part.node, schema)?;
     }
-    Some(outputs)
+
+    Some(Kind::Array(Box::new(projected), None))
 }
 
 /// Output key segments for an unaliased graph projection: `->likes`,
@@ -2133,9 +2198,7 @@ fn graph_destructure_output(
 fn graph_output_segments(idiom: &ast::Idiom) -> Option<Vec<String>> {
     let (graphs, tail) = graph_split(idiom);
     let mut segments = graph_segments_of(graphs)?;
-    // The engine's key simplification drops `.*` (`->follows->user.*.name`
-    // keys under `->follows.->user.name`), which `tail_path_segments` does too.
-    segments.extend(tail_path_segments(tail).unwrap_or_default());
+    segments.extend(tail_key_segments(tail).unwrap_or_default());
     Some(segments)
 }
 
@@ -2174,6 +2237,51 @@ fn tail_path_segments(tail: &[ast::Spanned<ast::IdiomPart>]) -> Option<Vec<Strin
         }
     }
     Some(segments)
+}
+
+/// A traversal tail's *output key*, with `.*` and `.{…}` dropped.
+///
+/// Neither names a key. The engine keys `->follows->user.{name}` under
+/// `->follows.->user` (holding the whole selected object) and
+/// `->follows->user.{name}.name` under `->follows.->user.name` — the
+/// destructure contributes nothing, the field behind it contributes its name.
+/// Verified on 3.0.5.
+fn tail_key_segments(tail: &[ast::Spanned<ast::IdiomPart>]) -> Option<Vec<String>> {
+    let mut segments = Vec::new();
+    for part in tail {
+        match &part.node {
+            ast::IdiomPart::Field(name) => segments.push(name.clone()),
+            ast::IdiomPart::All | ast::IdiomPart::Destructure(_) => {}
+            _ => return None,
+        }
+    }
+    Some(segments)
+}
+
+/// The FIRST `.{…}` in a row idiom together with the plain field path in front
+/// of it, whether or not anything follows it.
+///
+/// [`row_destructure_parts`] answers only the projecting shape (the
+/// destructure last); this answers the *validating* one. `author.{name}.age`
+/// still selects `name` off `author`, and a selection that names a field the
+/// target does not declare is wrong there too — it was silent purely because
+/// the destructure was not the final part.
+fn row_destructure_head(idiom: &ast::Idiom) -> Option<(Vec<String>, &[ast::Spanned<ast::Idiom>])> {
+    let at = idiom
+        .parts
+        .iter()
+        .position(|part| matches!(part.node, ast::IdiomPart::Destructure(_)))?;
+    let ast::IdiomPart::Destructure(selected) = &idiom.parts[at].node else {
+        return None;
+    };
+    let prefix = idiom.parts[..at]
+        .iter()
+        .map(|part| match &part.node {
+            ast::IdiomPart::Field(name) => Some(name.clone()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some((prefix, selected.as_slice()))
 }
 
 /// `profile.{email, city}`: leading plain fields plus a trailing destructure.
@@ -2260,26 +2368,34 @@ fn validate_graph_wildcard(
 }
 
 /// Validates each selected sub-field of a `.{…}` destructure on a graph target
-/// (`->friend->user.{name, aeg}`): resolves the traversal's target table and
-/// checks each field there (E1002), crossing record links. Silent when the
-/// target can't be resolved or isn't in the schema (no false positives).
+/// (`->friend->user.{name, aeg}`, `->friend->user.{name, aeg}.name`): resolves
+/// the row the destructure stands on and checks each field there (E1002),
+/// crossing record links. Silent when that row can't be resolved or isn't in
+/// the schema (no false positives).
 fn validate_graph_destructure(
     ctx: &mut AnalysisContext<'_>,
     row_table_name: &str,
     idiom: &ast::Idiom,
 ) {
-    let (graphs, tail) = graph_split(idiom);
-    let [tail_part] = tail else {
-        return;
-    };
-    let ast::IdiomPart::Destructure(selected) = &tail_part.node else {
+    let (_, tail) = graph_split(idiom);
+    let (_, reshaping) = tail_split(tail);
+    // `->follows->user.{name}.age` reads a key the selection does not hold.
+    crate::analyzer::expression::check::check_field_after_destructure(ctx, reshaping);
+    let Some(ast::IdiomPart::Destructure(selected)) = reshaping.first().map(|part| &part.node)
+    else {
         return;
     };
     let schema = ctx.schema();
-    let Some(target_name) = resolve_graph_chain(row_table_name, graphs, schema) else {
+    // `graph_tail_receiver` stops exactly where the destructure begins, so the
+    // table it names is the one the selection is read from.
+    let Some((Kind::Record(targets), _)) = graph_tail_receiver(row_table_name, idiom, schema)
+    else {
         return;
     };
-    let Some(target) = schema.tables.get(&target_name) else {
+    let [target_name] = targets.as_slice() else {
+        return;
+    };
+    let Some(target) = schema.tables.get(&target_name.to_string()) else {
         return;
     };
     for sub in selected {
@@ -4142,9 +4258,9 @@ mod tests {
         let fields = object_fields(array_element(&kind));
 
         let friend = object_fields(&fields["->friend"]);
-        let user = object_fields(&friend["->user"]);
-        assert_eq!(user["name"], Kind::Array(Box::new(Kind::String), None));
-        assert_eq!(user["age"], Kind::Array(Box::new(Kind::Int), None));
+        let selected = object_fields(array_element(&friend["->user"]));
+        assert_eq!(selected["name"], Kind::String);
+        assert_eq!(selected["age"], Kind::Int);
     }
 
     #[test]
@@ -4649,6 +4765,10 @@ mod tests {
         )
     }
 
+    /// A destructure names no output key of its own: the selected OBJECT
+    /// lands whole at the traversal's key, one per traversed record.
+    /// `SELECT ->friend->user.{name, age} FROM person`
+    /// → `{"->friend": {"->user": [{"name": …, "age": …}]}}` (3.0.5 live).
     #[test]
     fn graph_destructure_types_each_selected_field() {
         let schema = person_friend_user_schema();
@@ -4657,9 +4777,9 @@ mod tests {
             analyze_diagnostics(&schema, "SELECT ->friend->user.{name, age} FROM person;");
         let fields = object_fields(array_element(&kind));
         let friend = object_fields(&fields["->friend"]);
-        let user = object_fields(&friend["->user"]);
-        assert_eq!(user["name"], Kind::Array(Box::new(Kind::String), None));
-        assert_eq!(user["age"], Kind::Array(Box::new(Kind::Int), None));
+        let selected = object_fields(array_element(&friend["->user"]));
+        assert_eq!(selected["name"], Kind::String);
+        assert_eq!(selected["age"], Kind::Int);
         assert!(
             !codes(&diagnostics).contains(&1002),
             "a valid destructure must not emit 1002: {:?}",
@@ -4676,8 +4796,8 @@ mod tests {
         // `name` still projects.
         let fields = object_fields(array_element(&kind));
         let friend = object_fields(&fields["->friend"]);
-        let user = object_fields(&friend["->user"]);
-        assert_eq!(user["name"], Kind::Array(Box::new(Kind::String), None));
+        let selected = object_fields(array_element(&friend["->user"]));
+        assert_eq!(selected["name"], Kind::String);
 
         // `aeg` is absent on `user` -> 1002 naming `user`, with its note.
         let finding = diagnostics
@@ -4689,7 +4809,232 @@ mod tests {
             "unexpected message: {}",
             finding.message()
         );
-        assert!(!finding.related().is_empty(), "expected user's definition note");
+        assert!(
+            !finding.related().is_empty(),
+            "expected user's definition note"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // A `.{…}` with something behind it
+    //
+    // A destructure is not a path segment either: it *replaces* the value with
+    // an object of its own, and everything after it reads out of that object.
+    // Every shape below is engine-verified on SurrealDB 3.0.5.
+    // -----------------------------------------------------------------------
+
+    /// `SELECT ->follows->user.{name}.name AS r FROM user` -> `{r: ['Grace']}`.
+    #[test]
+    fn a_field_after_a_graph_destructure_reads_the_selected_key() {
+        let schema = person_friend_user_schema();
+
+        let (kind, diagnostics) = analyze_diagnostics(
+            &schema,
+            "SELECT ->friend->user.{name, age}.age AS r FROM person;",
+        );
+        let fields = object_fields(array_element(&kind));
+
+        assert_eq!(fields["r"], Kind::Array(Box::new(Kind::Int), None));
+        assert!(
+            !codes(&diagnostics).contains(&1002),
+            "a selected key reads back out cleanly: {:?}",
+            codes(&diagnostics)
+        );
+    }
+
+    /// The destructure names no output key, the field behind it does: the
+    /// engine keys `->friend->user.{name}.name` under `->friend.->user.name`.
+    #[test]
+    fn an_unaliased_field_after_a_graph_destructure_keys_under_the_field() {
+        let schema = person_friend_user_schema();
+
+        let kind = analyze(&schema, "SELECT ->friend->user.{name}.name FROM person;");
+        let fields = object_fields(array_element(&kind));
+        let friend = object_fields(&fields["->friend"]);
+        let user = object_fields(&friend["->user"]);
+
+        assert_eq!(user["name"], Kind::Array(Box::new(Kind::String), None));
+    }
+
+    /// A single hop with a tail reads off the EDGE, and a destructure there is
+    /// no different: `SELECT ->follows.{since}.since AS s FROM user`
+    /// -> `{s: ['2020-01-01T00:00:00Z']}`.
+    #[test]
+    fn a_destructure_on_the_edge_takes_a_field_tail_too() {
+        let schema = schema_from(
+            "DEFINE TABLE person SCHEMAFULL;\n\
+             DEFINE FIELD name ON person TYPE string;\n\
+             DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE FIELD name ON user TYPE string;\n\
+             DEFINE TABLE friend TYPE RELATION IN person OUT user;\n\
+             DEFINE FIELD since ON friend TYPE datetime;",
+        );
+
+        let kind = analyze(&schema, "SELECT ->friend.{since}.since AS s FROM person;");
+        let fields = object_fields(array_element(&kind));
+
+        assert_eq!(fields["s"], Kind::Array(Box::new(Kind::Datetime), None));
+    }
+
+    /// A field the selection does not hold is *provably* absent — there is no
+    /// schema left to consult. The engine returns NONE, and the site would
+    /// otherwise be a silent `any`.
+    #[test]
+    fn a_field_the_destructure_did_not_select_is_reported() {
+        let schema = person_friend_user_schema();
+
+        let (_, diagnostics) = analyze_diagnostics(
+            &schema,
+            "SELECT ->friend->user.{name}.age AS r FROM person;",
+        );
+
+        let finding = diagnostics
+            .iter()
+            .find(|finding| finding.code().number() == 1002)
+            .expect("expected 1002 for a key the destructure did not select");
+        assert!(
+            finding.message().contains("`age`") && finding.message().contains("`name`"),
+            "the message must name both the read and the selection: {}",
+            finding.message()
+        );
+    }
+
+    /// The same contract off a record link, where the destructure is not
+    /// behind a traversal: `SELECT author.{name}.age FROM post` -> `null`.
+    #[test]
+    fn a_field_the_row_destructure_did_not_select_is_reported() {
+        let schema = user_with_team_schema();
+
+        let (_, diagnostics) =
+            analyze_diagnostics(&schema, "SELECT team.{label}.nope AS r FROM user;");
+
+        assert!(
+            codes(&diagnostics).contains(&1002),
+            "expected 1002 for a key the destructure did not select: {:?}",
+            codes(&diagnostics)
+        );
+    }
+
+    /// A destructure whose selection is wrong is reported whether or not it is
+    /// the final part — it was silent purely because something followed it.
+    #[test]
+    fn a_destructure_with_a_tail_still_validates_its_selection() {
+        let schema = person_friend_user_schema();
+
+        let (_, graph) =
+            analyze_diagnostics(&schema, "SELECT ->friend->user.{aeg}.aeg AS r FROM person;");
+        assert!(
+            graph.iter().any(|finding| finding.code().number() == 1002
+                && finding.message().contains("`user` has no field `aeg`")),
+            "expected the selection itself to be reported: {:?}",
+            graph.iter().map(surrealguard_diagnostics::Finding::message).collect::<Vec<_>>()
+        );
+
+        let schema = user_with_team_schema();
+        let (_, row) = analyze_diagnostics(&schema, "SELECT team.{nope}.nope AS r FROM user;");
+        assert!(
+            row.iter()
+                .any(|finding| finding.code().number() == 1002
+                    && finding.message().contains("`nope`")),
+            "expected the selection itself to be reported: {:?}",
+            row.iter().map(surrealguard_diagnostics::Finding::message).collect::<Vec<_>>()
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // The EMPTY destructure
+    //
+    // `.{}` is valid SurrealQL and evaluates to the empty object. It used to be
+    // an S0001 parse error, which is fatal to a whole source rather than to one
+    // expression.
+    // -----------------------------------------------------------------------
+
+    /// `SELECT id.{} FROM user:ada` -> `[{id: {}}]`: the key is still
+    /// projected, holding the empty object.
+    #[test]
+    fn an_empty_row_destructure_still_projects_its_key() {
+        let schema = user_with_team_schema();
+
+        let (kind, diagnostics) = analyze_diagnostics(&schema, "SELECT team.{} FROM user;");
+        let fields = object_fields(array_element(&kind));
+
+        assert_eq!(fields["team"], object_literal(BTreeMap::new()));
+        assert!(
+            !codes(&diagnostics).contains(&1),
+            "an empty destructure is not a parse error: {:?}",
+            codes(&diagnostics)
+        );
+    }
+
+    /// `SELECT *, author.{} FROM post` narrows the seeded key to `{}` and
+    /// leaves its siblings whole (3.0.5 live).
+    #[test]
+    fn an_empty_destructure_beside_a_wildcard_narrows_the_field_to_nothing() {
+        let schema = schema_from(WILDCARD_SIBLING_SCHEMA);
+
+        let fields = row_fields(&schema, "SELECT *, address.{} FROM person;");
+
+        assert_eq!(fields["address"], object_literal(BTreeMap::new()));
+        assert_eq!(fields.len(), 4, "the siblings are untouched");
+    }
+
+    /// `SELECT ->follows->user.{} AS r FROM user` -> `{r: [{}]}`: one empty
+    /// object per traversed record, not one empty projection.
+    #[test]
+    fn an_empty_graph_destructure_projects_one_empty_object_per_record() {
+        let schema = person_friend_user_schema();
+
+        let kind = analyze(&schema, "SELECT ->friend->user.{} AS r FROM person;");
+        let fields = object_fields(array_element(&kind));
+
+        assert_eq!(
+            fields["r"],
+            Kind::Array(Box::new(object_literal(BTreeMap::new())), None)
+        );
+    }
+
+    /// Nothing was selected, so nothing can be read back out.
+    #[test]
+    fn a_field_after_an_empty_destructure_is_reported() {
+        let schema = user_with_team_schema();
+
+        let (_, diagnostics) = analyze_diagnostics(&schema, "SELECT team.{}.label AS r FROM user;");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|finding| finding.code().number() == 1002
+                    && finding.message().contains("selected nothing")),
+            "expected 1002 naming the empty selection: {:?}",
+            diagnostics.iter().map(surrealguard_diagnostics::Finding::message).collect::<Vec<_>>()
+        );
+    }
+
+    /// `SELECT VALUE author.{name} FROM post` is the destructured OBJECT, not
+    /// a row keyed by `author` (3.0.5: `[{name: 'Ada'}]`).
+    #[test]
+    fn a_value_destructure_is_the_object_itself_not_a_row() {
+        let schema = user_with_team_schema();
+
+        let kind = analyze(&schema, "SELECT VALUE team.{label} FROM user;");
+        let selected = object_fields(array_element(&kind));
+
+        assert_eq!(selected["label"], Kind::String);
+        assert_eq!(selected.len(), 1, "no `team` key wrapping it");
+    }
+
+    /// And the empty one likewise: `SELECT VALUE id.{} FROM ONLY user:ada`
+    /// -> `{}`.
+    #[test]
+    fn a_value_empty_destructure_is_the_empty_object() {
+        let schema = user_with_team_schema();
+
+        let kind = analyze(&schema, "SELECT VALUE team.{} FROM user;");
+
+        assert_eq!(
+            kind,
+            Kind::Array(Box::new(object_literal(BTreeMap::new())), None)
+        );
     }
 
     #[test]

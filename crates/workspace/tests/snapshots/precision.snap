@@ -318,6 +318,13 @@ table webhook_event  [schemafull]
   stmt     48:1 select           : array<{ sector_rows: array<{ id: record<sector>, name: string }> }>
   stmt     50:1 select           : array<{ owner_name: string }>
   stmt     54:1 select           : array<{ owner_row: { active: bool, created_at: datetime, deactivated_reason: option<string | null>, email: string, id: record<account>, person: option<record<person>>, settings: { locale: option<string>, notify: bool, timezone: string }, updated_at: datetime, username: string } | { address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' } }>
+  stmt     62:1 select           : array<{ id: {  } }>
+  stmt     64:1 select           : array<{ anonymous: {  } }>
+  stmt     66:1 select           : array<{ address: {  }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     68:1 select           : array<{  }>
+  stmt     73:1 select           : array<{ city: string }>
+  stmt     77:1 select           : array<{ city: string }>
+  stmt     79:1 select           : array<{ owner_name: string }>
   diag     4:36 I7014     Hint
   diag     6:51 I7014     Hint
   diag     8:41 I7014     Hint
@@ -339,6 +346,13 @@ table webhook_event  [schemafull]
   diag    48:38 I7014     Hint
   diag    50:44 I7014     Hint
   diag    54:34 I7014     Hint
+  diag    62:19 I7014     Hint
+  diag    64:35 I7014     Hint
+  diag    66:27 I7014     Hint
+  diag    68:30 I7014     Hint
+  diag    73:36 I7014     Hint
+  diag    77:43 I7014     Hint
+  diag    79:55 I7014     Hint
 
 == source: queries/20_graph.surql ==
   stmt      4:1 select           : array<{ orgs: array<record<organization>> }>
@@ -357,6 +371,15 @@ table webhook_event  [schemafull]
   stmt     41:1 select           : array<{ org_names: array<string> }>
   stmt     43:1 select           : array<{ "->employee_of": { "->organization": array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }> } }>
   stmt     46:1 select           : array<{ orgs: array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }> }>
+  stmt     53:1 select           : array<{ orgs: array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }> }>
+  stmt     55:1 select           : array<{ "->employee_of": { "->organization": array<{ name: string, tier: 'free' | 'pro' | 'enterprise' }> } }>
+  stmt     58:1 select           : array<{ orgs: array<{  }> }>
+  stmt     63:1 select           : array<{ org_names: array<string> }>
+  stmt     65:1 select           : array<{ "->employee_of": { "->organization": { name: array<string> } } }>
+  stmt     69:1 select           : array<{ memberships: array<{ status: 'invited' | 'active' | 'suspended', title: option<string> }> }>
+  stmt     71:1 select           : array<{ statuses: array<'invited' | 'active' | 'suspended'> }>
+  stmt     74:1 select           : array<{ members: array<{ username: string }> }>
+  stmt     76:1 select           : array<{ active: array<string> }>
   let      18:5 $member          : option<array<record<organization>>>
   let      20:5 $edge_titles     : array<array<option<string>>>
   diag     4:49 I7014     Hint
@@ -376,6 +399,15 @@ table webhook_event  [schemafull]
   diag    41:61 I7014     Hint
   diag    43:43 I7014     Hint
   diag    46:41 I7014     Hint
+  diag    53:64 I7014     Hint
+  diag    55:56 I7014     Hint
+  diag    58:52 I7014     Hint
+  diag    63:68 I7014     Hint
+  diag    65:55 I7014     Hint
+  diag    69:60 I7014     Hint
+  diag    71:57 I7014     Hint
+  diag    74:60 I7014     Hint
+  diag    76:90 I7014     Hint
 
 == source: queries/30_narrowing.surql ==
   stmt      5:1 let              : (no response)

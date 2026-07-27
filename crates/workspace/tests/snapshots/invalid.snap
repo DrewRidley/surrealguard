@@ -21,3 +21,15 @@
 == invalid/20_param_default.surql ==
      9  E2001
     15  E5002
+
+== invalid/30_destructure_keys.surql ==
+    12  E1002
+    12  L7014
+    15  E1002
+    15  L7014
+    19  E1002
+    19  L7014
+    24  E1002
+    24  L7014
+    28  E1002
+    28  L7014

@@ -366,6 +366,11 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
         return;
     }
 
+    // A graph tail's destructure is checked where the traversal is resolved
+    // (`validate_graph_destructure`), which is why this stands after the
+    // early return above rather than before it.
+    check_field_after_destructure(ctx, &idiom.parts);
+
     for (part, receiver) in idiom_prefix_kinds(idiom, ctx) {
         let Some(receiver) = receiver else {
             continue;
@@ -1037,6 +1042,67 @@ fn op_text(op: &ast::BinaryOp) -> &'static str {
         Op::Or => "OR",
         Op::NullCoalesce => "??",
         _ => "?",
+    }
+}
+
+/// A field read out of the object a `.{…}` just built.
+///
+/// A destructure's key set is exactly what the author wrote, so a name that is
+/// not among them is *provably* absent — there is no schema to consult and
+/// nothing to be lenient about. The engine returns NONE (3.0.5:
+/// `SELECT author.{name}.age FROM post` → `{r: null}`), and the site's type
+/// would otherwise be a silent `any`. Same contract and code as any other
+/// missing field (1002).
+///
+/// Deliberately narrow: only a selection whose every entry is a bare field
+/// name is checked, because only then is the key set unambiguous, and only the
+/// one field immediately behind the destructure — past that the walk has left
+/// the shape it can vouch for.
+pub(crate) fn check_field_after_destructure(
+    ctx: &mut AnalysisContext<'_>,
+    parts: &[ast::Spanned<ast::IdiomPart>],
+) {
+    let mut keys: Option<Vec<String>> = None;
+    for part in parts {
+        match &part.node {
+            ast::IdiomPart::Destructure(selected) => {
+                keys = selected
+                    .iter()
+                    .map(|sub| match sub.node.parts.as_slice() {
+                        [only] => match &only.node {
+                            ast::IdiomPart::Field(name) => Some(name.clone()),
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                    .collect();
+            }
+            ast::IdiomPart::Field(name) => {
+                if let Some(keys) = keys.take() {
+                    if !keys.contains(name) {
+                        emit(
+                            ctx,
+                            part.span,
+                            1002,
+                            match keys.len() {
+                                0 => format!(
+                                    "the empty destructure `.{{}}` selected nothing, so there is no `{name}` to read"
+                                ),
+                                _ => format!(
+                                    "the destructure selected {}, so it has no `{name}`",
+                                    keys.iter()
+                                        .map(|key| format!("`{key}`"))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ),
+                            },
+                        );
+                        return;
+                    }
+                }
+            }
+            _ => keys = None,
+        }
     }
 }
 
