@@ -250,10 +250,34 @@ fn write_literal(literal: &KindLiteral, style: Style) -> String {
         KindLiteral::Object(entries) => {
             let rendered: Vec<String> = entries
                 .iter()
-                .map(|(name, kind)| format!("{name}: {}", write_kind(kind, style)))
+                .map(|(name, kind)| format!("{}: {}", object_key(name), write_kind(kind, style)))
                 .collect();
             format!("{{ {} }}", rendered.join(", "))
         }
+    }
+}
+
+/// A projection key, quoted when it is not a bare identifier.
+///
+/// SurrealDB names an unaliased projection after the expression that produced
+/// it, so a key is routinely something no language would accept bare:
+/// `->follows`, `string::len`, `age > 18`. Rendering those unquoted produces a
+/// type that cannot be read back — `{ age > 18: bool }` does not even say
+/// where the key ends — and the playground's formatter, which round-trips the
+/// text it is given, falls back to printing one long line rather than risk
+/// mangling it.
+///
+/// The rule is deliberately the same one `codegen::is_identifier` applies, so
+/// a hover and the `.d.ts` it describes cannot disagree about a key. Codegen
+/// has always quoted these; only the human-facing renderer did not.
+fn object_key(name: &str) -> String {
+    let mut chars = name.chars();
+    let bare = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
+    if bare {
+        name.to_string()
+    } else {
+        format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
     }
 }
 
