@@ -554,6 +554,9 @@ h1 .grad {
 .guard-state.accepted { color: var(--accent-2); } .guard-state.accepted::before { background: var(--accent-2); }
 .guard-state.rejected { color: var(--red); } .guard-state.rejected::before { background: var(--red); }
 .guard-state.warning { color: var(--amber); } .guard-state.warning::before { background: var(--amber); }
+/* A hint is neither an acceptance nor a rejection, and saying either overstates
+   what the engine found. */
+.guard-state.hint { color: var(--accent-2); } .guard-state.hint::before { background: var(--accent-2); }
 
 .guard-stage { position: relative; padding: 20px 20px 16px; min-height: 128px; }
 .guard-code {

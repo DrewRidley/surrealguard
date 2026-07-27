@@ -534,7 +534,7 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
       { q: "SELECT age + name FROM user;",
         help: "`+` needs compatible operands. Cast with <string> or combine fields of the same kind." },
       { q: "SELECT name, age FROM user WHERE age > 18;", help: null },
-      { q: "SELECT title, author.name FROM post;", help: null },
+      { q: "SELECT title, author.name FROM post WHERE title != '';", help: null },
     ];
 
     const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
@@ -548,9 +548,18 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
     // Highlight a statement, wrapping the first diagnostic's byte span in a
     // squiggle. Segment boundaries are token boundaries, so each slice is
     // highlighted cleanly on its own.
+    // The finding the hero is *about*, not whichever the analyzer listed first.
+    // A whole-table-read hint fires on almost every unfiltered SELECT, so
+    // taking diags[0] showed L7014 above copy written about the E1002 beside
+    // it — and painted an accepted statement "rejected".
+    const SEV_RANK = { hint: 0, warning: 1, error: 2 };
+    function worst(diags) {
+      return diags.reduce((a, b) => ((SEV_RANK[b.severity] ?? 2) > (SEV_RANK[a.severity] ?? 2) ? b : a));
+    }
+
     function highlightWithSquiggle(q, diags) {
       if (!diags || !diags.length) return sgHighlight(q);
-      const d = diags[0];
+      const d = worst(diags);
       const s = Math.max(0, Math.min(d.start | 0, q.length));
       const e = Math.max(s, Math.min(d.end | 0, q.length));
       return sgHighlight(q.slice(0, s)) +
@@ -562,7 +571,7 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
       if (!diags || !diags.length) {
         return { cls: "guard-diag ok", html: '<div class="guard-ok">' + CHECK + " type-checks — no problems</div>" };
       }
-      const d = diags[0];
+      const d = worst(diags);
       const more = diags.length > 1 ? '<span class="more">+' + (diags.length - 1) + " more</span>" : "";
       const help = st.help ? '<div class="gd-help">' + sgEsc(st.help) + "</div>" : "";
       return {
@@ -637,13 +646,15 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
         const dd = diagHTML(st, diags);
         diagEl.className = dd.cls; diagEl.innerHTML = dd.html;
         if (diags.length) {
-          setState(diags[0].severity === "warning" ? "warning" : "rejected",
-                   diags[0].severity === "warning" ? "warning" : "rejected");
+          // A hint is not a rejection. Naming it one overstates what the
+          // engine said, which is the opposite of this panel's job.
+          const sev = worst(diags).severity;
+          setState(sev === "error" ? "rejected" : sev, sev === "error" ? "rejected" : sev);
           requestAnimationFrame(() => {
             const sq = codeEl.querySelector(".squiggle");
             if (sq) {
               diagEl.style.setProperty("--x", (sq.offsetLeft + Math.min(sq.offsetWidth, 64) / 2) + "px");
-              diagEl.style.setProperty("--dc", sevColor(diags[0].severity));
+              diagEl.style.setProperty("--dc", sevColor(sev));
             }
           });
         } else {
