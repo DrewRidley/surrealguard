@@ -145,6 +145,17 @@ cmd_publish() {
   # that release exists gives users a 404 instead of a stale version — strictly
   # worse. The `v*` tag is what triggers .github/workflows/release.yml to build
   # and upload those assets, so it must land first.
+  # A dirty tree is not a warning here. `cargo publish` reads the working
+  # directory, not the tag, so uncommitted changes go to crates.io permanently
+  # while the tag points at something else. This used to surface as a failure
+  # partway through the crate loop, after earlier crates had already published.
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "Working tree is dirty. cargo publish reads the tree, not the tag —"
+    echo "commit first, or you publish something no commit records:"
+    git status --short | sed 's/^/    /'
+    exit 1
+  fi
+
   if ! git rev-parse "v$v" >/dev/null 2>&1; then
     echo
     echo "No tag v$v yet. The GitHub Release assets (CLI + LSP, 5 targets) are"
@@ -158,6 +169,25 @@ cmd_publish() {
     read -r -p "Publish crates.io now and do npm later? [y/N] " go
     [ "$go" = "y" ] || exit 1
     local skip_npm=1
+  # Existing is not enough — it must name THIS commit. Tagging before committing
+  # the bump produces a v0.5.0 whose Cargo.toml still says 0.4.1, so the release
+  # workflow builds binaries that report the previous version. That happened, and
+  # nothing caught it: the tag was present, so the check passed.
+  elif [ "$(git rev-parse "v$v")" != "$(git rev-parse HEAD)" ]; then
+    echo
+    echo "Tag v$v exists but points at a different commit:"
+    printf '    v%-8s -> %s  (version %s)\n' "$v" \
+      "$(git rev-parse --short "v$v")" \
+      "$(git show "v$v:Cargo.toml" 2>/dev/null | grep -m1 -A2 '\[workspace.package\]' | grep -m1 '^version' | cut -d'"' -f2)"
+    printf '    %-9s -> %s  (version %s)\n' HEAD "$(git rev-parse --short HEAD)" "$v"
+    echo
+    echo "The release assets were built from the tag, so they do not match what"
+    echo "you are about to publish. Move it:"
+    echo
+    echo "    git tag -f v$v && git push origin v$v --force"
+    echo
+    echo "then wait for the run to go green on all five targets and re-run this."
+    exit 1
   fi
 
   for c in "${CRATES[@]}"; do
