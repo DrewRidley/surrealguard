@@ -68,6 +68,32 @@ impl Backend {
         self.client
             .publish_diagnostics(uri.clone(), lsp_diagnostics, None)
             .await;
+
+        self.refresh_semantic_tokens().await;
+    }
+
+    /// Ask the client to re-request semantic tokens.
+    ///
+    /// Diagnostics are *pushed*; semantic tokens are *pulled* — the client asks
+    /// once, caches the answer, and re-asks only when told to. Without this, our
+    /// tokens are whatever we said the first time the buffer was opened, and any
+    /// later invalidation leaves them stale.
+    ///
+    /// That is visible, not theoretical. In a `.svelte` buffer Zed keeps every
+    /// server's tokens separately and lets later ones win on overlap; the Svelte
+    /// server *does* refresh, so regenerating the query registry (which
+    /// invalidates its TypeScript project) got it a fresh answer while ours went
+    /// stale — and the highlighted query reverted to plain-string green exactly
+    /// when the generated types were rewritten.
+    ///
+    /// The request is workspace-wide because that is the only granularity the
+    /// protocol offers, and it is cheap: it makes the client re-ask, and our
+    /// answer for an unchanged document comes from the analysis cache.
+    async fn refresh_semantic_tokens(&self) {
+        // A client without the capability answers with an error; nothing about
+        // the document depends on the outcome, so a failure is not worth
+        // surfacing to the user.
+        let _ = self.client.semantic_tokens_refresh().await;
     }
 
     /// Hover for a position inside a host file's embedded query: the cursor is
@@ -134,6 +160,12 @@ impl Backend {
                 .publish_diagnostics(uri, lsp_diagnostics, None)
                 .await;
         }
+        drop(policy);
+
+        // One request for the whole sweep: this runs when the schema moved, so
+        // every open document's tokens are suspect, and the protocol has no
+        // per-document form anyway.
+        self.refresh_semantic_tokens().await;
     }
 }
 
