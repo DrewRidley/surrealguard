@@ -520,10 +520,18 @@ fn run_generate(root: &Path, out: Option<&Path>) -> Result<GenerateReport, Box<d
                 .statements
                 .iter()
                 .map(|statement| {
-                    statement
-                        .response_kind
-                        .as_ref()
-                        .map_or_else(|| "null".into(), surrealguard_codegen::ts_type)
+                    // A tuple slot: no key to omit, so an `option<T>` result
+                    // stays `T | undefined` rather than becoming optional.
+                    statement.response_kind.as_ref().map_or_else(
+                        || "null".into(),
+                        |kind| {
+                            surrealguard_codegen::ts_type(
+                                kind,
+                                surrealguard_codegen::TsContext::Value,
+                            )
+                            .text
+                        },
+                    )
                 })
                 .collect();
             let result_type = format!("[{}]", elements.join(", "));

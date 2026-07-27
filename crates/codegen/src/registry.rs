@@ -188,6 +188,60 @@ mod tests {
         );
     }
 
+    /// The two spellings of one `option<string>`, side by side in the file a
+    /// consumer actually imports. These exact rows are mirrored into
+    /// `packages/client/test-d/gen/surrealguard.generated.ts`, where
+    /// `optionality.test-d.ts` proves `tsc` treats them as different types —
+    /// so this assertion is what keeps that fixture honest.
+    #[test]
+    fn an_optional_field_and_an_optional_result_spell_differently() {
+        use surrealdb_types::KindLiteral;
+
+        let optional = Kind::Either(vec![Kind::None, Kind::String]);
+        let mut row = std::collections::BTreeMap::new();
+        row.insert("name".to_string(), Kind::String);
+        row.insert("nick".to_string(), optional.clone());
+        let rows = Kind::Array(Box::new(Kind::Literal(KindLiteral::Object(row))), None);
+
+        let entries = vec![
+            QueryEntry {
+                parts: vec!["SELECT name, nick FROM person".into()],
+                result_type: format!("[{}]", crate::ts_type(&rows, crate::TsContext::Value).text),
+                params: Vec::new(),
+            },
+            QueryEntry {
+                parts: vec!["SELECT VALUE nick FROM ONLY person:jane".into()],
+                result_type: format!(
+                    "[{}]",
+                    crate::ts_type(&optional, crate::TsContext::Value).text
+                ),
+                params: Vec::new(),
+            },
+        ];
+
+        let rendered = render_registry(&entries);
+
+        // Inside a row the `none` is a key that may be missing…
+        assert!(
+            rendered.contains(
+                "\"SELECT name, nick FROM person\": \
+                 { result: [Array<{ name: string; nick?: string }>]; \
+                 params: Record<string, never> };"
+            ),
+            "{rendered}"
+        );
+        // …and as a statement's whole result there is no key, so it is a
+        // union member. Same kind, same file, two spellings.
+        assert!(
+            rendered.contains(
+                "\"SELECT VALUE nick FROM ONLY person:jane\": \
+                 { result: [undefined | string]; \
+                 params: Record<string, never> };"
+            ),
+            "{rendered}"
+        );
+    }
+
     #[test]
     fn duplicate_query_texts_emit_one_registry_row() {
         let entry = || QueryEntry {

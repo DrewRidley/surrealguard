@@ -3,7 +3,7 @@
 //! `Kind` → TypeScript mapping and the augmentation output can be eyeballed.
 
 use surrealdb_types::{Kind, KindLiteral};
-use surrealguard_codegen::{render_registry, ts_type, QueryEntry};
+use surrealguard_codegen::{render_registry, ts_type, QueryEntry, TsContext};
 use surrealguard_workspace::analysis::ParamInference;
 
 fn main() {
@@ -18,7 +18,7 @@ fn main() {
                 "SELECT name, age FROM person WHERE age > ".into(),
                 "".into(),
             ],
-            result_type: ts_type(&result),
+            result_type: ts_type(&result, TsContext::Value).text,
             params: vec![ParamInference {
                 name: "__host0".into(),
                 kind: Some(Kind::Int),

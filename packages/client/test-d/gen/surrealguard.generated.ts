@@ -41,6 +41,8 @@ declare module "@surrealguard/client" {
   interface SurqlRegistry {
     "SELECT name FROM person WHERE team = $team": { result: [Array<{ name: string }>]; params: { team: RecordId<"team"> } };
     "SELECT id, name, joined FROM person": { result: [Array<{ id: RecordId<"person">; joined: Date; name: string }>]; params: Record<string, never> };
+    "SELECT name, nick FROM person": { result: [Array<{ name: string; nick?: string }>]; params: Record<string, never> };
+    "SELECT VALUE nick FROM ONLY person:jane": { result: [undefined | string]; params: Record<string, never> };
   }
 }
 
