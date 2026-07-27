@@ -108,7 +108,16 @@ pub fn statement_value_kind(
         ast::Statement::IfElse(s) => {
             ctx.with_child_env(|ctx| crate::analyzer::flow::if_else::analyze_if_else_flow(ctx, s).into_kind())
         }
-        ast::Statement::Block(s) => pure_block_kind(s, ctx).unwrap_or(Kind::Any),
+        // `({ … })` — a block used as a value. Routed through the same full
+        // flow analysis a statement block gets, for the same reason the `IF`
+        // arm above is: pure inference walks the block's statements and checks
+        // none of their contracts, so `RETURN ({ RETURN 1 + 'a'; })` was silent
+        // while the identical unparenthesized block reported. The child env
+        // keeps the block's `LET`s from leaking, which is the boundary a block
+        // *is*.
+        ast::Statement::Block(s) => {
+            ctx.with_child_env(|ctx| crate::analyzer::flow::block::analyze_block(ctx, s))
+        }
         _ => return None,
     };
     Some(kind)

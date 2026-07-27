@@ -120,6 +120,19 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
         ast::Expr::Idiom(idiom) => check_idiom_positions(ctx, idiom),
         ast::Expr::Literal(literal) => check_literal_content(ctx, expr, literal),
         ast::Expr::Subquery(statement) => check_subquery(ctx, statement),
+        // A block nested inside an expression, or standing as a whole clause
+        // value (`DEFINE FIELD … VALUE { … }`). `expr_fact` routes a block it
+        // is handed directly, but every other caller pairs pure inference —
+        // which reports a block as partial and walks nothing — with this
+        // function, so those blocks were analyzed by nobody at all.
+        //
+        // The child scope is the boundary: the block's `LET`s are resolved
+        // inside it and cannot escape into the enclosing expression.
+        ast::Expr::Block(block) => {
+            ctx.with_child_env(|ctx| {
+                crate::analyzer::flow::block::analyze_block(ctx, block);
+            });
+        }
         // A param, a table name, a record id and an unlowerable node carry no
         // position of their own. Exhaustive rather than a catch-all: a new
         // expression form must decide whether it has inner obligations, and
@@ -128,7 +141,6 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
         ast::Expr::Param(_)
         | ast::Expr::Table(_)
         | ast::Expr::RecordId { .. }
-        | ast::Expr::Block(_)
         | ast::Expr::Closure(_)
         | ast::Expr::Partial(_) => {}
     }
@@ -1162,6 +1174,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_block_used_as_a_value_is_analyzed_wherever_it_stands() {
+        // A block is checked when `expr_fact` is handed one directly; every
+        // other caller pairs *pure* inference — which reports a block as
+        // partial and walks nothing — with `check_value_expression`, whose
+        // catch-all swallowed it. So a block was analyzed by nobody at all in
+        // a clause value, inside another expression, or in parentheses.
+        for query in [
+            // parenthesized (a genuine statement subquery)
+            "RETURN ({ RETURN 1 + 'a'; });",
+            // its `LET`s resolve inside the block
+            "RETURN ({ LET $y = 1; $y + 'a' });",
+            // nested inside another expression
+            "RETURN 1 + { RETURN 'a'.nomethod(); };",
+        ] {
+            let expected = if query.contains("nomethod") { "E5001" } else { "E2004" };
+            assert!(
+                fires(query, expected),
+                "{query:?} must report {expected}: {:?}",
+                codes(query)
+            );
+        }
+
+        // …and in a clause value, where nothing reached it before.
+        let clause = concat!(
+            "DEFINE TABLE t SCHEMAFULL;\n",
+            "DEFINE FIELD v ON t VALUE { RETURN 1 + 'a'; };\n",
+        );
+        assert!(fires(clause, "E2004"), "codes: {:?}", codes(clause));
+    }
+
+    #[test]
+    fn a_blocks_bindings_do_not_escape_it() {
+        // The child scope is the boundary a block *is*. A `LET` inside one
+        // must not be visible after it, or checking a block would leak
+        // bindings into the expression that contains it.
+        let query = "RETURN ({ LET $inner = 1; $inner }) + $inner;";
+        // `$inner` outside the block is an unbound host parameter, not the
+        // block's binding — so the addition proves nothing and stays silent.
+        assert!(!fires(query, "E2004"), "codes: {:?}", codes(query));
+    }
+
     // ---- a check inside a guarded region reads the guarded kind ----
 
     /// A function whose parameter is an object with one optional field. A
@@ -1587,5 +1641,6 @@ mod tests {
         assert!(!fires(query, "E1027"), "codes: {:?}", codes(query));
     }
 }
+
 
 
