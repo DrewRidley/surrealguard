@@ -946,6 +946,37 @@ table webhook_event  [schemafull]
   diag    15:43 I7014     Hint
   diag    44:54 I7014     Hint
 
+== source: queries/45_divergence.surql ==
+  stmt     11:1 let              : (no response)
+  stmt     13:1 if_else          : none
+  stmt     15:1 let              : (no response)
+  stmt     20:1 let              : (no response)
+  stmt     22:1 if_else          : none
+  stmt     24:1 let              : (no response)
+  stmt     30:1 let              : (no response)
+  stmt     32:1 if_else          : none
+  stmt     34:1 let              : (no response)
+  stmt     39:1 let              : (no response)
+  stmt     41:1 if_else          : none
+  stmt     43:1 let              : (no response)
+  stmt     46:1 let              : (no response)
+  stmt     48:1 if_else          : none
+  stmt     50:1 let              : (no response)
+  stmt     52:1 return           : { constant: string, nested: string, parenthesised: string, plain: string, trailing: string }
+  let      11:5 $plain           : option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  let      15:5 $plain_name      : string
+  let      20:5 $trailing        : option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  let      24:5 $trailing_name   : string
+  let      30:5 $constant        : option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  let      34:5 $constant_name   : string
+  let      39:5 $parenthesised   : option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  let      43:5 $parenthesised_name : string
+  let      46:5 $nested          : option<{ name: string, tier: 'free' | 'pro' | 'enterprise' }>
+  let      50:5 $nested_name     : string
+  diag    22:48 W4006     Warning
+  diag    22:52 W7001     Warning
+  diag    32:26 W7004     Warning
+
 == source: queries/50_aggregates.surql ==
   stmt      4:1 select           : array<{ count: int }>
        modifier group      row_preserving=false

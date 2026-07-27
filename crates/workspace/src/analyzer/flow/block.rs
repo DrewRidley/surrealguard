@@ -229,6 +229,27 @@ pub(crate) fn statement_diverges(stmt: &ast::Statement) -> bool {
             None => false,
         },
         ast::Statement::Block(block) => block_diverges(block),
+        // A statement that is just an expression diverges when the expression
+        // does. `{ … }` and `(…)` and `IF … { RETURN 1 } ELSE { RETURN 2 }` in
+        // value position all lower to this shape, and all three were invisible
+        // here — so a block ending in one was not a diverging block, and the
+        // fall-through narrowing an enclosing guard should have established
+        // died with it.
+        ast::Statement::Expr(expr) => expr_diverges(&expr.node),
+        _ => false,
+    }
+}
+
+/// Whether an expression, evaluated for its value, provably never yields one.
+///
+/// Only the forms that *contain statements* can: a block, a parenthesized
+/// statement, an `IF` used as a value. Everything else is a value computation,
+/// which either produces a value or raises at runtime — and a runtime raise is
+/// not something this layer proves.
+fn expr_diverges(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Block(block) => block_diverges(block),
+        ast::Expr::Subquery(inner) => statement_diverges(&inner.node),
         _ => false,
     }
 }
@@ -262,12 +283,23 @@ fn const_diverges(stmt: &ast::Statement) -> bool {
             .all(|(branch, _)| block_diverges(&branch.body))
 }
 
-/// Whether a block diverges: its last statement does.
+/// Whether a block diverges: **any** statement in it does.
+///
+/// Control cannot reach the end of a sequence once it cannot get past one of
+/// its statements, so the position of the diverging statement is irrelevant —
+/// `{ THROW 'e'; RETURN 1; }` diverges exactly as `{ RETURN 1; }` does. Reading
+/// only the last statement made the answer depend on whether dead code had been
+/// written after the exit, which is the one thing it cannot depend on.
+///
+/// The rule is the same one [`block_flow`] terminates on, and now it is
+/// literally the same pair of predicates: a block whose `IF 1 = 1 { RETURN … }`
+/// made `block_flow` stop was, until now, not a diverging block to anybody
+/// asking from outside.
 pub(crate) fn block_diverges(block: &ast::Block) -> bool {
     block
         .statements
-        .last()
-        .is_some_and(|statement| statement_diverges(&statement.node))
+        .iter()
+        .any(|statement| statement_diverges(&statement.node) || const_diverges(&statement.node))
 }
 
 #[cfg(test)]
