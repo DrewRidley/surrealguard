@@ -458,7 +458,7 @@ pub(crate) fn collection_element_kind(kind: &Kind) -> Option<Kind> {
     }
 }
 
-/// Whether index/filter/splat applies to `kind`: a collection, an object,
+/// Whether index/filter applies to `kind`: a collection, an object,
 /// or — distributing over a union — a union whose arms *all* are. One
 /// definitely-non-collection arm (the `NONE` of an `option<array<T>>`)
 /// makes the access a genuine contract violation.
@@ -473,6 +473,71 @@ pub(crate) fn is_indexable_kind(kind: &Kind) -> bool {
     }
 }
 
+/// Whether `.*` / `[*]` applies to `kind`.
+///
+/// The splat accepts everything an index does, plus a **record link**: `.*`
+/// on a `record<user>` is not an index at all, it is "give me that row", and
+/// the engine returns the user's whole field object (verified on SurrealDB
+/// 3.0.5 — `SELECT author.* FROM ONLY post:p1` → `{author: {id, name, …}}`).
+/// A scalar still has nothing to splat, and — as with an index — a union with
+/// one non-splattable arm (the `NONE` of an `option<record<user>>`) is a
+/// genuine contract violation, not a shape to guess through.
+pub(crate) fn is_splattable_kind(kind: &Kind) -> bool {
+    let base = crate::kinds::literal_base_kind(kind).unwrap_or_else(|| kind.clone());
+    match base {
+        Kind::Record(_) => true,
+        Kind::Either(variants) => variants.iter().all(is_splattable_kind),
+        other => is_indexable_kind(&other),
+    }
+}
+
+/// What `.*` / `[*]` yields.
+///
+/// A record link becomes the **row it names**: the target table's whole field
+/// object, built by the very same `object_kind_for_all_fields` a bare
+/// `SELECT *` projects, so a splat and a wildcard SELECT can never disagree.
+/// A link naming several tables becomes the union of their rows — the engine
+/// hands back whichever row the link points at (`->touched->?.*` on an
+/// `OUT user|post` edge returns user rows and post rows in one array,
+/// verified on 3.0.5). The layers a link is wrapped in are preserved, so
+/// `array<record<user>>` splats to `array<{…}>`. Everything else — a
+/// collection, an object — splats to itself.
+///
+/// `Err(table)` when a named table declares no fields: there is no row shape
+/// to expand to, which is exactly where `SELECT * FROM <table>` gives up too.
+/// The caller reports that (7008) and keeps the site `any` rather than
+/// inventing a shape; it must not fall back to the link kind, because after a
+/// `.*` the value is the row, not the link.
+pub(crate) fn splat_kind(current: &Kind, schema: &SchemaIndex) -> Result<Kind, String> {
+    match current {
+        // A bare `record` names no table, so the row it splats to is an
+        // object whose shape is genuinely open — not unknown, just untyped.
+        Kind::Record(targets) if targets.is_empty() => Ok(Kind::Object),
+        Kind::Record(targets) => {
+            let mut rows = Vec::with_capacity(targets.len());
+            for target in targets {
+                let name = target.to_string();
+                let table = schema
+                    .tables
+                    .get(&name)
+                    .filter(|table| !table.fields.is_empty())
+                    .ok_or(name)?;
+                rows.push(crate::analyzer::data::select::object_kind_for_all_fields(table));
+            }
+            Ok(Kind::either(rows))
+        }
+        Kind::Array(element, max) => Ok(Kind::Array(Box::new(splat_kind(element, schema)?), *max)),
+        Kind::Set(element, max) => Ok(Kind::Set(Box::new(splat_kind(element, schema)?), *max)),
+        _ => Ok(current.clone()),
+    }
+}
+
+/// The table a `.*` on `kind` cannot expand, when there is one — the
+/// reporting half of [`splat_kind`].
+pub(crate) fn unexpandable_splat_table(kind: &Kind, schema: &SchemaIndex) -> Option<String> {
+    splat_kind(kind, schema).err()
+}
+
 /// One stepping rule shared by pure inference and position checking.
 fn step_part_kind(
     current: &Kind,
@@ -482,9 +547,10 @@ fn step_part_kind(
     match part {
         ast::IdiomPart::Field(name) => field_of_kind(current, name, ctx.schema()),
         ast::IdiomPart::Index(_) | ast::IdiomPart::Last => collection_element_kind(current),
-        ast::IdiomPart::All | ast::IdiomPart::Where(_) | ast::IdiomPart::Optional => {
-            Some(current.clone())
-        }
+        // A `.*` that cannot expand leaves the value shapeless: the row is
+        // not the link, so `Any` — never the receiver — is the honest answer.
+        ast::IdiomPart::All => Some(splat_kind(current, ctx.schema()).unwrap_or(Kind::Any)),
+        ast::IdiomPart::Where(_) | ast::IdiomPart::Optional => Some(current.clone()),
         ast::IdiomPart::Method { name, args } => {
             let arg_kinds: Vec<Kind> = std::iter::once(current.clone())
                 .chain(

@@ -1345,6 +1345,7 @@ fn value_projection_kind(
         ast::Expr::Idiom(idiom) if starts_with_graph(idiom) => {
             crate::analyzer::data::graph::check_graph_idiom(ctx, row_table_name, idiom);
             validate_graph_destructure(ctx, row_table_name, idiom);
+            validate_graph_wildcard(ctx, row_table_name, idiom);
             graph_projection_kind(row_table_name, idiom, ctx.schema(), false)
         }
         ast::Expr::Idiom(idiom) => {
@@ -1470,6 +1471,7 @@ fn project_expr(
             // A `.{…}` destructure tail selects fields on the resolved graph
             // target; each must exist there (E1002), independent of alias.
             validate_graph_destructure(ctx, row_table_name, idiom);
+            validate_graph_wildcard(ctx, row_table_name, idiom);
             // `->likes->post.{title, id}` without an alias fans out into
             // nested per-field arrays.
             if alias_name.is_none() {
@@ -2005,8 +2007,50 @@ fn graph_steps(
         .collect()
 }
 
+/// The kind a traversal's field tail reaches, *before* any `.*` is applied,
+/// paired with the wildcard part when the tail writes one.
+///
+/// `->likes.since` reads off the *edge*, `->likes->post.title` off the landed
+/// target, and a tail that is nothing but the wildcard stands on the row
+/// itself (`record<post>`) — which is exactly what the splat then expands.
+/// Sharing this between the type and its check is what keeps the reported
+/// table and the inferred kind from drifting apart.
+fn graph_tail_receiver<'i>(
+    row_table_name: &str,
+    idiom: &'i ast::Idiom,
+    schema: &SchemaIndex,
+) -> Option<(Kind, Option<&'i ast::Spanned<ast::IdiomPart>>)> {
+    let (graphs, tail) = graph_split(idiom);
+    let steps = graph_steps(graphs);
+    let segments = tail_path_segments(tail)?;
+    let wildcard = tail
+        .iter()
+        .find(|part| matches!(part.node, ast::IdiomPart::All));
+
+    // A single hop *with* a tail reads off the edge; a wildcard changes what
+    // is projected, not which table it comes from.
+    let (table, name) = if steps.len() == 1 && !tail.is_empty() {
+        let (dir, edge) = single_graph_target(&steps[0].node)?;
+        if !relation_accepts_source(row_table_name, dir, edge, schema) {
+            return None;
+        }
+        (schema.tables.get(edge)?, edge.to_string())
+    } else {
+        let target_name = resolve_graph_chain(row_table_name, graphs, schema)?;
+        (schema.tables.get(&target_name)?, target_name)
+    };
+
+    let reached = if segments.is_empty() {
+        Kind::Record(vec![name.as_str().into()])
+    } else {
+        kind_for_path(table, &segments)?
+    };
+    Some((reached, wildcard))
+}
+
 /// The type of one graph projection (`->likes->post`, `->likes.since`,
-/// `->likes->post.{a}` when aliased), wrapped in the traversal's array.
+/// `->likes->post.*`, `->likes->post.{a}` when aliased), wrapped in the
+/// traversal's array.
 pub(crate) fn graph_projection_kind(
     row_table_name: &str,
     idiom: &ast::Idiom,
@@ -2014,49 +2058,39 @@ pub(crate) fn graph_projection_kind(
     materialize_target: bool,
 ) -> Option<Kind> {
     let (graphs, tail) = graph_split(idiom);
-    let steps = graph_steps(graphs);
 
-    let projected = if steps.len() == 1 && !tail.is_empty() {
-        // Single hop with a field tail projects off the *edge* table:
-        // `->likes.since`.
-        let (dir, edge) = single_graph_target(&steps[0].node)?;
-        if !relation_accepts_source(row_table_name, dir, edge, schema) {
-            return None;
+    // A `.{…}` destructure tail is a shape of its own, not a path.
+    if let [part] = tail {
+        if let ast::IdiomPart::Destructure(selected) = &part.node {
+            let target_name = resolve_graph_chain(row_table_name, graphs, schema)?;
+            let target = schema.tables.get(&target_name)?;
+            let mut object = BTreeMap::new();
+            for sub in selected {
+                let segments = plain_field_segments(&sub.node)?;
+                let name = segments.join(".");
+                // A field absent on the target still projects (as `Any`);
+                // validation reports it separately.
+                object.insert(
+                    name,
+                    resolve_field_path(schema, target, &segments).unwrap_or(Kind::Any),
+                );
+            }
+            return Some(Kind::Array(Box::new(object_literal(object)), None));
         }
-        let edge_table = schema.tables.get(edge)?;
-        let segments = tail_plain_segments(tail)?;
-        kind_for_path(edge_table, &segments)?
-    } else {
+    }
+
+    let (reached, wildcard) = graph_tail_receiver(row_table_name, idiom, schema)?;
+    let projected = if wildcard.is_some() {
+        // `.*` expands the row the tail stands on, exactly as `SELECT *` does.
+        // A row with no declared shape leaves the projection `any`, which
+        // `validate_graph_wildcard` reports.
+        crate::analyzer::expression::infer::splat_kind(&reached, schema).unwrap_or(Kind::Any)
+    } else if tail.is_empty() && materialize_target {
+        // A FETCHed alias hands back the landed row rather than a link to it.
         let target_name = resolve_graph_chain(row_table_name, graphs, schema)?;
-        let target = schema.tables.get(&target_name)?;
-        if tail.is_empty() {
-            if materialize_target {
-                object_kind_for_all_fields(target)
-            } else {
-                Kind::Record(vec![target_name.into()])
-            }
-        } else if let [part] = tail {
-            if let ast::IdiomPart::Destructure(selected) = &part.node {
-                let mut object = BTreeMap::new();
-                for sub in selected {
-                    let segments = plain_field_segments(&sub.node)?;
-                    let name = segments.join(".");
-                    // A field absent on the target still projects (as `Any`);
-                    // validation reports it separately.
-                    object.insert(
-                        name,
-                        resolve_field_path(schema, target, &segments).unwrap_or(Kind::Any),
-                    );
-                }
-                object_literal(object)
-            } else {
-                let segments = tail_plain_segments(tail)?;
-                kind_for_path(target, &segments)?
-            }
-        } else {
-            let segments = tail_plain_segments(tail)?;
-            kind_for_path(target, &segments)?
-        }
+        object_kind_for_all_fields(schema.tables.get(&target_name)?)
+    } else {
+        reached
     };
 
     Some(Kind::Array(Box::new(projected), None))
@@ -2099,7 +2133,9 @@ fn graph_destructure_output(
 fn graph_output_segments(idiom: &ast::Idiom) -> Option<Vec<String>> {
     let (graphs, tail) = graph_split(idiom);
     let mut segments = graph_segments_of(graphs)?;
-    segments.extend(tail_plain_segments(tail).unwrap_or_default());
+    // The engine's key simplification drops `.*` (`->follows->user.*.name`
+    // keys under `->follows.->user.name`), which `tail_path_segments` does too.
+    segments.extend(tail_path_segments(tail).unwrap_or_default());
     Some(segments)
 }
 
@@ -2118,13 +2154,26 @@ fn graph_segments_of(graphs: &[ast::Spanned<ast::IdiomPart>]) -> Option<Vec<Stri
         .collect()
 }
 
-fn tail_plain_segments(tail: &[ast::Spanned<ast::IdiomPart>]) -> Option<Vec<String>> {
-    tail.iter()
-        .map(|part| match &part.node {
-            ast::IdiomPart::Field(name) => Some(name.clone()),
-            _ => None,
-        })
-        .collect()
+/// A traversal tail's field path, with any `.*` dropped.
+///
+/// A wildcard in a tail is not a path segment — it names no field and no
+/// output key (the engine simplifies `->follows->user.*.name` to the key
+/// `->follows.->user.name`, verified on 3.0.5). It is an instruction:
+/// *expand the link in front of me into the row it names*. So it is stripped
+/// from the path here and re-applied to the resolved kind as a splat.
+///
+/// `None` when the tail holds a part that is neither field nor wildcard — an
+/// index, a filter, a method — which the caller resolves its own way.
+fn tail_path_segments(tail: &[ast::Spanned<ast::IdiomPart>]) -> Option<Vec<String>> {
+    let mut segments = Vec::new();
+    for part in tail {
+        match &part.node {
+            ast::IdiomPart::Field(name) => segments.push(name.clone()),
+            ast::IdiomPart::All => {}
+            _ => return None,
+        }
+    }
+    Some(segments)
 }
 
 /// `profile.{email, city}`: leading plain fields plus a trailing destructure.
@@ -2186,6 +2235,28 @@ fn destructure_kinds(
     }
     let wrappers = wrapped_link.map(|(wrappers, _)| wrappers).unwrap_or_default();
     Some((wrappers, outputs))
+}
+
+/// Reports a `.*` on a traversal whose row has no declared shape
+/// (`->wrote->page.*` where `page` declares no fields): the projection's type
+/// is `any`, and a bare `any` with no finding reads as "analyzed
+/// successfully". Same contract, same code (7008) as a bare `SELECT *` on
+/// that table. Silent when the traversal resolves to a shaped row, and when
+/// it does not resolve at all — that already has its own findings.
+fn validate_graph_wildcard(
+    ctx: &mut AnalysisContext<'_>,
+    row_table_name: &str,
+    idiom: &ast::Idiom,
+) {
+    let Some((reached, Some(wildcard))) = graph_tail_receiver(row_table_name, idiom, ctx.schema())
+    else {
+        return;
+    };
+    if let Some(table) =
+        crate::analyzer::expression::infer::unexpandable_splat_table(&reached, ctx.schema())
+    {
+        crate::analyzer::expression::check::emit_fieldless_splat(ctx, wildcard.span, &table);
+    }
 }
 
 /// Validates each selected sub-field of a `.{…}` destructure on a graph target

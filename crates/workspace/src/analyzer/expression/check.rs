@@ -374,12 +374,11 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
             continue;
         }
         match &part.node {
-            // Index/filter/splat needs a collection — and a union of
+            // Index/filter needs a collection — and a union of
             // collections is one: `[[1, 2], [3]]` is
             // `array<int, 2> | array<int, 1>`, indexable on every arm.
             ast::IdiomPart::Index(_)
             | ast::IdiomPart::Where(_)
-            | ast::IdiomPart::All
             | ast::IdiomPart::Last
                 if !crate::analyzer::expression::infer::is_indexable_kind(&receiver) =>
             {
@@ -393,6 +392,34 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
                     ),
                 );
                 return;
+            }
+            // The splat is the same contract with one more admissible
+            // receiver: a record link, which `.*` expands rather than
+            // indexes. A scalar still has nothing to splat.
+            ast::IdiomPart::All
+                if !crate::analyzer::expression::infer::is_splattable_kind(&receiver) =>
+            {
+                emit(
+                    ctx,
+                    part.span,
+                    2030,
+                    format!(
+                        "a `{}` has nothing to splat — `.*` needs a collection, an object or a record link",
+                        crate::render::render_offending(&receiver, None)
+                    ),
+                );
+                return;
+            }
+            // The receiver is splattable but the row it names has no declared
+            // shape, so the splat's type is `any`. Say so — a bare `any` with
+            // no finding reads as "analyzed successfully".
+            ast::IdiomPart::All => {
+                if let Some(table) = crate::analyzer::expression::infer::unexpandable_splat_table(
+                    &receiver,
+                    ctx.schema(),
+                ) {
+                    emit_fieldless_splat(ctx, part.span, &table);
+                }
             }
             ast::IdiomPart::Method { name, args } => {
                 // A method's arguments are expressions in their own right, and
@@ -1011,6 +1038,27 @@ fn op_text(op: &ast::BinaryOp) -> &'static str {
         Op::NullCoalesce => "??",
         _ => "?",
     }
+}
+
+/// A `.*` whose row has no declared shape: the site's type is `any`, and the
+/// author deserves to know why rather than read `any` as "analyzed fine".
+/// Same contract, same code (7008) as a bare `SELECT *` on that table.
+pub(crate) fn emit_fieldless_splat(
+    ctx: &mut AnalysisContext<'_>,
+    span: surrealguard_syntax::span::ByteRange,
+    table: &str,
+) {
+    let source_span = SourceSpan::new(ctx.source().clone(), span);
+    ctx.emit(
+        surrealguard_diagnostics::catalog::finding(
+            source_span,
+            7008,
+            format!("`{table}` has no declared fields, so `.*` expands to nothing typed"),
+        )
+        .with_help(format!(
+            "add `DEFINE FIELD` declarations to `{table}` for full analysis"
+        )),
+    );
 }
 
 fn emit(
