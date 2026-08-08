@@ -291,6 +291,12 @@ fn add_embedded_queries(
         for (index, query) in queries.into_iter().enumerate() {
             let source_id = workspace
                 .add_virtual_source(format!("embedded://{host_id}#{index}"), query.text.clone());
+            // A `defineLive` string is an ordinary SELECT to the parser and a
+            // `LIVE SELECT` to the client. Only the extractor saw which sink it
+            // reached, so this is where that gets recorded.
+            if query.live {
+                workspace.mark_live_query(&source_id);
+            }
             embedded.insert(source_id.to_string(), (query, host_id.clone()));
         }
         source_texts.insert(host_id, text);
@@ -630,6 +636,12 @@ fn run_generate(
         for (index, query) in embedded.into_iter().enumerate() {
             let source_id = workspace
                 .add_virtual_source(format!("embedded://{host_id}#{index}"), query.text.clone());
+            // Same as the check path: `generate` must hold a `defineLive`
+            // string to the live contract too, or the two disagree about the
+            // same file.
+            if query.live {
+                workspace.mark_live_query(&source_id);
+            }
             queries.push((source_id, query, host_id.clone()));
         }
         host_texts.insert(host_id, text);

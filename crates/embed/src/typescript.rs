@@ -32,7 +32,12 @@ fn collect(node: Node<'_>, text: &str, queries: &mut Vec<EmbeddedQuery>) {
             node.child_by_field_name("arguments"),
         ) {
             if is_query_sink(function, text) {
-                if let Some(query) = call_string_to_query(arguments, text) {
+                if let Some(mut query) = call_string_to_query(arguments, text) {
+                    // `defineLive` runs its string as `LIVE SELECT`, which is a
+                    // far narrower statement than the SELECT the string parses
+                    // as. Recording the sink is what lets the analyzer apply
+                    // the live contract to it.
+                    query.live = sink_is_live(function, text);
                     queries.push(query);
                 }
             } else if is_query_method(function, text) {
@@ -67,6 +72,20 @@ fn collect(node: Node<'_>, text: &str, queries: &mut Vec<EmbeddedQuery>) {
 /// A sink that can never be typed is a sink that lies about being checked, so
 /// the tag form was removed rather than kept as a second-class spelling.
 const QUERY_SINKS: [&str; 2] = ["defineQuery", "defineLive"];
+
+/// The sink is `defineLive` specifically — the one whose string the client
+/// runs as a live query rather than a one-shot one.
+fn sink_is_live(node: Node<'_>, text: &str) -> bool {
+    let name = match node.kind() {
+        "identifier" => &text[node.byte_range()],
+        "member_expression" => match node.child_by_field_name("property") {
+            Some(property) => &text[property.byte_range()],
+            None => return false,
+        },
+        _ => return false,
+    };
+    name == "defineLive"
+}
 
 /// The callee names a query sink, either bare (`defineQuery(...)`) or through
 /// a member (`sg.defineQuery(...)`).
@@ -145,6 +164,7 @@ fn string_node_to_query(string: Node<'_>, text: &str) -> Option<EmbeddedQuery> {
         host_range: content_start..content_end,
         segments,
         substitutions: Vec::new(),
+        live: false,
     })
 }
 
@@ -191,6 +211,7 @@ fn template_to_query(template: Node<'_>, text: &str) -> Option<EmbeddedQuery> {
         host_range: content_start..content_end,
         segments,
         substitutions,
+        live: false,
     })
 }
 

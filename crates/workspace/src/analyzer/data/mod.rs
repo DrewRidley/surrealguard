@@ -7,6 +7,7 @@ pub mod delete;
 pub mod graph;
 pub mod insert;
 pub mod kill;
+pub(crate) mod live_contract;
 pub mod live_select;
 pub(crate) mod mutation;
 pub mod relate;

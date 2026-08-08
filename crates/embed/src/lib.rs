@@ -36,6 +36,13 @@ pub struct EmbeddedQuery {
     /// The substitutions that became parameters, in order: the parameter
     /// name and the host byte range of the `${...}` expression.
     pub substitutions: Vec<Substitution>,
+    /// Whether the sink that received this query runs it as a **live query**
+    /// — `defineLive`. The text is an ordinary SELECT and analyzes as one, but
+    /// the client wraps it in `LIVE SELECT`, which is a far narrower statement
+    /// than SELECT. Without this the analyzer cannot tell the two apart, and
+    /// `defineLive("SELECT * FROM user:1")` passes as a perfectly good query
+    /// while being a subscription that never fires.
+    pub live: bool,
 }
 
 /// A `${...}` template substitution rewritten into an analyzer parameter.
