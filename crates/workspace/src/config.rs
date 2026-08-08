@@ -12,7 +12,7 @@ use surrealguard_diagnostics::{catalog, FindingCode, LintLevel, PolicyConfig};
 pub struct WorkspaceConfig {
     /// Which files are schema, which are queries, and which to ignore.
     pub sources: SourceConfig,
-    /// Strictness and the target SurrealDB version.
+    /// Strictness.
     pub analysis: AnalysisConfig,
     /// How findings are escalated and what suppressions must carry.
     pub diagnostics: DiagnosticConfig,
@@ -32,13 +32,14 @@ pub struct SourceConfig {
 }
 
 /// Settings that steer inference and checking.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// There is deliberately no target-version key. SurrealGuard analyzes for the
+/// latest SurrealDB release, and a key that named a version while gating
+/// nothing was read as a claim that it targeted that one.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AnalysisConfig {
     /// Run in strict mode, tightening otherwise-advisory checks.
     pub strict: bool,
-    /// Target SurrealDB version (e.g. `"2"`, `"2.1"`); selects
-    /// version-gated behavior.
-    pub surrealdb_version: String,
 }
 
 /// How findings are surfaced: escalation policy and suppression rules.
@@ -133,15 +134,6 @@ impl Default for SourceConfig {
     }
 }
 
-impl Default for AnalysisConfig {
-    fn default() -> Self {
-        Self {
-            strict: false,
-            surrealdb_version: "2".into(),
-        }
-    }
-}
-
 #[derive(Debug, Default, Deserialize)]
 struct RawWorkspaceConfig {
     #[serde(default)]
@@ -164,7 +156,6 @@ struct RawSourceConfig {
 #[derive(Debug, Default, Deserialize)]
 struct RawAnalysisConfig {
     strict: Option<bool>,
-    surrealdb_version: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -194,10 +185,6 @@ impl RawWorkspaceConfig {
             },
             analysis: AnalysisConfig {
                 strict: self.analysis.strict.unwrap_or(defaults.analysis.strict),
-                surrealdb_version: self
-                    .analysis
-                    .surrealdb_version
-                    .unwrap_or(defaults.analysis.surrealdb_version),
             },
             diagnostics: DiagnosticConfig {
                 warnings_as_errors: self
@@ -331,7 +318,6 @@ queries = ["queries/**/*.surql"]
 
 [analysis]
 strict = true
-surrealdb_version = "2.1"
 
 [diagnostics]
 warnings_as_errors = true
@@ -351,7 +337,6 @@ permission_gated_field = "warn"
         );
         assert_eq!(config.sources.queries, vec!["queries/**/*.surql"]);
         assert!(config.analysis.strict);
-        assert_eq!(config.analysis.surrealdb_version, "2.1");
         assert!(config.diagnostics.warnings_as_errors);
         assert!(config.diagnostics.require_suppression_reasons);
         assert_eq!(config.lints.select_star, Some(LintLevel::Warn));
@@ -469,6 +454,27 @@ W7002 = "deny"
         assert!(config.sources.ignore.contains(&"node_modules/**".into()));
         assert!(config.sources.ignore.contains(&".git/**".into()));
         assert!(!config.analysis.strict);
-        assert_eq!(config.analysis.surrealdb_version, "2");
+    }
+
+    /// A key SurrealGuard no longer knows must not fail the parse. Every
+    /// `surrealguard init` before this release wrote `surrealdb_version` into
+    /// the file, so rejecting an unknown key would have broken every one of
+    /// those workspaces on upgrade. No struct here sets `deny_unknown_fields`,
+    /// and this test is what keeps it that way.
+    #[test]
+    fn a_config_carrying_a_retired_key_still_parses() {
+        let config = WorkspaceConfig::from_toml_str(
+            r#"
+[analysis]
+strict = true
+surrealdb_version = "2"
+
+[not_a_table]
+whatever = 1
+"#,
+        )
+        .expect("an unknown key is ignored, not an error");
+
+        assert!(config.analysis.strict);
     }
 }

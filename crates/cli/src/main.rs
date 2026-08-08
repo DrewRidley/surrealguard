@@ -36,7 +36,7 @@
 //!
 //! The config file — discovered by walking up from the working directory —
 //! declares the source globs (`[sources]` `schema` / `queries` / `ignore`),
-//! analysis toggles (`[analysis]` `strict`, `surrealdb_version`), diagnostic
+//! analysis toggles (`[analysis]` `strict`), diagnostic
 //! policy (`[diagnostics]` `warnings_as_errors`, `require_suppression_reasons`),
 //! and per-code lint levels (`[lints]`). `surrealguard init` writes a fully
 //! commented example.
@@ -146,8 +146,6 @@ ignore = ["target/**", "node_modules/**", ".git/**"]
 [analysis]
 # Tighten otherwise-advisory checks.
 strict = false
-# Target SurrealDB version for version-gated behavior.
-surrealdb_version = "2"
 
 [diagnostics]
 # Promote every warning to an error (useful in CI).
@@ -1275,7 +1273,7 @@ mod tests {
             .queries
             .iter()
             .any(|glob| glob.contains("queries")));
-        assert_eq!(config.analysis.surrealdb_version, "2");
+        assert!(!config.analysis.strict);
     }
 
     #[test]

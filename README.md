@@ -314,7 +314,6 @@ ignore = ["node_modules/**", "target/**"]
 
 [analysis]
 strict = false
-surrealdb_version = "2"
 
 [diagnostics]
 warnings_as_errors = false

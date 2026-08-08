@@ -10,4 +10,3 @@ ignore = ["node_modules/**", "target/**", ".git/**"]
 
 [analysis]
 strict = false
-surrealdb_version = "2"

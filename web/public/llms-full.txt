@@ -251,7 +251,6 @@ ignore = ["target/**", "node_modules/**", ".git/**"] # default: same
 
 [analysis]
 strict = false # tighten otherwise-advisory checks
-surrealdb_version = "2" # target version for version-gated behavior
 
 [diagnostics]
 warnings_as_errors = false # promote every warning to an error
@@ -440,7 +439,8 @@ Contract: a traversal or RELATE must use relations as declared (`in`->edge->`out
 
 ### 8xxx - Version compatibility
 
-Gated on `[analysis] surrealdb_version`.
+Resolved against the SurrealDB release SurrealGuard targets — the latest one.
+There is no target-version setting.
 
 - `8001` (E) - every function used exists in the configured target version
  (unavailable or renamed - the message suggests the new name).
