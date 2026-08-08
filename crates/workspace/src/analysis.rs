@@ -4889,7 +4889,7 @@ INSERT INTO person { name: 'Ada' };
         let mut workspace = Workspace::default();
         let source = workspace.add_virtual_source(
             "query".into(),
-            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD tags ON person TYPE array<string>;\nLET $lim = 'a';\nSELECT * FROM person LIMIT $lim;\nSELECT * FROM person START -1;\nSELECT * FROM person FETCH age;\nSELECT * FROM person SPLIT age;\nSELECT age FROM person ORDER BY name;\nDEFINE FIELD name ON person TYPE string;\nLET $auth = 1;\nRETURN [1, 'a'];\nIF true { RETURN 1; };\nRETURN array::map([1], |$v, $i, $extra| $v);\nSELECT type::field('ghost') FROM person;".into(),
+            "DEFINE TABLE person;\nDEFINE FIELD age ON person TYPE int;\nDEFINE FIELD tags ON person TYPE array<string>;\nLET $lim = 'a';\nSELECT * FROM person LIMIT $lim;\nSELECT * FROM person START -1;\nSELECT * FROM person FETCH age;\nSELECT * FROM person SPLIT age;\nSELECT age FROM person ORDER BY tags;\nDEFINE FIELD name ON person TYPE string;\nLET $auth = 1;\nRETURN [1, 'a'];\nIF true { RETURN 1; };\nRETURN array::map([1], |$v, $i, $extra| $v);\nSELECT type::field('ghost') FROM person;".into(),
         );
 
         let output = analyze_workspace(&workspace);
@@ -4907,9 +4907,14 @@ INSERT INTO person { name: 'Ada' };
                 "E1024",
                 "SPLIT needs a collection field, but `age` is a `int`",
             ),
+            // The key is `tags` — declared above this SELECT, so it exists —
+            // rather than `name`, which this source only declares *below* it.
+            // 2017's contract is "the field exists but this query's rows don't
+            // carry it"; a key that names nothing is 1002's, and reporting
+            // both was reporting one defect twice.
             (
                 "E2017",
-                "ORDER BY `name` doesn't name a field of this query's rows",
+                "ORDER BY `tags` doesn't name a field of this query's rows",
             ),
             (
                 "E6007",

@@ -329,6 +329,14 @@ table webhook_event  [schemafull]
        modifier where      row_preserving=true
   stmt     86:1 select           : array<{ name: string }>
        modifier where      row_preserving=true
+  stmt     94:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+  stmt     96:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+       modifier order      row_preserving=true
+  stmt    101:1 select           : array<{ owner: { username: string } }>
+       modifier order      row_preserving=true
+  stmt    105:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: record<sector>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
+       modifier split      row_preserving=false
+  stmt    107:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: array<{ email: string, label: string, primary: bool }>, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<{ id: record<sector>, name: string }>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
   diag     4:36 I7014     Hint
   diag     6:51 I7014     Hint
   diag     8:41 I7014     Hint
@@ -357,6 +365,15 @@ table webhook_event  [schemafull]
   diag    73:36 I7014     Hint
   diag    77:43 I7014     Hint
   diag    79:55 I7014     Hint
+  diag     94:8 I7015     Hint
+  diag    94:35 I7014     Hint
+  diag     96:8 I7015     Hint
+  diag    96:15 I7014     Hint
+  diag   101:28 I7014     Hint
+  diag    105:8 I7015     Hint
+  diag   105:15 I7014     Hint
+  diag    107:8 I7015     Hint
+  diag   107:15 I7014     Hint
 
 == source: queries/20_graph.surql ==
   stmt      4:1 select           : array<{ orgs: array<record<organization>> }>

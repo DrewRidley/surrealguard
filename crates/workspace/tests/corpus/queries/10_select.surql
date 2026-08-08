@@ -84,3 +84,24 @@ SELECT owner.{ username }.username AS owner_name FROM organization;
 SELECT username FROM account WHERE person.first_name = 'Ada';
 
 SELECT name FROM organization WHERE owner.person.last_name = 'Lovelace';
+
+-- The row-context clauses cross a record link exactly as the projection and
+-- the condition do. Each of these reads a REAL field on the linked table, so
+-- each must stay silent — before the clauses shared the crossing resolver
+-- they were silent here by accident (the non-crossing one stopped at the link
+-- and proved nothing either way), and this is what keeps them silent on
+-- purpose.
+SELECT * OMIT owner.username FROM organization;
+
+SELECT * FROM organization ORDER BY owner.username;
+
+-- Projecting the key is what lets a non-wildcard SELECT order by it: the
+-- engine rejects an ORDER BY idiom that is not in the selection unless the
+-- projection is a bare `*`.
+SELECT owner.username FROM organization ORDER BY owner.username;
+
+-- `sectors` is an `array<record<sector>>` — a collection, so SPLIT has
+-- something to fan out, and a link, so FETCH has something to expand.
+SELECT * FROM organization SPLIT sectors;
+
+SELECT * FROM organization FETCH sectors;

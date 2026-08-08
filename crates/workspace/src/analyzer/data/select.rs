@@ -92,7 +92,7 @@ fn select_response_kind_inner(
     // own code so hosts can configure them independently.
     for idiom in &stmt.omit {
         if let Some(segments) = plain_field_segments(&idiom.node) {
-            crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
+            check_clause_field_path(ctx, table, &segments, idiom.span);
         }
     }
     check_fetch_clauses(stmt, table, ctx);
@@ -106,7 +106,7 @@ fn select_response_kind_inner(
                 if projected_name_covers(&projected, &segments.join(".")) {
                     continue;
                 }
-                crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
+                check_clause_field_path(ctx, table, &segments, idiom.span);
             }
         }
     }
@@ -386,7 +386,9 @@ fn check_fetch_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analy
             continue;
         }
         if let Some(segments) = plain_field_segments(&idiom.node) {
-            crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
+            if check_clause_field_path(ctx, table, &segments, idiom.span) {
+                continue;
+            }
             // FETCH substitutes records; fetching a scalar does nothing.
             // Resolve across record links so `FETCH team.owner` reads the
             // linked field's kind rather than the opaque `Any` boundary.
@@ -419,7 +421,9 @@ fn check_fetch_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analy
 fn check_split_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut AnalysisContext<'_>) {
     for idiom in &stmt.split {
         if let Some(segments) = plain_field_segments(&idiom.node) {
-            crate::analyzer::data::check_field_path(ctx, table, &segments, idiom.span, 1002);
+            if check_clause_field_path(ctx, table, &segments, idiom.span) {
+                continue;
+            }
             // SPLIT fans rows out over a collection field. Resolve across
             // record links so a linked collection field types precisely.
             if let Some(kind) = resolve_field_path(ctx.schema(), table, &segments) {
@@ -500,8 +504,14 @@ fn check_order_clause(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analys
             ));
             continue;
         };
-        if !projected_name_covers(&projected, &segments.join(".")) {
-            crate::analyzer::data::check_field_path(ctx, table, &segments, key.expr.span, 1002);
+        // A key that names nothing at all is reported as 1002 and nothing
+        // else: 2017's remedy — project the key — does not fix a field the
+        // table does not have, so offering it would send the author the wrong
+        // way about the same single defect.
+        if !projected_name_covers(&projected, &segments.join("."))
+            && check_clause_field_path(ctx, table, &segments, key.expr.span)
+        {
+            continue;
         }
         if let Some(keys) = &explicit_keys {
             let name = segments.join(".");
@@ -997,11 +1007,30 @@ fn check_group_key_projection(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<
         return;
     }
     let projected = projected_row_names(stmt);
+    // A key that names nothing on the source table is 1002's to report, and
+    // only 1002's: this warning's remedy is "add the key to the projection",
+    // which cannot label a group by a field that does not exist. The lookup is
+    // the plain, side-effect-free one because the statement's own resolution
+    // (which emits) has not run yet at shape-check time.
+    let absent: std::collections::BTreeSet<String> =
+        match plain_source_table(stmt, ctx.schema()) {
+            Some(table) => group
+                .keys
+                .iter()
+                .filter_map(|key| plain_field_segments(&key.node))
+                .filter(|segments| field_path_is_absent(ctx.schema(), table, segments))
+                .map(|segments| segments.join("."))
+                .collect(),
+            None => std::collections::BTreeSet::new(),
+        };
     for key in &group.keys {
         let Some(segments) = plain_field_segments(&key.node) else {
             continue;
         };
         let name = segments.join(".");
+        if absent.contains(&name) {
+            continue;
+        }
         if !projected_name_covers(&projected, &name) {
             let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), key.span);
             ctx.emit(
@@ -1018,6 +1047,25 @@ fn check_group_key_projection(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<
             );
         }
     }
+}
+
+/// The source table's definition when the FROM clause names one plainly.
+///
+/// A side-effect-free counterpart to [`resolve_from_table`], for the shape
+/// checks: those run before the statement resolves its own source, and calling
+/// the resolving one twice would emit its findings twice. Anything less direct
+/// than a table name or a record id yields `None`, which every caller reads as
+/// "prove nothing here".
+fn plain_source_table<'a>(
+    stmt: &ast::SelectStmt,
+    schema: &'a crate::schema::SchemaIndex,
+) -> Option<&'a TableDef> {
+    let name = match &stmt.from.first()?.node {
+        ast::Expr::Table(name) => &name.node,
+        ast::Expr::RecordId { table, .. } => &table.node,
+        _ => return None,
+    };
+    schema.tables.get(name)
 }
 
 /// The names this query's result rows carry: each projection's `AS` alias,
@@ -3224,6 +3272,42 @@ pub(crate) fn validate_field_path(
         }
     }
     crate::analyzer::data::check_field_path(ctx, table, segments, span, code);
+}
+
+/// Checks one key of a row-context clause — OMIT, SPLIT, FETCH, GROUP BY,
+/// ORDER BY — against the schema, and reports whether the path is *provably
+/// absent*.
+///
+/// The path goes through [`validate_field_path`], the same link-crossing
+/// checker the projection and (since 75899ba) every condition already use, so
+/// a clause reads a path exactly as a projection of it would: `SPLIT
+/// owner.ghost` is the same wrong read as `SELECT owner.ghost`. These clauses
+/// were the last callers of `check_field_path`, which treats a `record<>`
+/// field as an opaque boundary — it never looked past `owner`, so every
+/// mistake behind a link went unreported here.
+///
+/// The `bool` is what keeps a clause from reporting one defect twice. Each of
+/// these clauses already has a finding for a key it cannot use (1023, 1024,
+/// 2017), and each is derived from the key's *resolved kind* — which, for a
+/// path that does not exist, is the vacuous `none`. "SPLIT needs a collection
+/// field, but `owner.ghost` is a `none`" restates the absence in the
+/// vocabulary of the wrong contract; 1002 names it directly and its fix (spell
+/// the field correctly) is the only one that works. So the caller stays quiet
+/// when this returns `true` and lets the root cause stand alone.
+fn check_clause_field_path(
+    ctx: &mut AnalysisContext<'_>,
+    table: &TableDef,
+    segments: &[String],
+    span: surrealguard_syntax::span::ByteRange,
+) -> bool {
+    // The predicate is `validate_field_path`'s non-emitting twin — asking it
+    // first is what makes "1002 fired" answerable before the emit, and keeps
+    // the suppression from ever drifting out of step with the report.
+    if !field_path_is_absent(ctx.schema(), table, segments) {
+        return false;
+    }
+    validate_field_path(ctx, table, segments, span, 1002);
+    true
 }
 
 /// Emits `code` for a path read through a **multi-table** link, when the path
