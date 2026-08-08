@@ -147,10 +147,6 @@
       "required": true,
       "types": [
         {
-          "type": "Ident",
-          "named": true
-        },
-        {
           "type": "JwtClause",
           "named": true
         },
@@ -159,11 +155,19 @@
           "named": true
         },
         {
+          "type": "RefreshClause",
+          "named": true
+        },
+        {
           "type": "SigninClause",
           "named": true
         },
         {
           "type": "SignupClause",
+          "named": true
+        },
+        {
+          "type": "WithJwtClause",
           "named": true
         }
       ]
@@ -770,7 +774,43 @@
       "required": true,
       "types": [
         {
+          "type": "Array",
+          "named": true
+        },
+        {
+          "type": "BinaryExpression",
+          "named": true
+        },
+        {
           "type": "Block",
+          "named": true
+        },
+        {
+          "type": "Bool",
+          "named": true
+        },
+        {
+          "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Duration",
+          "named": true
+        },
+        {
+          "type": "FormatString",
+          "named": true
+        },
+        {
+          "type": "FunctionCall",
+          "named": true
+        },
+        {
+          "type": "FunctionJs",
+          "named": true
+        },
+        {
+          "type": "Ident",
           "named": true
         },
         {
@@ -778,7 +818,59 @@
           "named": true
         },
         {
+          "type": "None",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        },
+        {
+          "type": "Object",
+          "named": true
+        },
+        {
+          "type": "Path",
+          "named": true
+        },
+        {
+          "type": "Point",
+          "named": true
+        },
+        {
+          "type": "PrefixExpression",
+          "named": true
+        },
+        {
+          "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RecordId",
+          "named": true
+        },
+        {
+          "type": "Regex",
+          "named": true
+        },
+        {
+          "type": "Set",
+          "named": true
+        },
+        {
+          "type": "String",
+          "named": true
+        },
+        {
           "type": "SubQuery",
+          "named": true
+        },
+        {
+          "type": "TypeCast",
+          "named": true
+        },
+        {
+          "type": "VariableName",
           "named": true
         }
       ]
@@ -2133,6 +2225,10 @@
           "named": true
         },
         {
+          "type": "PasswordClause",
+          "named": true
+        },
+        {
           "type": "Path",
           "named": true
         },
@@ -2173,7 +2269,19 @@
           "named": true
         },
         {
+          "type": "RolesClause",
+          "named": true
+        },
+        {
           "type": "ScopeDefinition",
+          "named": true
+        },
+        {
+          "type": "SequenceBatchClause",
+          "named": true
+        },
+        {
+          "type": "SequenceStartClause",
           "named": true
         },
         {
@@ -2198,6 +2306,10 @@
         },
         {
           "type": "ThenClause",
+          "named": true
+        },
+        {
+          "type": "TimeoutClause",
           "named": true
         },
         {
@@ -2738,6 +2850,10 @@
         },
         {
           "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "None",
           "named": true
         }
       ]
@@ -4023,6 +4139,14 @@
         {
           "type": "Keyword",
           "named": true
+        },
+        {
+          "type": "OnRootNsDbClause",
+          "named": true
+        },
+        {
+          "type": "OnTableClause",
+          "named": true
         }
       ]
     }
@@ -4378,6 +4502,33 @@
     }
   },
   {
+    "type": "IssuerClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "String",
+          "named": true
+        },
+        {
+          "type": "VariableName",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "JavaScriptBlock",
     "named": true,
     "fields": {}
@@ -4395,11 +4546,19 @@
           "named": true
         },
         {
+          "type": "IssuerClause",
+          "named": true
+        },
+        {
           "type": "Keyword",
           "named": true
         },
         {
           "type": "String",
+          "named": true
+        },
+        {
+          "type": "VariableName",
           "named": true
         }
       ]
@@ -5838,6 +5997,25 @@
     }
   },
   {
+    "type": "PasswordClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "String",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "PatchClause",
     "named": true,
     "fields": {},
@@ -6781,6 +6959,21 @@
     }
   },
   {
+    "type": "RefreshClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Keyword",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "RelateStatement",
     "named": true,
     "fields": {},
@@ -6913,6 +7106,10 @@
         },
         {
           "type": "Object",
+          "named": true
+        },
+        {
+          "type": "OnRootNsDbClause",
           "named": true
         },
         {
@@ -7226,6 +7423,25 @@
         },
         {
           "type": "VariableName",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "RolesClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "Keyword",
           "named": true
         }
       ]
@@ -7709,6 +7925,44 @@
     }
   },
   {
+    "type": "SequenceBatchClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "SequenceStartClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "SessionClause",
     "named": true,
     "fields": {},
@@ -7897,7 +8151,43 @@
       "required": true,
       "types": [
         {
+          "type": "Array",
+          "named": true
+        },
+        {
+          "type": "BinaryExpression",
+          "named": true
+        },
+        {
           "type": "Block",
+          "named": true
+        },
+        {
+          "type": "Bool",
+          "named": true
+        },
+        {
+          "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Duration",
+          "named": true
+        },
+        {
+          "type": "FormatString",
+          "named": true
+        },
+        {
+          "type": "FunctionCall",
+          "named": true
+        },
+        {
+          "type": "FunctionJs",
+          "named": true
+        },
+        {
+          "type": "Ident",
           "named": true
         },
         {
@@ -7905,7 +8195,59 @@
           "named": true
         },
         {
+          "type": "None",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        },
+        {
+          "type": "Object",
+          "named": true
+        },
+        {
+          "type": "Path",
+          "named": true
+        },
+        {
+          "type": "Point",
+          "named": true
+        },
+        {
+          "type": "PrefixExpression",
+          "named": true
+        },
+        {
+          "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RecordId",
+          "named": true
+        },
+        {
+          "type": "Regex",
+          "named": true
+        },
+        {
+          "type": "Set",
+          "named": true
+        },
+        {
+          "type": "String",
+          "named": true
+        },
+        {
           "type": "SubQuery",
+          "named": true
+        },
+        {
+          "type": "TypeCast",
+          "named": true
+        },
+        {
+          "type": "VariableName",
           "named": true
         }
       ]
@@ -7920,7 +8262,43 @@
       "required": true,
       "types": [
         {
+          "type": "Array",
+          "named": true
+        },
+        {
+          "type": "BinaryExpression",
+          "named": true
+        },
+        {
           "type": "Block",
+          "named": true
+        },
+        {
+          "type": "Bool",
+          "named": true
+        },
+        {
+          "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Duration",
+          "named": true
+        },
+        {
+          "type": "FormatString",
+          "named": true
+        },
+        {
+          "type": "FunctionCall",
+          "named": true
+        },
+        {
+          "type": "FunctionJs",
+          "named": true
+        },
+        {
+          "type": "Ident",
           "named": true
         },
         {
@@ -7928,7 +8306,59 @@
           "named": true
         },
         {
+          "type": "None",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        },
+        {
+          "type": "Object",
+          "named": true
+        },
+        {
+          "type": "Path",
+          "named": true
+        },
+        {
+          "type": "Point",
+          "named": true
+        },
+        {
+          "type": "PrefixExpression",
+          "named": true
+        },
+        {
+          "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RecordId",
+          "named": true
+        },
+        {
+          "type": "Regex",
+          "named": true
+        },
+        {
+          "type": "Set",
+          "named": true
+        },
+        {
+          "type": "String",
+          "named": true
+        },
+        {
           "type": "SubQuery",
+          "named": true
+        },
+        {
+          "type": "TypeCast",
+          "named": true
+        },
+        {
+          "type": "VariableName",
           "named": true
         }
       ]
@@ -10033,6 +10463,25 @@
       "types": [
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "Keyword",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "WithJwtClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "JwtClause",
           "named": true
         },
         {

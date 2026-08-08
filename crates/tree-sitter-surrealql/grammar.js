@@ -114,6 +114,11 @@ export default grammar({
 		// `_subqueryStatement` branch and the `csep` branch; both yield the
 		// same IfElseStatement child, so resolve dynamically.
 		[$._subqueryStatement, $.ArgumentList],
+		// After `WITH JWT <jwt>` inside DEFINE ACCESS ... TYPE RECORD, a `WITH`
+		// starts either the JWT clause's own `WITH ISSUER` or the type's
+		// trailing `WITH REFRESH`. Deciding needs the token after `WITH`, so
+		// the grammar is LR(2) here — not ambiguous. Let GLR look ahead.
+		[$.JwtClause],
 	],
 
 	rules: {
@@ -231,22 +236,8 @@ export default grammar({
 				alias($._kw_use, $.Keyword),
 				choice($._useNs, $._useDb, seq($._useNs, $._useDb)),
 			),
-		_useNs: ($) =>
-			seq(
-				choice(
-					alias($._kw_ns, $.Keyword),
-					alias($._kw_namespace, $.Keyword),
-				),
-				$.Ident,
-			),
-		_useDb: ($) =>
-			seq(
-				choice(
-					alias($._kw_db, $.Keyword),
-					alias($._kw_database, $.Keyword),
-				),
-				$.Ident,
-			),
+		_useNs: ($) => seq($._nsKeyword, $.Ident),
+		_useDb: ($) => seq($._dbKeyword, $.Ident),
 
 		// SHOW
 		ShowStatement: ($) =>
@@ -273,14 +264,24 @@ export default grammar({
 				alias($._kw_for, $.Keyword),
 				choice(
 					alias($._kw_root, $.Keyword),
-					alias($._kw_ns, $.Keyword),
-					alias($._kw_namespace, $.Keyword),
-					alias($._kw_db, $.Keyword),
-					alias($._kw_database, $.Keyword),
+					$._nsKeyword,
+					$._dbKeyword,
 					seq(alias($._kw_sc, $.Keyword), $.Ident),
 					seq(alias($._kw_scope, $.Keyword), $.Ident),
 					seq(alias($._kw_tb, $.Keyword), $.Ident),
 					seq(alias($._kw_table, $.Keyword), $.Ident),
+					// INFO FOR USER defaults to the session's level when the
+					// ON clause is omitted.
+					seq(
+						alias($._kw_user, $.Keyword),
+						$.Ident,
+						optional($.OnRootNsDbClause),
+					),
+					seq(
+						alias($._kw_index, $.Keyword),
+						$.Ident,
+						$.OnTableClause,
+					),
 				),
 				optional(alias($._kw_structure, $.Keyword)),
 			),
@@ -404,7 +405,7 @@ export default grammar({
 				alias($._kw_remove, $.Keyword),
 				choice(
 					seq(
-						alias($._kw_namespace, $.Keyword),
+						$._nsKeyword,
 						optional($.IfExistsClause),
 						$._value,
 						optional(
@@ -415,7 +416,7 @@ export default grammar({
 						),
 					),
 					seq(
-						alias($._kw_database, $.Keyword),
+						$._dbKeyword,
 						optional($.IfExistsClause),
 						$._value,
 						optional(
@@ -429,11 +430,26 @@ export default grammar({
 						alias($._kw_user, $.Keyword),
 						optional($.IfExistsClause),
 						$._value,
-						alias($._kw_on, $.Keyword),
+						$.OnRootNsDbClause,
+					),
+					seq(
+						alias($._kw_access, $.Keyword),
+						optional($.IfExistsClause),
+						$._value,
+						$.OnRootNsDbClause,
+					),
+					seq(
+						alias($._kw_sequence, $.Keyword),
+						optional($.IfExistsClause),
+						$._value,
+					),
+					seq(
+						alias($._kw_config, $.Keyword),
+						optional($.IfExistsClause),
 						choice(
-							alias($._kw_root, $.Keyword),
-							alias($._kw_namespace, $.Keyword),
-							alias($._kw_database, $.Keyword),
+							alias($._kw_graphql, $.Keyword),
+							alias($._kw_api, $.Keyword),
+							alias($._kw_default, $.Keyword),
 						),
 					),
 					seq(
@@ -442,8 +458,8 @@ export default grammar({
 						$._value,
 						alias($._kw_on, $.Keyword),
 						choice(
-							alias($._kw_namespace, $.Keyword),
-							alias($._kw_database, $.Keyword),
+							$._nsKeyword,
+							$._dbKeyword,
 							alias($._kw_scope, $.Keyword),
 						),
 					),
@@ -515,13 +531,11 @@ export default grammar({
 				alias($._kw_define, $.Keyword),
 				choice(
 					$.AccessDefinition,
+					seq($._nsKeyword, $._defineNamespaceOptions),
+					seq($._dbKeyword, $._defineDatabaseOptions),
 					seq(
-						alias($._kw_namespace, $.Keyword),
-						$._defineNamespaceOptions,
-					),
-					seq(
-						alias($._kw_database, $.Keyword),
-						$._defineDatabaseOptions,
+						alias($._kw_sequence, $.Keyword),
+						$._defineSequenceOptions,
 					),
 					seq(alias($._kw_user, $.Keyword), $._defineUserOptions),
 					seq(alias($._kw_token, $.Keyword), $._defineTokenOptions),
@@ -649,6 +663,25 @@ export default grammar({
 				optional($.CommentClause),
 			),
 
+		// DEFINE SEQUENCE takes BATCH/START/TIMEOUT in any order; the engine
+		// has no COMMENT on this statement.
+		_defineSequenceOptions: ($) =>
+			seq(
+				optional(choice($.IfNotExistsClause, $.OverwriteClause)),
+				$._value,
+				repeat(
+					choice(
+						$.SequenceBatchClause,
+						$.SequenceStartClause,
+						$.TimeoutClause,
+					),
+				),
+			),
+		SequenceBatchClause: ($) =>
+			seq(alias($._kw_batch, $.Keyword), $.Number),
+		SequenceStartClause: ($) =>
+			seq(alias($._kw_start, $.Keyword), $.Number),
+
 		_defineParamOptions: ($) =>
 			seq(
 				optional(choice($.IfNotExistsClause, $.OverwriteClause)),
@@ -732,8 +765,8 @@ export default grammar({
 				seq(
 					alias($._kw_on, $.Keyword),
 					choice(
-						alias($._kw_namespace, $.Keyword),
-						alias($._kw_database, $.Keyword),
+						$._nsKeyword,
+						$._dbKeyword,
 						seq(alias($._kw_scope, $.Keyword), $._value),
 					),
 				),
@@ -741,21 +774,32 @@ export default grammar({
 				seq(alias($._kw_value, $.Keyword), $.String),
 			),
 
+		// The engine takes DEFINE USER's optional clauses in any order, and
+		// each one may be repeated (the last wins). `repeat(choice(...))` is
+		// the honest shape; a fixed `seq` rejects `COMMENT 'x' PASSWORD 'y'`.
 		_defineUserOptions: ($) =>
 			seq(
 				optional(choice($.IfNotExistsClause, $.OverwriteClause)),
 				$._value,
 				$.OnRootNsDbClause,
-				seq(
+				repeat(
 					choice(
-						alias($._kw_password, $.Keyword),
-						alias($._kw_passhash, $.Keyword),
+						$.PasswordClause,
+						$.RolesClause,
+						$.DurationClause,
+						$.CommentClause,
 					),
-					$.String,
 				),
-				seq(alias($._kw_roles, $.Keyword), csep($.Ident)),
-				optional($.DurationClause),
 			),
+		PasswordClause: ($) =>
+			seq(
+				choice(
+					alias($._kw_password, $.Keyword),
+					alias($._kw_passhash, $.Keyword),
+				),
+				$.String,
+			),
+		RolesClause: ($) => seq(alias($._kw_roles, $.Keyword), csep($.Ident)),
 
 		_defineApiOptions: ($) =>
 			seq(
@@ -1090,16 +1134,31 @@ export default grammar({
 				$._value,
 			),
 
+		_nsKeyword: ($) =>
+			choice(
+				alias($._kw_ns, $.Keyword),
+				alias($._kw_namespace, $.Keyword),
+			),
+		_dbKeyword: ($) =>
+			choice(
+				alias($._kw_db, $.Keyword),
+				alias($._kw_database, $.Keyword),
+			),
+
 		OnRootNsDbClause: ($) =>
 			seq(
 				alias($._kw_on, $.Keyword),
 				choice(
 					alias($._kw_root, $.Keyword),
-					alias($._kw_namespace, $.Keyword),
-					alias($._kw_database, $.Keyword),
+					$._nsKeyword,
+					$._dbKeyword,
 				),
 			),
 
+		// TYPE JWT|RECORD|BEARER. Everything the engine parses as part of the
+		// access type stays nested here: it rejects SIGNUP/SIGNIN once a WITH
+		// clause has been seen, so this is genuinely ordered even though the
+		// clauses around it (AUTHENTICATE/DURATION/COMMENT) are not.
 		AccessTypeClause: ($) =>
 			seq(
 				alias($._kw_type, $.Keyword),
@@ -1108,70 +1167,81 @@ export default grammar({
 					seq(
 						alias($._kw_record, $.Keyword),
 						repeat(choice($.SignupClause, $.SigninClause)),
-						optional(
-							seq(
-								alias($._kw_with, $.Keyword),
-								alias($._kw_jwt, $.Keyword),
-								$.JwtClause,
-								optional(
-									seq(
-										alias($._kw_with, $.Keyword),
-										alias($._kw_issuer, $.Keyword),
-										alias($._kw_key, $.Keyword),
-										$.Ident,
-									),
-								),
-							),
+						optional($.RefreshClause),
+						optional($.WithJwtClause),
+						optional($.RefreshClause),
+					),
+					seq(
+						alias($._kw_bearer, $.Keyword),
+						alias($._kw_for, $.Keyword),
+						choice(
+							alias($._kw_user, $.Keyword),
+							alias($._kw_record, $.Keyword),
 						),
+						optional($.WithJwtClause),
 					),
 				),
+			),
+
+		WithJwtClause: ($) =>
+			seq(
+				alias($._kw_with, $.Keyword),
+				alias($._kw_jwt, $.Keyword),
+				$.JwtClause,
+			),
+		RefreshClause: ($) =>
+			seq(
+				alias($._kw_with, $.Keyword),
+				alias($._kw_refresh, $.Keyword),
 			),
 
 		JwtClause: ($) =>
-			choice(
-				seq(
-					alias($._kw_algorithm, $.Keyword),
-					$.Ident,
-					alias($._kw_key, $.Keyword),
-					$.Ident,
+			seq(
+				choice(
+					seq(
+						alias($._kw_algorithm, $.Keyword),
+						$.Ident,
+						alias($._kw_key, $.Keyword),
+						$._accessKeyValue,
+					),
+					seq(alias($._kw_url, $.Keyword), $._accessKeyValue),
 				),
-				seq(alias($._kw_url, $.Keyword), $.String),
+				optional($.IssuerClause),
 			),
 
-		SignupClause: ($) =>
-			seq(alias($._kw_signup, $.Keyword), choice($.SubQuery, $.Block)),
-		SigninClause: ($) =>
-			seq(alias($._kw_signin, $.Keyword), choice($.SubQuery, $.Block)),
-		AuthenticateClause: ($) =>
+		// WITH ISSUER takes an algorithm, a key, both, or neither.
+		IssuerClause: ($) =>
 			seq(
-				alias($._kw_authenticate, $.Keyword),
-				choice($.SubQuery, $.Block),
+				alias($._kw_with, $.Keyword),
+				alias($._kw_issuer, $.Keyword),
+				optional(seq(alias($._kw_algorithm, $.Keyword), $.Ident)),
+				optional(
+					seq(alias($._kw_key, $.Keyword), $._accessKeyValue),
+				),
 			),
+
+		_accessKeyValue: ($) => choice($.String, $.VariableName),
+
+		SignupClause: ($) => seq(alias($._kw_signup, $.Keyword), $._value),
+		SigninClause: ($) => seq(alias($._kw_signin, $.Keyword), $._value),
+		AuthenticateClause: ($) =>
+			seq(alias($._kw_authenticate, $.Keyword), $._value),
 		SessionClause: ($) => seq(alias($._kw_session, $.Keyword), $.Duration),
 
+		// DURATION FOR <TOKEN|SESSION|GRANT> <duration|NONE>, ... — the engine
+		// requires the FOR target on every entry and accepts NONE in place of
+		// a duration to mean "never expires".
 		DurationClause: ($) =>
-			seq(
-				alias($._kw_duration, $.Keyword),
-				optional(
-					seq(
-						alias($._kw_for, $.Keyword),
-						alias($._kw_session, $.Keyword),
-					),
-				),
-				csep($.DurationValue),
-			),
+			seq(alias($._kw_duration, $.Keyword), csep($.DurationValue)),
 		DurationValue: ($) =>
-			choice(
-				seq(
-					alias($._kw_for, $.Keyword),
+			seq(
+				alias($._kw_for, $.Keyword),
+				choice(
 					alias($._kw_token, $.Keyword),
-					$.Duration,
-				),
-				seq(
-					alias($._kw_for, $.Keyword),
 					alias($._kw_session, $.Keyword),
-					$.Duration,
+					alias($._kw_grant, $.Keyword),
 				),
+				choice($.Duration, alias($._kw_none, $.None)),
 			),
 
 		TokenTypeClause: ($) => seq(alias($._kw_type, $.Keyword), $.TokenType),
