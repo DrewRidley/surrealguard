@@ -151,6 +151,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "AccessStatement"
+        },
+        {
+          "type": "SYMBOL",
           "name": "KillStatement"
         },
         {
@@ -598,6 +602,296 @@
                 {
                   "type": "SYMBOL",
                   "name": "Number"
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "AccessStatement": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_kw_access"
+          },
+          "named": true,
+          "value": "Keyword"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "Ident"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "OnRootNsDbClause"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "AccessGrantClause"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "AccessShowClause"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "AccessRevokeClause"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "AccessPurgeClause"
+            }
+          ]
+        }
+      ]
+    },
+    "AccessGrantClause": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_kw_grant"
+          },
+          "named": true,
+          "value": "Keyword"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_kw_for"
+          },
+          "named": true,
+          "value": "Keyword"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_kw_user"
+                  },
+                  "named": true,
+                  "value": "Keyword"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "Ident"
+                }
+              ]
+            },
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_kw_record"
+                  },
+                  "named": true,
+                  "value": "Keyword"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "RecordId"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "AccessShowClause": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_kw_show"
+          },
+          "named": true,
+          "value": "Keyword"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_accessSubject"
+        }
+      ]
+    },
+    "AccessRevokeClause": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_kw_revoke"
+          },
+          "named": true,
+          "value": "Keyword"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_accessSubject"
+        }
+      ]
+    },
+    "_accessSubject": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_kw_all"
+          },
+          "named": true,
+          "value": "Keyword"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_kw_grant"
+              },
+              "named": true,
+              "value": "Keyword"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "Ident"
+            }
+          ]
+        },
+        {
+          "type": "SYMBOL",
+          "name": "WhereClause"
+        }
+      ]
+    },
+    "AccessPurgeClause": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_kw_purge"
+          },
+          "named": true,
+          "value": "Keyword"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_kw_expired"
+                  },
+                  "named": true,
+                  "value": "Keyword"
+                },
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_kw_revoked"
+                  },
+                  "named": true,
+                  "value": "Keyword"
+                }
+              ]
+            },
+            {
+              "type": "REPEAT",
+              "content": {
+                "type": "SEQ",
+                "members": [
+                  {
+                    "type": "STRING",
+                    "value": ","
+                  },
+                  {
+                    "type": "CHOICE",
+                    "members": [
+                      {
+                        "type": "ALIAS",
+                        "content": {
+                          "type": "SYMBOL",
+                          "name": "_kw_expired"
+                        },
+                        "named": true,
+                        "value": "Keyword"
+                      },
+                      {
+                        "type": "ALIAS",
+                        "content": {
+                          "type": "SYMBOL",
+                          "name": "_kw_revoked"
+                        },
+                        "named": true,
+                        "value": "Keyword"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_kw_for"
+                  },
+                  "named": true,
+                  "value": "Keyword"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "Duration"
                 }
               ]
             },
@@ -9244,8 +9538,23 @@
         {
           "type": "SYMBOL",
           "name": "Point"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "Constant"
         }
       ]
+    },
+    "Constant": {
+      "type": "TOKEN",
+      "content": {
+        "type": "PREC",
+        "value": 4,
+        "content": {
+          "type": "PATTERN",
+          "value": "(?:[mM][aA][tT][hH]::(?:[eE]|[fF][rR][aA][cC][__][11][__][pP][iI]|[fF][rR][aA][cC][__][11][__][sS][qQ][rR][tT][__][22]|[fF][rR][aA][cC][__][22][__][pP][iI]|[fF][rR][aA][cC][__][22][__][sS][qQ][rR][tT][__][pP][iI]|[fF][rR][aA][cC][__][pP][iI][__][22]|[fF][rR][aA][cC][__][pP][iI][__][33]|[fF][rR][aA][cC][__][pP][iI][__][44]|[fF][rR][aA][cC][__][pP][iI][__][66]|[fF][rR][aA][cC][__][pP][iI][__][88]|[iI][nN][fF]|[iI][nN][fF][iI][nN][iI][tT][yY]|[lL][nN][__][11][00]|[lL][nN][__][22]|[lL][oO][gG][11][00][__][22]|[lL][oO][gG][11][00][__][eE]|[lL][oO][gG][22][__][11][00]|[lL][oO][gG][22][__][eE]|[nN][eE][gG][__][iI][nN][fF]|[nN][eE][gG][__][iI][nN][fF][iI][nN][iI][tT][yY]|[pP][iI]|[sS][qQ][rR][tT][__][22]|[tT][aA][uU])|[tT][iI][mM][eE]::[eE][pP][oO][cC][hH]|[dD][uU][rR][aA][tT][iI][oO][nN]::[mM][aA][xX])"
+        }
+      }
     },
     "Path": {
       "type": "CHOICE",

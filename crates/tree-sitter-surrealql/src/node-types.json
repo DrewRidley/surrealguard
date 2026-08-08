@@ -40,6 +40,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -139,6 +143,133 @@
     }
   },
   {
+    "type": "AccessGrantClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "RecordId",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "AccessPurgeClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Duration",
+          "named": true
+        },
+        {
+          "type": "Keyword",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "AccessRevokeClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "WhereClause",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "AccessShowClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "WhereClause",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "AccessStatement",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "AccessGrantClause",
+          "named": true
+        },
+        {
+          "type": "AccessPurgeClause",
+          "named": true
+        },
+        {
+          "type": "AccessRevokeClause",
+          "named": true
+        },
+        {
+          "type": "AccessShowClause",
+          "named": true
+        },
+        {
+          "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "OnRootNsDbClause",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "AccessTypeClause",
     "named": true,
     "fields": {},
@@ -203,6 +334,10 @@
         },
         {
           "type": "CommentClause",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -381,6 +516,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "CreateStatement",
           "named": true
         },
@@ -540,6 +679,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -671,6 +814,10 @@
         },
         {
           "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -817,6 +964,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -925,6 +1076,10 @@
         },
         {
           "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -1054,6 +1209,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -1145,6 +1304,10 @@
       "required": true,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -1190,6 +1353,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -1475,6 +1642,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -1644,6 +1815,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -1771,6 +1946,10 @@
         },
         {
           "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -1974,6 +2153,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "DefaultAlways",
           "named": true
         },
@@ -2141,6 +2324,10 @@
         },
         {
           "type": "ConcurrentlyClause",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -2387,6 +2574,10 @@
       "required": true,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -2424,6 +2615,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -2663,6 +2858,10 @@
         },
         {
           "type": "Colon",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -3061,6 +3260,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -3198,6 +3401,10 @@
       "required": false,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -3239,6 +3446,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -3756,6 +3967,10 @@
         },
         {
           "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -4388,6 +4603,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -4487,6 +4706,10 @@
       "required": true,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -4532,6 +4755,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -4821,6 +5048,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -4941,6 +5172,10 @@
         },
         {
           "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -5314,6 +5549,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -5441,6 +5680,10 @@
         },
         {
           "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -5720,6 +5963,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -5947,6 +6194,10 @@
         },
         {
           "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -6280,6 +6531,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Destructure",
           "named": true
         },
@@ -6546,6 +6801,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -6653,6 +6912,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -6757,6 +7020,10 @@
         },
         {
           "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -7071,6 +7338,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -7286,6 +7557,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -7435,6 +7710,10 @@
       "required": true,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -7472,6 +7751,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -7701,6 +7984,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -7867,6 +8154,10 @@
       "required": true,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -7904,6 +8195,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -8239,6 +8534,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -8392,6 +8691,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -8500,6 +8803,10 @@
         },
         {
           "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -8660,6 +8967,10 @@
       "required": false,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -8697,6 +9008,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -8919,6 +9234,10 @@
       "required": false,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -8956,6 +9275,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -9185,6 +9508,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -9361,6 +9688,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -9473,6 +9804,10 @@
         },
         {
           "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -9672,6 +10007,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -9859,6 +10198,10 @@
       "required": true,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -9896,6 +10239,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -10130,6 +10477,10 @@
       "required": true,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -10167,6 +10518,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -10440,6 +10795,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -10589,6 +10948,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -10697,6 +11060,10 @@
         },
         {
           "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -11005,6 +11372,10 @@
     "type": "Comment",
     "named": true,
     "extra": true
+  },
+  {
+    "type": "Constant",
+    "named": true
   },
   {
     "type": "Decimal",

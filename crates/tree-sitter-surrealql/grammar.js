@@ -53,6 +53,43 @@ function piped(rule) {
 /** Digit sequence with optional underscore separators (e.g. 1_000_000) */
 const DIGITS = /[0-9]+(?:_[0-9]+)*/;
 
+/** Case-insensitive alternation source, for embedding in a larger RegExp. */
+function kwAlt(words) {
+	return words.map((word) => kw(word).source).join('|');
+}
+
+/**
+ * The constants SurrealQL resolves as bare paths — `math::PI` is a value, not
+ * a zero-argument call. The set is closed: 3.2.3 rejects `math::nan`,
+ * `time::MAX` and `duration::MIN` at parse time, so listing them exactly is
+ * what keeps the grammar from being looser than the engine.
+ */
+const MATH_CONSTANTS = [
+	'E',
+	'FRAC_1_PI',
+	'FRAC_1_SQRT_2',
+	'FRAC_2_PI',
+	'FRAC_2_SQRT_PI',
+	'FRAC_PI_2',
+	'FRAC_PI_3',
+	'FRAC_PI_4',
+	'FRAC_PI_6',
+	'FRAC_PI_8',
+	'INF',
+	'INFINITY',
+	'LN_10',
+	'LN_2',
+	'LOG10_2',
+	'LOG10_E',
+	'LOG2_10',
+	'LOG2_E',
+	'NEG_INF',
+	'NEG_INFINITY',
+	'PI',
+	'SQRT_2',
+	'TAU',
+];
+
 // ---------------------------------------------------------------------------
 // Grammar
 // ---------------------------------------------------------------------------
@@ -167,6 +204,7 @@ export default grammar({
 				$.CancelStatement,
 				$.CommitStatement,
 				$.InfoForStatement,
+				$.AccessStatement,
 				$.KillStatement,
 				$.LiveSelectStatement,
 				$.ShowStatement,
@@ -255,6 +293,57 @@ export default grammar({
 					),
 				),
 				optional(seq(alias($._kw_limit, $.Keyword), $.Number)),
+			),
+
+		// ACCESS — operate on the grants of a DEFINE ACCESS method. The level
+		// clause is optional (it defaults to the session's), and each verb
+		// carries its own operand shape. The grant id is an Ident and only an
+		// Ident: 3.2.3 rejects `SHOW GRANT $g` and `GRANT FOR USER $u`.
+		AccessStatement: ($) =>
+			seq(
+				alias($._kw_access, $.Keyword),
+				$.Ident,
+				optional($.OnRootNsDbClause),
+				choice(
+					$.AccessGrantClause,
+					$.AccessShowClause,
+					$.AccessRevokeClause,
+					$.AccessPurgeClause,
+				),
+			),
+		AccessGrantClause: ($) =>
+			seq(
+				alias($._kw_grant, $.Keyword),
+				alias($._kw_for, $.Keyword),
+				choice(
+					seq(alias($._kw_user, $.Keyword), $.Ident),
+					seq(alias($._kw_record, $.Keyword), $.RecordId),
+				),
+			),
+		AccessShowClause: ($) =>
+			seq(alias($._kw_show, $.Keyword), $._accessSubject),
+		AccessRevokeClause: ($) =>
+			seq(alias($._kw_revoke, $.Keyword), $._accessSubject),
+		// SHOW and REVOKE select the same way: everything, one grant by id, or
+		// a predicate over the grant records.
+		_accessSubject: ($) =>
+			choice(
+				alias($._kw_all, $.Keyword),
+				seq(alias($._kw_grant, $.Keyword), $.Ident),
+				$.WhereClause,
+			),
+		AccessPurgeClause: ($) =>
+			seq(
+				alias($._kw_purge, $.Keyword),
+				csep(
+					choice(
+						alias($._kw_expired, $.Keyword),
+						alias($._kw_revoked, $.Keyword),
+					),
+				),
+				optional(
+					seq(alias($._kw_for, $.Keyword), $.Duration),
+				),
 			),
 
 		// INFO FOR
@@ -1696,6 +1785,22 @@ export default grammar({
 				$.Object,
 				$.Duration,
 				$.Point,
+				$.Constant,
+			),
+
+		// One token, at a higher lexical precedence than `FunctionName`, so
+		// `math::PI` lexes as the constant while `math::pilot(…)` still lexes
+		// as a function name (longest match settles that first).
+		Constant: ($) =>
+			token(
+				prec(
+					4,
+					new RegExp(
+						`(?:${kw('math').source}::(?:${kwAlt(MATH_CONSTANTS)})` +
+							`|${kw('time').source}::${kw('EPOCH').source}` +
+							`|${kw('duration').source}::${kw('MAX').source})`,
+					),
+				),
 			),
 
 		// Paths
