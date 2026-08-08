@@ -37,6 +37,7 @@ mod tests {
                 "rand::enum".into(),
                 surrealguard_syntax::span::ByteRange::new(0, 1).unwrap(),
             ),
+            written: "rand::enum".into(),
             args: Vec::new(),
         };
 

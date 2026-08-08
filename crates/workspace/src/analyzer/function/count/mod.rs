@@ -21,7 +21,7 @@ pub(crate) fn analyze_count_function(
         // Lowering normalizes only `::is::` paths; a bare `count()` keeps the
         // path `"count"` (namespace == function name), so accept it as an
         // alias for the canonical `count::count`.
-        "count" | "count::count" => count::analyze_count_count(ctx, call, args),
+        "count" => count::analyze_count_count(ctx, call, args),
         _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }

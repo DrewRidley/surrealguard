@@ -31,28 +31,28 @@ pub(crate) fn analyze_duration_function(
 ) -> Kind {
     match path {
         "duration::days" => days::analyze_duration_days(ctx, call, args),
-        "duration::from_days" | "duration::from::days" => {
+        "duration::from_days" => {
             from_days::analyze_duration_from_days(ctx, call, args)
         }
-        "duration::from_hours" | "duration::from::hours" => {
+        "duration::from_hours" => {
             from_hours::analyze_duration_from_hours(ctx, call, args)
         }
-        "duration::from_micros" | "duration::from::micros" => {
+        "duration::from_micros" => {
             from_micros::analyze_duration_from_micros(ctx, call, args)
         }
-        "duration::from_millis" | "duration::from::millis" => {
+        "duration::from_millis" => {
             from_millis::analyze_duration_from_millis(ctx, call, args)
         }
-        "duration::from_mins" | "duration::from::mins" => {
+        "duration::from_mins" => {
             from_mins::analyze_duration_from_mins(ctx, call, args)
         }
-        "duration::from_nanos" | "duration::from::nanos" => {
+        "duration::from_nanos" => {
             from_nanos::analyze_duration_from_nanos(ctx, call, args)
         }
-        "duration::from_secs" | "duration::from::secs" => {
+        "duration::from_secs" => {
             from_secs::analyze_duration_from_secs(ctx, call, args)
         }
-        "duration::from_weeks" | "duration::from::weeks" => {
+        "duration::from_weeks" => {
             from_weeks::analyze_duration_from_weeks(ctx, call, args)
         }
         "duration::hours" => hours::analyze_duration_hours(ctx, call, args),

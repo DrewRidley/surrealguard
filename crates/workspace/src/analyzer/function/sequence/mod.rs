@@ -5,7 +5,6 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
-pub mod next;
 pub mod nextval;
 
 pub(crate) fn analyze_sequence_function(
@@ -15,7 +14,6 @@ pub(crate) fn analyze_sequence_function(
     args: &[Kind],
 ) -> Kind {
     match path {
-        "sequence::next" => next::analyze_sequence_next(ctx, call, args),
         "sequence::nextval" => nextval::analyze_sequence_nextval(ctx, call, args),
         _ => crate::analyzer::function::unknown_function(ctx, call),
     }

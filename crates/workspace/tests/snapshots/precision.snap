@@ -1161,7 +1161,14 @@ table webhook_event  [schemafull]
   stmt     18:1 let              : (no response)
   stmt     20:1 let              : (no response)
   stmt     22:1 let              : (no response)
-  stmt     24:1 return           : { heads: int, initials: string, joined: string, label: string, owner: record<account>, parsed: int, pro: bool, upper: string, when: datetime }
+  stmt     31:1 let              : (no response)
+  stmt     33:1 let              : (no response)
+  stmt     35:1 let              : (no response)
+  stmt     37:1 let              : (no response)
+  stmt     39:1 let              : (no response)
+  stmt     42:1 let              : (no response)
+  stmt     44:1 let              : (no response)
+  stmt     46:1 return           : { from_days: duration, from_unix: datetime, heads: int, initials: string, is_empty: bool, is_mail: bool, is_str: bool, joined: string, label: string, owner: record<account>, parsed: int, pro: bool, rid: string, tb: string, upper: string, when: datetime }
   let       6:5 $owner           : record<account>
   let       8:5 $heads           : int
   let      10:5 $initials        : string
@@ -1171,6 +1178,13 @@ table webhook_event  [schemafull]
   let      18:5 $joined          : string
   let      20:5 $when            : datetime
   let      22:5 $parsed          : int
+  let      31:5 $is_str          : bool
+  let      33:5 $is_mail         : bool
+  let      35:5 $is_empty        : bool
+  let      37:5 $from_days       : duration
+  let      39:5 $from_unix       : datetime
+  let      42:5 $tb              : string
+  let      44:5 $rid             : string
   diag     4:48 I7014     Hint
 
 == source: queries/81_type_constructors.surql ==

@@ -21,6 +21,7 @@ pub fn synthetic_call(path: &str) -> surrealguard_syntax::ast::Call {
             path.to_string(),
             surrealguard_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered"),
         ),
+        written: path.to_string(),
         args: Vec::new(),
     }
 }

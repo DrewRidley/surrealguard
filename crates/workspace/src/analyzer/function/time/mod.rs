@@ -54,20 +54,20 @@ pub(crate) fn analyze_time_function(
         "time::day" => day::analyze_time_day(ctx, call, args),
         "time::floor" => floor::analyze_time_floor(ctx, call, args),
         "time::format" => format::analyze_time_format(ctx, call, args),
-        "time::from_micros" | "time::from::micros" => {
+        "time::from_micros" => {
             from_micros::analyze_time_from_micros(ctx, call, args)
         }
-        "time::from_millis" | "time::from::millis" => {
+        "time::from_millis" => {
             from_millis::analyze_time_from_millis(ctx, call, args)
         }
-        "time::from_nanos" | "time::from::nanos" => {
+        "time::from_nanos" => {
             from_nanos::analyze_time_from_nanos(ctx, call, args)
         }
-        "time::from_secs" | "time::from::secs" => {
+        "time::from_secs" => {
             from_secs::analyze_time_from_secs(ctx, call, args)
         }
         "time::from_ulid" => from_ulid::analyze_time_from_ulid(ctx, call, args),
-        "time::from_unix" | "time::from::unix" => {
+        "time::from_unix" => {
             from_unix::analyze_time_from_unix(ctx, call, args)
         }
         "time::from_uuid" => from_uuid::analyze_time_from_uuid(ctx, call, args),

@@ -8,7 +8,6 @@ use crate::analyzer::context::AnalysisContext;
 pub mod exists;
 pub mod id;
 pub mod is_edge;
-pub mod refs;
 pub mod table;
 pub mod tb;
 
@@ -22,7 +21,6 @@ pub(crate) fn analyze_record_function(
         "record::exists" => exists::analyze_record_exists(ctx, call, args),
         "record::id" => id::analyze_record_id(ctx, call, args),
         "record::is_edge" => is_edge::analyze_record_is_edge(ctx, call, args),
-        "record::refs" => refs::analyze_record_refs(ctx, call, args),
         "record::table" => table::analyze_record_table(ctx, call, args),
         "record::tb" => tb::analyze_record_tb(ctx, call, args),
         _ => crate::analyzer::function::unknown_function(ctx, call),

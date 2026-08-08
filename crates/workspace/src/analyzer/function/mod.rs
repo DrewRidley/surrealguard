@@ -25,7 +25,6 @@ pub mod geo;
 pub mod http;
 pub mod math;
 pub mod meta;
-pub mod not;
 pub mod object;
 pub mod parse;
 pub mod rand;
@@ -60,11 +59,13 @@ pub(crate) fn analyze_builtin_function(
     // `type::is_record`); custom `fn::*` functions fall through to `Any`.
     let path = call.path.node.as_str();
 
-    if let Some((_, replacement)) = RETIRED_FUNCTIONS
+    // Against the WRITTEN spelling: `type::is::record` and `type::is_record`
+    // are the same `path` by this point, and only one of them parses.
+    if let Some((retired, replacement)) = RETIRED_FUNCTIONS
         .iter()
-        .find(|(retired, _)| *retired == path)
+        .find(|(retired, _)| *retired == call.written)
     {
-        return retired_function(ctx, call, replacement);
+        return retired_function(ctx, call, retired, replacement);
     }
 
     match path.split("::").next().unwrap_or_default() {
@@ -81,7 +82,6 @@ pub(crate) fn analyze_builtin_function(
         "http" => http::analyze_http_function(ctx, call, path, args),
         "math" => math::analyze_math_function(ctx, call, path, args),
         "meta" => meta::analyze_meta_function(ctx, call, path, args),
-        "not" => not::analyze_not_function(ctx, call, path, args),
         "object" => object::analyze_object_function(ctx, call, path, args),
         "parse" => parse::analyze_parse_function(ctx, call, path, args),
         "rand" => rand::analyze_rand_function(ctx, call, path, args),
@@ -158,30 +158,121 @@ pub(crate) fn analyze_builtin_function(
 /// unknown name (5001) — the same contract `string::endsWith` already reports
 /// under — carrying the engine's own suggestion.
 ///
-/// The colon-form spellings 3.x also retired (`type::is::string`,
-/// `duration::from::days`, `string::is::email`, all parse errors on 3.2.3)
-/// cannot be listed here: lowering canonicalizes `::is::` to `::is_` before an
-/// analyzer sees a path, so by this point the retired spelling and the current
-/// one are the same string. Reporting those needs the written spelling carried
-/// through lowering.
-const RETIRED_FUNCTIONS: &[(&str, &str)] = &[("type::thing", "type::record")];
+/// Matched against the path **as written**, not the canonical one. Lowering
+/// rewrites `::is::` to `::is_`, which is precisely what made the retired
+/// spelling indistinguishable from the live one here; `call.written` keeps
+/// them apart, so the whole colon-form family can be listed.
+///
+/// Every row was probed against 3.2.3 (`RETURN <name>()`, reading the parse
+/// error apart from the arity error) and every suggestion is the engine's own
+/// `did you maybe mean`, except where it offers none.
+const RETIRED_FUNCTIONS: &[(&str, &str)] = &[
+    // Renamed or removed outright, each verified against 3.2.3. The two with
+    // no replacement have none inside their namespace: `not::not(x)` is the
+    // `!x` operator, and reference traversal is the `<~` idiom — the engine
+    // offers no `did you maybe mean` for either.
+    ("count::count", "count"),
+    ("meta::table", "meta::tb"),
+    ("not::not", ""),
+    ("rand::guid", "rand::id"),
+    ("record::refs", ""),
+    ("sequence::next", "sequence::nextval"),
+    ("session::sc", "session::ac"),
+    ("session::sd", "session::rd"),
+    ("type::thing", "type::record"),
+
+    // The `::from::` families, retired wholesale in 3.x.
+    ("duration::from::days", "duration::from_days"),
+    ("duration::from::hours", "duration::from_hours"),
+    ("duration::from::micros", "duration::from_micros"),
+    ("duration::from::millis", "duration::from_millis"),
+    ("duration::from::mins", "duration::from_mins"),
+    ("duration::from::nanos", "duration::from_nanos"),
+    ("duration::from::secs", "duration::from_secs"),
+    ("duration::from::weeks", "duration::from_weeks"),
+    ("time::from::micros", "time::from_micros"),
+    ("time::from::millis", "time::from_millis"),
+    ("time::from::nanos", "time::from_nanos"),
+    ("time::from::secs", "time::from_secs"),
+    ("time::from::unix", "time::from_unix"),
+
+    // Every `::is::` spelling, likewise. One row per predicate the registry
+    // knows in its underscore form, so a row exists only where the
+    // replacement it names really does.
+    ("array::is::empty", "array::is_empty"),
+    ("geo::is::valid", "geo::is_valid"),
+    ("object::is::empty", "object::is_empty"),
+    ("record::is::edge", "record::is_edge"),
+    ("set::is::empty", "set::is_empty"),
+    ("string::is::alpha", "string::is_alpha"),
+    ("string::is::alphanum", "string::is_alphanum"),
+    ("string::is::ascii", "string::is_ascii"),
+    ("string::is::datetime", "string::is_datetime"),
+    ("string::is::domain", "string::is_domain"),
+    ("string::is::email", "string::is_email"),
+    ("string::is::hexadecimal", "string::is_hexadecimal"),
+    ("string::is::ip", "string::is_ip"),
+    ("string::is::latitude", "string::is_latitude"),
+    ("string::is::longitude", "string::is_longitude"),
+    ("string::is::numeric", "string::is_numeric"),
+    ("string::is::record", "string::is_record"),
+    ("string::is::semver", "string::is_semver"),
+    ("string::is::ulid", "string::is_ulid"),
+    ("string::is::url", "string::is_url"),
+    ("string::is::uuid", "string::is_uuid"),
+    ("time::is::leap_year", "time::is_leap_year"),
+    ("type::is::array", "type::is_array"),
+    ("type::is::bool", "type::is_bool"),
+    ("type::is::bytes", "type::is_bytes"),
+    ("type::is::collection", "type::is_collection"),
+    ("type::is::datetime", "type::is_datetime"),
+    ("type::is::decimal", "type::is_decimal"),
+    ("type::is::duration", "type::is_duration"),
+    ("type::is::float", "type::is_float"),
+    ("type::is::geometry", "type::is_geometry"),
+    ("type::is::int", "type::is_int"),
+    ("type::is::line", "type::is_line"),
+    ("type::is::multiline", "type::is_multiline"),
+    ("type::is::multipoint", "type::is_multipoint"),
+    ("type::is::multipolygon", "type::is_multipolygon"),
+    ("type::is::none", "type::is_none"),
+    ("type::is::null", "type::is_null"),
+    ("type::is::number", "type::is_number"),
+    ("type::is::object", "type::is_object"),
+    ("type::is::point", "type::is_point"),
+    ("type::is::polygon", "type::is_polygon"),
+    ("type::is::range", "type::is_range"),
+    ("type::is::record", "type::is_record"),
+    ("type::is::set", "type::is_set"),
+    ("type::is::string", "type::is_string"),
+    ("type::is::uuid", "type::is_uuid"),
+];
 
 /// Reports a call to a removed function (5001) and yields `Any`, exactly as an
 /// unknown name does — the call resolves to nothing on the engine either.
-fn retired_function(ctx: &mut AnalysisContext<'_>, call: &ast::Call, replacement: &str) -> Kind {
+fn retired_function(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    retired: &str,
+    replacement: &str,
+) -> Kind {
     if !is_synthetic(call) {
         let span = SourceSpan::new(ctx.source().clone(), call.path.span);
-        ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
-                span,
-                5001,
-                format!(
-                    "`{}` was removed from SurrealQL; it is not a known function",
-                    call.path.node
-                ),
-            )
-            .with_help(format!("use `{replacement}` instead")),
+        // The written spelling, so the message quotes what the author typed
+        // rather than the canonical form lowering rewrote it into.
+        let finding = surrealguard_diagnostics::catalog::finding(
+            span,
+            5001,
+            format!("`{retired}` was removed from SurrealQL; it is not a known function"),
         );
+        // Two of these have no replacement inside their namespace, and the
+        // engine offers none either. A "use `` instead" would be worse than
+        // the bare fact.
+        ctx.emit(if replacement.is_empty() {
+            finding.with_help("SurrealDB 3.2.3 rejects this call while parsing, so the query never runs")
+        } else {
+            finding.with_help(format!("use `{replacement}` instead"))
+        });
     }
     Kind::Any
 }
@@ -263,6 +354,11 @@ pub(crate) fn synthetic_call(path: &str) -> ast::Call {
             path.to_string(),
             surrealguard_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered"),
         ),
+        // Nothing wrote a synthetic call, so its written spelling is its
+        // canonical one — and never a retired form, which is what keeps a
+        // method-call desugaring from reporting a spelling the author did not
+        // use.
+        written: path.to_string(),
         args: Vec::new(),
     }
 }
@@ -594,8 +690,13 @@ mod tests {
             ("RETURN string::html::encode('<b>');", Kind::String),
             ("RETURN geo::hash::encode((0, 0), 8);", Kind::String),
             ("RETURN schema::table::exists('user');", Kind::Bool),
-            ("RETURN duration::from::days(3);", Kind::Duration),
-            ("RETURN time::from::unix(1);", Kind::Datetime),
+            // The underscore spellings, which are the only ones 3.2.3 parses.
+            // These rows said `duration::from::days` / `time::from::unix` and
+            // asserted they analyze CLEANLY — a 2.x assumption. Both are parse
+            // errors on the engine now, and both are reported as 5001; the
+            // retired-spelling test below is where they are pinned.
+            ("RETURN duration::from_days(3);", Kind::Duration),
+            ("RETURN time::from_unix(1);", Kind::Datetime),
             ("RETURN type::is_set([1]);", Kind::Bool),
             ("RETURN array::index_of([1, 2], 2);", Kind::Int),
         ];
@@ -645,6 +746,74 @@ mod tests {
             response_kind_of("RETURN type::record('person', 'ada');"),
             Some(Kind::Record(vec!["person".into()]))
         );
+    }
+
+    /// Every row of the table, and the live spelling each one names.
+    ///
+    /// The table is data, and data rots quietly: a row whose retired name the
+    /// analyzer stopped routing through this check, or one whose replacement
+    /// is itself not a function, would both go unnoticed. This walks the whole
+    /// thing — a retired name must report 5001, and the name it points at must
+    /// not.
+    ///
+    /// Both halves matter. The first is the contract. The second is the guard
+    /// against the failure this fix nearly shipped: the completion catalog
+    /// listed only the `type::is::x` spelling of that family, so retiring the
+    /// colon form silently removed the underscore form as well and
+    /// `age.is_none()` stopped resolving.
+    #[test]
+    fn every_retired_spelling_reports_and_every_replacement_it_names_does_not() {
+        for (retired, replacement) in super::RETIRED_FUNCTIONS {
+            let findings = diagnostics_of(&format!("RETURN {retired}();"));
+            assert!(
+                findings
+                    .iter()
+                    .any(|finding| finding.code().number() == 5001
+                        && finding.message().contains(&format!("`{retired}` was removed"))),
+                "`{retired}` is retired but was not reported: {findings:?}"
+            );
+            if replacement.is_empty() {
+                continue;
+            }
+            // Called with no arguments, so an arity finding (5002) is expected
+            // and uninteresting; what must not appear is 5001, which would mean
+            // we are pointing the author at a name we do not know either.
+            let findings = diagnostics_of(&format!("RETURN {replacement}();"));
+            assert!(
+                !findings
+                    .iter()
+                    .any(|finding| finding.code().number() == 5001),
+                "`{retired}`'s replacement `{replacement}` is not a known function: {findings:?}"
+            );
+        }
+    }
+
+    /// The colon spellings are the ones lowering used to erase: it rewrote
+    /// `::is::` to `::is_` before any analyzer saw a path, so the dead spelling
+    /// and the live one were the same string by the time anything could tell
+    /// them apart. `call.written` is what keeps them distinct.
+    #[test]
+    fn the_colon_spellings_report_while_their_underscore_forms_stay_clean() {
+        for (retired, live) in [
+            ("type::is::string", "type::is_string"),
+            ("string::is::email", "string::is_email"),
+            ("array::is::empty", "array::is_empty"),
+            ("duration::from::days", "duration::from_days"),
+            ("time::from::unix", "time::from_unix"),
+        ] {
+            assert!(
+                diagnostics_of(&format!("RETURN {retired}('x');"))
+                    .iter()
+                    .any(|finding| finding.code().number() == 5001),
+                "`{retired}` must report 5001"
+            );
+            assert!(
+                !diagnostics_of(&format!("RETURN {live}('x');"))
+                    .iter()
+                    .any(|finding| finding.code().number() == 5001),
+                "`{live}` must stay a known function"
+            );
+        }
     }
 
     #[test]

@@ -9,7 +9,6 @@ pub mod bool;
 pub mod duration;
 pub mod r#enum;
 pub mod float;
-pub mod guid;
 pub mod id;
 pub mod int;
 pub mod string;
@@ -42,7 +41,6 @@ pub(crate) fn analyze_rand_function(
         "rand::ulid" => ulid::analyze_rand_ulid(ctx, call, args),
         "rand::uuid" => uuid::analyze_rand_uuid(ctx, call, args),
         "rand" => rand::analyze_rand_rand(ctx, call, args),
-        "rand::guid" => guid::analyze_rand_guid(ctx, call, args),
         "rand::uuid::v4" => uuid_v4::analyze_rand_uuid_v4(ctx, call, args),
         "rand::uuid::v7" => uuid_v7::analyze_rand_uuid_v7(ctx, call, args),
         _ => crate::analyzer::function::unknown_function(ctx, call),

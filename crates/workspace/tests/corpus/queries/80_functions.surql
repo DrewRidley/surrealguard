@@ -21,4 +21,26 @@ LET $when = time::now();
 
 LET $parsed = <int> '42';
 
-RETURN { owner: $owner, heads: $heads, initials: $initials, pro: $pro, label: $label, upper: $upper, joined: $joined, when: $when, parsed: $parsed };
+-- The live spellings of the three families whose retired colon forms are now
+-- reported. These are here because retiring the colon spelling very nearly
+-- took the underscore one with it: the completion catalog listed ONLY
+-- `type::is::x`, folding both spellings onto one key, so removing the dead
+-- entry removed the live function too and `age.is_none()` stopped resolving.
+-- Each of these must keep both its acceptance and its inferred type.
+
+LET $is_str = type::is_string('x');
+
+LET $is_mail = string::is_email('a@b.c');
+
+LET $is_empty = array::is_empty([]);
+
+LET $from_days = duration::from_days(1);
+
+LET $from_unix = time::from_unix(1);
+
+-- The renamed one-offs, likewise: the name the engine kept.
+LET $tb = meta::tb(organization:acme);
+
+LET $rid = rand::id();
+
+RETURN { owner: $owner, heads: $heads, initials: $initials, pro: $pro, label: $label, upper: $upper, joined: $joined, when: $when, parsed: $parsed, is_str: $is_str, is_mail: $is_mail, is_empty: $is_empty, from_days: $from_days, from_unix: $from_unix, tb: $tb, rid: $rid };

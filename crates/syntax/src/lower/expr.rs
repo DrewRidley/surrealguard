@@ -250,10 +250,12 @@ impl Lowerer<'_> {
 
     fn call(&self, node: Node<'_>) -> Call {
         let name = first_child_of_kind(node, "FunctionName");
+        let written = name.map(|name| self.node_text(name).trim().to_string());
         let path = match name {
             Some(name) => self.spanned(name, normalize_function_path(self.node_text(name))),
             None => Spanned::new(String::new(), node_range(node)),
         };
+        let written = written.unwrap_or_else(|| path.node.clone());
         let args = first_child_of_kind(node, "ArgumentList")
             .map(|list| {
                 named_children(list)
@@ -262,7 +264,11 @@ impl Lowerer<'_> {
                     .collect()
             })
             .unwrap_or_default();
-        Call { path, args }
+        Call {
+            path,
+            written,
+            args,
+        }
     }
 
     fn cast(&self, node: Node<'_>) -> Expr {

@@ -47,6 +47,7 @@ mod tests {
                 "object::values".into(),
                 surrealguard_syntax::span::ByteRange::new(0, 1).unwrap(),
             ),
+            written: "object::values".into(),
             args: Vec::new(),
         };
         let mut fields = BTreeMap::new();

@@ -12,8 +12,6 @@ pub mod ip;
 pub mod ns;
 pub mod origin;
 pub mod rd;
-pub mod sc;
-pub mod sd;
 pub mod token;
 
 pub(crate) fn analyze_session_function(
@@ -31,8 +29,6 @@ pub(crate) fn analyze_session_function(
         "session::origin" => origin::analyze_session_origin(ctx, call, args),
         "session::rd" => rd::analyze_session_rd(ctx, call, args),
         "session::token" => token::analyze_session_token(ctx, call, args),
-        "session::sc" => sc::analyze_session_sc(ctx, call, args),
-        "session::sd" => sd::analyze_session_sd(ctx, call, args),
         _ => crate::analyzer::function::unknown_function(ctx, call),
     }
 }
