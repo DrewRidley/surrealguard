@@ -490,6 +490,9 @@ export default grammar({
 						alias($._kw_function, $.Keyword),
 						optional($.IfExistsClause),
 						$.FunctionName,
+						// The argument list may be written out and is always
+						// empty: `REMOVE FUNCTION fn::greet()`.
+						optional(seq('(', ')')),
 					),
 					seq(
 						alias($._kw_param, $.Keyword),
@@ -1709,7 +1712,13 @@ export default grammar({
 				seq($.Lookup, repeat($._pathElement)),
 			),
 		_pathElement: ($) =>
-			choice($.Lookup, $.Subscript, alias($._pathFilter, $.Filter)),
+			choice(
+				$.Lookup,
+				$.Subscript,
+				alias($._pathFilter, $.Filter),
+				// `...` flattens the array the path has reached.
+				alias('...', $.Flatten),
+			),
 		Subscript: ($) => seq('.', $._dotPart),
 		_dotPart: ($) =>
 			choice(
@@ -1836,6 +1845,8 @@ export default grammar({
 					choice(
 						seq('.', choice($.Ident, alias('*', $.Any))),
 						seq('[', alias('*', $.Any), ']'),
+						// `...` flattens the array the path has reached.
+						alias('...', $.Flatten),
 					),
 				),
 			),
@@ -2170,7 +2181,16 @@ export default grammar({
 				$.ParameterizedType,
 				$.LiteralType,
 			),
-		ParameterizedType: ($) => seq($._singleType, '<', $._type, '>'),
+		// `array<int, 3>` and `set<int, 5>` carry a size after the element
+		// type; nothing else takes a second argument.
+		ParameterizedType: ($) =>
+			seq(
+				$._singleType,
+				'<',
+				$._type,
+				optional(seq(',', $.Number)),
+				'>',
+			),
 		_type: ($) => choice($._singleType, $.UnionType),
 		UnionType: ($) =>
 			prec.right(

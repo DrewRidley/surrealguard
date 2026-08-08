@@ -2674,6 +2674,10 @@
           "named": true
         },
         {
+          "type": "Flatten",
+          "named": true
+        },
+        {
           "type": "FormatString",
           "named": true
         },
@@ -3973,6 +3977,10 @@
       "types": [
         {
           "type": "Any",
+          "named": true
+        },
+        {
+          "type": "Flatten",
           "named": true
         },
         {
@@ -6183,6 +6191,10 @@
           "named": true
         },
         {
+          "type": "Number",
+          "named": true
+        },
+        {
           "type": "ParameterizedType",
           "named": true
         },
@@ -6277,6 +6289,10 @@
         },
         {
           "type": "Filter",
+          "named": true
+        },
+        {
+          "type": "Flatten",
           "named": true
         },
         {
@@ -7005,6 +7021,10 @@
         },
         {
           "type": "Filter",
+          "named": true
+        },
+        {
+          "type": "Flatten",
           "named": true
         },
         {
@@ -10992,6 +11012,10 @@
   },
   {
     "type": "DurationPart",
+    "named": true
+  },
+  {
+    "type": "Flatten",
     "named": true
   },
   {
