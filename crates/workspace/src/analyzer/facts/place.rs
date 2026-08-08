@@ -71,6 +71,14 @@ impl Place {
         }
     }
 
+    /// A bare field of the row in scope: `v`.
+    pub(crate) fn row_field(name: impl Into<String>) -> Self {
+        Self {
+            root: PlaceRoot::RowField,
+            path: vec![Step::Field(name.into())],
+        }
+    }
+
     /// The plain field segments of this place, or `None` when any step is not
     /// a field.
     ///

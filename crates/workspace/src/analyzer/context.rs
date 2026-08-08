@@ -295,6 +295,23 @@ impl<'a> AnalysisContext<'a> {
         self.env.set_narrowed_path(key, kind);
     }
 
+    /// Flow-narrows the bare row-field path `path` to `kind`, against the row
+    /// currently in scope. Outside a row context there is no row for the path
+    /// to name, so nothing is recorded.
+    pub fn define_narrowed_row_path(&mut self, path: String, kind: surrealdb_types::Kind) {
+        let Some(table) = self.row_table else {
+            return;
+        };
+        let name = table.name.clone();
+        self.env.set_narrowed_row_path(name, path, kind);
+    }
+
+    /// The flow-narrowed kind for the bare row-field path `path` on the row
+    /// currently in scope, if a guard proved one.
+    pub fn narrowed_row_path(&self, path: &str) -> Option<&surrealdb_types::Kind> {
+        self.env.narrowed_row_path(&self.row_table?.name, path)
+    }
+
     /// Rebinds the bare param `name` to `fact` as the result of an *active flow
     /// narrowing* (a guard's positive/negative effect), and marks it narrowed
     /// so dead-branch folding may draw a verdict from the tightened kind. Unlike

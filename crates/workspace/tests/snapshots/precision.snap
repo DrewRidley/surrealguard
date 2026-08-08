@@ -1210,6 +1210,18 @@ table webhook_event  [schemafull]
   diag    17:50 I7014     Hint
   diag    20:52 I7014     Hint
 
+== source: queries/83_row_field_guards.surql ==
+  stmt     11:1 select           : array<{ summary_length: int }>
+  stmt     14:1 select           : array<{ bumped: int }>
+  stmt     18:1 select           : array<{ bumped_else: int }>
+  stmt     22:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     25:1 select           : array<{ line2_length: int }>
+  diag    11:90 I7014     Hint
+  diag    14:77 I7014     Hint
+  diag    18:81 I7014     Hint
+  diag    25:91 I7014     Hint
+
 == source: queries/90_opaque.surql ==
   stmt      4:1 select           : array<{ payload: any, provider: 'stripe' | 'github' }>
   stmt      6:1 let              : (no response)
