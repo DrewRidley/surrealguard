@@ -2338,5 +2338,3 @@ mod tests {
         assert_eq!(tokenizers, vec!["blank", "class"]);
     }
 }
-
-

@@ -361,7 +361,6 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
                 crate::analyzer::data::live_contract::check_live_select(
                     select,
                     parsed.source_id(),
-                    parsed.text(),
                     &mut live,
                 );
             }

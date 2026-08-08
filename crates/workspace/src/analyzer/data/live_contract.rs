@@ -79,7 +79,6 @@ use surrealguard_syntax::span::SourceSpan;
 pub(crate) fn check_live_select(
     stmt: &ast::SelectStmt,
     source: &surrealguard_syntax::source::SourceId,
-    text: &str,
     out: &mut Vec<surrealguard_diagnostics::Finding>,
 ) {
     let mut emit = |span: surrealguard_syntax::span::ByteRange, message: String, help: &str| {

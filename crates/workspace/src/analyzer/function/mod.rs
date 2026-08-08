@@ -180,7 +180,6 @@ const RETIRED_FUNCTIONS: &[(&str, &str)] = &[
     ("session::sc", "session::ac"),
     ("session::sd", "session::rd"),
     ("type::thing", "type::record"),
-
     // The `::from::` families, retired wholesale in 3.x.
     ("duration::from::days", "duration::from_days"),
     ("duration::from::hours", "duration::from_hours"),
@@ -195,7 +194,6 @@ const RETIRED_FUNCTIONS: &[(&str, &str)] = &[
     ("time::from::nanos", "time::from_nanos"),
     ("time::from::secs", "time::from_secs"),
     ("time::from::unix", "time::from_unix"),
-
     // Every `::is::` spelling, likewise. One row per predicate the registry
     // knows in its underscore form, so a row exists only where the
     // replacement it names really does.
@@ -269,7 +267,9 @@ fn retired_function(
         // engine offers none either. A "use `` instead" would be worse than
         // the bare fact.
         ctx.emit(if replacement.is_empty() {
-            finding.with_help("SurrealDB 3.2.3 rejects this call while parsing, so the query never runs")
+            finding.with_help(
+                "SurrealDB 3.2.3 rejects this call while parsing, so the query never runs",
+            )
         } else {
             finding.with_help(format!("use `{replacement}` instead"))
         });
@@ -769,7 +769,9 @@ mod tests {
                 findings
                     .iter()
                     .any(|finding| finding.code().number() == 5001
-                        && finding.message().contains(&format!("`{retired}` was removed"))),
+                        && finding
+                            .message()
+                            .contains(&format!("`{retired}` was removed"))),
                 "`{retired}` is retired but was not reported: {findings:?}"
             );
             if replacement.is_empty() {

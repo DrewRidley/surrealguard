@@ -1012,17 +1012,16 @@ fn check_group_key_projection(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<
     // which cannot label a group by a field that does not exist. The lookup is
     // the plain, side-effect-free one because the statement's own resolution
     // (which emits) has not run yet at shape-check time.
-    let absent: std::collections::BTreeSet<String> =
-        match plain_source_table(stmt, ctx.schema()) {
-            Some(table) => group
-                .keys
-                .iter()
-                .filter_map(|key| plain_field_segments(&key.node))
-                .filter(|segments| field_path_is_absent(ctx.schema(), table, segments))
-                .map(|segments| segments.join("."))
-                .collect(),
-            None => std::collections::BTreeSet::new(),
-        };
+    let absent: std::collections::BTreeSet<String> = match plain_source_table(stmt, ctx.schema()) {
+        Some(table) => group
+            .keys
+            .iter()
+            .filter_map(|key| plain_field_segments(&key.node))
+            .filter(|segments| field_path_is_absent(ctx.schema(), table, segments))
+            .map(|segments| segments.join("."))
+            .collect(),
+        None => std::collections::BTreeSet::new(),
+    };
     for key in &group.keys {
         let Some(segments) = plain_field_segments(&key.node) else {
             continue;
@@ -5127,7 +5126,8 @@ mod tests {
              DEFINE TABLE owner SCHEMAFULL;\n\
              DEFINE FIELD pet ON owner TYPE record<cat | dog>;",
         );
-        let (kind, diagnostics) = analyze_diagnostics(&lenient, "SELECT VALUE pet.nope FROM owner;");
+        let (kind, diagnostics) =
+            analyze_diagnostics(&lenient, "SELECT VALUE pet.nope FROM owner;");
         assert_eq!(kind, Kind::Array(Box::new(Kind::Any), None));
         assert!(
             !codes(&diagnostics).contains(&1002),
@@ -5731,8 +5731,10 @@ mod tests {
              DEFINE FIELD settings ON team FLEXIBLE TYPE object;",
         );
 
-        let (_, diagnostics) =
-            analyze_diagnostics(&schema, "SELECT name FROM team WHERE settings.anything = 1;");
+        let (_, diagnostics) = analyze_diagnostics(
+            &schema,
+            "SELECT name FROM team WHERE settings.anything = 1;",
+        );
         assert!(
             !codes(&diagnostics).contains(&1002),
             "a subpath of an open object must not read as an absent field: {:?}",

@@ -319,7 +319,10 @@ mod tests {
             .filter(|finding| finding.code().number() == 1002)
             .map(|finding| finding.message().to_string())
             .collect();
-        assert!(fields.is_empty(), "expected no field findings, got {fields:?}");
+        assert!(
+            fields.is_empty(),
+            "expected no field findings, got {fields:?}"
+        );
     }
 
     #[test]
