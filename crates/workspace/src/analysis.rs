@@ -1203,9 +1203,9 @@ BEGIN;
 CANCEL;
 COMMIT;
 INFO FOR DB;
-KILL 'abc';
+KILL u'e72bee20-f49b-11ec-b939-0242ac120002';
 LIVE SELECT * FROM person;
-SHOW CHANGES FOR TABLE person;
+SHOW CHANGES FOR TABLE person SINCE 0;
 SLEEP 1s;
 USE NS app DB app;
 OPTION IMPORT;
@@ -1231,9 +1231,9 @@ INSERT INTO person { name: 'Ada' };
 
         let output = analyze_query(&mut workspace, query);
 
-        // The fixture deliberately trips contracts (bare BREAK, KILL with a
-        // string, tables used before definition); this test pins only the
-        // statement-kind vocabulary.
+        // The fixture deliberately trips contracts (bare BREAK, tables used
+        // before definition); this test pins only the statement-kind
+        // vocabulary.
         let kinds: Vec<_> = output
             .statements
             .iter()
@@ -2816,7 +2816,7 @@ INSERT INTO person { name: 'Ada' };
         let mut workspace = Workspace::default();
         workspace.add_virtual_source(
             "query".into(),
-            "UPSERT ghost SET seen = true;\nINSERT INTO phantom { seen: true };\nLIVE SELECT * FROM missing;\nALTER TABLE shadow SCHEMAFULL;\nREMOVE TABLE stale;\nREBUILD INDEX by_name ON TABLE absent;\nSHOW CHANGES FOR TABLE vanished;\nINFO FOR TABLE hidden;\nINFO FOR TB obscured;".into(),
+            "UPSERT ghost SET seen = true;\nINSERT INTO phantom { seen: true };\nLIVE SELECT * FROM missing;\nALTER TABLE shadow SCHEMAFULL;\nREMOVE TABLE stale;\nREBUILD INDEX by_name ON TABLE absent;\nSHOW CHANGES FOR TABLE vanished SINCE 0;\nINFO FOR TABLE hidden;\nINFO FOR TB obscured;".into(),
         );
 
         let output = analyze_workspace(&workspace);
