@@ -326,6 +326,10 @@ pub struct DefineField {
     pub overwrite: bool,
     /// `DEFAULT <expr>` — supplied when a row is created without the field.
     pub default: Option<Spanned<Expr>>,
+    /// Whether that `DEFAULT` was written `DEFAULT ALWAYS` — re-applied on
+    /// every write rather than only at creation. The engine treats it as a
+    /// clause of its own: `id` accepts a plain `DEFAULT` and rejects this one.
+    pub default_always: bool,
     /// `VALUE <expr>` — the field is computed; writes are overwritten.
     pub value: Option<Spanned<Expr>>,
     /// `COMPUTED <expr>` — the field is derived from an expression and never

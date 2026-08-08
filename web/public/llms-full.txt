@@ -66,7 +66,7 @@ What it analyzes:
  literals for known rows, IF/ELSE unions, record-link and graph-edge shapes,
  the full builtin function table plus `fn::` declarations, closure and subquery
  inference, and constant-value evaluation.
-- **90 contract diagnostics** across eight families, with rust-analyzer-style
+- **91 contract diagnostics** across eight families, with rust-analyzer-style
  messages (lead with the consequence, `help:` fixes, `note:` definition spans).
 - **Flow-sensitive analysis** - control-flow type narrowing (occurrence typing
  that narrows `option<T>` and `record<A|B>` unions via `= NONE` guards and
@@ -287,7 +287,7 @@ severity at render time, and parse-level findings keep an `S` prefix. Severity
 classes: **error** (provably fails or misbehaves), **warning** (provably
 suspicious but executable), **hint** (analyzer limitation or style note).
 Severity is intrinsic data; consumers apply policy at their edge. Errors are
-never demotable; lints are fully configurable. 90 contracts span the
+never demotable; lints are fully configurable. 91 contracts span the
 eight families below (0xxx syntax is emitted by the parser). The listing below is
 representative, not exhaustive; the full catalog is in
 `crates/diagnostics/src/catalog.rs`.

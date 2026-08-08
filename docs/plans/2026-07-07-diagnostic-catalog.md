@@ -91,6 +91,7 @@ carried by the span and message, never by the code.
 | 1027 | an index-backed operator has its supporting index | `@@`/search::* need a SEARCH index; `<\|k\|>` needs MTREE/HNSW | E | ✅ emitting |
 | 1029 | each index covers a distinct field set | two indexes on `(email)` | W | ✅ emitting |
 | 1032 | DEFINE ANALYZER components name known tokenizers/filters/languages | `FILTERS snowball(klingon)` — tokenizer names are parser-covered (the grammar hard-codes them); filter names/languages emit here | E | ✅ emitting |
+| 1033 | a DEFINE FIELD clause is one the field it targets accepts | `id` rejects VALUE / READONLY / COMPUTED / DEFAULT ALWAYS — the engine fails the definition ("Cannot use the `VALUE` keyword on the `id` field"). A plain DEFAULT, TYPE, ASSERT, PERMISSIONS and COMMENT are all accepted on `id`; `in`/`out` were probed against 3.2.3 and have no clause restriction at all | E | ✅ emitting |
 
 Folded by the contract audit (2026-07-09): 1003–1011 → 1002; 1013, 1014,
 1030 → 1012; 1015 → 5001 (function resolution); 1016, 1017, 1018 → 1001;

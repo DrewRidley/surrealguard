@@ -28,6 +28,7 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
         .as_ref()
         .map_or(&no_partial, |parsed| &parsed.partial);
     check_field_definition(ctx, stmt, partial);
+    check_id_field_clauses(ctx, stmt);
     check_record_targets(ctx, stmt, declared.as_ref());
     check_reference_back_target(ctx, stmt);
 
@@ -213,6 +214,61 @@ fn collect_record_tables(kind: &Kind, out: &mut Vec<String>) {
 /// The definition's catalog contracts: target a known table (1001), don't
 /// redefine an existing field without `OVERWRITE` (1022), and declare a type
 /// the analyzer can express (6003).
+/// 1033 — `id` refuses four of `DEFINE FIELD`'s clauses, and the engine says
+/// so by failing the definition outright: "Cannot use the `VALUE` keyword on
+/// the `id` field." A record's identity is assigned when the row is created
+/// and is what every link and index addresses it by, so a clause that would
+/// recompute it on write has nowhere sane to land.
+///
+/// The rejected set, each verified against 3.2.3 on a fresh table (a second
+/// `DEFINE FIELD id` otherwise fails as a redefinition, which masks the real
+/// answer — every probe below used `OVERWRITE`):
+///
+/// ```text
+/// DEFINE FIELD OVERWRITE id ON t VALUE 1          -> Cannot use the `VALUE` keyword on the `id` field.
+/// DEFINE FIELD OVERWRITE id ON t READONLY         -> Cannot use the `READONLY` keyword on the `id` field.
+/// DEFINE FIELD OVERWRITE id ON t COMPUTED 1       -> Cannot use the `COMPUTED` keyword on the `id` field.
+/// DEFINE FIELD OVERWRITE id ON t DEFAULT ALWAYS 1 -> Cannot use the `DEFAULT ALWAYS` keyword on the `id` field.
+/// ```
+///
+/// A **plain** `DEFAULT` is accepted, which is the one that looks like it
+/// should not be — it supplies the id only when a create omits it, and that
+/// is exactly when an id may still be chosen. `TYPE`, `ASSERT`, `PERMISSIONS`
+/// and `COMMENT` are accepted too, so none of them belongs here.
+///
+/// `in`/`out` were checked for the same thing and have no such restriction:
+/// all ten clause forms above were accepted on a `TYPE RELATION` table's
+/// `in`/`out` with `OVERWRITE`, and on a plain table they are ordinary field
+/// names. The friction there is only that a relation table pre-defines both,
+/// so redefining without `OVERWRITE` is the generic 1022 redefinition rule
+/// and not a rule about those names.
+fn check_id_field_clauses(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineField) {
+    let path = crate::schema::idiom_field_path(&stmt.path.node);
+    if path != ["id"] {
+        return;
+    }
+    for keyword in [
+        stmt.value.is_some().then_some("VALUE"),
+        stmt.computed.is_some().then_some("COMPUTED"),
+        stmt.readonly.then_some("READONLY"),
+        stmt.default_always.then_some("DEFAULT ALWAYS"),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.path.span),
+                1033,
+                format!("`id` rejects a `{keyword}` clause"),
+            )
+            .with_help(format!(
+                "SurrealDB fails this definition with \"Cannot use the `{keyword}` keyword on the `id` field\""
+            )),
+        );
+    }
+}
+
 fn check_field_definition(
     ctx: &mut AnalysisContext<'_>,
     stmt: &ast::DefineField,

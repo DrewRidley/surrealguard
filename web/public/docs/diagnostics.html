@@ -127,7 +127,6 @@
     <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
     <div class="nav-links">
       <a href="/docs/">Docs</a>
-      <a href="/playground/">Playground</a>
       <a href="/#agents">For agents</a>
       <a href="/#install">Install</a>
       <a class="nav-cta" href="https://github.com/DrewRidley/surrealguard">GitHub ↗</a>
@@ -158,7 +157,7 @@
   <main class="docs-main">
     <span class="eyebrow-doc">// reference</span>
     <h1>Diagnostics &amp; lints</h1>
-    <p class="lead-p">Every construct in SurrealQL has a <strong>contract</strong> — what the author must mean for the statement to make sense. A diagnostic fires when that contract is provably violated, whether or not SurrealDB would run the query. This is the complete catalog: <strong>90 codes</strong> across eight families, plus the parser's own <a class="link" href="#fam-0">0xxx</a> codes.</p>
+    <p class="lead-p">Every construct in SurrealQL has a <strong>contract</strong> — what the author must mean for the statement to make sense. A diagnostic fires when that contract is provably violated, whether or not SurrealDB would run the query. This is the complete catalog: <strong>91 codes</strong> across eight families, plus the parser's own <a class="link" href="#fam-0">0xxx</a> codes.</p>
 
     <div class="genbar">
       <span>generated from <code>crates/diagnostics/src/catalog.rs</code></span>
@@ -213,7 +212,7 @@
     <p>Codes are <code>&lt;family&gt;&lt;3 digits&gt;</code>. Jump to a family, or read the full catalog below — every code, its severity, its default level, and what trips it.</p>
     <div class="fam-nav">
       <a class="n0" href="#fam-0"><b>0xxx</b> syntax · 3</a>
-      <a class="n1" href="#fam-1"><b>1xxx</b> schema · 11</a>
+      <a class="n1" href="#fam-1"><b>1xxx</b> schema · 12</a>
       <a class="n2" href="#fam-2"><b>2xxx</b> types · 23</a>
       <a class="n3" href="#fam-3"><b>3xxx</b> graph · 5</a>
       <a class="n4" href="#fam-4"><b>4xxx</b> statement · 23</a>
@@ -246,7 +245,7 @@
       <div class="fam-head">
         <span class="fam-badge">1xxx</span>
         <span class="ft">Schema references</span>
-        <span class="fc">11 codes</span>
+        <span class="fc">12 codes</span>
       </div>
       <p class="fam-desc">Every name a query uses must resolve against the schema, wherever the schema constrains it.</p>
       <div class="tbl-wrap"><table>
@@ -263,6 +262,7 @@
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">1027</span></span></td><td><span class="lvl deny">deny</span></td><td>An index-backed operator has its supporting index <span class="covers">— <code>@@</code>/search::* need a SEARCH index; <code>&lt;|k|&gt;</code> needs MTREE/HNSW</span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">1029</span></span></td><td><span class="lvl warn">warn</span></td><td>Each index covers a distinct field set <span class="covers">— two indexes on <code>(email)</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">1032</span></span></td><td><span class="lvl deny">deny</span></td><td>DEFINE ANALYZER components name known tokenizers/filters/languages <span class="covers">— <code>FILTERS snowball(klingon)</code> — tokenizer names are parser-covered (the grammar hard-codes them); filter names/languages emit here</span></td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">1033</span></span></td><td><span class="lvl deny">deny</span></td><td>A DEFINE FIELD clause is one the field it targets accepts (<code>id</code> rejects VALUE/READONLY/COMPUTED/DEFAULT ALWAYS) <span class="covers">— <code>id</code> rejects VALUE / READONLY / COMPUTED / DEFAULT ALWAYS — the engine fails the definition (&quot;Cannot use the <code>VALUE</code> keyword on the <code>id</code> field&quot;). A plain DEFAULT, TYPE, ASSERT, PERMISSIONS and COMMENT are all accepted on <code>id</code>; <code>in</code>/<code>out</code> were probed against 3.2.3 and have no clause restriction at all</span></td></tr>
         </tbody>
       </table></div>
     </section>
@@ -376,7 +376,7 @@
         <tbody>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">5001</span></span></td><td><span class="lvl deny">deny</span></td><td>A call resolves to a function that exists <span class="covers">— unknown builtins, undefined <code>fn::</code>, methods not available on the receiver&#39;s kind</span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">5002</span></span></td><td><span class="lvl deny">deny</span></td><td>A call matches the function&#39;s signature <span class="covers">— argument count, per-argument kinds (anchored per argument), <code>fn::</code> declared params, a closure declaring more parameters than its consumer binds</span></td></tr>
-          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">5005</span></span></td><td><span class="lvl deny">deny</span></td><td>A const argument satisfies the function&#39;s value contract <span class="covers">— <code>type::field(&#39;aeg&#39;)</code> naming no field, non-string paths (<code>type::field(42)</code>), <code>type::record(&#39;ghost&#39;, ..)</code> naming no table, out-of-range constants (<code>math::fixed(x, -1)</code>)</span></td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">5005</span></span></td><td><span class="lvl deny">deny</span></td><td>A const argument satisfies the function&#39;s value contract <span class="covers">— <code>type::field(&#39;aeg&#39;)</code> naming no field, non-string paths (<code>type::field(42)</code>), <code>type::thing(&#39;ghost&#39;, ..)</code> naming no table, out-of-range constants (<code>math::fixed(x, -1)</code>)</span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">5009</span></span></td><td><span class="lvl warn">warn</span></td><td><code>fn::</code> definitions terminate (no direct/mutual recursion cycles) <span class="covers">— <code>fn::f</code> calls <code>fn::f</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">5010</span></span></td><td><span class="lvl warn">warn</span></td><td>Events do not trigger themselves (directly or in a cycle) <span class="covers">— event on <code>person</code> THEN mutates <code>person</code>; A→B→A</span></td></tr>
         </tbody>
@@ -441,7 +441,7 @@
         <span class="ft">Version compatibility</span>
         <span class="fc">2 codes</span>
       </div>
-      <p class="fam-desc">Resolved against the SurrealDB release SurrealGuard targets — the latest one. There is no target-version setting: these checks read one registry of function availability and syntax support, the current one.</p>
+      <p class="fam-desc">Gated on <code>[analysis] surrealdb_version</code>. Checks resolve against a per-version registry of function availability and syntax support.</p>
       <div class="tbl-wrap"><table>
         <thead><tr><th>Code</th><th>Level</th><th>Contract &amp; what trips it</th></tr></thead>
         <tbody>

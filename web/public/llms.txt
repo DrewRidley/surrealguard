@@ -17,7 +17,7 @@ SurrealDB is permissive at runtime (cross-kind comparisons order by kind, coerci
 
 ## Diagnostics
 
-90 findings use codes in eight families: 1xxx schema references, 2xxx types, 3xxx graph, 4xxx statement misuse, 5xxx functions, 6xxx parameters, 7xxx lints, 8xxx version compatibility. Severity is intrinsic to each finding; consumers apply policy (warnings-as-errors, per-code and per-family lint levels) at their edge. Messages are rust-analyzer style: they lead with the consequence and attach `help:` fixes and `note:` spans. Analysis includes control-flow type narrowing, PERMISSIONS-predicate checks, and comparison footguns (`= NONE`/`= NULL`, `IN` element-kind, disjoint record equality).
+91 findings use codes in eight families: 1xxx schema references, 2xxx types, 3xxx graph, 4xxx statement misuse, 5xxx functions, 6xxx parameters, 7xxx lints, 8xxx version compatibility. Severity is intrinsic to each finding; consumers apply policy (warnings-as-errors, per-code and per-family lint levels) at their edge. Messages are rust-analyzer style: they lead with the consequence and attach `help:` fixes and `note:` spans. Analysis includes control-flow type narrowing, PERMISSIONS-predicate checks, and comparison footguns (`= NONE`/`= NULL`, `IN` element-kind, disjoint record equality).
 
 ## Links
 
