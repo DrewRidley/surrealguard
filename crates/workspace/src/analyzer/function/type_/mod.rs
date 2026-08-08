@@ -51,7 +51,6 @@ pub mod set;
 pub mod string;
 pub mod string_lossy;
 pub mod table;
-pub mod thing;
 pub mod uuid;
 
 /// The table a `type::` constructor's table argument names, when the argument
@@ -134,7 +133,6 @@ pub(crate) fn analyze_type_function(
         "type::string" => string::analyze_type_string(ctx, call, args),
         "type::string_lossy" => string_lossy::analyze_type_string_lossy(ctx, call, args),
         "type::table" => table::analyze_type_table(ctx, call, args),
-        "type::thing" => thing::analyze_type_thing(ctx, call, args),
         "type::uuid" => uuid::analyze_type_uuid(ctx, call, args),
         "type::geometry" => geometry::analyze_type_geometry(ctx, call, args),
         "type::is_set" => is_set::analyze_type_is_set(ctx, call, args),

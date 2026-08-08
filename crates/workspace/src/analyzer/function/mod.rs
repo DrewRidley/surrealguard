@@ -60,6 +60,13 @@ pub(crate) fn analyze_builtin_function(
     // `type::is_record`); custom `fn::*` functions fall through to `Any`.
     let path = call.path.node.as_str();
 
+    if let Some((_, replacement)) = RETIRED_FUNCTIONS
+        .iter()
+        .find(|(retired, _)| *retired == path)
+    {
+        return retired_function(ctx, call, replacement);
+    }
+
     match path.split("::").next().unwrap_or_default() {
         "api" => api::analyze_api_function(ctx, call, path, args),
         "array" => array::analyze_array_function(ctx, call, path, args),
@@ -133,6 +140,50 @@ pub(crate) fn analyze_builtin_function(
         },
         _ => unknown_function(ctx, call),
     }
+}
+
+/// Function names SurrealDB has **removed**, each paired with the spelling that
+/// replaced it.
+///
+/// These are not merely unregistered names. SurrealDB 3.2.3 refuses to *parse*
+/// a call to one, so the query never reaches execution at all — verified live:
+///
+/// ```text
+/// RETURN type::thing('person', 'ada');
+///   --< Parse error: Invalid function/constant path, did you maybe mean `type::record`
+/// RETURN type::record('person', 'ada');   -> ["person:ada"]
+/// ```
+///
+/// SurrealGuard analyzes for the latest release, so a retired name is simply an
+/// unknown name (5001) — the same contract `string::endsWith` already reports
+/// under — carrying the engine's own suggestion.
+///
+/// The colon-form spellings 3.x also retired (`type::is::string`,
+/// `duration::from::days`, `string::is::email`, all parse errors on 3.2.3)
+/// cannot be listed here: lowering canonicalizes `::is::` to `::is_` before an
+/// analyzer sees a path, so by this point the retired spelling and the current
+/// one are the same string. Reporting those needs the written spelling carried
+/// through lowering.
+const RETIRED_FUNCTIONS: &[(&str, &str)] = &[("type::thing", "type::record")];
+
+/// Reports a call to a removed function (5001) and yields `Any`, exactly as an
+/// unknown name does — the call resolves to nothing on the engine either.
+fn retired_function(ctx: &mut AnalysisContext<'_>, call: &ast::Call, replacement: &str) -> Kind {
+    if !is_synthetic(call) {
+        let span = SourceSpan::new(ctx.source().clone(), call.path.span);
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                span,
+                5001,
+                format!(
+                    "`{}` was removed from SurrealQL; it is not a known function",
+                    call.path.node
+                ),
+            )
+            .with_help(format!("use `{replacement}` instead")),
+        );
+    }
+    Kind::Any
 }
 
 /// Fallthrough for a call that resolved to no builtin: emits 5001 unless
@@ -557,6 +608,43 @@ mod tests {
             );
             assert_eq!(response_kind_of(query), Some(expected), "kind of `{query}`");
         }
+    }
+
+    /// A name the engine no longer parses is not a name we can type-check.
+    /// SurrealDB 3.2.3 answers `RETURN type::thing('person', 'ada')` with
+    /// "Parse error: Invalid function/constant path, did you maybe mean
+    /// `type::record`" — the query never runs, so silently inferring a
+    /// `record<person>` for it was assurance about a query that cannot execute.
+    #[test]
+    fn a_removed_function_is_reported_with_the_spelling_that_replaced_it() {
+        let findings = diagnostics_of("RETURN type::thing('person', 'ada');");
+        let finding = findings
+            .iter()
+            .find(|finding| finding.code().number() == 5001)
+            .expect("expected 5001 for a removed function");
+        assert!(
+            finding.message().contains("`type::thing` was removed"),
+            "unexpected message: {}",
+            finding.message()
+        );
+        assert!(
+            finding
+                .help()
+                .iter()
+                .any(|help| help.message.contains("`type::record`")),
+            "the finding must name the replacement: {:?}",
+            finding.help()
+        );
+
+        // The replacement itself stays clean, and keeps its inference.
+        assert_eq!(
+            diagnostics_of("RETURN type::record('person', 'ada');"),
+            Vec::new()
+        );
+        assert_eq!(
+            response_kind_of("RETURN type::record('person', 'ada');"),
+            Some(Kind::Record(vec!["person".into()]))
+        );
     }
 
     #[test]

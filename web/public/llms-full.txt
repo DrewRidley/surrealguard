@@ -397,7 +397,7 @@ Contract: a traversal or RELATE must use relations as declared (`in`->edge->`out
 - `5002` (E) - a call matches the function's signature (arity, per-argument
  kinds, `fn::` declared params, closure arity).
 - `5005` (E) - a const argument satisfies the function's value contract
- (`type::field('aeg')` naming no field, `type::thing('ghost', ...)`).
+ (`type::field('aeg')` naming no field, `type::record('ghost', ...)`).
 - `5009` (W) - `fn::` definitions terminate (no recursion cycles).
 - `5010` (W) - events do not trigger themselves, directly or in a cycle.
 

@@ -2074,11 +2074,6 @@ pub(crate) static BUILTINS: &[Builtin] = &[
         returns: "table",
     },
     Builtin {
-        name: "type::thing",
-        params: "table, id",
-        returns: "record",
-    },
-    Builtin {
         name: "type::uuid",
         params: "any",
         returns: "uuid",
