@@ -1,6 +1,7 @@
 //! LSP backend — implements the `LanguageServer` trait.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use surrealguard_diagnostics::PolicyConfig;
 use surrealguard_syntax::parse::parse_source;
@@ -24,6 +25,12 @@ pub struct Backend {
     /// the editor exactly as they do in `surrealguard check`. Defaults until
     /// `initialize` locates a config in a workspace root.
     policy: RwLock<PolicyConfig>,
+    /// Whether the client asked to be told when semantic tokens go stale.
+    /// `workspace/semanticTokens/refresh` is a server->client *request*, and a
+    /// client that never declared support has no reason to expect one — it
+    /// arrives interleaved with the responses the client is waiting on. Set
+    /// from `initialize`, so it is false until a client says otherwise.
+    semantic_tokens_refresh_support: AtomicBool,
 }
 
 impl Backend {
@@ -34,6 +41,7 @@ impl Backend {
             client,
             workspace: RwLock::new(Workspace::new()),
             policy: RwLock::new(PolicyConfig::default()),
+            semantic_tokens_refresh_support: AtomicBool::new(false),
         }
     }
 
@@ -98,6 +106,9 @@ impl Backend {
     /// no requests. A real editor would have replied, so the bug would have
     /// reached a release looking like a hang under some other client.
     fn refresh_semantic_tokens(&self) {
+        if !self.semantic_tokens_refresh_support.load(Ordering::Relaxed) {
+            return;
+        }
         let client = self.client.clone();
         tokio::spawn(async move {
             // A client without the capability answers with an error; nothing
@@ -193,6 +204,16 @@ fn load_workspace_config(root: &Path) -> Option<WorkspaceConfig> {
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        let refresh_support = params
+            .capabilities
+            .workspace
+            .as_ref()
+            .and_then(|w| w.semantic_tokens.as_ref())
+            .and_then(|s| s.refresh_support)
+            .unwrap_or(false);
+        self.semantic_tokens_refresh_support
+            .store(refresh_support, Ordering::Relaxed);
+
         if let Some(folders) = &params.workspace_folders {
             let roots: Vec<_> = folders
                 .iter()
