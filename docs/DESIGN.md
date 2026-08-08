@@ -222,7 +222,7 @@ Immediate focus:
 1. host adapters over the parameter-constraint and response-kind exports, Rust proc-macro first
 2. grammar-conformance worklist (`docs/grammar-conformance.md`) down to zero failures, then wire the harness into CI
 3. TypeScript DX polish: LSP-driven regeneration on change (debounced), hover types inside templates, and the 7.1 IPC reverse direction when it stabilizes
-4. remaining catalog machinery: 5010 event-trigger cycles, the 8xxx version registry, and the researched-but-unruled rows (4009, 4013)
+4. remaining catalog machinery: 5010 event-trigger cycles and the researched-but-unruled rows (4009, 4013). The 8xxx version registry is not on this list any more: its two codes were retired with `[analysis] surrealdb_version`, since a single-target analyzer has no version axis to check against
 5. richer `Finding.help`/`related` coverage (did-you-mean and declared-here attachments exist for tables, fields, `fn::` names, and relation shapes; extend site by site)
 
 The core readiness gate below has passed; host adapters may start.

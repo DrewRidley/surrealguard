@@ -157,7 +157,7 @@
   <main class="docs-main">
     <span class="eyebrow-doc">// reference</span>
     <h1>Diagnostics &amp; lints</h1>
-    <p class="lead-p">Every construct in SurrealQL has a <strong>contract</strong> — what the author must mean for the statement to make sense. A diagnostic fires when that contract is provably violated, whether or not SurrealDB would run the query. This is the complete catalog: <strong>91 codes</strong> across eight families, plus the parser's own <a class="link" href="#fam-0">0xxx</a> codes.</p>
+    <p class="lead-p">Every construct in SurrealQL has a <strong>contract</strong> — what the author must mean for the statement to make sense. A diagnostic fires when that contract is provably violated, whether or not SurrealDB would run the query. This is the complete catalog: <strong>89 codes</strong> across eight families, plus the parser's own <a class="link" href="#fam-0">0xxx</a> codes.</p>
 
     <div class="genbar">
       <span>generated from <code>crates/diagnostics/src/catalog.rs</code></span>
@@ -219,7 +219,6 @@
       <a class="n5" href="#fam-5"><b>5xxx</b> functions · 5</a>
       <a class="n6" href="#fam-6"><b>6xxx</b> params · 7</a>
       <a class="n7" href="#fam-7"><b>7xxx</b> lints · 14</a>
-      <a class="n8" href="#fam-8"><b>8xxx</b> compat · 2</a>
     </div>
 
     <!-- ============ 0xxx ============ -->
@@ -430,23 +429,6 @@
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7013</span></span></td><td><span class="lvl warn">warn</span></td><td>A suppression directive names a catalog code (with a reason when required) <span class="covers">— <code>-- surrealguard: allow(ghost)</code>; missing reason under <code>require_suppression_reasons</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">7014</span></span></td><td><span class="lvl allow">allow</span></td><td>Whole-table SELECT without WHERE/LIMIT <span class="covers">— <code>SELECT * FROM person;</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">7015</span></span></td><td><span class="lvl allow">allow</span></td><td>Bare <code>SELECT *</code> (over-fetch / schema-drift brittleness) <span class="covers">— <code>SELECT * FROM person WHERE id = person:tobie;</code></span></td></tr>
-        </tbody>
-      </table></div>
-    </section>
-
-    <!-- ============ 8xxx ============ -->
-    <section class="fam fam-8" id="fam-8">
-      <div class="fam-head">
-        <span class="fam-badge">8xxx</span>
-        <span class="ft">Version compatibility</span>
-        <span class="fc">2 codes</span>
-      </div>
-      <p class="fam-desc">Gated on <code>[analysis] surrealdb_version</code>. Checks resolve against a per-version registry of function availability and syntax support.</p>
-      <div class="tbl-wrap"><table>
-        <thead><tr><th>Code</th><th>Level</th><th>Contract &amp; what trips it</th></tr></thead>
-        <tbody>
-          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">8001</span></span></td><td><span class="lvl deny">deny</span></td><td>Every function used exists in the configured target version <span class="covers">— unavailable (<code>array::fold</code> on 1.x) or renamed (<code>string::endsWith</code> — message suggests <code>string::ends_with</code>)</span></td></tr>
-          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">8003</span></span></td><td><span class="lvl deny">deny</span></td><td>Syntax requires a newer version <span class="covers">— closures / <code>??</code> on old targets</span></td></tr>
         </tbody>
       </table></div>
     </section>

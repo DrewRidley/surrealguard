@@ -46,7 +46,7 @@ are never reused.
 | function | 5xxx | Function and closure misuse |
 | param | 6xxx | Parameter constraints and conflicts |
 | lint | 7xxx | Style and suspicious-but-valid constructs |
-| compat | 8xxx | SurrealDB version compatibility |
+| compat | 8xxx | SurrealDB version compatibility — retired and empty, see below |
 
 Severity defaults: **error** = provably fails or misbehaves at runtime;
 **warning** = provably suspicious but executable; **info** = analyzer
@@ -223,16 +223,30 @@ Folded by the contract audit (2026-07-09): 5003, 5004, 5006 → 5002; 5007,
 | 7014 | whole-table SELECT with no WHERE and no LIMIT | `SELECT * FROM person;` | I | ✅ opt-in (allow by default) |
 | 7015 | any bare `SELECT *` (over-fetch / schema-drift brittleness) | `SELECT * FROM person WHERE id = person:tobie;` | I | ✅ opt-in (allow by default) |
 
-## 8xxx — Version compatibility
+## 8xxx — Version compatibility (retired, empty)
 
-The workspace config gains `surrealdb_version`; checks gate on it. Needs a
-small version registry (function → introduced/removed/renamed-in), built
-from the surrealdb source the same way the signature table was.
+**Retired 2026-08-08.** 8001 and 8003 were the only two codes here, both
+gated on `[analysis] surrealdb_version` — a key `894f039` deleted because it
+named a version and gated nothing. Neither code ever had an emission site,
+so the family documented two contracts the analyzer could not enforce and
+the generated diagnostics page advertised them to users as if it could.
 
-| Code | Finding | Example | Sev | Status |
-|---|---|---|---|---|
-| 8001 | every function used exists in the configured target version | unavailable (`array::fold` on 1.x) or renamed (`string::endsWith` — message suggests `string::ends_with`) | E | 🔨 version registry |
-| 8003 | syntax requires a newer version | closures / `??` on old targets | E | 🔨 same |
+Neither survives the config key's removal, because both contracts were
+*about* having more than one target:
+
+- **8001** — "every function used exists in the configured target version".
+  There is no configured target: SurrealGuard analyzes for the latest
+  release. A function that does not exist in that one release is already
+  **5001**'s contract ("a call resolves to a function that exists"), which
+  is where the retired spellings report. Keeping 8001 would be a second code
+  for a single contract.
+- **8003** — "syntax requires a newer version". With one target, syntax
+  either parses or it does not, and not-parsing is a 0xxx parse-level code.
+  There is no version axis left for this to measure against.
+
+Both numbers are retired permanently and never reused, like the folded rows
+below. Should per-version targeting ever return, it needs new numbers and a
+real registry behind them — not two placeholders held open for it.
 
 **After the contract audit (2026-07-09): ~80 contracts across 8 families**
 (from 135 rows). Every row states its contract; message variants never get

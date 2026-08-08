@@ -17,7 +17,7 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
    after policy — use it as a CI/agent gate.
 3. **Fix by code + span.** Codes are grouped: 1xxx schema references, 2xxx types,
    3xxx graph, 4xxx statement misuse, 5xxx functions, 6xxx parameters, 7xxx
-   lints, 8xxx version compatibility. The `range` is a byte offset into `source`
+   lints. The `range` is a byte offset into `source`
    — apply edits there.
 4. **Type the queries:**
    - Rust: wrap queries in the `query!` macro (`cargo add surrealguard-rs`). They

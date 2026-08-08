@@ -27,7 +27,11 @@ pub enum FindingCategory {
     Param,
     /// 7xxx — style and suspicious-but-valid constructs.
     Lint,
-    /// 8xxx — SurrealDB version compatibility.
+    /// 8xxx — SurrealDB version compatibility. **Empty**: its only two codes
+    /// were retired once `[analysis] surrealdb_version` went away, and no
+    /// catalog entry lives here now. The variant remains because it is the
+    /// `from_number` fallback and because this enum is serialized — dropping
+    /// a variant would break consumers over the wire for no gain.
     Compat,
 }
 

@@ -138,8 +138,6 @@ const ENTRIES: &[(u16, &str, Severity, LintLevel)] = &[
     ),
     (7014, "whole-table SELECT without WHERE/LIMIT", Severity::Hint, Allow),
     (7015, "bare `SELECT *` (over-fetch / schema-drift brittleness)", Severity::Hint, Allow),
-    (8001, "every function used exists in the configured target version", Severity::Error, Deny),
-    (8003, "syntax requires a newer version", Severity::Error, Deny),
 ];
 
 /// Every registered catalog entry, in code-number order. Consumers use
