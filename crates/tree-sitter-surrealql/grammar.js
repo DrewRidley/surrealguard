@@ -597,7 +597,14 @@ export default grammar({
 				optional(choice($.IfNotExistsClause, $.OverwriteClause)),
 				$._value,
 				$.OnTableClause,
-				repeat(choice($.WhenClause, $.ThenClause, $.CommentClause)),
+				repeat(
+					choice(
+						$.WhenClause,
+						$.ThenClause,
+						$.AsyncClause,
+						$.CommentClause,
+					),
+				),
 			),
 
 		_defineDatabaseOptions: ($) =>
@@ -871,6 +878,8 @@ export default grammar({
 		DeleteStatement: ($) =>
 			seq(
 				alias($._kw_delete, $.Keyword),
+				// `DELETE FROM t` is the same statement as `DELETE t`.
+				optional(alias($._kw_from, $.Keyword)),
 				optional(alias($._kw_only, $.Keyword)),
 				choice(
 					$._statement,
@@ -878,10 +887,12 @@ export default grammar({
 						csep($._value),
 						repeat(
 							choice(
+								$.WithClause,
 								$.WhereClause,
 								$.ReturnClause,
 								$.TimeoutClause,
 								$.ParallelClause,
+								$.ExplainClause,
 							),
 						),
 					),
@@ -929,11 +940,13 @@ export default grammar({
 					$._statement,
 					seq(
 						csep($._value),
+						optional($.WithClause),
 						optional($._dataClause),
 						optional($.WhereClause),
 						optional($.ReturnClause),
 						optional($.TimeoutClause),
 						optional($.ParallelClause),
+						optional($.ExplainClause),
 					),
 				),
 			),
@@ -947,11 +960,13 @@ export default grammar({
 					$._statement,
 					seq(
 						csep($._value),
+						optional($.WithClause),
 						optional($._dataClause),
 						optional($.WhereClause),
 						optional($.ReturnClause),
 						optional($.TimeoutClause),
 						optional($.ParallelClause),
+						optional($.ExplainClause),
 					),
 				),
 			),
@@ -1262,6 +1277,7 @@ export default grammar({
 				$.FulltextClause,
 				$.MtreeClause,
 				$.HnswClause,
+				$.DiskannClause,
 			),
 		UniqueClause: ($) => alias($._kw_unique, $.Keyword),
 
@@ -1354,6 +1370,7 @@ export default grammar({
 						$.IndexEfcClause,
 						$.IndexExtendCandidatesClause,
 						$.IndexKeepPrunedConnectionsClause,
+						$.IndexHashedVectorClause,
 					),
 				),
 			),
@@ -1365,6 +1382,32 @@ export default grammar({
 					seq(alias($._kw_minkowski, $.Distance), $.Number),
 				),
 			),
+
+		// DISKANN, the v3 replacement for MTREE. Its DEGREE/L_BUILD/ALPHA are
+		// its own; DIMENSION is the one required part.
+		DiskannClause: ($) =>
+			seq(
+				alias($._kw_diskann, $.Keyword),
+				$.IndexDimensionClause,
+				repeat(
+					choice(
+						$.HnswDistClause,
+						$.IndexTypeClause,
+						$.IndexDegreeClause,
+						$.IndexLBuildClause,
+						$.IndexAlphaClause,
+						$.IndexHashedVectorClause,
+					),
+				),
+			),
+		IndexDegreeClause: ($) =>
+			seq(alias($._kw_degree, $.Keyword), $.Number),
+		IndexLBuildClause: ($) =>
+			seq(alias($._kw_l_build, $.Keyword), $.Number),
+		IndexAlphaClause: ($) =>
+			seq(alias($._kw_alpha, $.Keyword), $.Number),
+		IndexHashedVectorClause: ($) =>
+			alias($._kw_hashed_vector, $.Keyword),
 
 		IndexDimensionClause: ($) =>
 			seq(alias($._kw_dimension, $.Keyword), $.Number),
@@ -1424,15 +1467,46 @@ export default grammar({
 			),
 
 		ChangefeedClause: ($) =>
-			seq(alias($._kw_changefeed, $.Keyword), $.Duration),
+			seq(
+				alias($._kw_changefeed, $.Keyword),
+				$.Duration,
+				optional(
+					seq(
+						alias($._kw_include, $.Keyword),
+						alias($._kw_original, $.Keyword),
+					),
+				),
+			),
 
 		WhenClause: ($) => seq(alias($._kw_when, $.Keyword), $._value),
+		// THEN takes a comma-separated list of values, and a value here may be
+		// a bare statement (`THEN RETURN 'foo'`, `THEN CREATE x`).
 		ThenClause: ($) =>
 			seq(
-				optional(alias($._kw_async, $.Keyword)),
 				alias($._kw_then, $.Keyword),
-				csep(choice($.SubQuery, $.Block)),
+				// A value list, or `RETURN <value>`. The body cannot be an
+				// arbitrary statement: DEFINE and ALTER own a COMMENT of their
+				// own, so a trailing COMMENT would belong either to them or to
+				// the event, and admitting them costs 14 GLR conflicts and
+				// doubles the parser table. Write those bodies as a block.
+				choice(
+					csep($._value),
+					alias(
+						seq(alias($._kw_return, $.Keyword), $._value),
+						$.ReturnStatement,
+					),
+				),
 			),
+		// RETRY and MAXDEPTH only exist behind ASYNC — the engine says so by
+		// name — but they may follow it in either order.
+		AsyncClause: ($) =>
+			seq(
+				alias($._kw_async, $.Keyword),
+				repeat(choice($.EventRetryClause, $.EventMaxDepthClause)),
+			),
+		EventRetryClause: ($) => seq(alias($._kw_retry, $.Keyword), $.Number),
+		EventMaxDepthClause: ($) =>
+			seq(alias($._kw_maxdepth, $.Keyword), $.Number),
 
 		TokenizersClause: ($) =>
 			seq(alias($._kw_tokenizers, $.Keyword), csep($.AnalyzerTokenizer)),
@@ -1525,7 +1599,12 @@ export default grammar({
 				choice(
 					alias($._kw_none, $.None),
 					alias($._kw_full, $.Literal),
-					repeat1($.PermissionGroup),
+					// The engine takes the groups with or without commas
+					// between them.
+					seq(
+						$.PermissionGroup,
+						repeat(seq(optional(','), $.PermissionGroup)),
+					),
 				),
 			),
 
@@ -2331,6 +2410,8 @@ export default grammar({
 			choice(
 				$._kw_chebyshev,
 				$._kw_cosine,
+				$._kw_cosine_normalized,
+				$._kw_inner_product,
 				$._kw_euclidean,
 				$._kw_hamming,
 				$._kw_jaccard,
@@ -2384,11 +2465,14 @@ export default grammar({
 			seq(
 				optional(alias($._kw_type, $.Keyword)),
 				choice(
+					alias($._kw_f16, $.Keyword),
 					alias($._kw_f32, $.Keyword),
 					alias($._kw_f64, $.Keyword),
+					alias($._kw_i8, $.Keyword),
 					alias($._kw_i16, $.Keyword),
 					alias($._kw_i32, $.Keyword),
 					alias($._kw_i64, $.Keyword),
+					alias($._kw_u8, $.Keyword),
 				),
 			),
 
@@ -2454,7 +2538,8 @@ export default grammar({
 		_kw_delete: ($) => kw('delete'),
 		_kw_desc: ($) => kw('desc'),
 		_kw_dimension: ($) => kw('dimension'),
-		_kw_dist: ($) => kw('dist'),
+		// v2 spelled it DIST, v3 spells it DISTANCE; both still parse.
+		_kw_dist: ($) => choice(kw('dist'), kw('distance')),
 		_kw_doc_ids_cache: ($) => kw('doc_ids_cache'),
 		_kw_doc_ids_order: ($) => kw('doc_ids_order'),
 		_kw_doc_lengths_cache: ($) => kw('doc_lengths_cache'),
@@ -2508,6 +2593,13 @@ export default grammar({
 		_kw_m0: ($) => kw('m0'),
 		_kw_merge: ($) => kw('merge'),
 		_kw_middleware: ($) => kw('middleware'),
+		_kw_diskann: ($) => kw('diskann'),
+		_kw_degree: ($) => kw('degree'),
+		_kw_l_build: ($) => kw('l_build'),
+		_kw_alpha: ($) => kw('alpha'),
+		_kw_hashed_vector: ($) => kw('hashed_vector'),
+		_kw_retry: ($) => kw('retry'),
+		_kw_maxdepth: ($) => kw('maxdepth'),
 		_kw_mtree: ($) => kw('mtree'),
 		_kw_mtree_cache: ($) => kw('mtree_cache'),
 		_kw_namespace: ($) => kw('namespace'),
@@ -2547,7 +2639,8 @@ export default grammar({
 		_kw_roles: ($) => kw('roles'),
 		_kw_root: ($) => kw('root'),
 		_kw_sc: ($) => kw('sc'),
-		_kw_schemafull: ($) => kw('schemafull'),
+		// The engine takes both spellings.
+		_kw_schemafull: ($) => choice(kw('schemaful'), kw('schemafull')),
 		_kw_schemaless: ($) => kw('schemaless'),
 		_kw_scope: ($) => kw('scope'),
 		_kw_search: ($) => kw('search'),
@@ -2609,6 +2702,8 @@ export default grammar({
 		// Distance keywords
 		_kw_chebyshev: ($) => kw('chebyshev'),
 		_kw_cosine: ($) => kw('cosine'),
+		_kw_cosine_normalized: ($) => kw('cosine_normalized'),
+		_kw_inner_product: ($) => kw('inner_product'),
 		_kw_euclidean: ($) => kw('euclidean'),
 		_kw_hamming: ($) => kw('hamming'),
 		_kw_jaccard: ($) => kw('jaccard'),
@@ -2647,11 +2742,14 @@ export default grammar({
 		_kw_rs512: ($) => kw('rs512'),
 
 		// Index type keywords (f32/f64/i16/i32/i64)
+		_kw_f16: ($) => kw('f16'),
 		_kw_f32: ($) => kw('f32'),
 		_kw_f64: ($) => kw('f64'),
 		_kw_i16: ($) => kw('i16'),
 		_kw_i32: ($) => kw('i32'),
 		_kw_i64: ($) => kw('i64'),
+		_kw_i8: ($) => kw('i8'),
+		_kw_u8: ($) => kw('u8'),
 
 		_kw_rand: ($) => kw('rand'),
 		_kw_count: ($) => kw('count'),
@@ -2682,6 +2780,7 @@ export default grammar({
 				$._kw_access,
 				$._kw_algorithm,
 				$._kw_all,
+				$._kw_alpha,
 				$._kw_alter,
 				$._kw_always,
 				$._kw_analyzer,
@@ -2756,6 +2855,10 @@ export default grammar({
 				$._kw_group,
 				$._kw_highlights,
 				$._kw_hnsw,
+				$._kw_diskann,
+				$._kw_degree,
+				$._kw_l_build,
+				$._kw_hashed_vector,
 				$._kw_if,
 				$._kw_ignore,
 				$._kw_in,
@@ -2778,6 +2881,7 @@ export default grammar({
 				$._kw_m0,
 				$._kw_merge,
 				$._kw_middleware,
+				$._kw_maxdepth,
 				$._kw_mtree,
 				$._kw_mtree_cache,
 				$._kw_namespace,
@@ -2813,6 +2917,7 @@ export default grammar({
 				$._kw_relation,
 				$._kw_remove,
 				$._kw_replace,
+				$._kw_retry,
 				$._kw_return,
 				$._kw_roles,
 				$._kw_root,

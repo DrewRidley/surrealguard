@@ -256,6 +256,11 @@ static bool scan_object_open(TSLexer *lexer) {
     if (!consume_obj_key(lexer)) return false;
     skip_obj_whitespace(lexer);
     if (lexer->lookahead == ':') {
+        // `{ fn::foo(1); }` is a Block whose first statement is a namespaced
+        // call, not an Object keyed `fn`. The token end is already marked past
+        // the `{`, so advancing here to see the second `:` costs nothing.
+        skip(lexer);
+        if (lexer->lookahead == ':') return false;
         lexer->result_symbol = OBJECT_OPEN;
         return true;
     }

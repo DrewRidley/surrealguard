@@ -761,6 +761,29 @@
     }
   },
   {
+    "type": "AsyncClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "EventMaxDepthClause",
+          "named": true
+        },
+        {
+          "type": "EventRetryClause",
+          "named": true
+        },
+        {
+          "type": "Keyword",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "At",
     "named": true,
     "fields": {}
@@ -2081,6 +2104,10 @@
           "named": true
         },
         {
+          "type": "AsyncClause",
+          "named": true
+        },
+        {
           "type": "BackendClause",
           "named": true
         },
@@ -2420,6 +2447,10 @@
           "named": true
         },
         {
+          "type": "ExplainClause",
+          "named": true
+        },
+        {
           "type": "ForStatement",
           "named": true
         },
@@ -2586,6 +2617,10 @@
         {
           "type": "WhereClause",
           "named": true
+        },
+        {
+          "type": "WithClause",
+          "named": true
         }
       ]
     }
@@ -2716,6 +2751,49 @@
         },
         {
           "type": "VariableName",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "DiskannClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "HnswDistClause",
+          "named": true
+        },
+        {
+          "type": "IndexAlphaClause",
+          "named": true
+        },
+        {
+          "type": "IndexDegreeClause",
+          "named": true
+        },
+        {
+          "type": "IndexDimensionClause",
+          "named": true
+        },
+        {
+          "type": "IndexHashedVectorClause",
+          "named": true
+        },
+        {
+          "type": "IndexLBuildClause",
+          "named": true
+        },
+        {
+          "type": "IndexTypeClause",
+          "named": true
+        },
+        {
+          "type": "Keyword",
           "named": true
         }
       ]
@@ -2869,6 +2947,44 @@
       "types": [
         {
           "type": "Keyword",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "EventMaxDepthClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "EventRetryClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "Number",
           "named": true
         }
       ]
@@ -3784,6 +3900,10 @@
           "named": true
         },
         {
+          "type": "IndexHashedVectorClause",
+          "named": true
+        },
+        {
           "type": "IndexKeepPrunedConnectionsClause",
           "named": true
         },
@@ -3935,6 +4055,25 @@
     }
   },
   {
+    "type": "IndexAlphaClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "IndexCapacityClause",
     "named": true,
     "fields": {},
@@ -3962,6 +4101,10 @@
       "required": true,
       "types": [
         {
+          "type": "DiskannClause",
+          "named": true
+        },
+        {
           "type": "FulltextClause",
           "named": true
         },
@@ -3979,6 +4122,25 @@
         },
         {
           "type": "UniqueClause",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "IndexDegreeClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "Number",
           "named": true
         }
       ]
@@ -4038,6 +4200,21 @@
     }
   },
   {
+    "type": "IndexHashedVectorClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "Keyword",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "IndexKeepPrunedConnectionsClause",
     "named": true,
     "fields": {},
@@ -4047,6 +4224,25 @@
       "types": [
         {
           "type": "Keyword",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "IndexLBuildClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "Number",
           "named": true
         }
       ]
@@ -4563,6 +4759,11 @@
         }
       ]
     }
+  },
+  {
+    "type": "Keyword",
+    "named": true,
+    "fields": {}
   },
   {
     "type": "KillStatement",
@@ -9120,7 +9321,43 @@
       "required": true,
       "types": [
         {
+          "type": "Array",
+          "named": true
+        },
+        {
+          "type": "BinaryExpression",
+          "named": true
+        },
+        {
           "type": "Block",
+          "named": true
+        },
+        {
+          "type": "Bool",
+          "named": true
+        },
+        {
+          "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Duration",
+          "named": true
+        },
+        {
+          "type": "FormatString",
+          "named": true
+        },
+        {
+          "type": "FunctionCall",
+          "named": true
+        },
+        {
+          "type": "FunctionJs",
+          "named": true
+        },
+        {
+          "type": "Ident",
           "named": true
         },
         {
@@ -9128,7 +9365,63 @@
           "named": true
         },
         {
+          "type": "None",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        },
+        {
+          "type": "Object",
+          "named": true
+        },
+        {
+          "type": "Path",
+          "named": true
+        },
+        {
+          "type": "Point",
+          "named": true
+        },
+        {
+          "type": "PrefixExpression",
+          "named": true
+        },
+        {
+          "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RecordId",
+          "named": true
+        },
+        {
+          "type": "Regex",
+          "named": true
+        },
+        {
+          "type": "ReturnStatement",
+          "named": true
+        },
+        {
+          "type": "Set",
+          "named": true
+        },
+        {
+          "type": "String",
+          "named": true
+        },
+        {
           "type": "SubQuery",
+          "named": true
+        },
+        {
+          "type": "TypeCast",
+          "named": true
+        },
+        {
+          "type": "VariableName",
           "named": true
         }
       ]
@@ -9610,6 +9903,10 @@
           "named": true
         },
         {
+          "type": "ExplainClause",
+          "named": true
+        },
+        {
           "type": "ForStatement",
           "named": true
         },
@@ -9795,6 +10092,10 @@
         },
         {
           "type": "WhereClause",
+          "named": true
+        },
+        {
+          "type": "WithClause",
           "named": true
         }
       ]
@@ -9873,6 +10174,10 @@
           "named": true
         },
         {
+          "type": "ExplainClause",
+          "named": true
+        },
+        {
           "type": "ForStatement",
           "named": true
         },
@@ -10058,6 +10363,10 @@
         },
         {
           "type": "WhereClause",
+          "named": true
+        },
+        {
+          "type": "WithClause",
           "named": true
         }
       ]
@@ -10695,10 +11004,6 @@
   },
   {
     "type": "KeyName",
-    "named": true
-  },
-  {
-    "type": "Keyword",
     "named": true
   },
   {
