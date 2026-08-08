@@ -57,6 +57,17 @@ pub(crate) fn analyze_define_event(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
         let table = ctx.schema().tables.get(&stmt.table.node);
         ctx.with_row_table(table, |ctx| {
             if let Some(when) = &stmt.when {
+                // An event's WHEN runs against the row that triggered it, so a
+                // bare name in it is a field of the target table — the same
+                // read a `WHERE` performs, and now checked by the same walker
+                // (1002). It was checked by nothing at all: only `$event.x`
+                // references were resolved, and `$event` is the string
+                // `'CREATE' | 'UPDATE' | 'DELETE'`, so `WHEN ghost = 1` — a
+                // plain absent field — went straight through. The event then
+                // defines cleanly and simply never fires.
+                if let Some(table) = ctx.schema().tables.get(&stmt.table.node) {
+                    crate::analyzer::data::check_expression_field_paths(ctx, table, when, 1002);
+                }
                 let kind = crate::analyzer::expression::analyze_expr(ctx, when);
                 // WHEN gates whether the event fires, so it is a condition like
                 // any other. It had no kind contract at all: `WHEN 'CREATE'`
@@ -281,6 +292,34 @@ mod tests {
             "expected a related note at the table definition, got: {:?}",
             finding.related()
         );
+    }
+
+    /// The WHEN condition reads the triggering row, so a name in it that the
+    /// table declares is an ordinary read and must stay silent — including
+    /// one behind a record link, which is the case the crossing walker exists
+    /// for. This is the half that a check added for `WHEN ghost` could most
+    /// easily get wrong.
+    #[test]
+    fn event_when_accepts_the_fields_the_row_actually_has() {
+        let query = concat!(
+            "DEFINE TABLE person SCHEMAFULL;\n",
+            "DEFINE FIELD name ON person TYPE string;\n",
+            "DEFINE TABLE ticket SCHEMAFULL;\n",
+            "DEFINE FIELD owner ON ticket TYPE record<person>;\n",
+            "DEFINE FIELD title ON ticket TYPE string;\n",
+            "DEFINE EVENT ev ON ticket\n",
+            "  WHEN $event = 'UPDATE' AND title != NONE AND owner.name = 'Ada'\n",
+            "  THEN {};\n",
+        );
+        let mut workspace = Workspace::default();
+        let output = analyze_query(&mut workspace, query);
+        let fields: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|finding| finding.code().number() == 1002)
+            .map(|finding| finding.message().to_string())
+            .collect();
+        assert!(fields.is_empty(), "expected no field findings, got {fields:?}");
     }
 
     #[test]

@@ -143,3 +143,9 @@
     46  E1002
     46  L7014
     46  L7015
+
+== invalid/72_event_when_fields.surql ==
+    11  E1002
+    15  E1002
+    21  E1002
+    27  E1002
