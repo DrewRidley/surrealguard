@@ -1226,6 +1226,7 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
         ty: None,
         overwrite: false,
         default: None,
+        default_always: false,
         value: None,
         computed: None,
         reference: false,
@@ -1236,9 +1237,12 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
 
     for child in named_children(node) {
         match child.kind() {
-            "Keyword" if text[child.byte_range()].eq_ignore_ascii_case("overwrite") => {
-                def.overwrite = true;
-            }
+            // `OVERWRITE` is its own clause node, not a loose keyword — the
+            // shape `lower_define_table` has always read. Matching a bare
+            // `Keyword` here found nothing, so every `DEFINE FIELD OVERWRITE`
+            // lowered as if the word were absent and drew the 1022 that word
+            // exists to answer.
+            "OverwriteClause" => def.overwrite = true,
             "Keyword" => {}
             "Idiom" => {
                 def.path = Spanned::new(
@@ -1251,7 +1255,12 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
                     def.table = table;
                 }
             }
-            "DefaultClause" => def.default = clause_expr(child, text),
+            "DefaultClause" => {
+                def.default = clause_expr(child, text);
+                def.default_always = named_children(child)
+                    .into_iter()
+                    .any(|word| word.kind() == "DefaultAlways");
+            }
             "ValueClause" => def.value = clause_expr(child, text),
             "ComputedClause" => def.computed = clause_expr(child, text),
             "AssertClause" => def.assert = clause_expr(child, text),
@@ -2048,6 +2057,53 @@ mod tests {
         assert_eq!(step.targets[0].node, "team");
     }
 
+    /// `OVERWRITE` reaches the AST on a field as it always has on a table.
+    /// It arrives as an `OverwriteClause` node, and `lower_define_field` was
+    /// looking for a loose `Keyword` spelled "overwrite" — which the tree does
+    /// not contain — so every `DEFINE FIELD OVERWRITE` lowered as though the
+    /// word were absent and drew the 1022 that word exists to answer.
+    #[test]
+    fn lowers_define_field_overwrite_flag() {
+        let parsed = parse("DEFINE FIELD OVERWRITE title ON ticket TYPE string;");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Field(def)) => Some(def),
+            _ => None,
+        });
+        assert!(stmt.overwrite, "OVERWRITE sets the flag");
+        assert_eq!(stmt.table.node, "ticket", "and the rest still lowers");
+
+        let parsed = parse("DEFINE FIELD title ON ticket TYPE string;");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Field(def)) => Some(def),
+            _ => None,
+        });
+        assert!(!stmt.overwrite, "and its absence leaves it clear");
+    }
+
+    /// `DEFAULT ALWAYS` is a distinct clause to the engine — `id` takes a
+    /// plain `DEFAULT` and rejects this one — so the two must not lower to the
+    /// same thing. The grammar marks it with a `DefaultAlways` node beside the
+    /// value; the `DEFAULT` keyword itself is not even a named child, so
+    /// nothing else in the clause distinguishes them.
+    #[test]
+    fn lowers_define_field_default_always_apart_from_a_plain_default() {
+        let parsed = parse("DEFINE FIELD n ON t DEFAULT ALWAYS 1;");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Field(def)) => Some(def),
+            _ => None,
+        });
+        assert!(stmt.default_always, "ALWAYS sets the flag");
+        assert!(stmt.default.is_some(), "and the value still lowers");
+
+        let parsed = parse("DEFINE FIELD n ON t DEFAULT 1;");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Field(def)) => Some(def),
+            _ => None,
+        });
+        assert!(!stmt.default_always, "a plain DEFAULT leaves it clear");
+        assert!(stmt.default.is_some());
+    }
+
     #[test]
     fn lowers_define_field_reference_flag() {
         let parsed = parse("DEFINE FIELD org ON team TYPE record<organization> REFERENCE;");
@@ -2282,3 +2338,5 @@ mod tests {
         assert_eq!(tokenizers, vec!["blank", "class"]);
     }
 }
+
+
