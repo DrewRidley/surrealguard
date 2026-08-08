@@ -1198,6 +1198,18 @@ table webhook_event  [schemafull]
   let      39:5 $as_set          : set<int, 3>
   let      40:5 $as_of           : string
 
+== source: queries/82_union_receivers.surql ==
+  stmt      7:1 select           : array<{ shouted: string }>
+  stmt     11:1 select           : array<{ owned_since: datetime }>
+  stmt     16:1 select           : array<{ owner_username: option<string> }>
+  stmt     17:1 select           : array<{ owner_legal_name: option<string> }>
+  stmt     20:1 select           : array<{ reviewer_username: option<string> }>
+  diag     7:42 I7014     Hint
+  diag    11:45 I7014     Hint
+  diag    16:46 I7014     Hint
+  diag    17:50 I7014     Hint
+  diag    20:52 I7014     Hint
+
 == source: queries/90_opaque.surql ==
   stmt      4:1 select           : array<{ payload: any, provider: 'stripe' | 'github' }>
   stmt      6:1 let              : (no response)

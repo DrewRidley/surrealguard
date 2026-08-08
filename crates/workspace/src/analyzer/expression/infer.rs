@@ -671,6 +671,27 @@ pub(crate) fn field_of_kind(value: &Kind, field: &str, schema: &SchemaIndex) -> 
     match value {
         Kind::Literal(KindLiteral::Object(fields)) => fields.get(field).cloned(),
         Kind::Record(targets) => {
+            // A multi-table link steps into every table at once, and the field
+            // is the union of what they answer — `none` from an arm that does
+            // not declare it. Giving up here (which is what a `[target]`-only
+            // match did) left `pet.bark.len()` with no receiver at all, so the
+            // method behind a union link was checked by nobody.
+            if targets.len() > 1 {
+                return match crate::analyzer::data::select::resolve_across_link(
+                    schema,
+                    targets,
+                    &[field.to_string()],
+                ) {
+                    Kind::Any => None,
+                    // Absent on every arm — the case that already reported
+                    // 1002. A single-table link stops the walk here too
+                    // (`kind_for_path` answers `None`), and stopping is what
+                    // keeps one mistake to one finding instead of trailing a
+                    // "`none` has no method" behind it.
+                    Kind::None => None,
+                    kind => Some(kind),
+                };
+            }
             let [target] = targets.as_slice() else {
                 return None;
             };

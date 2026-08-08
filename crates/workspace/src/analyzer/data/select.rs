@@ -3097,10 +3097,26 @@ fn rewrap_link_result(wrappers: &[crate::kinds::KindWrapper], resolved: Kind) ->
     crate::kinds::rewrap_kind(wrappers, resolved)
 }
 
-/// Resolves `rest` across a record link to `targets`, widening to `Kind::Any`
-/// whenever the answer isn't provable: an empty (`record<>`) or unknown target,
-/// or variants that disagree on the remainder's kind.
-fn resolve_across_link(
+/// Resolves `rest` across a record link to `targets` — the **union** of what
+/// each table answers, because that is what the value is: the link points at
+/// one of them, and nobody knows which.
+///
+/// Two shapes the old "one common kind, else `Kind::Any`" rule threw away, both
+/// engine-verified on 3.2.3 against a `document.owner` declared
+/// `record<account | organization>`:
+///
+/// * **A field only some arms declare.** `SELECT owner.username FROM document`
+///   is `[{username: 'ada'}, {username: NONE}]`, and `type::of` says `'string'`
+///   then `'none'` — so the read is an `option<string>`. An absent arm
+///   contributes `none`, which is the answer, not an absence of one.
+/// * **Arms that disagree.** Two kinds are a union of two kinds. `any` claims
+///   less than either, and it is what made a union receiver unenforceable:
+///   nothing can be required of an `any`.
+///
+/// `Kind::Any` is still the answer where nothing is provable — an empty
+/// (`record<>`) or unknown target, a schemaless one (open by design), or an arm
+/// that itself resolved to `any`.
+pub(crate) fn resolve_across_link(
     schema: &SchemaIndex,
     targets: &[surrealdb_types::Table],
     rest: &[String],
@@ -3108,30 +3124,74 @@ fn resolve_across_link(
     if targets.is_empty() {
         return Kind::Any;
     }
-    let mut resolved: Option<Kind> = None;
+    let mut arms = Vec::with_capacity(targets.len());
     for target in targets {
         let Some(table) = schema.tables.get(&target.to_string()) else {
             return Kind::Any;
         };
-        let Some(kind) = resolve_field_path(schema, table, rest) else {
+        // A schemaless row is open: it may well carry the field, so its arm
+        // proves neither a kind nor a `none`.
+        if table.fields.is_empty() {
             return Kind::Any;
-        };
-        match &resolved {
-            None => resolved = Some(kind),
-            Some(prev) if *prev == kind => {}
-            Some(_) => return Kind::Any,
+        }
+        match resolve_field_path(schema, table, rest) {
+            Some(Kind::Any) => return Kind::Any,
+            Some(kind) => arms.push(kind),
+            None => arms.push(Kind::None),
         }
     }
-    resolved.unwrap_or(Kind::Any)
+    Kind::either(arms)
+}
+
+/// Whether `segments` is *provably* absent from `table` — the question
+/// [`validate_field_path`] answers by emitting, asked without emitting.
+///
+/// Every suppression rule that file uses is a `false` here, so the two cannot
+/// drift: an opaque intermediate segment, a `record<>` with no targets, a
+/// target the workspace has no `DEFINE TABLE` for, and a schemaless table all
+/// prove nothing. A union link is absent only when the remainder is absent on
+/// *every* arm.
+///
+/// This is what lets a multi-table link be checked at all. `record<dog |
+/// cat>.bark` is wrong only when no arm declares `bark`; one arm that does
+/// makes it legitimate polymorphic code whose value is merely NONE for the
+/// others, and reporting that would be reporting a program that works.
+pub(crate) fn field_path_is_absent(
+    schema: &SchemaIndex,
+    table: &TableDef,
+    segments: &[String],
+) -> bool {
+    for split in 1..segments.len() {
+        let (prefix, rest) = segments.split_at(split);
+        if let Some((_wrappers, targets)) = record_link_targets_at(table, prefix) {
+            return !targets.is_empty()
+                && targets.iter().all(|target| {
+                    schema
+                        .tables
+                        .get(&target.to_string())
+                        .is_some_and(|linked| field_path_is_absent(schema, linked, rest))
+                });
+        }
+        if field_is_opaque_boundary(table, prefix) {
+            return false;
+        }
+    }
+    // The same two escapes `check_field_path` makes before it emits: a
+    // schemaless row is open by design, and a path that resolves is present.
+    !table.fields.is_empty() && kind_for_path(table, segments).is_none()
 }
 
 /// Validates a (possibly link-crossing) field path against the schema, emitting
 /// `code` (E1002) at the table where a segment is genuinely absent. When the
 /// path crosses a record link into a single *known* table, validation continues
 /// there — so `team.badfield` reports against `team`, with its `DEFINE TABLE`
-/// note. A `record<>`, an unknown/dangling target (already E1001 elsewhere), or
-/// a union link (multiple targets) suppresses the finding: reporting those
-/// would double-report or risk a false positive.
+/// note. A `record<>` and an unknown/dangling target (already E1001 elsewhere)
+/// suppress the finding: reporting those would double-report or risk a false
+/// positive.
+///
+/// A **union** link is reported when the remainder is absent on every one of
+/// its tables — see [`field_path_is_absent`]. It names them all rather than
+/// picking one, because no single one of them is the receiver.
 pub(crate) fn validate_field_path(
     ctx: &mut AnalysisContext<'_>,
     table: &TableDef,
@@ -3142,11 +3202,13 @@ pub(crate) fn validate_field_path(
     for split in 1..segments.len() {
         let (prefix, rest) = segments.split_at(split);
         if let Some((_wrappers, targets)) = record_link_targets_at(table, prefix) {
-            let [only] = targets.as_slice() else {
-                return;
-            };
-            if let Some(linked) = ctx.schema().tables.get(&only.to_string()) {
-                validate_field_path(ctx, linked, rest, span, code);
+            match targets.as_slice() {
+                [only] => {
+                    if let Some(linked) = ctx.schema().tables.get(&only.to_string()) {
+                        validate_field_path(ctx, linked, rest, span, code);
+                    }
+                }
+                many => emit_absent_on_every_link_target(ctx, many, rest, span, code),
             }
             return;
         }
@@ -3162,6 +3224,62 @@ pub(crate) fn validate_field_path(
         }
     }
     crate::analyzer::data::check_field_path(ctx, table, segments, span, code);
+}
+
+/// Emits `code` for a path read through a **multi-table** link, when the path
+/// is absent on every table the link can point at.
+///
+/// The message names the whole union — `record<account | organization>` is what
+/// the author wrote and no one of its arms is "the" receiver — and the "did you
+/// mean" is drawn from the fields the arms have in common, since a suggestion
+/// only one arm declares would not fix the read either.
+pub(crate) fn emit_absent_on_every_link_target(
+    ctx: &mut AnalysisContext<'_>,
+    targets: &[surrealdb_types::Table],
+    segments: &[String],
+    span: surrealguard_syntax::span::ByteRange,
+    code: u16,
+) {
+    if targets.is_empty() {
+        return;
+    }
+    let mut tables = Vec::new();
+    for target in targets {
+        let Some(table) = ctx.schema().tables.get(&target.to_string()) else {
+            return;
+        };
+        if !field_path_is_absent(ctx.schema(), table, segments) {
+            return;
+        }
+        tables.push(table);
+    }
+    let common: Vec<&str> = tables
+        .first()
+        .map(|first| {
+            first
+                .fields
+                .keys()
+                .filter(|name| tables.iter().all(|table| table.fields.contains_key(*name)))
+                .map(String::as_str)
+                .collect()
+        })
+        .unwrap_or_default();
+    let named = targets
+        .iter()
+        .map(|target| target.to_string())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let path = segments.join(".");
+    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
+    let mut finding = surrealguard_diagnostics::catalog::finding(
+        span,
+        code,
+        format!("`record<{named}>` has no field `{path}`"),
+    );
+    if let Some(nearest) = crate::suggest::closest(&path, common.into_iter()) {
+        finding = finding.with_help(format!("did you mean `{nearest}`?"));
+    }
+    ctx.emit(finding);
 }
 
 /// Whether `prefix` names a concrete declared *leaf* field on `table` that is
@@ -4876,7 +4994,7 @@ mod tests {
     }
 
     #[test]
-    fn union_record_link_resolves_a_field_common_to_every_variant() {
+    fn union_record_link_reads_the_union_of_what_its_tables_answer() {
         let schema = schema_from(
             "DEFINE TABLE cat SCHEMAFULL;\n\
              DEFINE FIELD legs ON cat TYPE int;\n\
@@ -4891,14 +5009,45 @@ mod tests {
         let kind = analyze(&schema, "SELECT VALUE pet.legs FROM owner;");
         assert_eq!(kind, Kind::Array(Box::new(Kind::Int), None));
 
-        // `purrs` exists only on `cat` -> widen to Any (never invent), and no
-        // 1002 (a union is too ambiguous to report without a false positive).
+        // `purrs` exists only on `cat`. A `dog` answers NONE for it — verified
+        // on 3.2.3, where `type::of(owner.username)` over a two-table link is
+        // `'string'` for the arm that has it and `'none'` for the arm that does
+        // not — so the read is an `option<bool>`, and it is not a finding:
+        // one arm declaring the field makes the query legitimate.
         let (kind, diagnostics) =
             analyze_diagnostics(&schema, "SELECT VALUE pet.purrs FROM owner;");
+        assert_eq!(
+            kind,
+            Kind::Array(Box::new(Kind::either(vec![Kind::Bool, Kind::None])), None)
+        );
+        assert!(
+            !codes(&diagnostics).contains(&1002),
+            "a field one arm declares must not emit 1002: {:?}",
+            codes(&diagnostics)
+        );
+
+        // Absent on EVERY arm is the case that is provable, and it reports.
+        let (_, diagnostics) = analyze_diagnostics(&schema, "SELECT VALUE pet.nope FROM owner;");
+        assert!(
+            codes(&diagnostics).contains(&1002),
+            "a field no arm declares must emit 1002: {:?}",
+            codes(&diagnostics)
+        );
+
+        // A schemaless arm is open by design and vouches for nothing, so the
+        // whole read stays unchecked and untyped.
+        let lenient = schema_from(
+            "DEFINE TABLE cat SCHEMAFULL;\n\
+             DEFINE FIELD legs ON cat TYPE int;\n\
+             DEFINE TABLE dog;\n\
+             DEFINE TABLE owner SCHEMAFULL;\n\
+             DEFINE FIELD pet ON owner TYPE record<cat | dog>;",
+        );
+        let (kind, diagnostics) = analyze_diagnostics(&lenient, "SELECT VALUE pet.nope FROM owner;");
         assert_eq!(kind, Kind::Array(Box::new(Kind::Any), None));
         assert!(
             !codes(&diagnostics).contains(&1002),
-            "a union-link traversal must not emit 1002: {:?}",
+            "a schemaless arm must suppress the finding: {:?}",
             codes(&diagnostics)
         );
     }
