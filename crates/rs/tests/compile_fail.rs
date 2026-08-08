@@ -4,6 +4,13 @@
 //! gets a case here. `trybuild` compiles each `tests/ui/*.rs` and compares the
 //! compiler's output against the matching `.stderr`.
 
+// The `.stderr` files record one compiler's exact wording, and rustc rewords
+// its diagnostics between channels — `From` currently prints its impl list one
+// way on stable and another on nightly, so the same file cannot match both.
+// They are recorded on stable, which is what CI builds with; running anywhere
+// else reports a diff that says nothing about whether the macro rejected the
+// case. Bless with `TRYBUILD=overwrite` on stable.
+#[rustversion::attr(not(stable), ignore = "stderr is recorded on stable")]
 #[test]
 fn rejections_are_compile_errors() {
     // The macro resolves the schema from `CARGO_MANIFEST_DIR`, which trybuild

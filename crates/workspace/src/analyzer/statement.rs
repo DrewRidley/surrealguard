@@ -82,7 +82,10 @@ mod tests {
             ("INSERT INTO user { name: 'A' };", Some(Kind::Any)),
             ("RELATE user:one->likes->post:one;", Some(Kind::Any)),
             ("LIVE SELECT * FROM user;", Some(Kind::Uuid)),
-            ("KILL u'e72bee20-f49b-11ec-b939-0242ac120002';", Some(Kind::None)),
+            (
+                "KILL u'e72bee20-f49b-11ec-b939-0242ac120002';",
+                Some(Kind::None),
+            ),
             ("DEFINE TABLE user;", Some(Kind::None)),
             ("DEFINE FIELD name ON user;", Some(Kind::None)),
             ("REMOVE TABLE user;", Some(Kind::None)),

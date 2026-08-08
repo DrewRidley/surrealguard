@@ -1029,10 +1029,7 @@ mod tests {
 
         // Unguarded, the union has no `len` — `int` does not answer it.
         assert_eq!(
-            code_count(
-                &format!("{SCHEMA}SELECT (v.len()) AS n FROM mixed;"),
-                5001
-            ),
+            code_count(&format!("{SCHEMA}SELECT (v.len()) AS n FROM mixed;"), 5001),
             1
         );
 

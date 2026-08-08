@@ -90,12 +90,8 @@ pub(crate) fn check_graph_idiom_at(
             ast::IdiomPart::Graph { dir, step } => {
                 if !pending_fields.is_empty() {
                     check_source_fields(ctx, require_landing, current.as_deref(), &pending_fields);
-                    current = rebase_through_fields(
-                        ctx,
-                        current.as_deref(),
-                        &pending_fields,
-                        part.span,
-                    );
+                    current =
+                        rebase_through_fields(ctx, current.as_deref(), &pending_fields, part.span);
                     pending_edge = None;
                     pending_fields.clear();
                 }
@@ -334,7 +330,13 @@ fn check_source_fields(
     let Some(span) = span else {
         return;
     };
-    crate::analyzer::data::select::validate_field_path(ctx, table, &field_names(fields), span, 1002);
+    crate::analyzer::data::select::validate_field_path(
+        ctx,
+        table,
+        &field_names(fields),
+        span,
+        1002,
+    );
 }
 
 /// The table a graph step traverses from, after a run of field reads.

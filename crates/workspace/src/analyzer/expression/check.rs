@@ -428,9 +428,7 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
     for (part, receiver) in idiom_prefix_kinds(idiom, ctx) {
         let was_collection = receiver
             .as_ref()
-            .map(|kind| {
-                crate::analyzer::expression::infer::collection_element_kind(kind).is_some()
-            })
+            .map(|kind| crate::analyzer::expression::infer::collection_element_kind(kind).is_some())
             .unwrap_or(false);
         let field_receiver = splat_source.take().or_else(|| receiver.clone());
         splat_source = match &part.node {

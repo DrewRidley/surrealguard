@@ -612,9 +612,9 @@ fn step_part_kind(
         }
         // `Start` is a value, not a step off one; `Recurse` and `Partial` name
         // no single reachable shape.
-        ast::IdiomPart::Start(_)
-        | ast::IdiomPart::Recurse { .. }
-        | ast::IdiomPart::Partial(_) => None,
+        ast::IdiomPart::Start(_) | ast::IdiomPart::Recurse { .. } | ast::IdiomPart::Partial(_) => {
+            None
+        }
     }
 }
 

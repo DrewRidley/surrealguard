@@ -4240,6 +4240,7 @@ name = "surrealguard-rs"
 version = "0.5.3"
 dependencies = [
  "chrono",
+ "rustversion",
  "surrealdb",
  "surrealdb-types",
  "surrealguard-macros",

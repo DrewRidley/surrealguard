@@ -32,6 +32,8 @@ surrealdb = { version = "3.2", default-features = false, optional = true }
 surrealdb = { version = "3.2", features = ["protocol-ws"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 trybuild = "1"
+# To skip the `trybuild` cases off stable, where rustc words them differently.
+rustversion = "1"
 # Only to build a `Datetime` to assert against in the execution tests.
 chrono = "0.4"
 
