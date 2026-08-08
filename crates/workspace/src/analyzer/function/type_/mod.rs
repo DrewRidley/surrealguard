@@ -54,6 +54,36 @@ pub mod table;
 pub mod thing;
 pub mod uuid;
 
+/// The table a `type::` constructor's table argument names, when the argument
+/// is provably one table and not merely "some table".
+///
+/// `type::record('person', $id)` is a `record<person>` on every run: the table
+/// half is a constant, so the constructed link's table is decided statically
+/// and a schema field declared `record<person>` accepts it (engine-verified on
+/// 3.2.3 — `CREATE ticket SET owner = type::record('person', 'a')` stores
+/// `person:a`, while `type::record('metrics', 'a')` is rejected with
+/// "Expected `record<person>` but found `metrics:a`").
+///
+/// **Prove or stay silent.** `type::record($table, $id)` is a record whose
+/// table nobody knows until the parameter is bound, so it stays the
+/// unconstrained `record` — not `any`, and never a guess. The const channel
+/// resolves a `LET`-bound string too (`LET $t = 'person'` is as constant as the
+/// literal), and nothing else.
+///
+/// The empty string is rejected rather than taken: the engine refuses it
+/// ("Found  for the Record ID but this is not a valid table name"), so there is
+/// no table to name.
+pub(super) fn constant_table_arg(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    index: usize,
+) -> Option<surrealdb_types::Table> {
+    match crate::analyzer::function::const_value_arg(ctx, call, index)? {
+        surrealdb_types::Value::String(name) if !name.is_empty() => Some(name.as_str().into()),
+        _ => None,
+    }
+}
+
 pub(crate) fn analyze_type_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
