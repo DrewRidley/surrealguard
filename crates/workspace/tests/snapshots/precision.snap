@@ -325,6 +325,10 @@ table webhook_event  [schemafull]
   stmt     73:1 select           : array<{ city: string }>
   stmt     77:1 select           : array<{ city: string }>
   stmt     79:1 select           : array<{ owner_name: string }>
+  stmt     84:1 select           : array<{ username: string }>
+       modifier where      row_preserving=true
+  stmt     86:1 select           : array<{ name: string }>
+       modifier where      row_preserving=true
   diag     4:36 I7014     Hint
   diag     6:51 I7014     Hint
   diag     8:41 I7014     Hint
@@ -1228,6 +1232,8 @@ table webhook_event  [schemafull]
   stmt      8:1 let              : (no response)
   stmt     10:1 return           : { headers: option<object>, payload: option<any> }
   stmt     16:1 select           : array<{ external_row: any }>
+  stmt     23:1 select           : array<{ provider: 'stripe' | 'github' }>
+       modifier where      row_preserving=true
   let       6:5 $payload         : option<any>
   let       8:5 $headers         : option<object>
   diag     4:31 I7014     Hint

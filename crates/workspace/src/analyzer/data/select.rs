@@ -5600,6 +5600,62 @@ mod tests {
         );
     }
 
+    /// The other half of the same contract: a condition resolves a path the way
+    /// a projection of it does, so a field absent on the *linked* table is
+    /// reported there. `WHERE owner.ghost = 1` was silent while `SELECT
+    /// owner.ghost` reported, because the condition walk stopped at the link.
+    /// A mutation's filter is the same walk; `tests/corpus/invalid/` pins the
+    /// `UPDATE`/`DELETE` spellings, which this SELECT-only harness cannot lower.
+    #[test]
+    fn an_absent_field_past_a_link_in_a_where_clause_emits_1002() {
+        let schema = schema_from(
+            "DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE FIELD name ON user TYPE string;\n\
+             DEFINE FIELD boss ON user TYPE option<record<user>>;\n\
+             DEFINE TABLE team SCHEMAFULL;\n\
+             DEFINE FIELD owner ON team TYPE record<user>;",
+        );
+
+        for query in [
+            "SELECT id FROM team WHERE owner.ghost = 1;",
+            "SELECT id FROM team WHERE owner.boss.ghost = 1;",
+            "SELECT id FROM team WHERE id != NONE AND (owner.ghost = 1 OR id = NONE);",
+            "SELECT id FROM team WHERE string::len(owner.ghost) > 0;",
+        ] {
+            let (_, diagnostics) = analyze_diagnostics(&schema, query);
+            let finding = diagnostics
+                .iter()
+                .find(|finding| finding.code().number() == 1002)
+                .unwrap_or_else(|| panic!("expected 1002 for `{query}`"));
+            assert!(
+                finding.message().contains("`user` has no field `ghost`"),
+                "unexpected message for `{query}`: {}",
+                finding.message()
+            );
+        }
+    }
+
+    /// The false positive the same routing removes. A `TYPE object` field is
+    /// open — any key may be there — which is why the projection has never
+    /// reported a subpath of one. The condition claimed the row had no field
+    /// `settings.anything`, on a read that is perfectly legal.
+    #[test]
+    fn a_subpath_of_an_open_object_in_a_where_clause_is_not_a_missing_field() {
+        let schema = schema_from(
+            "DEFINE TABLE team SCHEMAFULL;\n\
+             DEFINE FIELD name ON team TYPE string;\n\
+             DEFINE FIELD settings ON team FLEXIBLE TYPE object;",
+        );
+
+        let (_, diagnostics) =
+            analyze_diagnostics(&schema, "SELECT name FROM team WHERE settings.anything = 1;");
+        assert!(
+            !codes(&diagnostics).contains(&1002),
+            "a subpath of an open object must not read as an absent field: {:?}",
+            codes(&diagnostics)
+        );
+    }
+
     /// TI-2, negative: a union with a record arm *and* an unrelated arm has no
     /// single payload to traverse. Stay conservative — no invented type, and
     /// no 1002 on a remainder we cannot prove absent.

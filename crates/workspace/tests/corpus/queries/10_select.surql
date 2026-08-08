@@ -77,3 +77,10 @@ SELECT VALUE address.{ city } FROM organization;
 SELECT address.{ city }.city AS city FROM organization;
 
 SELECT owner.{ username }.username AS owner_name FROM organization;
+
+-- A condition resolves a field path across a record link exactly as a
+-- projection of the same path does — one hop and several, and through the
+-- `option` wrapper on the link.
+SELECT username FROM account WHERE person.first_name = 'Ada';
+
+SELECT name FROM organization WHERE owner.person.last_name = 'Lovelace';
