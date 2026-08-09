@@ -17,7 +17,7 @@ exactly when the query reads params).
 | Example | What it shows |
 | --- | --- |
 | [`basic/`](./basic) | Vanilla TypeScript. Starts with a bare `db.query("…")`; then `defineQuery` + `db.run` / `db.watch` for what a named query buys. |
-| [`sveltekit/`](./sveltekit) | Svelte 5 / SvelteKit. `/` is `db.query` in a component and nothing else; `/live` adds `preload` in `load` + `createLive` in the component, plus a shared query in a `.svelte.ts` module. |
+| [`sveltekit/`](./sveltekit) | Svelte 5 / SvelteKit. `/` is `db.query` in a component and nothing else; `/live` adds `preload` in `load` + `createLive` in the component, plus a shared query in a `.svelte.ts` module; `/components` renders the same data with `<Query>` / `<LiveQuery>`, one live subscription per row. |
 
 Both type-check as part of `pnpm -r run typecheck`.
 

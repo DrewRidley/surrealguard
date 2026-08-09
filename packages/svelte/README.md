@@ -26,8 +26,9 @@ nothing around it — no provider, no wrapper, no helper:
 
 What this package adds is *reactive* state: a live query that re-renders as rows
 change, a query whose parameters follow `$derived` state, an SSR payload a
-component can pick up without naming the query twice. Reach for it when you want
-one of those.
+component can pick up without naming the query twice — as runes
+(`createQuery` / `createLive`) or as markup (`<Query>` / `<LiveQuery>`). Reach
+for it when you want one of those.
 
 ## Setup
 
@@ -227,6 +228,80 @@ scalar (`RETURN count(…)`) and there is nothing honest to default it to. If yo
 only need the rows once and do not need loading state, `{#await db.query("…")}`
 is less machinery.
 
+## `<Query>` / `<LiveQuery>` — the same two, in markup
+
+Thin wrappers over `createQuery` / `createLive`: same cache, same refcounting,
+same teardown. They exist for when a route would rather say what it renders
+than assemble a handle first.
+
+```svelte
+<script lang="ts">
+  import { LiveQuery, Query } from "@surrealguard/svelte";
+  import { allPeople, liveTeam } from "$lib/queries";
+  import { recordId } from "$lib/records";
+</script>
+
+<Query q={allPeople}>
+  {#snippet loading()}<p>Loading…</p>{/snippet}
+  {#snippet error(cause, retry)}
+    <p>{cause.message}</p><button onclick={retry}>Retry</button>
+  {/snippet}
+  {#snippet children(people)}
+    {#each people as person (person.id)}
+      <li>
+        {person.name}
+        <!-- one live subscription per row -->
+        <LiveQuery q={liveTeam.with({ team: recordId(person.team) })}>
+          {#snippet children(teammates)}<small>{teammates.length}</small>{/snippet}
+        </LiveQuery>
+      </li>
+    {/each}
+  {/snippet}
+</Query>
+```
+
+(`recordId` is app-local, not an export: a reactive row is `Json`-shaped, so
+`person.team` is the string `"team:red"`, while a record *parameter* has to be
+the SDK's `RecordId` to match on the wire. Four lines —
+[`examples/sveltekit/src/lib/records.ts`](../../examples/sveltekit/src/lib/records.ts).)
+
+`people` and `teammates` carry **no annotation and are still fully typed** — the
+row type flows out of `q` and into the snippet parameter, `Rows<R>` unwrapping
+and all. `person.nope` is a compile error.
+
+`q` takes what the primitives take: a bound query, a `Preloaded` payload, a
+thunk of either (reactive params), or `"skip"`. There is no `q="SELECT …"`
+string form — a string in a markup attribute cannot be typed yet, and a prop
+that yields `unknown` is not worth the convenience.
+
+Nesting a `<LiveQuery>` per row is the intended pattern, not an abuse of it.
+Mounting joins the refcounted cache entry for that key, so rows on the same
+query share one `LIVE SELECT`; unmounting drops the last reference and `KILL`s
+it immediately. A long list can subscribe to what is on screen and drop the
+rest as it scrolls.
+
+Both are separate components rather than `<Query live>`: a flag that changed the
+result type is worse to read and worse to type.
+
+**When a snippet is absent.** No `loading` renders nothing — a spinner is your
+decision. No `error` **throws**, so the failure reaches `<svelte:boundary>` or
+SvelteKit's error page rather than leaving a page silently and permanently
+blank. Give it an `error` snippet or catch it:
+
+```svelte
+<svelte:boundary>
+  <Query q={allPeople}>{#snippet children(people)}…{/snippet}</Query>
+  {#snippet failed(cause)}<p>{(cause as Error).message}</p>{/snippet}
+</svelte:boundary>
+```
+
+`<Query>` renders `children` as soon as it has data — including a `Preloaded`
+seed, on the server, on the first paint, with no flash of `loading`.
+`<LiveQuery>` waits for its seeding `SELECT`, because its rows start `[]` and an
+empty array is indistinguishable from a query that really has none. Its snippet
+receives the reconciled **rows**; the live-query `Uuid` is a subscription handle,
+not a payload, and is never surfaced.
+
 ## `createMutation` — a write, and what it invalidates
 
 ```svelte
@@ -366,6 +441,8 @@ initialisation, so a module cannot read it.
 | `createLive(source, options?)` | live query; `data` is always an array |
 | `createQuery(source, options?)` | one-shot; `data` is `T \| undefined` |
 | `createMutation(query, options?)` | write + invalidation |
+| `<Query q children loading? error? client?>` | `createQuery` in markup |
+| `<LiveQuery q children loading? error? client?>` | `createLive` in markup |
 | `preload(db, query)` | SSR payload that remembers its query |
 | `setClient(db)` / `useClient(override?)` | context, for the helpers above |
 | `dehydrate(db)` / `hydrate(db, state)` | whole-cache transport |
