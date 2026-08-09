@@ -773,8 +773,20 @@ fn walk_statement(stmt: &ast::Statement, refs: &mut SourceReferenceSet) {
         S::Sleep(s) => walk_opt_expr(&s.duration, refs),
         S::Kill(s) => walk_opt_expr(&s.id, refs),
         S::LiveSelect(s) => {
-            if let Some(table) = &s.table {
-                add_table(refs, &table.node);
+            for from in &s.from {
+                walk_expr(&from.node, refs);
+            }
+            for projection in &s.projections {
+                walk_projection(projection, refs);
+            }
+            if let Some(where_clause) = &s.where_clause {
+                walk_expr(&where_clause.node, refs);
+            }
+            if !s.fetch.is_empty() {
+                refs.navigates_records = true;
+                for idiom in &s.fetch {
+                    walk_idiom(&idiom.node, refs);
+                }
             }
         }
         S::Show(s) => {

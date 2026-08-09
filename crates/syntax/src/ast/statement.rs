@@ -506,10 +506,36 @@ pub struct ForStmt {
 }
 
 /// `LIVE SELECT` — subscribes to changes on a table.
+///
+/// Modelled with the same shape as [`SelectStmt`] for the clauses a live
+/// query really takes, because they mean the same thing and are checked by
+/// the same code. The clauses missing here are missing because the engine
+/// cannot parse them at all (`ORDER BY`, `GROUP`, `LIMIT`, `START`, `SPLIT`,
+/// `OMIT`, `TIMEOUT`, `PARALLEL`, `EXPLAIN`, `ONLY`) — a live query has no
+/// result set for any of them to shape, and the grammar refuses them here
+/// exactly as SurrealDB does.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LiveSelectStmt {
-    /// The table subscribed to.
-    pub table: Option<Spanned<String>>,
+    /// `LIVE SELECT DIFF` — the span of the leading `DIFF` keyword.
+    ///
+    /// Only leading `DIFF` is the diff form. Anywhere later in the list
+    /// (`SELECT title, DIFF`) it parses as an ordinary field path, which is
+    /// why this is a span rather than a flag: the two cases need to be told
+    /// apart and pointed at.
+    pub diff: Option<ByteRange>,
+    /// `LIVE SELECT VALUE <expr>` — notifications carry the bare value.
+    pub value: bool,
+    /// The projection list. Empty for the `DIFF` form, which has none.
+    pub projections: Vec<Projection>,
+    /// `FROM` sources, as written. The engine takes exactly one table, but
+    /// the grammar accepts a comma-separated list and record ids, so every
+    /// source is kept: what makes those wrong is a contract, not a parse.
+    pub from: Vec<Spanned<Expr>>,
+    /// `WHERE <expr>` — evaluated per notification, against the one changed
+    /// record.
+    pub where_clause: Option<Spanned<Expr>>,
+    /// `FETCH <fields>` — record links to expand in the notification.
+    pub fetch: Vec<Spanned<Idiom>>,
 }
 
 /// `KILL` — terminates a live query by id.

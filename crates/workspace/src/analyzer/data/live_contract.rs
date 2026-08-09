@@ -58,12 +58,64 @@
 //! Reported as 4009, whose contract — "LIVE SELECT with unsupported clause" —
 //! is exactly this and which had no emission site before.
 //!
-//! Two rejected forms are deliberately NOT reported, because the AST does not
-//! carry them: `FROM [ticket:1, ticket:2]` has no source node for an array
-//! literal (`stmt.from` comes back empty), and `FROM (SELECT …)` reaches here
-//! as a subquery whose value is only known at runtime. Both are engine
-//! rejections we can see no evidence of, and a check written against a shape
-//! the AST never holds is a check that silently never fires.
+//! Two rejected forms are deliberately NOT reported through the `defineLive`
+//! path, because the SELECT AST does not carry them: `FROM [ticket:1,
+//! ticket:2]` has no source node for an array literal (`stmt.from` comes back
+//! empty), and `FROM (SELECT …)` reaches here as a subquery whose value is
+//! only known at runtime. Both are engine rejections we can see no evidence
+//! of, and a check written against a shape the AST never holds is a check
+//! that silently never fires. Written as a real `LIVE SELECT` neither form
+//! parses at all — the grammar takes only an ident, a record id or a param
+//! after `FROM` — so both are already reported there, as syntax errors.
+//!
+//! # What the engine accepts and then does not honour
+//!
+//! Registering is not the contract. A notification is computed from the one
+//! changed record, not by re-running the query, so a clause can parse, can
+//! register, and still not reach the payload. That gap was measured the same
+//! way as the rejections — by subscribing over `ws://` to 3.2.3, writing to
+//! the table, and reading the raw notification frames. What the payload
+//! showed, per clause:
+//!
+//! - `FETCH` **is** honoured, and resolves at notification time rather than
+//!   at registration: `LIVE SELECT * FROM ticket FETCH owner` delivers
+//!   `owner` as a full object on CREATE, UPDATE *and* DELETE, and picks up an
+//!   edit made to the fetched record in between. A dangling link fetches as
+//!   `null`. A `FETCH` naming a non-link or unknown field is silently a
+//!   no-op.
+//! - `WHERE` **is** honoured, including through a link path
+//!   (`WHERE owner.name = 'x'`), on all three actions. Note for callers, not
+//!   a defect: there is no "left the filter" notification — a row updated out
+//!   of the filter simply goes quiet.
+//! - Projections, aliases, computed expressions and `VALUE` **are** honoured,
+//!   evaluated against the changed record.
+//! - Graph traversals in a projection **are** honoured, with two edges worth
+//!   knowing: they are re-evaluated only when the *subscribed* record
+//!   changes, so writing an edge fires nothing at all, and on DELETE the
+//!   traversal resolves against an already-deleted record and always comes
+//!   back empty.
+//! - `DIFF` **is** honoured, delivering a JSON-Patch-shaped array. Its
+//!   `change` op carries a unified-diff *string* for edited text rather than
+//!   the new value.
+//!
+//! and the two that are not honoured, reported as 4027:
+//!
+//! ```text
+//! -- FETCH is silently ignored under DIFF. Same write, two subscriptions:
+//! LIVE SELECT *    FROM ticket FETCH owner
+//!    -> {"id":"ticket:a","owner":{"id":"person:bob","name":"bob"},...}
+//! LIVE SELECT DIFF FROM ticket FETCH owner
+//!    -> [{"op":"replace","path":"","value":{"owner":"person:bob",...}}]
+//!
+//! -- DIFF is the diff form only in leading position. Later in the list it
+//! -- is an ordinary field path, and no table has a field called DIFF:
+//! LIVE SELECT title, DIFF FROM ticket
+//!    -> {"DIFF":null,"title":"t"}      (on every action, forever)
+//! ```
+//!
+//! Both register, both deliver, and both quietly do something other than what
+//! they say — which is why they are a warning rather than an error, and why
+//! the message says what the payload will actually contain.
 
 use surrealguard_syntax::ast;
 use surrealguard_syntax::span::SourceSpan;
@@ -204,6 +256,114 @@ pub(crate) fn check_live_select(
     }
 }
 
+/// Checks a real `LIVE SELECT` statement.
+///
+/// Everything the engine cannot parse — `ORDER BY`, `GROUP`, `LIMIT`,
+/// `START`, `SPLIT`, `OMIT`, `TIMEOUT`, `PARALLEL`, `EXPLAIN`, `ONLY`, an
+/// array or subquery source — the grammar cannot parse here either, so those
+/// arrive as syntax errors and are not this function's business. What is left
+/// is the two kinds of mistake that survive parsing: a source the engine
+/// refuses once it runs the statement, and a clause it accepts and then does
+/// not put in the notification.
+pub(crate) fn check_live_select_statement(
+    ctx: &mut crate::analyzer::context::AnalysisContext<'_>,
+    stmt: &ast::LiveSelectStmt,
+) {
+    let source = ctx.source().clone();
+    let mut findings = Vec::new();
+    let mut emit =
+        |span: surrealguard_syntax::span::ByteRange, code: u16, message: String, help: &str| {
+            findings.push(
+                surrealguard_diagnostics::catalog::finding(
+                    SourceSpan::new(source.clone(), span),
+                    code,
+                    message,
+                )
+                .with_help(help.to_string()),
+            );
+        };
+
+    // One subscription, one table — the engine stops at the comma while
+    // parsing, so this never registers at all.
+    if stmt.from.len() > 1 {
+        for from in &stmt.from[1..] {
+            emit(
+                from.span,
+                4009,
+                "a live query subscribes to one table".to_string(),
+                "register a separate live query per table",
+            );
+        }
+    }
+
+    // A record id registers, answers with a uuid, and then never fires: the
+    // engine refuses it while executing, not while parsing, so there is no
+    // error for the author to see anywhere.
+    for from in &stmt.from {
+        if matches!(from.node, ast::Expr::RecordId { .. }) {
+            emit(
+                from.span,
+                4009,
+                "a live query can't subscribe to a record id".to_string(),
+                "subscribe to the table and filter with WHERE — SurrealDB registers this and then never fires it",
+            );
+        }
+    }
+
+    // `DIFF` and `FETCH` together: the engine takes both and the diff it
+    // sends has the link unresolved, exactly as if the FETCH were not there.
+    if stmt.diff.is_some() {
+        for idiom in &stmt.fetch {
+            emit(
+                idiom.span,
+                4027,
+                "this FETCH does nothing — a DIFF notification is never fetched".to_string(),
+                "notifications for this subscription carry a JSON-Patch array with the link left as a record id; drop DIFF to get fetched rows, or resolve the link on the client",
+            );
+        }
+    }
+
+    // `DIFF` is the diff form only in leading position. Later in the list the
+    // parser has already committed to a projection list, so it reads as an
+    // ordinary field path — and since no table has a field called `DIFF`,
+    // every notification carries `"DIFF": null`.
+    if stmt.diff.is_none() {
+        for projection in &stmt.projections {
+            let ast::Projection::Expr { expr, alias } = projection else {
+                continue;
+            };
+            if alias.is_some() || !is_bare_diff_path(&expr.node) {
+                continue;
+            }
+            emit(
+                expr.span,
+                4027,
+                "this DIFF is read as a field name, not as the diff form".to_string(),
+                "only `LIVE SELECT DIFF FROM ...` is the diff form; here it is an ordinary field path, so every notification will carry `DIFF: null`",
+            );
+        }
+    }
+
+    drop(emit);
+    for finding in findings {
+        ctx.emit(finding);
+    }
+}
+
+/// Whether `expr` is the single unqualified path `DIFF`, in any casing —
+/// the shape a `DIFF` that lost its leading position lowers to.
+fn is_bare_diff_path(expr: &ast::Expr) -> bool {
+    let ast::Expr::Idiom(idiom) = expr else {
+        return false;
+    };
+    match idiom.parts.as_slice() {
+        [only] => {
+            matches!(&only.node, ast::IdiomPart::Field(name) if name.eq_ignore_ascii_case("diff"))
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::analysis::{analyze_workspace, Workspace};
@@ -278,6 +438,121 @@ mod tests {
             let found = live_findings(query);
             assert!(found.is_empty(), "`{query}` should be clean, got {found:?}");
         }
+    }
+
+    /// The same schema, but for real `LIVE SELECT` statements — which reach
+    /// analysis through the ordinary pipeline, not the `defineLive` post-pass,
+    /// and so are not marked as live sources.
+    fn statement_findings(query: &str) -> Vec<(u16, String)> {
+        let mut workspace = Workspace::default();
+        let schema = concat!(
+            "DEFINE TABLE person SCHEMAFULL;\n",
+            "DEFINE FIELD name ON person TYPE string;\n",
+            "DEFINE TABLE ticket SCHEMAFULL;\n",
+            "DEFINE FIELD owner ON ticket TYPE record<person>;\n",
+            "DEFINE FIELD title ON ticket TYPE string;\n",
+        );
+        workspace.add_virtual_source("schema".into(), schema.into());
+        let source = workspace.add_virtual_source("live".into(), query.into());
+        analyze_workspace(&workspace)
+            .sources
+            .get(&source)
+            .map(|output| {
+                output
+                    .diagnostics
+                    .iter()
+                    .map(|finding| (finding.code().number(), finding.message().to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The two forms that parse, register, and are then refused or ignored by
+    /// the engine — the ones with no runtime symptom to debug from.
+    #[test]
+    fn a_live_statement_reports_the_sources_the_engine_will_not_subscribe_to() {
+        for (query, code, expected) in [
+            (
+                "LIVE SELECT * FROM ticket:1;",
+                4009,
+                "can't subscribe to a record id",
+            ),
+            (
+                "LIVE SELECT * FROM ticket, person;",
+                4009,
+                "subscribes to one table",
+            ),
+        ] {
+            let found = statement_findings(query);
+            assert!(
+                found
+                    .iter()
+                    .any(|(number, message)| *number == code && message.contains(expected)),
+                "`{query}` should report {code}/{expected:?}, got {found:?}"
+            );
+        }
+    }
+
+    /// 4027 — accepted by the engine, delivered, and provably not reflected in
+    /// the notification. Both were read off raw ws:// frames from 3.2.3.
+    #[test]
+    fn a_live_statement_reports_the_clauses_the_notification_will_not_reflect() {
+        let found = statement_findings("LIVE SELECT DIFF FROM ticket FETCH owner;");
+        assert!(
+            found
+                .iter()
+                .any(|(number, message)| *number == 4027 && message.contains("FETCH does nothing")),
+            "a fetched DIFF should report 4027, got {found:?}"
+        );
+
+        let found = statement_findings("LIVE SELECT title, DIFF FROM ticket;");
+        assert!(
+            found.iter().any(
+                |(number, message)| *number == 4027 && message.contains("read as a field name")
+            ),
+            "a trailing DIFF should report 4027, got {found:?}"
+        );
+    }
+
+    /// The half that decides whether this is usable: every form the engine
+    /// accepts *and* honours must stay silent. Each of these registered
+    /// against 3.2.3 and delivered notifications carrying what it asked for.
+    #[test]
+    fn a_live_statement_accepts_everything_the_notification_really_honours() {
+        for query in [
+            "LIVE SELECT * FROM ticket;",
+            "LIVE SELECT title FROM ticket;",
+            "LIVE SELECT title AS t FROM ticket;",
+            "LIVE SELECT owner.name AS who FROM ticket;",
+            "LIVE SELECT string::uppercase(title) AS shout FROM ticket;",
+            "LIVE SELECT VALUE title FROM ticket;",
+            "LIVE SELECT DIFF FROM ticket;",
+            "LIVE SELECT * FROM ticket WHERE title = 'x';",
+            "LIVE SELECT * FROM ticket WHERE owner.name = 'x';",
+            "LIVE SELECT * FROM ticket FETCH owner;",
+            "LIVE SELECT * FROM ticket WHERE title = 'x' FETCH owner;",
+        ] {
+            let found = statement_findings(query);
+            assert!(found.is_empty(), "`{query}` should be clean, got {found:?}");
+        }
+    }
+
+    /// `DIFF` leading is the diff form and takes no alias; `DIFF` anywhere
+    /// else is a field path. Only the second is 4027, and the flag that tells
+    /// them apart comes from the grammar rather than from the spelling.
+    #[test]
+    fn only_a_non_leading_diff_is_read_as_a_field() {
+        let leading = statement_findings("LIVE SELECT DIFF FROM ticket;");
+        assert!(
+            leading.is_empty(),
+            "leading DIFF is the diff form: {leading:?}"
+        );
+
+        let trailing = statement_findings("LIVE SELECT title, diff FROM ticket;");
+        assert!(
+            trailing.iter().any(|(number, _)| *number == 4027),
+            "a lowercase trailing `diff` is the same mistake: {trailing:?}"
+        );
     }
 
     /// The contract belongs to the sink, not the SurrealQL: the same string is

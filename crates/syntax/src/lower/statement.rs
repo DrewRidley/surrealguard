@@ -157,9 +157,7 @@ pub(crate) fn lower_statement(node: Node<'_>, text: &str) -> Spanned<Statement> 
             id: statement_value_expr(node, text),
         }),
         "UseStatement" => Statement::Use(lower_use(node, text)),
-        "LiveSelectStatement" => Statement::LiveSelect(LiveSelectStmt {
-            table: table_after_keyword(node, text, "from"),
-        }),
+        "LiveSelectStatement" => Statement::LiveSelect(lower_live_select(node, text)),
         "InfoForStatement" => Statement::Info(InfoStmt {
             // `INFO FOR TABLE x` and its `TB` short form.
             table: table_after_keyword(node, text, "table")
@@ -284,6 +282,61 @@ fn lower_select(node: Node<'_>, text: &str) -> SelectStmt {
             }
             // Everything unconsumed is an explicit fact, never dropped:
             // ReturnClause, WithClause, VersionClause, TempfilesClause, ...
+            _ => {}
+        }
+    }
+
+    stmt
+}
+
+/// Lowers `LIVE SELECT`.
+///
+/// The projection list is not wrapped in a `Fields` node here the way a
+/// SELECT's is — the grammar spells it out inline — so the projection
+/// children are collected directly. `FROM` is the divider: the same node
+/// kinds appear on both sides of it (a bare `Ident` is a projected field
+/// before `FROM` and the subscribed table after), so every projection arm is
+/// guarded on not having passed it yet.
+fn lower_live_select(node: Node<'_>, text: &str) -> LiveSelectStmt {
+    let mut stmt = LiveSelectStmt {
+        diff: None,
+        value: false,
+        projections: Vec::new(),
+        from: Vec::new(),
+        where_clause: None,
+        fetch: Vec::new(),
+    };
+    let mut saw_from = false;
+
+    for child in named_children(node) {
+        if child.is_error() || child.is_missing() {
+            continue;
+        }
+        match child.kind() {
+            "Keyword" => {
+                let keyword = &text[child.byte_range()];
+                if keyword.eq_ignore_ascii_case("from") {
+                    saw_from = true;
+                } else if keyword.eq_ignore_ascii_case("value") {
+                    stmt.value = true;
+                }
+            }
+            // The grammar aliases the `DIFF` keyword to `Literal`, and only
+            // in leading position. A `DIFF` later in the list arrives as an
+            // ordinary `Predicate` naming a field, which is precisely what
+            // SurrealDB does with it, so it is left to lower as one.
+            "Literal" if !saw_from && text[child.byte_range()].eq_ignore_ascii_case("diff") => {
+                stmt.diff = Some(node_range(child));
+            }
+            "Any" if !saw_from => stmt
+                .projections
+                .push(Projection::Wildcard(node_range(child))),
+            "Predicate" if !saw_from => stmt.projections.push(lower_projection(child, text)),
+            "WhereClause" => stmt.where_clause = clause_expr(child, text),
+            "FetchClause" => stmt.fetch = clause_idioms(child, text),
+            _ if saw_from && is_source_node(child) => {
+                stmt.from.push(lower_source(child, text));
+            }
             _ => {}
         }
     }
@@ -1960,15 +2013,76 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn lowers_thin_statements_with_their_table_references() {
-        let parsed = parse("LIVE SELECT * FROM person;");
-        let stmt = lower_kind(&parsed, "LiveSelectStatement", |s| match s {
+    fn lower_live_select_stmt(parsed: &ParsedSource) -> LiveSelectStmt {
+        lower_kind(parsed, "LiveSelectStatement", |s| match s {
             Statement::LiveSelect(stmt) => Some(stmt),
             _ => None,
-        });
-        assert_eq!(stmt.table.as_ref().map(|t| t.node.as_str()), Some("person"));
+        })
+    }
 
+    /// The source list, which is what tells a subscribable table apart from
+    /// the record id and the second target the engine refuses.
+    #[test]
+    fn lowers_live_select_sources() {
+        let parsed = parse("LIVE SELECT * FROM person;");
+        let stmt = lower_live_select_stmt(&parsed);
+        assert!(matches!(
+            stmt.from.as_slice(),
+            [one] if matches!(&one.node, Expr::Table(name) if name.node == "person")
+        ));
+
+        let parsed = parse("LIVE SELECT * FROM person:one;");
+        let stmt = lower_live_select_stmt(&parsed);
+        assert!(matches!(
+            stmt.from.as_slice(),
+            [one] if matches!(&one.node, Expr::RecordId { .. })
+        ));
+
+        let parsed = parse("LIVE SELECT * FROM person, company;");
+        assert_eq!(lower_live_select_stmt(&parsed).from.len(), 2);
+    }
+
+    /// `DIFF` is the diff form only in leading position; later in the list it
+    /// is an ordinary projected field path, which is exactly what SurrealDB
+    /// does with it.
+    #[test]
+    fn lowers_live_select_clauses() {
+        let parsed = parse("LIVE SELECT DIFF FROM person FETCH manager;");
+        let stmt = lower_live_select_stmt(&parsed);
+        assert!(stmt.diff.is_some());
+        assert!(stmt.projections.is_empty());
+        assert_eq!(stmt.fetch.len(), 1);
+
+        let parsed = parse("LIVE SELECT name, DIFF FROM person;");
+        let stmt = lower_live_select_stmt(&parsed);
+        assert!(stmt.diff.is_none());
+        assert_eq!(stmt.projections.len(), 2);
+
+        let parsed = parse("LIVE SELECT VALUE name FROM person;");
+        let stmt = lower_live_select_stmt(&parsed);
+        assert!(stmt.value);
+        assert_eq!(stmt.projections.len(), 1);
+
+        let parsed = parse("LIVE SELECT *, name AS n FROM person WHERE age > 3;");
+        let stmt = lower_live_select_stmt(&parsed);
+        assert!(stmt.where_clause.is_some());
+        assert!(matches!(
+            stmt.projections.as_slice(),
+            [
+                Projection::Wildcard(_),
+                Projection::Expr { alias: Some(_), .. }
+            ]
+        ));
+        // `name` before FROM is a projection, `person` after it is the
+        // source — the same node kind on either side of the divider.
+        assert!(matches!(
+            stmt.from.as_slice(),
+            [one] if matches!(&one.node, Expr::Table(name) if name.node == "person")
+        ));
+    }
+
+    #[test]
+    fn lowers_thin_statements_with_their_table_references() {
         let parsed = parse("REBUILD INDEX idx ON person;");
         let stmt = lower_kind(&parsed, "RebuildStatement", |s| match s {
             Statement::Rebuild(stmt) => Some(stmt),

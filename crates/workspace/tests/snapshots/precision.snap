@@ -1300,3 +1300,17 @@ table webhook_event  [schemafull]
   diag    13:19 I7014     Hint
   diag    16:24 I7014     Hint
   diag    19:37 I7014     Hint
+
+== source: queries/97_live_select.surql ==
+  stmt      6:1 live_select      : uuid
+  stmt      8:1 live_select      : uuid
+  stmt     10:1 live_select      : uuid
+  stmt     14:1 live_select      : uuid
+  stmt     17:1 live_select      : uuid
+  stmt     20:1 live_select      : uuid
+  stmt     24:1 live_select      : uuid
+  stmt     28:1 live_select      : uuid
+  stmt     30:1 live_select      : uuid
+  stmt     34:1 live_select      : uuid
+  stmt     36:1 live_select      : uuid
+  stmt     39:1 live_select      : uuid

@@ -767,8 +767,20 @@ impl SchemaHovers<'_> {
                 }
             }
             Statement::LiveSelect(live) => {
-                if let Some(table) = &live.table {
-                    self.table_ref(table);
+                let root = single_table(&live.from);
+                for source in &live.from {
+                    self.walk_expr(None, source);
+                }
+                for projection in &live.projections {
+                    if let ast::Projection::Expr { expr, .. } = projection {
+                        self.walk_expr(root, expr);
+                    }
+                }
+                if let Some(where_clause) = &live.where_clause {
+                    self.walk_expr(root, where_clause);
+                }
+                for idiom in &live.fetch {
+                    self.walk_idiom(root, &idiom.node);
                 }
             }
             Statement::Info(info) => {
@@ -1422,8 +1434,20 @@ impl SchemaDefs<'_> {
                 }
             }
             Statement::LiveSelect(live) => {
-                if let Some(table) = &live.table {
-                    self.table_ref(table);
+                let root = single_table(&live.from);
+                for source in &live.from {
+                    self.walk_expr(None, source);
+                }
+                for projection in &live.projections {
+                    if let ast::Projection::Expr { expr, .. } = projection {
+                        self.walk_expr(root, expr);
+                    }
+                }
+                if let Some(where_clause) = &live.where_clause {
+                    self.walk_expr(root, where_clause);
+                }
+                for idiom in &live.fetch {
+                    self.walk_idiom(root, &idiom.node);
                 }
             }
             Statement::Info(info) => {
