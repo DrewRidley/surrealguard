@@ -104,9 +104,21 @@ is not housekeeping: a cache key is the query text plus its parameters, and
 `$auth` is in neither, so without it the rows Ada fetched are the rows Grace
 would render.
 
-**4. The editor.** Break the query in the attribute — `nmae` for `name`, or
-`persn` for `person`. Three more, each with the exact message it produces, are
-commented out at the bottom of `src/lib/queries.ts`:
+**4. The editor.** Break the query in the attribute. `persn` for `person` gives,
+on that line and under that word:
+
+```
+error[E1001]: `persn` is not a defined table
+   --> src/routes/+page.svelte:50:49
+    |
+ 50 |   <LiveQuery q="SELECT id, name, age, team FROM persn WHERE age > {minAge}">
+    |                                                 ^^^^^
+    |
+    = help: did you mean `person`?
+```
+
+Three more, each with the exact message it produces, are commented out at the
+bottom of `src/lib/queries.ts`:
 
 ```
 error[E1002]: `person` has no field `nmae`        — help: did you mean `name`?
@@ -167,10 +179,11 @@ telling you to add it.
 
 `src/lib/inline-registry.ts` exists for a reason that will expire:
 
-1. **`surrealguard generate` does not read markup yet.** It extracts queries
-   from host-language call expressions (`db.query("…")`, `defineQuery("…")`),
-   including inside a `<script>`, but not from attributes. So the two skeletons
-   are restated there — once — for the registry to contain them.
+1. **The registry key for an interpolated attribute does not match the runtime
+   text yet.** `surrealguard generate` reads the attribute — the diagnostic does
+   land on that line — but keys the entry with the hole spelled `${}` where the
+   runtime produces `$__host0`, and a registry key has to match byte for byte.
+   So the two skeletons are restated there — once — until the two agree.
 2. **`svelte2tsx` type-checks the original markup.** `svelte-check` and the
    editor's Svelte extension apply `script` and `style` preprocessors but not
    `markup` ones, so they see the attribute as a string and never as the query
@@ -178,8 +191,8 @@ telling you to add it.
    types are still *derived* from the schema — `person.nope` is a compile error
    — but the annotation should not have to be there.
 
-Both disappear the moment markup extraction lands. Delete that file and the two
-annotations with it.
+The first goes away when the two spellings agree; the second when `svelte2tsx`
+learns to apply markup preprocessors.
 
 ---
 

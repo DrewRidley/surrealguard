@@ -12,15 +12,19 @@
 // skeleton is what the generated registry is keyed by — which is what makes
 // `person.name` a `string` in the snippet with no annotation.
 //
-// `generate` extracts embedded queries from host-language CALL EXPRESSIONS
-// (`db.query("…")`, `defineQuery("…")`), including those inside a `<script>`
-// block. It does not yet read markup attributes. So until it does, the two
-// skeletons are restated here, and only here, so the registry contains them.
+// `generate` now DOES read the markup attribute — the diagnostic lands on that
+// line, which is the whole point — but it keys the entry with the hole spelled
+// `${}` rather than `$__host0`, and a registry key has to match the runtime
+// text byte for byte. So until the two agree, the two skeletons are restated
+// here, and only here, so the registry contains the text that is actually run.
 //
 // This is exactly the drift the project exists to prevent — two places that
 // must agree with nothing enforcing it — which is why it is quarantined in a
 // file whose whole purpose is to be deleted, rather than mixed into
 // `queries.ts` where it would look like a design decision.
+//
+// `scripts/verify.mjs` catches the mismatch if it ever stops being caught here:
+// it asserts the text the preprocessor produces, and runs it.
 
 import type { Json, ResultOf, Rows } from "@surrealguard/client";
 import { defineQuery } from "$lib/surrealguard.generated";
