@@ -68,11 +68,18 @@ async function main() {
   // ---- the preprocessor, on the file the demo actually shows --------------
   console.log("\nthe inline attribute");
   const inline = await inlineQueriesOfDemoPage();
-  const roster = inline.find((entry) => entry.kind === "live");
-  const tickets = inline.find((entry) => entry.kind === "query");
-  check("+page.svelte's <LiveQuery> was rewritten", Boolean(roster));
-  check("+page.svelte's <Query> was rewritten", Boolean(tickets));
-  if (!roster || !tickets) throw new Error("the demo page no longer has both inline queries");
+  // By what they select, not by where they sit: the page has three inline
+  // queries and adding a fourth must not silently renumber these.
+  const from = (table) => inline.find((entry) => entry.parts.join("").includes(`FROM ${table}`));
+  const roster = from("person");
+  const tickets = from("ticket");
+  const teams = from("team");
+  check("+page.svelte's <LiveQuery> was rewritten", roster?.kind === "live");
+  check("+page.svelte's ticket <Query> was rewritten", tickets?.kind === "query");
+  check("+page.svelte's team picker <Query> was rewritten", teams?.kind === "query");
+  if (!roster || !tickets || !teams) {
+    throw new Error("the demo page no longer has all three inline queries");
+  }
 
   const rosterAt = (minAge) => sgLive(roster.parts, [minAge]);
   check(
@@ -94,6 +101,17 @@ async function main() {
     authentication: { username: ROOT_USER, password: ROOT_PASS },
   });
   const core = getQueryClient(db);
+
+  // ---- the add form's team picker is a query, not a list ------------------
+  // The `<select>` is filled from this. Come back empty and the form has no
+  // team to offer, so "add a person" cannot be driven at all.
+  console.log("\nthe team picker");
+  const teamRows = await core.fetch(sgQuery(teams.parts, []));
+  check(
+    "the picker's options are rows of `team`",
+    teamRows.length === 2 && teamRows.every((row) => typeof row.name === "string"),
+    teamRows.map((row) => row.name).join(", "),
+  );
 
   // ---- a parameter change re-runs the query ------------------------------
   console.log("\nthe slider");

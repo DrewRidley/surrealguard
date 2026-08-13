@@ -1,15 +1,21 @@
 # SurrealGuard — SvelteKit demo
 
-One page. The query is written **in the markup**, where you are looking when
+One page. Every query is written **in the markup**, where you are looking when
 you want to change it:
 
 ```svelte
 <LiveQuery q="SELECT id, name, age, team FROM person WHERE age > {minAge}">
 ```
 
-Move the slider and it re-runs. Press a button and the rows arrive over a live
+Move the slider and it re-runs. Add someone and the row arrives over a live
 subscription. Sign in as someone else and the *same* ticket query returns
 different rows, because SurrealDB's `PERMISSIONS` say so.
+
+The page holds no data of its own. There is no array of people, no list of
+teams, no counter — the three things on screen are three `<Query>`s against the
+schema, right down to the team dropdown in the add form. The only `$state` in
+`+page.svelte` is what the human is typing: the slider, and the form's name,
+age and team.
 
 `{minAge}` is **not** string interpolation. See
 [What `{minAge}` actually compiles to](#what-minage-actually-compiles-to).
@@ -18,7 +24,21 @@ different rows, because SurrealDB's `PERMISSIONS` say so.
 
 ## Run it
 
-Two terminals, in this order.
+One install, then two terminals, in this order.
+
+### The CLI, once per checkout
+
+```sh
+cd ../..            # the repository root
+cargo install --path crates/cli --force
+```
+
+The demo needs a `surrealguard` built from **this** branch. A CLI older than
+`0d3229f` reads the `<script>` block but not the markup, so the query in the
+`q=` attribute is invisible to it: `surrealguard check` says "no issues found"
+however wrong the attribute is (that is demo beat 4), and `pnpm generate`
+writes a registry with the inline queries missing. Neither fails loudly, which
+is exactly why this step is here rather than in the troubleshooting table.
 
 ### Terminal 1 — the database
 
@@ -74,6 +94,7 @@ opened from the browser.
 | Port 8124 or 5178 in use | `pkill -f "surreal start"`, and Ctrl-C the old `pnpm dev`. |
 | The data drifted after rehearsing | `pnpm db:seed` in a third terminal. Reload the page. |
 | Rows are `unknown` in the editor | `pnpm generate` — the registry is stale. It refuses to write while there is an analysis error, so read the output. |
+| `pnpm generate` drops the inline queries, or breaking the `q=` attribute reports nothing | The `surrealguard` on your `PATH` predates markup extraction. `cargo install --path crates/cli --force`, from the repository root. |
 
 ---
 
@@ -84,9 +105,15 @@ opened from the browser.
 The line to point at is the `q=` attribute. It is SurrealQL, it is typed from
 `schema/schema.surql`, and SurrealGuard reports a mistake in it *on that line*.
 
-**2. Add a person.** The row arrives over the subscription, not from the click.
-Open a second tab side by side first and press the button in one — both update.
-The `×` on a row deletes it.
+**2. Add a person.** Type a name, pick an age, pick a team, press the button.
+The row arrives over the subscription, not from the click. Open a second tab
+side by side first and add in one — both update. The `×` on a row deletes it.
+
+The team dropdown is worth a sentence of its own: it is a third `<Query>`,
+`SELECT id, name FROM team`. Its options *are* rows — so there is no list of
+teams in the page to fall out of date with the database. Create a third team and
+it is in the dropdown on the next load, with nothing in `src/` edited. (A
+one-shot `<Query>`, not a `<LiveQuery>`: teams do not change while you present.)
 
 Worth doing: set the slider to 45 first, then add someone. Nothing appears —
 the filter is the database's, not the page's — and dropping the slider brings
@@ -109,9 +136,9 @@ on that line and under that word:
 
 ```
 error[E1001]: `persn` is not a defined table
-   --> src/routes/+page.svelte:85:49
+    --> src/routes/+page.svelte:118:49
     |
- 85 |   <LiveQuery q="SELECT id, name, age, team FROM persn WHERE age > {minAge}">
+118 |   <LiveQuery q="SELECT id, name, age, team FROM persn WHERE age > {minAge}">
     |                                                 ^^^^^
     |
     = help: did you mean `person`?
@@ -130,6 +157,52 @@ error[E4009]: a live query can't ORDER BY
 write the registry while there is an error.
 
 The command-line equivalent: `surrealguard check`, from this directory.
+
+---
+
+## The schema
+
+`schema/schema.surql` is both what SurrealGuard analyses and what `scripts/db.mjs`
+applies to the running database, so the schema the types come from and the
+schema the demo runs on cannot drift. It carries no comments — this section is
+where its reasoning lives.
+
+Three tables, deliberately: a team, the people on it, and the tickets those
+people work. An audience reads that in one glance.
+
+**`person` is `PERMISSIONS FULL`, on purpose.** The roster is public in this
+demo, so the slider, the live updates and the add form behave identically
+whoever is signed in. `team` is open for the same reason: the picker has to keep
+offering both teams after you sign in as Ada. The access-control beat lives on
+`ticket`, where it is the only thing changing and therefore the only thing to
+look at.
+
+**`email` and `password` are `option<>`** because not everyone in the roster has
+a login — `alan`, `katherine` and `barbara` in `scripts/seed.surql` do not — and
+because it keeps "add a person" a three-parameter write. Make `email` required
+instead and SurrealGuard says so immediately, on the `CREATE` in
+`src/lib/queries.ts:17` and on the three seeded people who have no login:
+
+```
+error[E2034]: `email` must be set when creating a `person`
+  = help: `email` is `string` with no `DEFAULT`, so every create must provide it
+```
+
+**`password` is `PERMISSIONS NONE`** so the hash never leaves the database: no
+record user can select it. `crypto::argon2::compare` still sees it, because the
+`SIGNIN` query runs with full access rather than as the user signing in.
+
+**`ticket` is the access-control beat.** `FOR select WHERE team = $auth.team`
+means a record user sees only their own team's tickets; a root user bypasses
+table permissions and sees all six. Signing in as someone else visibly changes
+the rows, and nothing in the query text says so — `$auth` does. Writes are
+`NONE`: the demo never creates a ticket.
+
+**`DEFINE ACCESS staff … TYPE RECORD`** is the authentication, written in
+SurrealQL rather than in the app. `db.signin({ access: "staff", variables: {
+email, password } })` runs the `SIGNIN` query, and whatever record it returns
+becomes `$auth` for that session. There is no authorisation logic in
+`src/`.
 
 ---
 
@@ -175,24 +248,23 @@ export default { preprocess: [surrealguard(), vitePreprocess()] };
 Leave it out and nothing silently misbehaves: `<Query>` throws with a message
 telling you to add it.
 
-### Two stopgaps, both marked, both temporary
+### One stopgap left, marked and temporary
 
-`src/lib/inline-registry.ts` exists for a reason that will expire:
+`src/lib/inline-registry.ts` used to hold two. The first is gone: `surrealguard
+generate` now keys an interpolated attribute with the hole spelled `$__host0`,
+which is exactly what the preprocessor emits, so the registry entry is looked up
+by the same bytes that run and no query text is restated anywhere in the
+example. The file no longer contains a single query string.
 
-1. **The registry key for an interpolated attribute does not match the runtime
-   text yet.** `surrealguard generate` reads the attribute — the diagnostic does
-   land on that line — but keys the entry with the hole spelled `${}` where the
-   runtime produces `$__host0`, and a registry key has to match byte for byte.
-   So the two skeletons are restated there — once — until the two agree.
-2. **`svelte2tsx` type-checks the original markup.** `svelte-check` and the
-   editor's Svelte extension apply `script` and `style` preprocessors but not
-   `markup` ones, so they see the attribute as a string and never as the query
-   it becomes. That is why the two snippet parameters carry an annotation. The
-   types are still *derived* from the schema — `person.nope` is a compile error
-   — but the annotation should not have to be there.
-
-The first goes away when the two spellings agree; the second when `svelte2tsx`
-learns to apply markup preprocessors.
+What remains is that **`svelte2tsx` type-checks the original markup**.
+`svelte-check` and the editor's Svelte extension apply `script` and `style`
+preprocessors but not `markup` ones, so they see the attribute as a string and
+never as the query it becomes. That is why each `{#snippet children(…)}` carries
+an annotation, and why the three row types live in that file. The types are
+still *derived* — `ResultOf` reads the generated registry entry the attribute
+keys, and `person.nope` is a compile error — but the annotation should not have
+to be there. It goes away when `svelte2tsx` learns to apply markup
+preprocessors, and the file goes with it.
 
 ---
 
@@ -220,15 +292,15 @@ neither of which needs a database.
 
 | | |
 | --- | --- |
-| `src/routes/+page.svelte` | The demo. Both queries are in it. |
-| `schema/schema.surql` | The schema, the `PERMISSIONS` and the `DEFINE ACCESS`. What SurrealGuard analyses **and** what the database runs. |
+| `src/routes/+page.svelte` | The demo. All three reads are in it, in the markup. |
+| `schema/schema.surql` | The schema, the `PERMISSIONS` and the `DEFINE ACCESS`. What SurrealGuard analyses **and** what the database runs. Its reasoning is [above](#the-schema). |
 | `scripts/db.mjs` | Starts SurrealDB, applies the schema, seeds. `--seed-only` re-seeds a running one. |
 | `scripts/seed.surql` | The data. Deliberately tiny — a large seed was observed to drop live subscriptions. |
 | `scripts/verify.mjs` | The headless check above. |
 | `src/lib/queries.ts` | The two writes, and the editor-moment comment block. |
 | `src/lib/db.ts` | The one client. Port 8124 lives here and in `scripts/db.mjs`, nowhere else. |
 | `src/lib/session.svelte.ts` | Sign-in, and the cache reset that has to follow it. |
-| `src/lib/inline-registry.ts` | The two stopgaps above. Delete on sight, once you can. |
+| `src/lib/inline-registry.ts` | The row types the snippets annotate themselves with, and nothing else. The stopgap above. Delete on sight, once you can. |
 | `src/lib/surrealguard.generated.ts` | Generated; committed on purpose, so a fresh checkout type-checks with no build step. `pnpm generate`. |
 
 ## Things not to do live

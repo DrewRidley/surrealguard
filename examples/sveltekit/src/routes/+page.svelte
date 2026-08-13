@@ -1,5 +1,5 @@
 <!--
-  The demo. One page, two things.
+  The demo. One page, three things.
 
   1. THE QUERY IS IN THE MARKUP. The `q=` attribute below is written where you
      are looking when you want to change it, it is typed from your schema, and
@@ -18,7 +18,12 @@
 
      One query text, whatever the slider says.
 
-  2. WHO YOU ARE CHANGES WHAT YOU SEE. The ticket query below never changes.
+  2. THE PAGE KEEPS NO DATA. There is no array of people, no list of teams, no
+     counter — every row on screen, including the options in the "add a person"
+     dropdown, is a <Query> against the schema. The only `$state` here is what
+     the human is typing: the slider, and the three form fields.
+
+  3. WHO YOU ARE CHANGES WHAT YOU SEE. The ticket query below never changes.
      `PERMISSIONS FOR select WHERE team = $auth.team` on the table, and
      `DEFINE ACCESS staff … TYPE RECORD` next to it — both in
      `schema/schema.surql` — do all of it. There is no authorisation logic in
@@ -36,32 +41,26 @@
 <script lang="ts">
   import { recordId } from "@surrealguard/client";
   import { createMutation, LiveQuery, Query } from "@surrealguard/svelte";
-  import { RecordId } from "$lib/surrealguard.generated";
   import { addPerson, removePerson } from "$lib/queries";
-  import type { PersonRows, TicketRows } from "$lib/inline-registry";
+  import type { PersonRows, TeamRows, TicketRows } from "$lib/inline-registry";
   import { LOGINS, session } from "$lib/session.svelte";
 
   // Plain `$state`. Nothing about it knows there is a database.
   let minAge = $state(25);
 
-  const add = createMutation(addPerson);
+  // The add form's fields — what the human is typing, and nothing else. No row
+  // the database owns is mirrored here; the teams in the picker are a <Query>.
+  //
+  // `team` is the id of a `team` record, spelled the way JSON spells it, and
+  // that type is DERIVED: it is the `id` column of the very query the picker
+  // runs. Add a team to the database and the picker offers it; there is no list
+  // to update.
+  let name = $state("");
+  let age = $state(30);
+  let team = $state<TeamRows[number]["id"] | "">("");
+
+  const add = createMutation(addPerson, { onSuccess: () => (name = "") });
   const remove = createMutation(removePerson);
-
-  const CANDIDATES = [
-    { name: "Edsger", age: 42, team: "red" },
-    { name: "Radia", age: 38, team: "blue" },
-    { name: "Margaret", age: 33, team: "red" },
-    { name: "Katsu", age: 47, team: "blue" },
-  ] as const;
-  let next = $state(0);
-
-  function addOne() {
-    const who = CANDIDATES[next % CANDIDATES.length]!;
-    next += 1;
-    // `team` has to be a `RecordId`, not the string "team:red": a plain string
-    // encodes to a SurrealQL string and matches nothing. The type says so.
-    add.mutate({ name: who.name, age: who.age, team: new RecordId("team", who.team) });
-  }
 </script>
 
 <header>
@@ -79,7 +78,41 @@
       <input type="range" min="20" max="50" bind:value={minAge} />
       <output data-testid="min-age">{minAge}</output>
     </label>
-    <button onclick={addOne} disabled={add.pending}>Add a person</button>
+  </div>
+
+  <div class="control">
+    <input placeholder="name" bind:value={name} data-testid="new-name" />
+    <input type="number" min="18" max="99" bind:value={age} data-testid="new-age" />
+
+    <!-- The picker is a query. The options are rows of `team`, so there is no
+         list of teams in this file to fall out of date. -->
+    <Query q="SELECT id, name FROM team">
+      {#snippet loading()}<span class="muted">teams…</span>{/snippet}
+      {#snippet error(cause)}<span class="error">{cause.message}</span>{/snippet}
+      {#snippet children(teams: TeamRows)}
+        <select bind:value={team} data-testid="new-team">
+          <option value="" disabled>pick a team</option>
+          {#each teams as t (t.id)}
+            <option value={t.id}>{t.name}</option>
+          {/each}
+        </select>
+      {/snippet}
+    </Query>
+
+    <!-- A `<select>` hands back a string, and `team` on `person` is a
+         `record<team>`: a plain string encodes to a SurrealQL string, which is
+         a different type on the wire and a different value in the database.
+         `recordId()` rebuilds the `RecordId` and keeps the inference — no
+         cast, and the generated params type is what insists. The `team &&` is
+         the same "nothing picked yet" the `disabled` says, spelled so the type
+         checker can read it too. -->
+    <button
+      data-testid="add"
+      disabled={add.pending || !name || !team}
+      onclick={() => team && add.mutate({ name, age, team: recordId(team) })}
+    >
+      Add a person
+    </button>
   </div>
 
   <LiveQuery q="SELECT id, name, age, team FROM person WHERE age > {minAge}">
@@ -183,6 +216,17 @@
   }
   input[type="range"] {
     width: 14rem;
+  }
+  .control input:not([type="range"]),
+  .control select {
+    font: inherit;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    background: white;
+  }
+  .control input[type="number"] {
+    width: 5rem;
   }
   output {
     font-variant-numeric: tabular-nums;
