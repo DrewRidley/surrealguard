@@ -52,8 +52,14 @@
     loading,
     error,
   }: {
-    /** The live query: a bound `SurqlLive`, a `Preloaded` payload, a thunk of either, or `"skip"`. */
-    q: Source<SurqlLive<Row, Bound> | Preloaded<Json<Row>[]>>;
+    /**
+     * The live query: a bound `SurqlLive`, a `Preloaded` payload, a thunk of
+     * either, or `"skip"`.
+     *
+     * A **string** is the inline form — see `<Query>`; the preprocessor rewrites
+     * it, and one reaching runtime throws.
+     */
+    q: Source<SurqlLive<Row, Bound> | Preloaded<Json<Row>[]>> | string;
     /** Override the context client (tests, a second connection). */
     client?: SurrealGuardClient;
     /** Rendered with the reconciled rows. Always an array, so no `?? []`. */

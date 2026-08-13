@@ -1,51 +1,63 @@
 <!--
-  `setClient` is NOT the price of entry, and the docs used to read as if it
-  were. `db.query`, `db.run` and `db.watch` work from a plain
-  `import { db } from "$lib/db"` anywhere — a component, a `load`, a server
-  route, a plain `.ts` module. Nothing has to be provided or wired up first.
-
-  This call exists for exactly one thing: the REACTIVE helpers (`createQuery`,
-  `createLive`, `createMutation`) resolve their client from Svelte context, so
-  that components do not thread `db` through props. Every one of them also
-  accepts `{ client: db }` directly — which is what a `.svelte.ts` module must
-  do anyway, since `setContext` is only readable during component
-  initialisation.
-
-  So: using `createLive` in components? Call this once, here. Otherwise delete
-  it.
+  `setClient` is not the price of entry. `db.query`, `db.run` and `db.watch`
+  work from a plain `import { db } from "$lib/db"` anywhere. This one call
+  exists so the REACTIVE helpers — `<Query>`, `<LiveQuery>`, `createMutation` —
+  can find a client without every component threading `db` through props. Each
+  of them also takes `{ client: db }` directly.
 -->
 <script lang="ts">
   import { setClient } from "@surrealguard/svelte";
-  import { db } from "$lib/db";
-  import { health } from "$lib/health.svelte";
+  import { db, HEALTH_URL } from "$lib/db";
 
   setClient(db);
 
   let { children } = $props();
 
-  // Demo scaffolding — see `$lib/health.svelte.ts`. Not something an app needs.
-  $effect(() => health.watch());
+  // Demo scaffolding, and worth its ten lines: `Surreal.connect()` does not
+  // reject when nothing is listening — it waits — so a page opened before
+  // `pnpm db` shows a spinner forever and produces no error for any `error`
+  // snippet to render. Asking over HTTP is the only way to say the useful
+  // thing.
+  let up = $state<boolean | undefined>(undefined);
+  let startedDown = $state(false);
+
+  $effect(() => {
+    let stopped = false;
+    let first = true;
+    const tick = async () => {
+      const ok = await fetch(HEALTH_URL, { cache: "no-store" }).then(
+        (response) => response.ok,
+        () => false,
+      );
+      if (stopped) return;
+      if (first) {
+        first = false;
+        startedDown = !ok;
+      }
+      up = ok;
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), 1500);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  });
 </script>
 
-{#if health.reachable === false}
+{#if up === false}
   <p class="banner">
     <strong>SurrealDB is not running.</strong>
-    Start it with <code>pnpm db</code> in <code>examples/sveltekit</code>, then reload.
+    Start it with <code>pnpm db</code> in <code>examples/sveltekit</code>.
   </p>
-{:else if health.needsReload}
+{:else if up && startedDown}
+  <!-- A dropped socket reconnects on its own; one that never opened does not. -->
   <p class="banner up">
     <strong>SurrealDB is up now.</strong>
     This page connected before it was, so it needs a reload.
     <button onclick={() => location.reload()}>Reload</button>
   </p>
 {/if}
-
-<nav>
-  <a href="/">demo</a>
-  <a href="/plain">db.query</a>
-  <a href="/live">createLive + preload</a>
-  <a href="/components">&lt;Query&gt; / &lt;LiveQuery&gt;</a>
-</nav>
 
 <main>
   {@render children()}
@@ -69,20 +81,6 @@
     background: #f3f4f6;
     padding: 0.1em 0.35em;
     border-radius: 4px;
-  }
-  nav {
-    display: flex;
-    gap: 1.25rem;
-    padding: 0.75rem 1.5rem;
-    border-bottom: 1px solid #e5e7eb;
-    font-size: 0.9rem;
-  }
-  nav a {
-    color: #2563eb;
-    text-decoration: none;
-  }
-  nav a:hover {
-    text-decoration: underline;
   }
   .banner {
     margin: 0;
@@ -108,8 +106,8 @@
     cursor: pointer;
   }
   main {
-    max-width: 56rem;
+    max-width: 52rem;
     margin: 0 auto;
-    padding: 1.5rem;
+    padding: 2rem 1.5rem;
   }
 </style>

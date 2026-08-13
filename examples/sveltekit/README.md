@@ -1,26 +1,24 @@
 # SurrealGuard — SvelteKit demo
 
-A runnable SvelteKit app on a local SurrealDB, in four beats:
+One page. The query is written **in the markup**, where you are looking when
+you want to change it:
 
-1. **A reactive parameter** — a slider bound to `$state`, passed to a query
-   through a thunk. Moving it re-runs the query.
-2. **Live updates** — a `<LiveQuery>` plus write buttons on the page, so a
-   change is demonstrable from one window.
-3. **Nesting** — `<Query>` → `{#each}` → `<LiveQuery>`, one ephemeral
-   subscription per row.
-4. **Record-level access control** — `DEFINE ACCESS … TYPE RECORD` and
-   `PERMISSIONS … WHERE team = $auth.team`, so the *same* query returns
-   different rows to different people.
+```svelte
+<LiveQuery q="SELECT id, name, age, team FROM person WHERE age > {minAge}">
+```
 
-Everything is typed from `schema/schema.surql`. No row or snippet parameter in
-`src/routes/+page.svelte` carries a type annotation, and every one of them is
-fully typed.
+Move the slider and it re-runs. Press a button and the rows arrive over a live
+subscription. Sign in as someone else and the *same* ticket query returns
+different rows, because SurrealDB's `PERMISSIONS` say so.
+
+`{minAge}` is **not** string interpolation. See
+[What `{minAge}` actually compiles to](#what-minage-actually-compiles-to).
 
 ---
 
 ## Run it
 
-Two terminals. Run them in this order.
+Two terminals, in this order.
 
 ### Terminal 1 — the database
 
@@ -29,9 +27,9 @@ cd examples/sveltekit
 pnpm db
 ```
 
-Starts SurrealDB in memory on **port 8124** (not 8000 — a demo machine usually
-has something on the default already), applies `schema/schema.surql`, and loads
-`scripts/seed.surql`. It prints:
+SurrealDB, in memory, on **port 8124** (not 8000 — a demo machine usually has
+something on the default already). It applies `schema/schema.surql`, loads
+`scripts/seed.surql`, and prints:
 
 ```
   SurrealDB ready on ws://127.0.0.1:8124/rpc
@@ -39,7 +37,7 @@ has something on the default already), applies `schema/schema.surql`, and loads
   seeded 5 people, 6 tickets
 ```
 
-**Leave it running.** Ctrl-C stops it, and because the store is in memory,
+**Leave it running.** Ctrl-C stops it, and since the store is in memory,
 stopping it is also the reset button.
 
 ### Terminal 2 — the app
@@ -60,143 +58,148 @@ pnpm dev
 
 Open **<http://localhost:5178>**.
 
-> Vite binds to `localhost`, which on macOS is `::1`. `http://127.0.0.1:5178`
-> will *not* answer. Use `localhost`.
+> Vite binds to `localhost`, which is `::1` on macOS. `http://127.0.0.1:5178`
+> will not answer. Use `localhost`.
 
-The page connects over a WebSocket from the browser and paints rows in well
-under a second. There is no server-side rendering (`src/routes/+layout.ts` sets
-`ssr = false`), so a `curl` of the page returns an empty shell — that is
-expected, not a fault.
+There is no server-side rendering (`src/routes/+layout.ts` sets `ssr = false`),
+so `curl` of the page returns an empty shell. That is expected: the WebSocket is
+opened from the browser.
 
 ### If something is wrong
 
 | Symptom | Fix |
 | --- | --- |
-| A red bar says **SurrealDB is not running** | It isn't. `pnpm db` in terminal 1. Within two seconds the bar turns green and offers a **Reload** button — press it. (The reload is genuinely necessary: `Surreal.connect()` does not fail when nothing is listening, it *waits*, so a socket opened against a closed port never recovers. The bar exists because no error is ever raised for an `error` snippet to show.) |
-| Four spinners, no bar, nothing happens | The health poll is being blocked (an extension, an offline browser). Check `http://127.0.0.1:8124/health` in another tab. |
-| `Could not run \`surreal\`` | Install it: `curl -sSf https://install.surrealdb.com \| sh` |
-| Port 8124 or 5178 already in use | Something from a previous run. `pkill -f "surreal start"`, and Ctrl-C the old `pnpm dev`. |
-| The data has drifted after rehearsing | `pnpm db:seed` in a third terminal puts it back without restarting anything. Reload the page afterwards. |
-| Rows are typed `any` in the editor | `pnpm generate` — the registry is stale. It refuses to write while there is an analysis error, so check the output. |
+| A red bar says **SurrealDB is not running** | It isn't. `pnpm db` in terminal 1. Within two seconds the bar turns green with a **Reload** button — press it. The reload is genuinely needed: `Surreal.connect()` does not fail when nothing is listening, it *waits*, so a socket opened against a closed port never recovers. |
+| `Could not run \`surreal\`` | `curl -sSf https://install.surrealdb.com \| sh` |
+| Port 8124 or 5178 in use | `pkill -f "surreal start"`, and Ctrl-C the old `pnpm dev`. |
+| The data drifted after rehearsing | `pnpm db:seed` in a third terminal. Reload the page. |
+| Rows are `unknown` in the editor | `pnpm generate` — the registry is stale. It refuses to write while there is an analysis error, so read the output. |
 
 ---
 
 ## Running the demo
 
-### Beat 1 — the reactive parameter
+**1. The slider.** Drag it. The list follows every step.
 
-Drag the slider. The list and the count follow every step.
+The line to point at is the `q=` attribute. It is SurrealQL, it is typed from
+`schema/schema.surql`, and SurrealGuard reports a mistake in it *on that line*.
 
-Say what is happening: `minAge` is plain `$state`. It reaches the query as
-`q={() => peopleOver.with({ minAge })}` — **a thunk**. That is the whole
-mechanism: the thunk re-runs when its dependencies change, the query key changes
-with it, and the cache entry for the old key is dropped.
+**2. Add a person.** The row arrives over the subscription, not from the click.
+Open a second tab side by side first and press the button in one — both update.
+The `×` on a row deletes it.
 
-### Beat 2 — live updates
+Worth doing: set the slider to 45 first, then add someone. Nothing appears —
+the filter is the database's, not the page's — and dropping the slider brings
+them in.
 
-Press **Add a person**. The row appears in the live list — and note that it
-arrives over the subscription, not from the click. The `×` on any row deletes
-it.
+**3. Sign in.** Root sees all 6 tickets, because a root user bypasses table
+permissions. Ada (Red) sees 3, Grace (Blue) sees the other 3, `root` puts it
+back. The query text never changes; `PERMISSIONS FOR select WHERE team =
+$auth.team` on the table and `DEFINE ACCESS staff … TYPE RECORD` beside it — both
+in `schema/schema.surql` — do all of it. There is no authorisation logic in the
+app.
 
-To make the point properly: **open a second tab on the same URL first**, put
-them side by side, and press the button in one. Both update.
+On sign-in, `src/lib/session.svelte.ts` calls `getQueryClient(db).reset()`. That
+is not housekeeping: a cache key is the query text plus its parameters, and
+`$auth` is in neither, so without it the rows Ada fetched are the rows Grace
+would render.
 
-### Beat 3 — nesting
-
-Two teams, each with a `<LiveQuery>` mounted *inside* the `{#each}` and
-parameterised by that row. Add a person in beat 2 and the matching team grows
-while the other does not. Rows sharing a query key share one `LIVE SELECT`;
-unmounting a row `KILL`s its subscription.
-
-`recordId(team.id)` is doing the small but load-bearing thing there: a reactive
-row is JSON-shaped, so `team.id` is the string `"team:red"`, while a record
-*parameter* has to be the SDK's `RecordId` or it matches nothing on the wire.
-It ships in `@surrealguard/client` and infers `RecordId<"team">` from the
-literal type, with no cast.
-
-### Beat 4 — record-level access control
-
-Start signed out: **root sees all 6 tickets**, because a root user bypasses
-table permissions.
-
-- **Sign in as Ada (Red)** → 3 tickets, all `team:red`.
-- **Sign in as Grace (Blue)** → 3 tickets, all `team:blue`.
-- **Sign out** → 6 again.
-
-The query text never changes. `PERMISSIONS FOR select WHERE team = $auth.team`
-on the `ticket` table does all of it, and `DEFINE ACCESS staff ON DATABASE TYPE
-RECORD` — SIGNUP, SIGNIN and `DURATION`, in `schema/schema.surql` — is what
-makes `$auth` a person. The app contains no authorisation logic at all.
-
-Worth saying out loud, because it is the part that is easy to get wrong: on
-sign-in, `src/lib/session.svelte.ts` calls `getQueryClient(db).reset()`. A cache
-key is the query text plus its parameters, and `$auth` is in neither — so
-without that call, the rows Ada fetched are the rows Grace would render. `reset()`
-kills every live subscription (a `LIVE SELECT` captures its permission context
-when it opens and cannot be re-pointed), puts every subscribed entry back to
-pending, and re-runs it as the new identity.
-
-### The editor moment
-
-`src/lib/queries.ts`, at the bottom: five commented-out one-liners, each
-annotated with the exact diagnostic it produces. Uncomment one, save, and the
-squiggle appears. The messages in that comment are copied from real runs against
-this schema.
+**4. The editor.** Break the query in the attribute — `nmae` for `name`, or
+`persn` for `person`. Three more, each with the exact message it produces, are
+commented out at the bottom of `src/lib/queries.ts`:
 
 ```
-error[E1002]:   `person` has no field `nmae`        — help: did you mean `name`?
-error[E1001]:   `prson` is not a defined table      — help: did you mean `person`?
-error[E2004]:   `>` can't combine a `int` and a `string`
-error[E4009]:   a live query can't ORDER BY
-warning[W4027]: this FETCH does nothing — a DIFF notification is never fetched
+error[E1002]: `person` has no field `nmae`        — help: did you mean `name`?
+error[E2004]: `>` can't combine a `int` and a `string`
+error[E4009]: a live query can't ORDER BY
 ```
 
 **Re-comment the line before moving on.** `surrealguard generate` refuses to
-write the registry while there is an error, so a stray one makes the app's types
-stale at the next regeneration.
+write the registry while there is an error.
 
-The command-line equivalent, if the editor is not cooperating:
+The command-line equivalent: `surrealguard check`, from this directory.
 
-```sh
-cd examples/sveltekit && surrealguard check
+---
+
+## What `{minAge}` actually compiles to
+
+Svelte compiles an interpolated attribute to string concatenation. Left alone,
+`<Query>` would receive a finished string with the value already spliced into
+the query text — a SurrealQL injection for a string value, and a brand-new query
+text (so a brand-new cache entry) on every keystroke for a number.
+
+So `@surrealguard/svelte/preprocess` catches the attribute before the compiler
+and captures the parts:
+
+```svelte
+<LiveQuery q="SELECT id, name, age, team FROM person WHERE age > {minAge}">
 ```
+
+becomes, pre-compile,
+
+```svelte
+<LiveQuery q={() => __sg_live(["SELECT id, name, age, team FROM person WHERE age > ", ""], [minAge])}>
+```
+
+which runs
+
+```
+text    SELECT id, name, age, team FROM person WHERE age > $__host0
+params  { __host0: minAge }
+```
+
+One query text whatever the slider says, a real bound parameter on the wire, and
+a static skeleton for the registry to key and for SurrealGuard to analyse. The
+thunk is what keeps it reactive — `Source<Q>` resolves it inside a tracking
+context, so `minAge` is read there.
+
+It is enabled in `svelte.config.js`:
+
+```js
+import { surrealguard } from "@surrealguard/svelte/preprocess";
+export default { preprocess: [surrealguard(), vitePreprocess()] };
+```
+
+Leave it out and nothing silently misbehaves: `<Query>` throws with a message
+telling you to add it.
+
+### Two stopgaps, both marked, both temporary
+
+`src/lib/inline-registry.ts` exists for a reason that will expire:
+
+1. **`surrealguard generate` does not read markup yet.** It extracts queries
+   from host-language call expressions (`db.query("…")`, `defineQuery("…")`),
+   including inside a `<script>`, but not from attributes. So the two skeletons
+   are restated there — once — for the registry to contain them.
+2. **`svelte2tsx` type-checks the original markup.** `svelte-check` and the
+   editor's Svelte extension apply `script` and `style` preprocessors but not
+   `markup` ones, so they see the attribute as a string and never as the query
+   it becomes. That is why the two snippet parameters carry an annotation. The
+   types are still *derived* from the schema — `person.nope` is a compile error
+   — but the annotation should not have to be there.
+
+Both disappear the moment markup extraction lands. Delete that file and the two
+annotations with it.
 
 ---
 
 ## Checking it still works
 
 ```sh
-cd examples/sveltekit
 pnpm db          # terminal 1, left running
 pnpm verify      # terminal 2
 ```
 
-`pnpm verify` re-seeds and then drives all four beats headlessly against the
-real database, through the same reactive core the components use
-(`getQueryClient(db).observe` / `.observeLive` — which is exactly what
-`<Query>` / `<LiveQuery>` call). It reads the query texts out of
-`src/lib/queries.ts` rather than restating them, so it cannot pass against a
-query the app does not run. **It re-seeds, so do not run it while presenting.**
+`pnpm verify` runs the preprocessor over `src/routes/+page.svelte`, pulls out the
+queries it emitted, and drives them against the real database through the same
+reactive core the components use — so it cannot pass against a query the page
+does not run. It also proves the parameter is bound rather than spliced, by
+matching a name containing both kinds of quote.
 
-Static checks, from the repository root:
+**It re-seeds. Do not run it while presenting.**
 
-```sh
-pnpm -r run typecheck   # 0 errors, including this example
-pnpm -r run test        # packages/*; needs no database
-```
-
----
-
-## The other pages
-
-The demo is `/`. Three smaller pages show one idea each, in increasing order of
-machinery — they are documentation, not part of the live script:
-
-| Route | What it shows |
-| --- | --- |
-| `/plain` | `db.query("SELECT …")` in a component, typed, with nothing wrapped around it. |
-| `/live` | `preload` in `+page.ts` and `createLive` in the component, without naming the query twice. |
-| `/components` | `<Query>` / `<LiveQuery>` over a preloaded payload. |
+From the repository root: `pnpm -r run typecheck` and `pnpm -r run test`,
+neither of which needs a database.
 
 ---
 
@@ -204,24 +207,21 @@ machinery — they are documentation, not part of the live script:
 
 | | |
 | --- | --- |
-| `schema/schema.surql` | The schema, including the `DEFINE ACCESS` and the `PERMISSIONS`. What `surrealguard` analyses **and** what the database runs. |
+| `src/routes/+page.svelte` | The demo. Both queries are in it. |
+| `schema/schema.surql` | The schema, the `PERMISSIONS` and the `DEFINE ACCESS`. What SurrealGuard analyses **and** what the database runs. |
 | `scripts/db.mjs` | Starts SurrealDB, applies the schema, seeds. `--seed-only` re-seeds a running one. |
 | `scripts/seed.surql` | The data. Deliberately tiny — a large seed was observed to drop live subscriptions. |
-| `scripts/verify.mjs` | The headless check described above. |
-| `src/lib/queries.ts` | Named queries, and the editor-moment comment block. |
+| `scripts/verify.mjs` | The headless check above. |
+| `src/lib/queries.ts` | The two writes, and the editor-moment comment block. |
 | `src/lib/db.ts` | The one client. Port 8124 lives here and in `scripts/db.mjs`, nowhere else. |
 | `src/lib/session.svelte.ts` | Sign-in, and the cache reset that has to follow it. |
-| `src/lib/health.svelte.ts` | Demo scaffolding: polls `/health` so "the database is not running" is a sentence rather than a spinner. |
-| `src/routes/+page.svelte` | The demo. |
-| `src/lib/surrealguard.generated.ts` | Generated; committed on purpose, so a fresh checkout type-checks with no build step. Regenerate with `pnpm generate`. |
+| `src/lib/inline-registry.ts` | The two stopgaps above. Delete on sight, once you can. |
+| `src/lib/surrealguard.generated.ts` | Generated; committed on purpose, so a fresh checkout type-checks with no build step. `pnpm generate`. |
 
 ## Things not to do live
 
-- **Do not run `pnpm verify` while presenting.** It re-seeds the database
-  underneath the open page.
-- **Do not leave a diagnostic uncommented** in `src/lib/queries.ts` and then run
-  `pnpm generate`; it will refuse and the types stay stale.
-- **Do not use `http://127.0.0.1:5178`.** Vite is on `localhost` (`::1`).
-- **Do not press "Add a person" more than a handful of times** before beat 3 —
-  the point is one row appearing, and a list of twenty makes it harder to see,
-  not easier. The `×` buttons undo it.
+- **Do not run `pnpm verify` while presenting.** It re-seeds under the open page.
+- **Do not leave a diagnostic uncommented** and then run `pnpm generate`.
+- **Do not use `http://127.0.0.1:5178`.** Vite is on `localhost`.
+- **Do not delete Ada or Grace** with the `×` buttons — they are the two logins.
+  `pnpm db:seed` puts them back.

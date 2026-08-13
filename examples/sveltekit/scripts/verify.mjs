@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 /**
- * Drive the demo's four beats headlessly, against a real SurrealDB, through the
- * exact code path the components use.
+ * Drive the demo headlessly, against a real SurrealDB, through the same code
+ * the page runs.
  *
- * `<Query>` is `createQuery` is `getQueryClient(db).observe(...)`, and
- * `<LiveQuery>` is `createLive` is `.observeLive(...)`. Everything below the
- * Svelte layer is what runs here; what is NOT covered is the runes plumbing
- * itself, which `packages/svelte`'s own tests cover.
+ * "The same code" is meant literally in two places:
  *
- * The query TEXTS are read out of `src/lib/queries.ts` rather than retyped, so
- * this cannot pass against a query the app does not run.
+ * - the queries are the ones the PREPROCESSOR emits for
+ *   `src/routes/+page.svelte`. This runs `@surrealguard/svelte/preprocess` over
+ *   that file, pulls the `__sg_query(...)` / `__sg_live(...)` calls out of the
+ *   result, and runs those. If the attribute changes, this follows it; there is
+ *   no second copy of the query text anywhere.
+ * - `<Query>` is `createQuery` is `getQueryClient(db).observe(...)`, and
+ *   `<LiveQuery>` is `createLive` is `.observeLive(...)`, which is what is
+ *   subscribed below.
  *
  *   node scripts/verify.mjs      # needs `pnpm db` running in another terminal
  */
@@ -17,7 +20,9 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createClient, defineLive, defineQuery, RecordId } from "@surrealguard/client";
+import { createClient, defineQuery, RecordId } from "@surrealguard/client";
+import { sgLive, sgQuery } from "@surrealguard/svelte/inline";
+import { surrealguard } from "@surrealguard/svelte/preprocess";
 import { getQueryClient } from "@surrealguard/query";
 import { DATABASE, NAMESPACE, ROOT_PASS, ROOT_USER, seed, URL_RPC } from "./db.mjs";
 
@@ -31,8 +36,7 @@ function check(label, ok, detail = "") {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Wait for a condition, polling — a subscription is asynchronous by nature. */
-async function until(predicate, timeoutMs = 4000) {
+async function until(predicate, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return true;
@@ -41,34 +45,47 @@ async function until(predicate, timeoutMs = 4000) {
   return false;
 }
 
-/** The app's own query texts, by name, straight out of the source. */
-async function appQueries() {
-  const source = await readFile(join(ROOT, "src", "lib", "queries.ts"), "utf8");
-  const out = {};
-  const pattern = /^export const (\w+) = define(Query|Live)\(\s*\n?\s*"([^"]+)"/gm;
-  for (const [, name, kind, text] of source.matchAll(pattern)) {
-    out[name] = kind === "Live" ? defineLive(text) : defineQuery(text);
+/**
+ * Run the preprocessor over the demo page and read back the parts arrays it
+ * emitted, in source order. `[["SELECT … > ", ""], "live"]` and so on.
+ */
+async function inlineQueriesOfDemoPage() {
+  const content = await readFile(join(ROOT, "src", "routes", "+page.svelte"), "utf8");
+  const output = surrealguard().markup({ content, filename: "+page.svelte" });
+  if (!output) throw new Error("the preprocessor rewrote nothing in +page.svelte");
+  const found = [];
+  const call = /__sg_(query|live)\((\[[^\]]*\]),/g;
+  for (const [, kind, parts] of output.code.matchAll(call)) {
+    found.push({ kind, parts: JSON.parse(parts) });
   }
-  return out;
+  return found;
 }
 
 async function main() {
   console.log("\nre-seeding, so the numbers below mean something…");
   await seed();
 
-  const q = await appQueries();
-  for (const name of [
-    "allPeople",
-    "peopleOver",
-    "livePeople",
-    "liveRoster",
-    "addPerson",
-    "removePerson",
-    "allTeams",
-    "allTickets",
-  ]) {
-    if (!q[name]) throw new Error(`could not read query \`${name}\` out of src/lib/queries.ts`);
-  }
+  // ---- the preprocessor, on the file the demo actually shows --------------
+  console.log("\nthe inline attribute");
+  const inline = await inlineQueriesOfDemoPage();
+  const roster = inline.find((entry) => entry.kind === "live");
+  const tickets = inline.find((entry) => entry.kind === "query");
+  check("+page.svelte's <LiveQuery> was rewritten", Boolean(roster));
+  check("+page.svelte's <Query> was rewritten", Boolean(tickets));
+  if (!roster || !tickets) throw new Error("the demo page no longer has both inline queries");
+
+  const rosterAt = (minAge) => sgLive(roster.parts, [minAge]);
+  check(
+    "the value is bound, not spliced into the text",
+    rosterAt(30).text.includes("$__host0") && !rosterAt(30).text.includes("30"),
+    rosterAt(30).text,
+  );
+  check(
+    "every slider position is ONE query text",
+    rosterAt(30).text === rosterAt(31).text,
+  );
+  check("…and two different cache keys", rosterAt(30).key !== rosterAt(31).key);
+  check("the parameter is named positionally", "__host0" in (rosterAt(30).params ?? {}));
 
   const db = createClient({
     url: URL_RPC,
@@ -78,152 +95,160 @@ async function main() {
   });
   const core = getQueryClient(db);
 
-  // ---- Beat 1: a parameter change re-runs the query --------------------
-  console.log("\nbeat 1 — reactive parameters");
-  const at = async (minAge) => {
-    // What the thunk in `<Query q={() => peopleOver.with({ minAge })}>` resolves
-    // to on each change: a new bound query, therefore a new cache key.
-    const observable = core.observe(q.peopleOver.with({ minAge }));
+  // ---- a parameter change re-runs the query ------------------------------
+  console.log("\nthe slider");
+  const namesAbove = async (minAge) => {
+    const observable = core.observeLive(rosterAt(minAge));
     const stop = observable.subscribe(() => {});
     await until(() => observable.get().status === "success");
-    const rows = observable.get().data ?? [];
+    const names = observable.get().data.map((row) => row.name).sort();
     stop();
-    return rows.map((row) => row.name);
+    return names;
   };
-  const at30 = await at(30);
-  const at45 = await at(45);
-  const at25 = await at(25);
-  check(
-    "minAge=30 → Barbara, Ada, Alan, Grace",
-    String(at30) === "Barbara,Ada,Alan,Grace",
-    String(at30),
-  );
-  check("minAge=45 → Grace only", String(at45) === "Grace", String(at45));
-  check("minAge=25 → all five", at25.length === 5, String(at25));
-  check("the result set actually changed", String(at30) !== String(at45));
+  const above20 = await namesAbove(20);
+  const above40 = await namesAbove(40);
+  const above46 = await namesAbove(46);
+  check("age > 20 → all five", above20.length === 5, String(above20));
+  check("age > 40 → Alan and Grace", String(above40) === "Alan,Grace", String(above40));
+  check("age > 46 → nobody", above46.length === 0, String(above46));
 
-  // ---- Beat 2: a write reaches a live subscription ----------------------
-  console.log("\nbeat 2 — live updates");
-  const live = core.observeLive(q.livePeople);
-  const seen = [];
-  const stopLive = live.subscribe((state) => seen.push((state.data ?? []).length));
+  // ---- a value with a quote in it ----------------------------------------
+  // The proof that this is a bound parameter rather than string concatenation:
+  // spliced into the text, `O'Hara "the Bold"` is a syntax error, and a
+  // determined value would be an injection.
+  console.log("\na hostile value");
+  const HOSTILE = `O'Hara "the Bold"`;
+  const addPerson = defineQuery.unchecked(
+    "CREATE person SET name = $name, age = $age, team = $team",
+  );
+  const [hostilePerson] = await core.mutate(addPerson, {
+    name: HOSTILE,
+    age: 44,
+    team: new RecordId("team", "red"),
+  });
+  const byName = sgQuery(["SELECT id, name FROM person WHERE name = ", ""], [HOSTILE]);
+  check("the quote never enters the query text", !byName.text.includes("O'Hara"), byName.text);
+  const matched = await core.fetch(byName);
+  check("and the row still comes back", matched.length === 1 && matched[0].name === HOSTILE);
+  await core.mutate(defineQuery.unchecked("DELETE person WHERE id = $person"), {
+    person: hostilePerson.id,
+  });
+
+  // ---- a write reaches the live subscription ------------------------------
+  console.log("\nlive updates");
+  const live = core.observeLive(rosterAt(20));
+  const stopLive = live.subscribe(() => {});
   await until(() => live.get().status === "success");
+  // `status: success` means the SEEDING SELECT resolved, which happens before
+  // the `LIVE SELECT` is open — so a write issued the instant the rows appear
+  // can land in the gap and never be notified. The page cannot hit this (a
+  // human takes longer than a round trip to reach the button) but a script
+  // does, every time.
+  await sleep(500);
   const before = live.get().data.length;
-
-  const [created] = await core.mutate(
-    q.addPerson,
-    { name: "Edsger", age: 42, team: new RecordId("team", "red") },
-    { invalidates: [q.allPeople, q.allTeams, q.peopleOver] },
+  const [created] = await core.mutate(addPerson, {
+    name: "Edsger",
+    age: 42,
+    team: new RecordId("team", "red"),
+  });
+  check(
+    `CREATE arrived over the subscription (${before} → ${before + 1})`,
+    await until(() => live.get().data.length === before + 1),
   );
-  const grew = await until(() => live.get().data.length === before + 1);
-  check(`CREATE arrived over the subscription (${before} → ${before + 1})`, grew);
   check(
     "the new row is the one that was written",
     live.get().data.some((row) => row.name === "Edsger"),
   );
+  await core.mutate(defineQuery.unchecked("DELETE person WHERE id = $person"), {
+    person: created.id,
+  });
+  check(
+    `DELETE arrived over the subscription (${before + 1} → ${before})`,
+    await until(
+      () =>
+        live.get().data.length === before &&
+        !live.get().data.some((row) => row.name === "Edsger"),
+    ),
+  );
 
-  await core.mutate(q.removePerson, { person: created.id }, { invalidates: [q.allPeople] });
-  const shrank = await until(() => live.get().data.length === before);
-  check(`DELETE arrived over the subscription (${before + 1} → ${before})`, shrank);
-  check("the seed did not replay as notifications", seen[0] === 0 || seen.length > 0);
-
-  // ---- Beat 3: one subscription per row, parameterised by that row ------
-  console.log("\nbeat 3 — nesting");
-  const red = core.observeLive(q.liveRoster.with({ team: new RecordId("team", "red") }));
-  const blue = core.observeLive(q.liveRoster.with({ team: new RecordId("team", "blue") }));
-  const stopRed = red.subscribe(() => {});
-  const stopBlue = blue.subscribe(() => {});
-  await until(() => red.get().status === "success" && blue.get().status === "success");
-  const redBefore = red.get().data.length;
-  const blueBefore = blue.get().data.length;
-  check(`red starts with ${redBefore}, blue with ${blueBefore}`, redBefore === 3 && blueBefore === 2);
-
-  const [redPerson] = await core.mutate(q.addPerson, {
+  // The filter is the database's, not the page's: someone below the threshold
+  // must not appear at all.
+  const filtered = core.observeLive(rosterAt(40));
+  const stopFiltered = filtered.subscribe(() => {});
+  await until(() => filtered.get().status === "success");
+  await sleep(500);
+  const filteredBefore = filtered.get().data.length;
+  const [young] = await core.mutate(addPerson, {
     name: "Margaret",
     age: 33,
     team: new RecordId("team", "red"),
   });
-  const redGrew = await until(() => red.get().data.length === redBefore + 1);
-  check("adding to red reaches only red's subscription", redGrew);
-  check("blue was untouched", blue.get().data.length === blueBefore, `blue=${blue.get().data.length}`);
+  await sleep(700);
+  check(
+    "a row below the threshold never reaches the filtered subscription",
+    filtered.get().data.length === filteredBefore,
+    `${filtered.get().data.length}`,
+  );
+  await core.mutate(defineQuery.unchecked("DELETE person WHERE id = $person"), {
+    person: young.id,
+  });
+  stopFiltered();
 
-  // Two observers of the SAME key share one entry, and therefore one LIVE SELECT.
-  const redAgain = core.observeLive(q.liveRoster.with({ team: new RecordId("team", "red") }));
-  check("a second observer of the same key shares the entry", redAgain.get() === red.get());
-
-  await core.mutate(q.removePerson, { person: redPerson.id });
-  await until(() => red.get().data.length === redBefore);
-  stopRed();
-  stopBlue();
-
-  // ---- Beat 4: identity changes what the same query returns -------------
-  console.log("\nbeat 4 — record-level access control");
-  const tickets = () => {
-    const observable = core.observe(q.allTickets);
-    return observable;
-  };
-  const asRoot = tickets();
+  // ---- identity changes what the same query returns -----------------------
+  console.log("\nrecord-level access control");
+  const ticketQuery = () => sgQuery(tickets.parts, []);
+  const asRoot = core.observe(ticketQuery());
   const stopTickets = asRoot.subscribe(() => {});
   await until(() => asRoot.get().status === "success");
   check("root sees all 6 tickets", asRoot.get().data.length === 6, `${asRoot.get().data.length}`);
 
-  await db.signin({
-    namespace: NAMESPACE,
-    database: DATABASE,
-    access: "staff",
-    variables: { email: "ada@example.com", password: "demo" },
-  });
+  const signIn = (email) =>
+    db.signin({
+      namespace: NAMESPACE,
+      database: DATABASE,
+      access: "staff",
+      variables: { email, password: "demo" },
+    });
 
-  // THE HAZARD, demonstrated before it is fixed: the identity has changed and
-  // the cache has not. `$auth` is in neither the query text nor its parameters,
-  // so nothing about the key knows.
+  await signIn("ada@example.com");
+  // The hazard, before it is closed: a cache key is the query text plus its
+  // parameters, and `$auth` is in neither.
   check(
     "without a reset, Ada would still be rendering root's 6 rows",
     asRoot.get().data.length === 6,
     "this is the leak `reset()` closes",
   );
-
   await core.reset();
   await until(() => asRoot.get().status === "success");
-  const adaTickets = asRoot.get().data;
-  check("after reset(), Ada sees 3", adaTickets.length === 3, `${adaTickets.length}`);
-  check(
-    "and they are all team:red",
-    adaTickets.every((ticket) => ticket.team === "team:red"),
-    adaTickets.map((t) => t.team).join(","),
-  );
+  const ada = asRoot.get().data;
+  check("after reset(), Ada sees 3", ada.length === 3, `${ada.length}`);
+  check("all of them team:red", ada.every((row) => row.team === "team:red"));
 
-  // The live subscription opened as root has to be re-established, not merely
-  // dropped: a LIVE SELECT captures its permission context when it is opened.
-  const afterResetCount = live.get().data.length;
-  const [asAda] = await core.mutate(q.addPerson, {
+  // A LIVE SELECT captures its permission context when it opens, so `reset()`
+  // has to re-establish it rather than leave it running under the old identity.
+  const liveCount = live.get().data.length;
+  const [asAda] = await core.mutate(addPerson, {
     name: "Radia",
     age: 38,
     team: new RecordId("team", "blue"),
   });
-  const stillLive = await until(() => live.get().data.length === afterResetCount + 1);
-  check("the live subscription still delivers after an identity change", stillLive);
-  await core.mutate(q.removePerson, { person: asAda.id });
-  await until(() => live.get().data.length === afterResetCount);
-
-  await db.signin({
-    namespace: NAMESPACE,
-    database: DATABASE,
-    access: "staff",
-    variables: { email: "grace@example.com", password: "demo" },
-  });
-  await core.reset();
-  await until(() => asRoot.get().status === "success" && asRoot.get().data.length !== 3 || false, 500);
-  const graceTickets = asRoot.get().data;
-  check("Grace sees 3", graceTickets.length === 3, `${graceTickets.length}`);
   check(
-    "and they are all team:blue",
-    graceTickets.every((ticket) => ticket.team === "team:blue"),
-    graceTickets.map((t) => t.team).join(","),
+    "the live subscription still delivers after an identity change",
+    await until(() => live.get().data.length === liveCount + 1),
   );
+  await core.mutate(defineQuery.unchecked("DELETE person WHERE id = $person"), {
+    person: asAda.id,
+  });
+  await until(() => live.get().data.length === liveCount);
+
+  await signIn("grace@example.com");
+  await core.reset();
+  const grace = asRoot.get().data;
+  check("Grace sees 3", grace.length === 3, `${grace.length}`);
+  check("all of them team:blue", grace.every((row) => row.team === "team:blue"));
   check(
     "none of Ada's rows survived into Grace's view",
-    graceTickets.every((ticket) => !adaTickets.some((other) => other.id === ticket.id)),
+    grace.every((row) => !ada.some((other) => other.id === row.id)),
   );
 
   await db.signin({ username: ROOT_USER, password: ROOT_PASS });
@@ -237,11 +262,7 @@ async function main() {
   core.clear();
   await db.close();
 
-  console.log(
-    failures === 0
-      ? "\nall checks passed\n"
-      : `\n${failures} CHECK(S) FAILED\n`,
-  );
+  console.log(failures === 0 ? "\nall checks passed\n" : `\n${failures} CHECK(S) FAILED\n`);
   process.exit(failures === 0 ? 0 : 1);
 }
 

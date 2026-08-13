@@ -91,6 +91,24 @@ function fromPreloaded(payload: Preloaded<unknown>): SurqlLive<unknown, Bound> {
   } as SurqlLive<unknown, Bound>;
 }
 
+/**
+ * A raw string reaching here means the inline attribute form was written and
+ * `@surrealguard/svelte/preprocess` is not in the `svelte.config.js` preprocess
+ * chain — so Svelte concatenated the attribute and handed us the finished text.
+ * That is precisely the case the preprocessor exists to prevent, so it fails
+ * loudly rather than running an unparameterised, un-cached query.
+ */
+function assertPreprocessed(resolved: unknown): void {
+  if (typeof resolved !== "string" || resolved === "skip") return;
+  throw new Error(
+    "[@surrealguard/svelte] <Query>/<LiveQuery> received a plain string. Add the " +
+      "preprocessor to svelte.config.js:\n\n" +
+      '  import { surrealguard } from "@surrealguard/svelte/preprocess";\n' +
+      "  export default { preprocess: [surrealguard(), vitePreprocess()] };\n\n" +
+      `Got: ${JSON.stringify(resolved.slice(0, 80))}`,
+  );
+}
+
 function isPreloaded(value: unknown): value is Preloaded<unknown> {
   return (
     typeof value === "object" &&
@@ -141,7 +159,9 @@ const PENDING: QueryState<unknown> = { status: "pending", data: undefined, error
  * "fetch this once, show a spinner, show an error" had nothing to call.
  */
 export function createQuery<R>(
-  source: Source<SurqlQuery<R, Bound> | Preloaded<Json<Rows<R>>>>,
+  // `| string` is the inline attribute form, which the preprocessor rewrites
+  // before it can ever get here; `assertPreprocessed` below says so if it does.
+  source: Source<SurqlQuery<R, Bound> | Preloaded<Json<Rows<R>>> | string>,
   options: CreateOptions<Json<Rows<R>>> = {},
 ): QueryHandle<Json<Rows<R>>> {
   const client = options.client ?? useClient();
@@ -149,6 +169,7 @@ export function createQuery<R>(
   const view = $derived.by((): View | undefined => {
     const resolved = resolveSource(source);
     if (resolved === "skip") return undefined;
+    assertPreprocessed(resolved);
     if (isPreloaded(resolved)) {
       return makeView(client, fromPreloaded(resolved), resolved.data, false);
     }
@@ -192,7 +213,7 @@ export function createQuery<R>(
  * same reactivity trap the thunk form exists to close.
  */
 export function createLive<Row>(
-  source: Source<SurqlLive<Row, Bound> | Preloaded<Json<Row>[]>>,
+  source: Source<SurqlLive<Row, Bound> | Preloaded<Json<Row>[]> | string>,
   options: CreateOptions<Json<Row>[]> = {},
 ): LiveHandle<Json<Row>> {
   const client = options.client ?? useClient();
@@ -200,6 +221,7 @@ export function createLive<Row>(
   const view = $derived.by((): View | undefined => {
     const resolved = resolveSource(source);
     if (resolved === "skip") return undefined;
+    assertPreprocessed(resolved);
     if (isPreloaded(resolved)) {
       return makeView(client, fromPreloaded(resolved), resolved.data, true);
     }

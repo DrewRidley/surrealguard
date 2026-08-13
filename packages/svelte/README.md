@@ -303,6 +303,55 @@ empty array is indistinguishable from a query that really has none. Its snippet
 receives the reconciled **rows**; the live-query `Uuid` is a subscription handle,
 not a payload, and is never surfaced.
 
+## The query in the markup
+
+With the preprocessor installed, `q` takes the SurrealQL directly:
+
+```svelte
+<LiveQuery q="SELECT id, name, age FROM person WHERE age > {minAge}">
+  {#snippet children(people)}
+    {#each people as person (person.id)}<li>{person.name}</li>{/each}
+  {/snippet}
+</LiveQuery>
+```
+
+```js
+// svelte.config.js
+import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
+import { surrealguard } from "@surrealguard/svelte/preprocess";
+
+export default { preprocess: [surrealguard(), vitePreprocess()] };
+```
+
+`{minAge}` is **not** interpolation. Svelte compiles an interpolated attribute
+to string concatenation, so without the preprocessor the value would be spliced
+into the query text — an injection for a string, and a fresh query text (so a
+fresh cache entry) on every keystroke for a number. The preprocessor catches the
+attribute ahead of the compiler and captures the parts, so what runs is
+
+```
+text    SELECT id, name, age FROM person WHERE age > $__host0
+params  { __host0: minAge }
+```
+
+One text whatever the value is; a real bound parameter on the wire; a static
+skeleton for the registry to key and for `surrealguard` to analyse. It is
+wrapped in a thunk, so it stays reactive through the same `Source` machinery as
+everything else.
+
+Forget the preprocessor and nothing misbehaves quietly: the string reaches
+`<Query>` at runtime and it throws, naming the two lines to add.
+
+Two things this does not do yet, both external:
+
+- `surrealguard generate` extracts queries from call expressions, not from
+  markup attributes, so the skeleton has to reach the registry another way until
+  it does.
+- `svelte2tsx` — what `svelte-check` and the editor use — applies `script` and
+  `style` preprocessors but type-checks the *original* markup, so it sees a
+  string here. The snippet parameter needs an annotation until that changes.
+  `examples/sveltekit` shows how to derive one rather than write one.
+
 ## `createMutation` — a write, and what it invalidates
 
 ```svelte
@@ -444,6 +493,7 @@ initialisation, so a module cannot read it.
 | `createMutation(query, options?)` | write + invalidation |
 | `<Query q children loading? error? client?>` | `createQuery` in markup |
 | `<LiveQuery q children loading? error? client?>` | `createLive` in markup |
+| `surrealguard()` (`/preprocess`) | the inline `q="SELECT … {value}"` attribute |
 | `preload(db, query)` | SSR payload that remembers its query |
 | `setClient(db)` / `useClient(override?)` | context, for the helpers above |
 | `dehydrate(db)` / `hydrate(db, state)` | whole-cache transport |

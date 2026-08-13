@@ -54,8 +54,17 @@
     loading,
     error,
   }: {
-    /** The query to run: a bound `SurqlQuery`, a `Preloaded` payload, a thunk of either, or `"skip"`. */
-    q: Source<SurqlQuery<R, Bound> | Preloaded<Json<Rows<R>>>>;
+    /**
+     * The query to run: a bound `SurqlQuery`, a `Preloaded` payload, a thunk of
+     * either, or `"skip"`.
+     *
+     * A **string** is the inline form — `q="SELECT … WHERE age > {minAge}"` —
+     * which `@surrealguard/svelte/preprocess` rewrites into the thunk-plus-parts
+     * shape before the compiler sees it. It is accepted here only so the
+     * attribute type-checks; a string that actually arrives at runtime means the
+     * preprocessor is not installed, and it throws saying so.
+     */
+    q: Source<SurqlQuery<R, Bound> | Preloaded<Json<Rows<R>>>> | string;
     /** Override the context client (tests, a second connection). */
     client?: SurrealGuardClient;
     /** Rendered with the result once it is available. */

@@ -128,6 +128,9 @@ importers:
       '@sveltejs/kit':
         specifier: ^2
         version: 2.70.1(@sveltejs/vite-plugin-svelte@4.0.4(svelte@5.56.7)(vite@5.4.21(@types/node@22.20.1)))(svelte@5.56.7)(typescript@5.9.3)(vite@5.4.21(@types/node@22.20.1))
+      magic-string:
+        specifier: ^0.30.0
+        version: 0.30.21
     devDependencies:
       '@sveltejs/package':
         specifier: ^2.5.8
