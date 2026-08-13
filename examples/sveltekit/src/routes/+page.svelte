@@ -1,3 +1,38 @@
+<!--
+  The demo. One page, two things.
+
+  1. THE QUERY IS IN THE MARKUP. The `q=` attribute below is written where you
+     are looking when you want to change it, it is typed from your schema, and
+     SurrealGuard reports a mistake ON THAT LINE. Move the slider and it
+     re-runs; press a button and the rows arrive over a live subscription.
+
+     `{minAge}` is NOT string interpolation. Svelte would compile an
+     interpolated attribute to concatenation, which would splice the value into
+     the query text — a SurrealQL injection for a string, and a brand-new query
+     text (so a brand-new cache entry) on every keystroke for a number. The
+     preprocessor in `@surrealguard/svelte/preprocess` catches the attribute
+     before the compiler and captures the parts, so what actually runs is one
+     text with a real bound parameter:
+
+       SELECT … WHERE age > $__host0        { __host0: minAge }
+
+     One query text, whatever the slider says.
+
+  2. WHO YOU ARE CHANGES WHAT YOU SEE. The ticket query below never changes.
+     `PERMISSIONS FOR select WHERE team = $auth.team` on the table, and
+     `DEFINE ACCESS staff … TYPE RECORD` next to it — both in
+     `schema/schema.surql` — do all of it. There is no authorisation logic in
+     this app.
+
+  Break the query in the attribute below to see it: `persn` for `person` gives,
+  on that line and under that word,
+
+    error[E1001]: `persn` is not a defined table
+      help: did you mean `person`?
+
+  Three more, with their exact messages, are at the bottom of
+  `src/lib/queries.ts`.
+-->
 <script lang="ts">
   import { recordId } from "@surrealguard/client";
   import { createMutation, LiveQuery, Query } from "@surrealguard/svelte";

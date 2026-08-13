@@ -109,9 +109,9 @@ on that line and under that word:
 
 ```
 error[E1001]: `persn` is not a defined table
-   --> src/routes/+page.svelte:50:49
+   --> src/routes/+page.svelte:85:49
     |
- 50 |   <LiveQuery q="SELECT id, name, age, team FROM persn WHERE age > {minAge}">
+ 85 |   <LiveQuery q="SELECT id, name, age, team FROM persn WHERE age > {minAge}">
     |                                                 ^^^^^
     |
     = help: did you mean `person`?
