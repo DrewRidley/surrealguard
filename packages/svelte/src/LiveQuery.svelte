@@ -32,38 +32,46 @@
   Fallbacks match `<Query>`: absent `loading` renders nothing, absent `error`
   throws so the failure surfaces.
 -->
-<script lang="ts" generics="Row">
+<script lang="ts" generics="Q extends LiveSource">
   import type { Snippet } from "svelte";
   import type {
     Bound,
     Json,
+    ParamsOf,
     Preloaded,
     SurqlLive,
     SurrealGuardClient,
     SurrealGuardError,
   } from "@surrealguard/client";
+  import { sgTextLive } from "./inline.js";
   import { createLive } from "./queries.svelte.js";
   import { resolveSource, type Source } from "./source.js";
+  import type { LiveRow, LiveRows, LiveSource } from "./prop.js";
+
+  // One type parameter, inferred off `q` — see `./prop.ts` for why a second one
+  // read through a conditional cannot work.
+  type Row = LiveRow<Q>;
 
   let {
     q,
+    params,
     client,
     children,
     loading,
     error,
   }: {
     /**
-     * The live query: a bound `SurqlLive`, a `Preloaded` payload, a thunk of
-     * either, or `"skip"`.
-     *
-     * A **string** is the inline form — see `<Query>`; the preprocessor rewrites
-     * it, and one reaching runtime throws.
+     * The live query: the text of a registered one, a bound `SurqlLive`, a
+     * `Preloaded` payload, a thunk of either, or `"skip"`. The text is a plain
+     * `SELECT`; the client prefixes `LIVE` when it opens the subscription.
      */
-    q: Source<SurqlLive<Row, Bound> | Preloaded<Json<Row>[]>> | string;
+    q: Q;
+    /** Bound parameters, when `q` is text that names some. */
+    params?: Q extends string ? ParamsOf<Q> : never;
     /** Override the context client (tests, a second connection). */
     client?: SurrealGuardClient;
     /** Rendered with the reconciled rows. Always an array, so no `?? []`. */
-    children: Snippet<[Json<Row>[]]>;
+    children: Snippet<[LiveRows<Q>]>;
     /** Rendered until the seeding `SELECT` resolves. */
     loading?: Snippet<[]>;
     /** Rendered on failure. Omit it and the error is thrown instead. */
@@ -76,7 +84,12 @@
   // Read once on purpose — see `<Query>`: the client is resolved at
   // construction, so a closure over it would change nothing.
   // svelte-ignore state_referenced_locally
-  const handle = createLive<Row>(() => resolveSource(q), { client });
+  const handle = createLive<Row>(() => {
+    if (typeof q === "string" && q !== "skip") {
+      return sgTextLive(q, params as Record<string, unknown> | undefined) as SurqlLive<Row, Bound>;
+    }
+    return resolveSource(q as Source<SurqlLive<Row, Bound>>) as SurqlLive<Row, Bound>;
+  }, { client });
 
   const failure = $derived(handle.error);
 

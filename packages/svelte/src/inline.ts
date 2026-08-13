@@ -118,6 +118,37 @@ export function sgLive<const Parts extends readonly string[]>(
 }
 
 /**
+ * Build a query from an attribute that is a plain string, binding `params` if
+ * there are any: `<Query q="SELECT … WHERE age > $min" params={{ min }} />`.
+ *
+ * This form needs no preprocessor at all, and that is the point of it. The
+ * attribute stays a string *literal*, so TypeScript keeps its literal type and
+ * the registry lookup that types the snippet works in the editor — where the
+ * interpolated form's type is lost, because `svelte2tsx` applies `script` and
+ * `style` preprocessors but not `markup` ones. It is also plainer SurrealQL:
+ * `$min` is a parameter the language already has, so what you read in the
+ * attribute is what the database is sent.
+ */
+export function sgText(
+  text: string,
+  params: Record<string, unknown> | undefined,
+): SurqlQuery<unknown, Bound> {
+  const query = defineQuery.unchecked(text);
+  // Bind nothing rather than `{}`: an empty binding keys the entry `text::`
+  // instead of `text`, and `invalidate` matches by prefix off the bare text.
+  return (params ? query.with(params) : query) as SurqlQuery<unknown, Bound>;
+}
+
+/** {@link sgText}, for `<LiveQuery>`. */
+export function sgTextLive(
+  text: string,
+  params: Record<string, unknown> | undefined,
+): SurqlLive<unknown, Bound> {
+  const live = defineLive.unchecked(text);
+  return (params ? live.with(params) : live) as SurqlLive<unknown, Bound>;
+}
+
+/**
  * The runtime half of {@link Skeleton}. Kept next to it, because the two
  * agreeing is the whole contract: a mismatch is a silent registry miss.
  */

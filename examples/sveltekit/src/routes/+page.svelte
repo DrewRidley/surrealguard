@@ -1,286 +1,119 @@
 <!--
-  The demo. One page, three things.
-
-  1. THE QUERY IS IN THE MARKUP. The `q=` attribute below is written where you
-     are looking when you want to change it, it is typed from your schema, and
-     SurrealGuard reports a mistake ON THAT LINE. Move the slider and it
-     re-runs; press a button and the rows arrive over a live subscription.
-
-     `{minAge}` is NOT string interpolation. Svelte would compile an
-     interpolated attribute to concatenation, which would splice the value into
-     the query text — a SurrealQL injection for a string, and a brand-new query
-     text (so a brand-new cache entry) on every keystroke for a number. The
-     preprocessor in `@surrealguard/svelte/preprocess` catches the attribute
-     before the compiler and captures the parts, so what actually runs is one
-     text with a real bound parameter:
-
-       SELECT … WHERE age > $__host0        { __host0: minAge }
-
-     One query text, whatever the slider says.
-
-  2. THE PAGE KEEPS NO DATA. There is no array of people, no list of teams, no
-     counter — every row on screen, including the options in the "add a person"
-     dropdown, is a <Query> against the schema. The only `$state` here is what
-     the human is typing: the slider, and the three form fields.
-
-  3. WHO YOU ARE CHANGES WHAT YOU SEE. The ticket query below never changes.
-     `PERMISSIONS FOR select WHERE team = $auth.team` on the table, and
-     `DEFINE ACCESS staff … TYPE RECORD` next to it — both in
-     `schema/schema.surql` — do all of it. There is no authorisation logic in
-     this app.
-
-  Break the query in the attribute below to see it: `persn` for `person` gives,
-  on that line and under that word,
-
-    error[E1001]: `persn` is not a defined table
-      help: did you mean `person`?
-
-  Three more, with their exact messages, are at the bottom of
-  `src/lib/queries.ts`.
+  Every read on this page is written where you are looking at it, and every one
+  of them is typed by `surrealguard generate` — no annotations below, anywhere.
+  Change a field name in an attribute and the editor says so before the app runs.
 -->
 <script lang="ts">
+  import { LiveQuery, Query } from "@surrealguard/svelte";
   import { recordId } from "@surrealguard/client";
-  import { createMutation, LiveQuery, Query } from "@surrealguard/svelte";
-  import { addPerson, removePerson } from "$lib/queries";
-  import type { PersonRows, TeamRows, TicketRows } from "$lib/inline-registry";
+  import { db } from "$lib/db";
   import { LOGINS, session } from "$lib/session.svelte";
 
-  // Plain `$state`. Nothing about it knows there is a database.
   let minAge = $state(25);
-
-  // The add form's fields — what the human is typing, and nothing else. No row
-  // the database owns is mirrored here; the teams in the picker are a <Query>.
-  //
-  // `team` is the id of a `team` record, spelled the way JSON spells it, and
-  // that type is DERIVED: it is the `id` column of the very query the picker
-  // runs. Add a team to the database and the picker offers it; there is no list
-  // to update.
   let name = $state("");
   let age = $state(30);
-  let team = $state<TeamRows[number]["id"] | "">("");
+  let team = $state("");
 
-  const add = createMutation(addPerson, { onSuccess: () => (name = "") });
-  const remove = createMutation(removePerson);
+  async function add() {
+    if (!name || !team) return;
+    await db.query("CREATE person SET name = $name, age = $age, team = $team", {
+      name,
+      age,
+      team: recordId(team as `team:${string}`),
+    });
+    name = "";
+  }
+
+  const remove = (person: `person:${string}`) =>
+    db.query("DELETE person WHERE id = $person", { person: recordId(person) });
 </script>
 
-<header>
-  <h1>SurrealGuard <span class="thin">— SvelteKit</span></h1>
-  <div class="viewer">
-    <span class="label">signed in as</span>
-    <strong>{session.viewer.kind === "root" ? "root" : session.viewer.name}</strong>
-  </div>
-</header>
-
-<section>
-  <div class="control">
-    <label>
-      age &gt;
-      <input type="range" min="20" max="50" bind:value={minAge} />
-      <output data-testid="min-age">{minAge}</output>
+<div class="mx-auto max-w-3xl space-y-8 p-8 text-slate-100">
+  <section class="space-y-3">
+    <label class="flex items-center gap-3">
+      <span class="w-28 text-sm text-slate-400">age &gt; {minAge}</span>
+      <input type="range" min="20" max="50" bind:value={minAge} class="flex-1" />
     </label>
-  </div>
 
-  <div class="control">
-    <input placeholder="name" bind:value={name} data-testid="new-name" />
-    <input type="number" min="18" max="99" bind:value={age} data-testid="new-age" />
+    <div class="flex gap-2">
+      <input
+        placeholder="name"
+        bind:value={name}
+        data-testid="new-name"
+        class="flex-1 rounded bg-slate-800 px-3 py-2"
+      />
+      <input
+        type="number"
+        min="18"
+        max="99"
+        bind:value={age}
+        data-testid="new-age"
+        class="w-20 rounded bg-slate-800 px-3 py-2"
+      />
 
-    <!-- The picker is a query. The options are rows of `team`, so there is no
-         list of teams in this file to fall out of date. -->
-    <Query q="SELECT id, name FROM team">
-      {#snippet loading()}<span class="muted">teams…</span>{/snippet}
-      {#snippet error(cause)}<span class="error">{cause.message}</span>{/snippet}
-      {#snippet children(teams: TeamRows)}
-        <select bind:value={team} data-testid="new-team">
-          <option value="" disabled>pick a team</option>
-          {#each teams as t (t.id)}
-            <option value={t.id}>{t.name}</option>
-          {/each}
-        </select>
-      {/snippet}
-    </Query>
+      <Query q="SELECT id, name FROM team">
+        {#snippet children(teams)}
+          <select bind:value={team} data-testid="new-team" class="rounded bg-slate-800 px-3 py-2">
+            <option value="" disabled>team</option>
+            {#each teams as t (t.id)}<option value={t.id}>{t.name}</option>{/each}
+          </select>
+        {/snippet}
+      </Query>
 
-    <!-- A `<select>` hands back a string, and `team` on `person` is a
-         `record<team>`: a plain string encodes to a SurrealQL string, which is
-         a different type on the wire and a different value in the database.
-         `recordId()` rebuilds the `RecordId` and keeps the inference — no
-         cast, and the generated params type is what insists. The `team &&` is
-         the same "nothing picked yet" the `disabled` says, spelled so the type
-         checker can read it too. -->
-    <button
-      data-testid="add"
-      disabled={add.pending || !name || !team}
-      onclick={() => team && add.mutate({ name, age, team: recordId(team) })}
-    >
-      Add a person
-    </button>
-  </div>
+      <button
+        onclick={add}
+        disabled={!name || !team}
+        class="rounded bg-sky-600 px-4 py-2 font-medium disabled:opacity-40">Add</button
+      >
+    </div>
+  </section>
 
-  <LiveQuery q="SELECT id, name, age, team FROM person WHERE age > {minAge}">
-    {#snippet loading()}<p class="muted">Subscribing…</p>{/snippet}
-    {#snippet error(cause)}
-      <p class="error">{cause.message}</p>
-      <p class="muted">Is SurrealDB running? <code>pnpm db</code>, in another terminal.</p>
-    {/snippet}
-    <!-- The annotation is a stopgap, and `$lib/inline-registry.ts` explains
-         exactly why: `svelte2tsx` type-checks the ORIGINAL markup, so it sees
-         a string here rather than the query the preprocessor makes of it. The
-         type is still DERIVED from the schema — `person.age` is a `number`,
-         `person.nope` is a compile error — and both go away when markup
-         extraction lands. -->
-    {#snippet children(people: PersonRows)}
-      <ul data-testid="people" class="rows">
+  <!-- Reactive parameters: `params` re-runs this subscription as the slider moves. -->
+  <LiveQuery q="SELECT id, name, age, team FROM person WHERE age > $min" params={{ min: minAge }}>
+    {#snippet loading()}<p class="text-slate-500">…</p>{/snippet}
+    {#snippet children(people)}
+      <ul class="divide-y divide-slate-800 rounded border border-slate-800">
         {#each people as person (person.id)}
-          <li>
-            <strong>{person.name}</strong>
-            <span class="muted">{person.age} · {person.team}</span>
-            <button
-              class="x"
-              title="delete {person.name}"
-              onclick={() => remove.mutate({ person: recordId(person.id) })}>×</button
+          <li class="flex items-center gap-3 px-4 py-2" data-testid="person-{person.name}">
+            <span class="flex-1">{person.name}</span>
+            <span class="text-slate-400">{person.age}</span>
+            <button onclick={() => remove(person.id)} class="text-slate-500 hover:text-rose-400"
+              >×</button
             >
           </li>
         {/each}
       </ul>
-      <p class="count" data-testid="people-count">{people.length} people</p>
     {/snippet}
   </LiveQuery>
-  {#if add.error}<p class="error">{add.error.message}</p>{/if}
-  {#if remove.error}<p class="error">{remove.error.message}</p>{/if}
-</section>
 
-<section>
-  <div class="control">
-    {#each LOGINS as login (login.email)}
-      <button onclick={() => session.signIn(login)} disabled={session.busy}>
-        {login.name} ({login.team})
-      </button>
-    {/each}
-    <button onclick={() => session.signOut()} disabled={session.busy}>root</button>
-    {#if session.error}<span class="error">{session.error}</span>{/if}
-  </div>
+  <!-- Who you are decides what this returns: `ticket` PERMISSIONS read `$auth`. -->
+  <section class="space-y-3">
+    <div class="flex items-center gap-2 text-sm">
+      {#each LOGINS as login (login.email)}
+        <button
+          onclick={() => session.signIn(login)}
+          disabled={session.busy}
+          class="rounded bg-slate-800 px-3 py-1 hover:bg-slate-700">{login.name}</button
+        >
+      {/each}
+      <button
+        onclick={() => session.signOut()}
+        disabled={session.busy}
+        class="rounded bg-slate-800 px-3 py-1 hover:bg-slate-700">root</button
+      >
+      <span class="text-slate-500">
+        {session.viewer.kind === "root" ? "root — sees every ticket" : `${session.viewer.name} — ${session.viewer.team}`}
+      </span>
+    </div>
 
-  <Query q="SELECT id, title, team FROM ticket">
-    {#snippet loading()}<p class="muted">Loading tickets…</p>{/snippet}
-    {#snippet error(cause, retry)}
-      <p class="error">{cause.message}</p>
-      <button onclick={retry}>Retry</button>
-    {/snippet}
-    {#snippet children(tickets: TicketRows)}
-      <ul data-testid="tickets" class="rows">
-        {#each tickets as ticket (ticket.id)}
-          <li><strong>{ticket.title}</strong> <span class="muted">{ticket.team}</span></li>
-        {:else}
-          <li class="muted">no tickets visible to this identity</li>
-        {/each}
-      </ul>
-      <p class="count" data-testid="ticket-count">{tickets.length} tickets visible</p>
-    {/snippet}
-  </Query>
-</section>
-
-<style>
-  header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-  h1 {
-    margin: 0;
-    font-size: 1.6rem;
-  }
-  .thin {
-    font-weight: 400;
-    color: #6b7280;
-  }
-  .viewer .label {
-    color: #6b7280;
-  }
-  section {
-    margin: 2rem 0;
-    padding-top: 1.25rem;
-    border-top: 1px solid #e5e7eb;
-  }
-  .control {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-    margin-bottom: 1rem;
-  }
-  label {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-  }
-  input[type="range"] {
-    width: 14rem;
-  }
-  .control input:not([type="range"]),
-  .control select {
-    font: inherit;
-    padding: 0.3rem 0.5rem;
-    border: 1px solid #d1d5db;
-    border-radius: 6px;
-    background: white;
-  }
-  .control input[type="number"] {
-    width: 5rem;
-  }
-  output {
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-    min-width: 2ch;
-  }
-  .rows {
-    list-style: none;
-    padding: 0;
-    margin: 0.5rem 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-  }
-  .rows li {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    padding: 0.35rem 0.6rem;
-    border-radius: 6px;
-    background: #f9fafb;
-  }
-  .muted {
-    color: #6b7280;
-    font-size: 0.92rem;
-  }
-  .count {
-    color: #6b7280;
-    font-size: 0.85rem;
-    margin: 0.35rem 0 0;
-  }
-  .error {
-    color: #b91c1c;
-  }
-  button {
-    font: inherit;
-    padding: 0.35rem 0.75rem;
-    border: 1px solid #d1d5db;
-    border-radius: 6px;
-    background: white;
-    cursor: pointer;
-  }
-  button:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-  button.x {
-    margin-left: auto;
-    border: none;
-    background: transparent;
-    color: #9ca3af;
-    padding: 0 0.35rem;
-  }
-  button.x:hover {
-    color: #b91c1c;
-  }
-</style>
+    <Query q="SELECT id, title, team FROM ticket">
+      {#snippet children(tickets)}
+        <ul class="grid grid-cols-2 gap-2" data-testid="tickets">
+          {#each tickets as ticket (ticket.id)}
+            <li class="rounded bg-slate-800/60 px-3 py-2 text-sm">{ticket.title}</li>
+          {/each}
+        </ul>
+      {/snippet}
+    </Query>
+  </section>
+</div>

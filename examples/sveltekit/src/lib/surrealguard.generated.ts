@@ -42,7 +42,7 @@ declare module "@surrealguard/client" {
     "CREATE person SET name = $name, age = $age, team = $team": { result: [Array<{ age: number; email?: string; id: RecordId<"person">; name: string; password?: string; team: RecordId<"team"> }>]; params: { age: number; name: string; team: RecordId<"team"> } };
     "DELETE person WHERE id = $person": { result: [Array<{ age: number; email?: string; id: RecordId<"person">; name: string; password?: string; team: RecordId<"team"> }>]; params: { person: RecordId<"person"> } };
     "SELECT id, name FROM team": { result: [Array<{ id: RecordId<"team">; name: string }>]; params: Record<string, never> };
-    "SELECT id, name, age, team FROM person WHERE age > $__host0": { result: [Array<{ age: number; id: RecordId<"person">; name: string; team: RecordId<"team"> }>]; params: Record<string, never> };
+    "SELECT id, name, age, team FROM person WHERE age > $min": { result: [Array<{ age: number; id: RecordId<"person">; name: string; team: RecordId<"team"> }>]; params: { min: number } };
     "SELECT id, title, team FROM ticket": { result: [Array<{ id: RecordId<"ticket">; team: RecordId<"team">; title: string }>]; params: Record<string, never> };
   }
 }

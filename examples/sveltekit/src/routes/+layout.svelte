@@ -6,6 +6,7 @@
   of them also takes `{ client: db }` directly.
 -->
 <script lang="ts">
+  import "../app.css";
   import { setClient } from "@surrealguard/svelte";
   import { db, HEALTH_URL } from "$lib/db";
 

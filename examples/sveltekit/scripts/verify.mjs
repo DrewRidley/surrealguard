@@ -21,8 +21,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient, defineQuery, RecordId } from "@surrealguard/client";
-import { sgLive, sgQuery } from "@surrealguard/svelte/inline";
-import { surrealguard } from "@surrealguard/svelte/preprocess";
+import { sgText, sgTextLive } from "@surrealguard/svelte/inline";
 import { getQueryClient } from "@surrealguard/query";
 import { DATABASE, NAMESPACE, ROOT_PASS, ROOT_USER, seed, URL_RPC } from "./db.mjs";
 
@@ -46,17 +45,18 @@ async function until(predicate, timeoutMs = 5000) {
 }
 
 /**
- * Run the preprocessor over the demo page and read back the parts arrays it
- * emitted, in source order. `[["SELECT … > ", ""], "live"]` and so on.
+ * The queries the demo page actually shows, read off its `q="…"` attributes.
+ *
+ * Read from the source rather than restated here, so this cannot drift into
+ * testing a query the page does not run — which is the only reason it is worth
+ * running at all.
  */
 async function inlineQueriesOfDemoPage() {
   const content = await readFile(join(ROOT, "src", "routes", "+page.svelte"), "utf8");
-  const output = surrealguard().markup({ content, filename: "+page.svelte" });
-  if (!output) throw new Error("the preprocessor rewrote nothing in +page.svelte");
   const found = [];
-  const call = /__sg_(query|live)\((\[[^\]]*\]),/g;
-  for (const [, kind, parts] of output.code.matchAll(call)) {
-    found.push({ kind, parts: JSON.parse(parts) });
+  const attribute = /<(Query|LiveQuery)\s[^>]*?q="([^"]+)"/g;
+  for (const [, element, text] of content.matchAll(attribute)) {
+    found.push({ kind: element === "LiveQuery" ? "live" : "query", text });
   }
   return found;
 }
@@ -70,29 +70,26 @@ async function main() {
   const inline = await inlineQueriesOfDemoPage();
   // By what they select, not by where they sit: the page has three inline
   // queries and adding a fourth must not silently renumber these.
-  const from = (table) => inline.find((entry) => entry.parts.join("").includes(`FROM ${table}`));
+  const from = (table) => inline.find((entry) => entry.text.includes(`FROM ${table}`));
   const roster = from("person");
   const tickets = from("ticket");
   const teams = from("team");
-  check("+page.svelte's <LiveQuery> was rewritten", roster?.kind === "live");
-  check("+page.svelte's ticket <Query> was rewritten", tickets?.kind === "query");
-  check("+page.svelte's team picker <Query> was rewritten", teams?.kind === "query");
+  check("+page.svelte subscribes to the roster", roster?.kind === "live");
+  check("+page.svelte queries the tickets", tickets?.kind === "query");
+  check("+page.svelte queries the team picker", teams?.kind === "query");
   if (!roster || !tickets || !teams) {
     throw new Error("the demo page no longer has all three inline queries");
   }
 
-  const rosterAt = (minAge) => sgLive(roster.parts, [minAge]);
+  const rosterAt = (minAge) => sgTextLive(roster.text, { min: minAge });
   check(
     "the value is bound, not spliced into the text",
-    rosterAt(30).text.includes("$__host0") && !rosterAt(30).text.includes("30"),
+    rosterAt(30).text.includes("$min") && !rosterAt(30).text.includes("30"),
     rosterAt(30).text,
   );
-  check(
-    "every slider position is ONE query text",
-    rosterAt(30).text === rosterAt(31).text,
-  );
+  check("every slider position is ONE query text", rosterAt(30).text === rosterAt(31).text);
   check("…and two different cache keys", rosterAt(30).key !== rosterAt(31).key);
-  check("the parameter is named positionally", "__host0" in (rosterAt(30).params ?? {}));
+  check("the parameter is bound under the name the query spells", "min" in (rosterAt(30).params ?? {}));
 
   const db = createClient({
     url: URL_RPC,
@@ -106,7 +103,7 @@ async function main() {
   // The `<select>` is filled from this. Come back empty and the form has no
   // team to offer, so "add a person" cannot be driven at all.
   console.log("\nthe team picker");
-  const teamRows = await core.fetch(sgQuery(teams.parts, []));
+  const teamRows = await core.fetch(sgText(teams.text, undefined));
   check(
     "the picker's options are rows of `team`",
     teamRows.length === 2 && teamRows.every((row) => typeof row.name === "string"),
@@ -144,7 +141,7 @@ async function main() {
     age: 44,
     team: new RecordId("team", "red"),
   });
-  const byName = sgQuery(["SELECT id, name FROM person WHERE name = ", ""], [HOSTILE]);
+  const byName = sgText("SELECT id, name FROM person WHERE name = $name", { name: HOSTILE });
   check("the quote never enters the query text", !byName.text.includes("O'Hara"), byName.text);
   const matched = await core.fetch(byName);
   check("and the row still comes back", matched.length === 1 && matched[0].name === HOSTILE);
@@ -214,7 +211,7 @@ async function main() {
 
   // ---- identity changes what the same query returns -----------------------
   console.log("\nrecord-level access control");
-  const ticketQuery = () => sgQuery(tickets.parts, []);
+  const ticketQuery = () => sgText(tickets.text, undefined);
   const asRoot = core.observe(ticketQuery());
   const stopTickets = asRoot.subscribe(() => {});
   await until(() => asRoot.get().status === "success");
