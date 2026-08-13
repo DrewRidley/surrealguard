@@ -18,10 +18,29 @@
 //! Framework files (Svelte, Vue, Astro) are TypeScript inside
 //! `<script>` blocks; [`extract`] handles both plain and framework
 //! sources by extension.
+//!
+//! Svelte files carry queries in a second place: **markup attributes**, on
+//! the components that run them — `<Query q="SELECT …">`. Those are found
+//! by [`svelte::extract_svelte_markup`] over the Svelte grammar, and they
+//! produce the same [`EmbeddedQuery`] with the same span map, so everything
+//! downstream treats a markup query exactly like a script one.
 
+mod svelte;
 mod typescript;
 
+pub use svelte::{extract_svelte_markup, QUERY_ATTRIBUTE, QUERY_ELEMENTS};
 pub use typescript::extract_typescript;
+
+/// The prefix of the parameter names generated for host substitutions:
+/// `${...}` in a TypeScript template, `{...}` in a Svelte markup attribute.
+///
+/// Both extraction paths share it so the two cannot drift: a substitution is
+/// a *host* substitution whichever syntax spelled it, and the generated
+/// registry and the framework runtime bind these names by convention. The
+/// leading underscores are the point — `__host0` is reserved-looking, so it
+/// cannot collide with a parameter the user wrote themselves, the way a
+/// short name like `p0` silently would.
+pub const HOST_PARAM_PREFIX: &str = "__host";
 
 /// One SurrealQL query found in a host file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,14 +64,23 @@ pub struct EmbeddedQuery {
     pub live: bool,
 }
 
-/// A `${...}` template substitution rewritten into an analyzer parameter.
+/// A host substitution rewritten into an analyzer parameter — `${...}` in a
+/// TypeScript template, `{...}` in a Svelte markup attribute.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Substitution {
     /// The generated parameter name (`__hostN`) standing in for the
     /// substitution.
     pub param: String,
-    /// Byte range of the original `${...}` expression in the host file.
+    /// Byte range of the original host expression — `${min}` / `{minAge}`,
+    /// braces included.
     pub host_range: std::ops::Range<usize>,
+    /// Byte range of the generated `$__hostN` text inside [`EmbeddedQuery::text`].
+    ///
+    /// This is what lets a finding raised *on the parameter* be reported
+    /// against the whole host expression the user actually wrote, rather
+    /// than against the single byte the copied-run map would otherwise
+    /// resolve to.
+    pub embed_range: std::ops::Range<usize>,
 }
 
 /// A run of bytes copied verbatim from the host file into the query.
@@ -120,13 +148,30 @@ impl EmbeddedQuery {
     }
 
     /// Maps an embedded byte range to the smallest host range covering it.
+    ///
+    /// A range that touches a generated `$__hostN` parameter widens to cover
+    /// that substitution's whole host expression. Without this, a finding on
+    /// the parameter collapses onto the one byte the copied-run map resolves
+    /// to — an opening `{` — and the reader gets a caret under punctuation
+    /// instead of under the `{minAge}` they wrote.
     pub fn host_span(&self, range: std::ops::Range<usize>) -> std::ops::Range<usize> {
+        let end_of = range.end.max(range.start + 1);
         let start = self.host_offset(range.start);
         let end = self
-            .host_offset(range.end.max(range.start + 1).saturating_sub(1))
+            .host_offset(end_of.saturating_sub(1))
             .saturating_add(1)
             .max(start + 1);
-        start..end
+
+        let mut span = start..end;
+        for substitution in &self.substitutions {
+            let overlaps = substitution.embed_range.start < end_of
+                && range.start < substitution.embed_range.end;
+            if overlaps {
+                span.start = span.start.min(substitution.host_range.start);
+                span.end = span.end.max(substitution.host_range.end);
+            }
+        }
+        span
     }
 }
 
@@ -136,16 +181,31 @@ impl EmbeddedQuery {
 pub fn extract(file_name: &str, text: &str) -> Vec<EmbeddedQuery> {
     let extension = file_name.rsplit('.').next().unwrap_or_default();
     match extension {
-        "svelte" | "vue" | "astro" | "html" => script_blocks(text)
-            .into_iter()
-            .flat_map(|block| {
-                let mut queries = extract_typescript(&text[block.clone()], true);
-                for query in &mut queries {
-                    shift(query, block.start);
-                }
-                queries
-            })
-            .collect(),
+        "svelte" | "vue" | "astro" | "html" => {
+            let mut queries: Vec<EmbeddedQuery> = script_blocks(text)
+                .into_iter()
+                .flat_map(|block| {
+                    let mut queries = extract_typescript(&text[block.clone()], true);
+                    for query in &mut queries {
+                        shift(query, block.start);
+                    }
+                    queries
+                })
+                .collect();
+
+            // Markup attributes are Svelte's alone: `{expr}` in an attribute
+            // is an interpolation there, and something else (or nothing) in
+            // Vue, Astro and plain HTML. Scanning those with the Svelte
+            // grammar would invent substitutions their syntax never had.
+            if extension == "svelte" {
+                queries.extend(extract_svelte_markup(text));
+            }
+
+            // Document order, so the `embedded://host#N` ids the CLI and the
+            // LSP mint stay in reading order once two extractors contribute.
+            queries.sort_by_key(|query| (query.host_range.start, query.host_range.end));
+            queries
+        }
         "tsx" | "jsx" => extract_typescript(text, true),
         _ => extract_typescript(text, false),
     }

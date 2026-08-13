@@ -14,6 +14,7 @@ description = "Embedded SurrealQL extraction from host-language sources (TypeScr
 [dependencies]
 tree-sitter.workspace = true
 tree-sitter-typescript = "0.23"
+tree-sitter-svelte-ng = "1.0.2"
 
 [lints]
 workspace = true

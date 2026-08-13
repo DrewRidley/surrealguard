@@ -2,7 +2,7 @@
 
 use tree_sitter::{Node, Parser};
 
-use crate::{EmbeddedQuery, Segment, Substitution};
+use crate::{EmbeddedQuery, Segment, Substitution, HOST_PARAM_PREFIX};
 
 /// Finds every embedded SurrealQL query in a TypeScript source. `tsx`
 /// selects the TSX grammar (needed for files with JSX).
@@ -195,12 +195,14 @@ fn template_to_query(template: Node<'_>, text: &str) -> Option<EmbeddedQuery> {
             &mut query,
             &mut segments,
         );
-        let param = format!("__host{}", substitutions.len());
+        let param = format!("{HOST_PARAM_PREFIX}{}", substitutions.len());
+        let embed_start = query.len();
         query.push('$');
         query.push_str(&param);
         substitutions.push(Substitution {
             param,
             host_range: child.byte_range(),
+            embed_range: embed_start..query.len(),
         });
         host_cursor = child.end_byte();
     }
