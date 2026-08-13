@@ -4187,6 +4187,7 @@ name = "surrealguard-codegen"
 version = "0.5.3"
 dependencies = [
  "surrealdb-types",
+ "surrealguard-embed",
  "surrealguard-workspace",
 ]
 

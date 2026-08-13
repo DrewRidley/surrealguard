@@ -1047,7 +1047,9 @@ impl Workspace {
     }
 }
 
-fn is_surrealql_uri(uri: &Url) -> bool {
+/// Whether a document is SurrealQL itself, rather than a host file whose
+/// queries are embedded in string literals.
+pub fn is_surrealql_uri(uri: &Url) -> bool {
     let path = uri.path();
     path.ends_with(".surql") || path.ends_with(".surrealql")
 }

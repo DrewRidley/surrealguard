@@ -3,6 +3,7 @@
 //! `surrealguard-lsp` binary serves [`backend::Backend`] over stdio.
 
 pub mod backend;
+pub mod code_action;
 pub mod completion;
 pub mod diagnostics;
 pub mod semantic;

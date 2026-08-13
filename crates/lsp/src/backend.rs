@@ -1,6 +1,6 @@
 //! LSP backend — implements the `LanguageServer` trait.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use surrealguard_diagnostics::PolicyConfig;
@@ -13,7 +13,17 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 use crate::workspace::Workspace;
-use crate::{completion, diagnostics, semantic};
+use crate::{code_action, completion, diagnostics, semantic};
+
+/// The `surrealguard.toml` behind the workspace policy: where it is, and the
+/// text last successfully parsed from it. Kept so the "suppress workspace-wide"
+/// action can edit the real file, and so a change to it can be noticed.
+#[derive(Clone, Debug)]
+struct LoadedConfig {
+    path: PathBuf,
+    text: String,
+    config: WorkspaceConfig,
+}
 
 /// The language server: holds the LSP client handle, the tracked workspace,
 /// and the severity policy resolved from `surrealguard.toml`. Implements
@@ -25,6 +35,23 @@ pub struct Backend {
     /// the editor exactly as they do in `surrealguard check`. Defaults until
     /// `initialize` locates a config in a workspace root.
     policy: RwLock<PolicyConfig>,
+    /// The `surrealguard.toml` the policy came from, when a workspace root has
+    /// one. `None` leaves the workspace-wide suppression action unoffered:
+    /// creating a config file is a resource operation not every client
+    /// supports, and inventing one behind the user's back is not a quick fix.
+    config: RwLock<Option<LoadedConfig>>,
+    /// Whether the client declared it can receive `CodeAction` literals. A
+    /// client that only understands `Command` would get objects it never asked
+    /// for, so with this false the server advertises no code-action provider
+    /// and answers `textDocument/codeAction` with nothing.
+    code_action_literal_support: AtomicBool,
+    /// Whether the client can be asked to watch files for us. The
+    /// "suppress workspace-wide" action edits `surrealguard.toml` through the
+    /// client, which then tells us nothing about it; a watcher is how the
+    /// allowed diagnostic disappears without waiting for the next keystroke.
+    /// Registration is a server->client *request*, so — like semantic-token
+    /// refresh — it is only sent to a client that declared it accepts one.
+    watched_files_support: AtomicBool,
     /// Whether the client asked to be told when semantic tokens go stale.
     /// `workspace/semanticTokens/refresh` is a server->client *request*, and a
     /// client that never declared support has no reason to expect one — it
@@ -41,12 +68,52 @@ impl Backend {
             client,
             workspace: RwLock::new(Workspace::new()),
             policy: RwLock::new(PolicyConfig::default()),
+            config: RwLock::new(None),
+            code_action_literal_support: AtomicBool::new(false),
+            watched_files_support: AtomicBool::new(false),
             semantic_tokens_refresh_support: AtomicBool::new(false),
         }
     }
 
+    /// Re-reads `surrealguard.toml` and rebuilds the policy when its text
+    /// changed on disk.
+    ///
+    /// The editor is the one surface where the config can move *while the
+    /// server runs* — the "suppress workspace-wide" action edits it, and the
+    /// client applies that edit without telling us anything. Without this, an
+    /// accepted action leaves the diagnostic it just allowed still squiggled
+    /// until the next restart.
+    ///
+    /// A read per publish, of a file measured in hundreds of bytes, alongside
+    /// an analysis pass. A config that fails to parse mid-edit leaves both the
+    /// cached text and the policy alone, so the next publish retries rather
+    /// than latching a half-written file.
+    async fn reload_config(&self) {
+        let Some(path) = ({ self.config.read().await.as_ref().map(|c| c.path.clone()) }) else {
+            return;
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        if self
+            .config
+            .read()
+            .await
+            .as_ref()
+            .is_some_and(|loaded| loaded.text == text)
+        {
+            return;
+        }
+        let Ok(config) = WorkspaceConfig::from_toml_str(&text) else {
+            return;
+        };
+        *self.policy.write().await = config.policy();
+        *self.config.write().await = Some(LoadedConfig { path, text, config });
+    }
+
     /// Analyze a document and publish diagnostics.
     async fn publish_diagnostics(&self, uri: &Url) {
+        self.reload_config().await;
         let result = {
             let ws = self.workspace.read().await;
             ws.diagnostic_analysis(uri)
@@ -118,6 +185,37 @@ impl Backend {
         });
     }
 
+    /// Asks the client to watch `surrealguard.toml`, when it said it would.
+    ///
+    /// Spawned, never awaited, for the same reason semantic-token refresh is:
+    /// this is a server->client *request*, and awaiting one inside a handler
+    /// blocks that handler until the client answers. Nothing here depends on
+    /// the outcome — without the watcher a config change is still picked up on
+    /// the next publish, just not instantly.
+    fn watch_config_file(&self) {
+        if !self.watched_files_support.load(Ordering::Relaxed) {
+            return;
+        }
+        let Ok(options) = serde_json::to_value(DidChangeWatchedFilesRegistrationOptions {
+            watchers: vec![FileSystemWatcher {
+                glob_pattern: GlobPattern::String("**/surrealguard.toml".to_string()),
+                kind: None,
+            }],
+        }) else {
+            return;
+        };
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            let _ = client
+                .register_capability(vec![Registration {
+                    id: "surrealguard-config-watcher".to_string(),
+                    method: "workspace/didChangeWatchedFiles".to_string(),
+                    register_options: Some(options),
+                }])
+                .await;
+        });
+    }
+
     /// Hover for a position inside a host file's embedded query: the cursor is
     /// translated into the query, answered by the query's own analysis, and the
     /// resulting span mapped back onto the host text — so a field inside a
@@ -157,9 +255,105 @@ impl Backend {
         })
     }
 
+    /// The surrealguard diagnostics a code-action request is about, each
+    /// paired with the canonical code a suppression must name, deduplicated so
+    /// one code never yields two identical actions.
+    ///
+    /// The client's `context.diagnostics` is the authority — it is what the
+    /// user's cursor is actually on. Some clients send an empty context when
+    /// the request comes from a keybinding rather than a lightbulb, so an
+    /// empty one falls back to our own findings overlapping the request range.
+    async fn suppressible_diagnostics(
+        &self,
+        uri: &Url,
+        params: &CodeActionParams,
+    ) -> Vec<(String, Diagnostic)> {
+        let mut candidates: Vec<Diagnostic> = params
+            .context
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.source.as_deref() == Some("surrealguard"))
+            .cloned()
+            .collect();
+        if candidates.is_empty() {
+            candidates = self.diagnostics_overlapping(uri, params.range).await;
+        }
+
+        let mut seen = std::collections::BTreeSet::new();
+        candidates
+            .into_iter()
+            .filter_map(|diagnostic| {
+                let Some(NumberOrString::String(rendered)) = &diagnostic.code else {
+                    return None;
+                };
+                let code = code_action::suppressible_code(rendered)?;
+                seen.insert(code.clone()).then_some((code, diagnostic))
+            })
+            .collect()
+    }
+
+    /// The diagnostics this server would publish for `uri` that touch `range`.
+    async fn diagnostics_overlapping(&self, uri: &Url, range: Range) -> Vec<Diagnostic> {
+        let result = {
+            let ws = self.workspace.read().await;
+            ws.diagnostic_analysis(uri)
+        };
+        let Some(result) = result else {
+            return Vec::new();
+        };
+        let policy = self.policy.read().await;
+        result
+            .diagnostics
+            .iter()
+            .filter_map(|finding| {
+                diagnostics::workspace_finding_to_lsp_diagnostic(
+                    &result.source,
+                    finding,
+                    &policy,
+                    &result.texts,
+                )
+            })
+            .filter(|diagnostic| ranges_overlap(diagnostic.range, range))
+            .collect()
+    }
+
+    /// Whether an inline directive inserted above `offset` would actually
+    /// suppress — the only condition under which the action is offered.
+    ///
+    /// Two ways it would not. In a host file the query lives in a string
+    /// literal, and only a multi-line backtick template can hold a comment
+    /// line (see [`code_action::host_inline_site`]). And in *any* file,
+    /// suppression is skipped entirely for a source that failed to parse, so a
+    /// document with a syntax error would take the directive and keep the
+    /// finding.
+    async fn inline_suppression_possible(&self, uri: &Url, offset: usize) -> bool {
+        let ws = self.workspace.read().await;
+
+        if crate::workspace::is_surrealql_uri(uri) {
+            return ws
+                .parsed_surql(uri)
+                .is_some_and(|(_, parsed)| parsed.syntax_diagnostics().is_empty());
+        }
+
+        let Some((host_text, queries)) = ws.host_queries(uri) else {
+            return false;
+        };
+        if !code_action::host_inline_site(&host_text, &queries, offset) {
+            return false;
+        }
+        queries
+            .iter()
+            .find(|query| query.host_range.contains(&offset))
+            .and_then(|query| {
+                parse_source(SourceId::new("code-action://probe"), query.text.as_str()).ok()
+            })
+            .is_some_and(|parsed| parsed.syntax_diagnostics().is_empty())
+    }
+
     /// Publish diagnostics for all tracked documents in a single workspace
     /// analysis pass (avoids re-analyzing the whole workspace once per file).
     async fn publish_all_diagnostics(&self) {
+        self.reload_config().await;
         let results = {
             let ws = self.workspace.read().await;
             ws.analyze_all()
@@ -191,14 +385,44 @@ impl Backend {
     }
 }
 
+/// Whether two LSP ranges share at least a boundary point.
+fn ranges_overlap(left: Range, right: Range) -> bool {
+    let key = |position: Position| (position.line, position.character);
+    key(left.start) <= key(right.end) && key(right.start) <= key(left.end)
+}
+
+/// A quick fix that applies one edit to one file.
+///
+/// `changes` rather than `documentChanges`: the richer form is a separate
+/// client capability, and a single edit to a single existing file needs
+/// nothing it adds.
+fn suppression_action(
+    title: String,
+    uri: Url,
+    edit: TextEdit,
+    diagnostic: Diagnostic,
+) -> CodeActionOrCommand {
+    CodeActionOrCommand::CodeAction(CodeAction {
+        title,
+        kind: Some(CodeActionKind::QUICKFIX),
+        diagnostics: Some(vec![diagnostic]),
+        edit: Some(WorkspaceEdit {
+            changes: Some([(uri, vec![edit])].into_iter().collect()),
+            ..WorkspaceEdit::default()
+        }),
+        ..CodeAction::default()
+    })
+}
+
 /// Loads and parses `surrealguard.toml` from a workspace root. Returns
 /// `None` when the root has no config file; a malformed config is treated as
 /// absent (the editor falls back to the default policy rather than failing to
 /// start).
-fn load_workspace_config(root: &Path) -> Option<WorkspaceConfig> {
-    let config_path = root.join("surrealguard.toml");
-    let text = std::fs::read_to_string(config_path).ok()?;
-    WorkspaceConfig::from_toml_str(&text).ok()
+fn load_workspace_config(root: &Path) -> Option<LoadedConfig> {
+    let path = root.join("surrealguard.toml");
+    let text = std::fs::read_to_string(&path).ok()?;
+    let config = WorkspaceConfig::from_toml_str(&text).ok()?;
+    Some(LoadedConfig { path, text, config })
 }
 
 #[tower_lsp::async_trait]
@@ -214,6 +438,32 @@ impl LanguageServer for Backend {
         self.semantic_tokens_refresh_support
             .store(refresh_support, Ordering::Relaxed);
 
+        // Code actions are only offered to a client that said it can receive
+        // them as literals. `codeActionLiteralSupport` is the flag that means
+        // "send me `CodeAction` objects, not bare `Command`s"; without it the
+        // only legal answer is a command the client would then have to execute
+        // through `workspace/executeCommand`, which is a capability of its own.
+        // Rather than send a shape nobody advertised, offer nothing at all.
+        let code_action_literals = params
+            .capabilities
+            .text_document
+            .as_ref()
+            .and_then(|text| text.code_action.as_ref())
+            .and_then(|action| action.code_action_literal_support.as_ref())
+            .is_some();
+        self.code_action_literal_support
+            .store(code_action_literals, Ordering::Relaxed);
+
+        let watched_files = params
+            .capabilities
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.did_change_watched_files.as_ref())
+            .and_then(|watched| watched.dynamic_registration)
+            .unwrap_or(false);
+        self.watched_files_support
+            .store(watched_files, Ordering::Relaxed);
+
         if let Some(folders) = &params.workspace_folders {
             let roots: Vec<_> = folders
                 .iter()
@@ -223,8 +473,9 @@ impl LanguageServer for Backend {
             // Resolve `[lints]` levels from the first workspace root that
             // carries a surrealguard.toml, so the editor honors the same
             // policy as `surrealguard check`. No config leaves the default.
-            if let Some(config) = roots.iter().find_map(|root| load_workspace_config(root)) {
-                *self.policy.write().await = config.policy();
+            if let Some(loaded) = roots.iter().find_map(|root| load_workspace_config(root)) {
+                *self.policy.write().await = loaded.config.policy();
+                *self.config.write().await = Some(loaded);
             }
 
             let mut ws = self.workspace.write().await;
@@ -277,20 +528,113 @@ impl LanguageServer for Backend {
                     resolve_provider: Some(false),
                     ..CompletionOptions::default()
                 }),
+                code_action_provider: code_action_literals.then(|| {
+                    CodeActionProviderCapability::Options(CodeActionOptions {
+                        // Only quick fixes: a suppression is offered against a
+                        // specific diagnostic, never as a standalone refactor.
+                        code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+                        // Every action carries its complete edit when it is
+                        // offered; there is nothing left to resolve.
+                        resolve_provider: Some(false),
+                        work_done_progress_options: WorkDoneProgressOptions::default(),
+                    })
+                }),
                 ..ServerCapabilities::default()
             },
         })
     }
 
     async fn initialized(&self, _: InitializedParams) {
+        self.watch_config_file();
         self.publish_all_diagnostics().await;
         self.client
             .log_message(MessageType::INFO, "SurrealGuard LSP ready")
             .await;
     }
 
+    /// `surrealguard.toml` changed underneath us — usually because the
+    /// "suppress workspace-wide" quick fix was just accepted. Re-resolve the
+    /// policy and re-publish every document against it.
+    async fn did_change_watched_files(&self, _params: DidChangeWatchedFilesParams) {
+        self.publish_all_diagnostics().await;
+    }
+
     async fn shutdown(&self) -> Result<()> {
         Ok(())
+    }
+
+    /// Suppression quick fixes for the diagnostics under the cursor: silence
+    /// this one here, or silence the code across the workspace.
+    ///
+    /// Both write the *canonical* code spelling, not the one the editor
+    /// displays — see [`code_action::suppressible_code`] for why those differ
+    /// and why copying the displayed one silently does nothing.
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        // Defense in depth behind the `initialize` gate: a client that never
+        // declared literal support gets nothing even if it asks anyway.
+        if !self.code_action_literal_support.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+
+        let uri = params.text_document.uri.clone();
+
+        // The config decides both whether a directive needs a reason and where
+        // the `[lints]` table to edit lives; re-read so an edit made since the
+        // handshake (including one of ours) is the one we build on.
+        self.reload_config().await;
+        let config = self.config.read().await.clone();
+        let require_reason = config
+            .as_ref()
+            .is_some_and(|loaded| loaded.config.diagnostics.require_suppression_reasons);
+
+        let candidates = self.suppressible_diagnostics(&uri, &params).await;
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+        let text = {
+            let ws = self.workspace.read().await;
+            ws.document_text(&uri)
+        };
+
+        let mut actions: Vec<CodeActionOrCommand> = Vec::new();
+        for (code, diagnostic) in candidates {
+            // The title names the code the way the editor spelled it, so the
+            // action reads as being about the squiggle the user clicked.
+            let shown = match &diagnostic.code {
+                Some(NumberOrString::String(rendered)) => rendered.clone(),
+                _ => code.clone(),
+            };
+
+            if let Some(text) = &text {
+                let offset = crate::text::position_to_offset(text, diagnostic.range.start);
+                if self.inline_suppression_possible(&uri, offset).await {
+                    actions.push(suppression_action(
+                        format!("Suppress {shown} here"),
+                        uri.clone(),
+                        code_action::inline_suppression_edit(text, offset, &code, require_reason),
+                        diagnostic.clone(),
+                    ));
+                }
+            }
+
+            // Offered only when a `surrealguard.toml` already exists: creating
+            // one is a resource operation not every client supports, and a
+            // quick fix should not invent a workspace's configuration.
+            if let Some(loaded) = &config {
+                if let Some(edit) = code_action::lints_allow_edit(&loaded.text, &code) {
+                    if let Ok(config_uri) = Url::from_file_path(&loaded.path) {
+                        actions.push(suppression_action(
+                            format!("Suppress {shown} workspace-wide (surrealguard.toml)"),
+                            config_uri,
+                            edit,
+                            diagnostic.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok((!actions.is_empty()).then_some(actions))
     }
 
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
