@@ -15,5 +15,10 @@ description = "TypeScript type generation from SurrealGuard analysis results"
 surrealdb-types.workspace = true
 surrealguard-workspace = { path = "../workspace", version = "0.5.3" }
 
+[dev-dependencies]
+# Only to assert the host-parameter prefix restated here still matches the
+# definition. Generation itself does not depend on extraction.
+surrealguard-embed = { path = "../embed", version = "0.5.3" }
+
 [lints]
 workspace = true
