@@ -19,8 +19,8 @@
 -->
 <script lang="ts">
   import { LiveQuery, Query } from "@surrealguard/svelte";
-  import { liveTeam } from "$lib/queries";
-  import { recordId } from "$lib/records";
+  import { recordId } from "@surrealguard/client";
+  import { liveRoster } from "$lib/queries";
   import type { load } from "./+page";
 
   // A real app writes `import type { PageData } from "./$types"`. Spelled out
@@ -53,8 +53,8 @@
           <!-- One live subscription per row, parameterised by a field of the
                outer row. `person.team` is the JSON link `"team:red"`; a record
                PARAMETER has to be the SDK's `RecordId`, so `recordId` rebuilds
-               it — see `$lib/records.ts`. -->
-          <LiveQuery q={liveTeam.with({ team: recordId(person.team) })}>
+               it. It ships in `@surrealguard/client`. -->
+          <LiveQuery q={liveRoster.with({ team: recordId(person.team) })}>
             {#snippet loading()}
               <small>counting teammates…</small>
             {/snippet}

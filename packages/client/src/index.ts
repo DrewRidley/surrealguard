@@ -51,6 +51,8 @@ export {
 
 export { SurrealGuardError, type SurrealGuardErrorContext } from "./error.js";
 
+export { recordId } from "./record.js";
+
 export { openLive, reconcile, type ReconcilableRow } from "./live.js";
 
 export { preload, type Preloaded } from "./preload.js";

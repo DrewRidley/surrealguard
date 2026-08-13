@@ -41,7 +41,12 @@ declare module "@surrealguard/client" {
   interface SurqlRegistry {
     "SELECT id, name, age, team FROM person": { result: [Array<{ age: number; id: RecordId<"person">; name: string; team: RecordId<"team"> }>]; params: Record<string, never> };
     "SELECT id, name FROM person WHERE team = $team": { result: [Array<{ id: RecordId<"person">; name: string }>]; params: { team: RecordId<"team"> } };
-    "CREATE person SET name = $name, age = $age, team = $team": { result: [Array<{ age: number; id: RecordId<"person">; name: string; team: RecordId<"team"> }>]; params: { age: number; name: string; team: RecordId<"team"> } };
+    "SELECT id, name, age, team FROM person WHERE age >= $minAge ORDER BY age": { result: [Array<{ age: number; id: RecordId<"person">; name: string; team: RecordId<"team"> }>]; params: { minAge: number } };
+    "SELECT id, name, age FROM person WHERE team = $team": { result: [Array<{ age: number; id: RecordId<"person">; name: string }>]; params: { team: RecordId<"team"> } };
+    "CREATE person SET name = $name, age = $age, team = $team": { result: [Array<{ age: number; email?: string; id: RecordId<"person">; name: string; password?: string; team: RecordId<"team"> }>]; params: { age: number; name: string; team: RecordId<"team"> } };
+    "DELETE person WHERE id = $person": { result: [Array<{ age: number; email?: string; id: RecordId<"person">; name: string; password?: string; team: RecordId<"team"> }>]; params: { person: RecordId<"person"> } };
+    "SELECT id, name FROM team ORDER BY name": { result: [Array<{ id: RecordId<"team">; name: string }>]; params: Record<string, never> };
+    "SELECT id, title, done, team FROM ticket ORDER BY title": { result: [Array<{ done: boolean; id: RecordId<"ticket">; team: RecordId<"team">; title: string }>]; params: Record<string, never> };
   }
 }
 

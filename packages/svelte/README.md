@@ -238,7 +238,7 @@ than assemble a handle first.
 <script lang="ts">
   import { LiveQuery, Query } from "@surrealguard/svelte";
   import { allPeople, liveTeam } from "$lib/queries";
-  import { recordId } from "$lib/records";
+  import { recordId } from "@surrealguard/client";
 </script>
 
 <Query q={allPeople}>
@@ -260,10 +260,11 @@ than assemble a handle first.
 </Query>
 ```
 
-(`recordId` is app-local, not an export: a reactive row is `Json`-shaped, so
+(`recordId` ships in `@surrealguard/client`. A reactive row is `Json`-shaped, so
 `person.team` is the string `"team:red"`, while a record *parameter* has to be
-the SDK's `RecordId` to match on the wire. Four lines —
-[`examples/sveltekit/src/lib/records.ts`](../../examples/sveltekit/src/lib/records.ts).)
+the SDK's `RecordId` to match on the wire — and the table name survives in the
+literal type, so `recordId(person.team)` infers `RecordId<"team">` with no
+cast.)
 
 `people` and `teammates` carry **no annotation and are still fully typed** — the
 row type flows out of `q` and into the snippet parameter, `Rows<R>` unwrapping

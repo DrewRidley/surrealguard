@@ -7,7 +7,7 @@
 import { createLive, createMutation, createQuery, preload } from "@surrealguard/svelte";
 import { RecordId, defineQuery } from "$lib/surrealguard.generated";
 import { db } from "./db";
-import { addPerson, allPeople, liveTeam, livePeople, peopleOf } from "./queries";
+import { addPerson, allPeople, liveRoster, livePeople, peopleOf } from "./queries";
 
 const team = new RecordId("team", "red");
 
@@ -73,7 +73,7 @@ export async function guarantees() {
   (await db.run(allPeople))[0]!.team.startsWith("team:");
 
   // @ts-expect-error an UNBOUND live query cannot be handed to an adapter.
-  createLive(liveTeam, { client: db });
+  createLive(liveRoster, { client: db });
 
   // @ts-expect-error a one-shot query is not a live query.
   createLive(allPeople, { client: db });

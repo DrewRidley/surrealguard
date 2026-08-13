@@ -13,7 +13,7 @@
 import { createLive, createQuery } from "@surrealguard/svelte";
 import type { RecordId } from "@surrealguard/client";
 import { db } from "./db";
-import { allPeople, liveTeam, livePeople } from "./queries";
+import { allPeople, liveRoster, livePeople } from "./queries";
 
 /** Every person, live. Import this from any component; they share one `LIVE SELECT`. */
 export const people = createLive(livePeople, { client: db });
@@ -31,7 +31,7 @@ export function peopleOfTeam(team: () => RecordId<"team"> | undefined) {
     () => {
       const current = team();
       // `"skip"` is how a thunk-based API says "not yet".
-      return current ? liveTeam.with({ team: current }) : "skip";
+      return current ? liveRoster.with({ team: current }) : "skip";
     },
     { client: db },
   );
