@@ -109,7 +109,7 @@
     <Query q="SELECT id, title, team FROM ticket">
       {#snippet children(tickets)}
         <ul class="grid grid-cols-2 gap-2" data-testid="tickets">
-          {#each tickets as ticket (ticket.id)}
+          {#each tickets as ticket}
             <li class="rounded bg-slate-800/60 px-3 py-2 text-sm">{ticket.title}</li>
           {/each}
         </ul>

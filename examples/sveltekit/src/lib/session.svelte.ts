@@ -1,25 +1,3 @@
-// Who the browser is talking to the database as — and what has to happen to
-// the cache when that changes.
-//
-// The authentication itself is SurrealDB's, not ours: `DEFINE ACCESS staff ON
-// DATABASE TYPE RECORD` in `schema/schema.surql` owns the SIGNIN query, and
-// `db.signin` runs it. Whatever record it returns becomes `$auth` for the
-// session, and `PERMISSIONS FOR select WHERE team = $auth.team` on `ticket`
-// does the rest. There is no authorisation logic in this file, or anywhere else
-// in the app, which is the point of the beat.
-//
-// ---------------------------------------------------------------------------
-// The part that is NOT decoration: `getQueryClient(db).reset()`.
-//
-// A cache entry is keyed by query text plus parameters. `$auth` is in neither.
-// So `SELECT … FROM ticket` has ONE cache key, and without the reset the rows
-// Ada fetched are the rows Grace renders — one user's data shown to another,
-// with no error anywhere. `reset()` kills every live subscription (a LIVE
-// SELECT captures its permission context when it is opened, and cannot be
-// re-pointed at a new identity), puts every subscribed entry back to pending,
-// and re-runs it under the new identity. It is awaited before `viewer` moves,
-// so the label and the rows change together.
-// ---------------------------------------------------------------------------
 
 import { getQueryClient } from "@surrealguard/query";
 import { db } from "./db";

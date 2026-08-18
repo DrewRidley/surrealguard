@@ -11,6 +11,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "generate": "surrealguard generate --out src/lib/surrealguard.generated.ts",
+    "generate:watch": "surrealguard generate --out src/lib/surrealguard.generated.ts --watch",
     "typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "verify": "node scripts/verify.mjs"
   },
