@@ -23,7 +23,7 @@ surrealguard-workspace = { path = "../workspace", version = "0.5.3" }
 tower-lsp = "0.20"
 # Dynamic capability registration carries its options as a raw JSON value.
 serde_json = "1"
-tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync", "time"] }
 # Semantic tokens read the grammar's node kinds straight off the parse tree
 # `surrealguard-syntax` already produced.
 tree-sitter.workspace = true

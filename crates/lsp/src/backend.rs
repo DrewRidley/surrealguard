@@ -713,7 +713,21 @@ impl LanguageServer for Backend {
         self.publish_all_diagnostics().await;
     }
 
+    /// Acknowledges `shutdown`, and arms the exit the protocol promises.
+    ///
+    /// The client follows `shutdown` with an `exit` notification and expects
+    /// the process to end. tower-lsp answers `exit` by refusing further
+    /// requests but keeps reading stdin, so a client that does not also close
+    /// the pipe (or whose close is delayed) leaves a live process behind —
+    /// one per restart, each holding its analysed workspace. Editors restart
+    /// servers freely, so the grace exit below caps that: after `shutdown`
+    /// the process ends within two seconds whatever the client does next.
+    /// Closing stdin still ends it immediately, as before.
     async fn shutdown(&self) -> Result<()> {
+        tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            std::process::exit(0);
+        });
         Ok(())
     }
 
