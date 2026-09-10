@@ -4,16 +4,18 @@ error[E0277]: the trait bound `i64: From<&str>` is not satisfied
 3 |     let _ = surrealguard_rs::query!("SELECT name FROM user WHERE age > $min;", min = "18");
   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `From<&str>` is not implemented for `i64`
   |
-  = help: the following other types implement trait `From<T>`:
-            `i64` implements `From<bool>`
-            `i64` implements `From<deranged::RangedI64<MIN, MAX>>`
-            `i64` implements `From<i16>`
-            `i64` implements `From<i32>`
-            `i64` implements `From<i8>`
-            `i64` implements `From<u16>`
-            `i64` implements `From<u32>`
-            `i64` implements `From<u8>`
-          and $N others
+  = help: `i64` implements trait `From<T>`:
+            From<bool>
+            From<deranged::RangedI64<MIN, MAX>>
+            From<i16>
+            From<i32>
+            From<i8>
+            From<u16>
+            From<u32>
+            From<u8>
+            From<zerocopy::byteorder::I16<O>>
+            From<zerocopy::byteorder::I32<O>>
+            From<zerocopy::byteorder::I64<O>>
   = note: required for `&str` to implement `Into<i64>`
 note: required by a bound in `surrealguard_rs::_rt::checked`
  --> src/_rt.rs

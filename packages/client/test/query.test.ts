@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { RecordId } from "surrealdb";
 import { computeKey, defineLive, defineQuery } from "../src/index.js";
-import { reconcile } from "../src/live.js";
+import { reconcile, type ReconcilableRow } from "../src/live.js";
 
 // The registry is empty in this package, so the runtime behaviour is exercised
 // through the `unchecked` factories. Type-level behaviour lives in `test-d`.
@@ -45,6 +45,9 @@ describe("query references", () => {
 });
 
 describe("reconcile", () => {
+  // Typed, or `reconcile([], …)` infers its row type as `never` and the
+  // `rows[0]!.name` reads below do not compile.
+  const empty: ReconcilableRow[] = [];
   const message = (action: "CREATE" | "UPDATE" | "DELETE", id: string, value = {}) =>
     ({
       queryId: undefined as never,
@@ -54,25 +57,25 @@ describe("reconcile", () => {
     }) as never;
 
   it("appends a created record", () => {
-    const rows = reconcile([], message("CREATE", "ada", { name: "ada" }));
+    const rows = reconcile(empty, message("CREATE", "ada", { name: "ada" }));
     expect(rows).toHaveLength(1);
     expect(rows[0]!.name).toBe("ada");
   });
 
   it("replaces an updated record in place", () => {
-    const created = reconcile([], message("CREATE", "ada", { name: "ada" }));
+    const created = reconcile(empty, message("CREATE", "ada", { name: "ada" }));
     const updated = reconcile(created, message("UPDATE", "ada", { name: "Ada" }));
     expect(updated).toHaveLength(1);
     expect(updated[0]!.name).toBe("Ada");
   });
 
   it("removes a deleted record", () => {
-    const created = reconcile([], message("CREATE", "ada", { name: "ada" }));
+    const created = reconcile(empty, message("CREATE", "ada", { name: "ada" }));
     expect(reconcile(created, message("DELETE", "ada"))).toHaveLength(0);
   });
 
   it("ignores KILLED and never mutates the input", () => {
-    const rows = reconcile([], message("CREATE", "ada", { name: "ada" }));
+    const rows = reconcile(empty, message("CREATE", "ada", { name: "ada" }));
     const after = reconcile(rows, { action: "KILLED" } as never);
     expect(after).toBe(rows);
   });

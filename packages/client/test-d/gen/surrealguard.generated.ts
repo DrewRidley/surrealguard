@@ -39,10 +39,21 @@ export type {
 
 declare module "@surrealguard/client" {
   interface SurqlRegistry {
-    "SELECT name FROM person WHERE team = $team": { result: [Array<{ name: string }>]; params: { team: RecordId<"team"> } };
     "SELECT id, name, joined FROM person": { result: [Array<{ id: RecordId<"person">; joined: Date; name: string }>]; params: Record<string, never> };
+    "SELECT name FROM person WHERE team = $team": { result: [Array<{ name: string }>]; params: { team: RecordId<"team"> } };
     "SELECT name, nick FROM person": { result: [Array<{ name: string; nick?: string }>]; params: Record<string, never> };
     "SELECT VALUE nick FROM ONLY person:jane": { result: [undefined | string]; params: Record<string, never> };
+    "SELECT name, status, tags FROM person WHERE status = $status": { result: [Array<{ name: string; status: "active" | "retired"; tags: Array<string> }>]; params: { status: "active" | "retired" } };
+    "SELECT settings, mentor, external_id, tenure FROM person WHERE id = $id": { result: [Array<{ external_id: Uuid; mentor?: RecordId<"person">; settings: { locale?: string; notify: boolean; timezone: string }; tenure: Duration }>]; params: { id: RecordId<"person"> } };
+    "SELECT name, budget FROM team": { result: [Array<{ budget: Decimal; name: string }>]; params: Record<string, never> };
+    "SELECT ->knows->person.name AS friends FROM person:jane": { result: [Array<{ friends: Array<string> }>]; params: Record<string, never> };
+    "SELECT in, out, since, weight FROM knows": { result: [Array<{ in: RecordId<"person">; out: RecordId<"person">; since: Date; weight: number }>]; params: Record<string, never> };
+    "RETURN fn::greet($name)": { result: [string]; params: { name: string } };
+    "LET $cutoff = time::now() - 1w; SELECT name, joined FROM person WHERE joined > $cutoff": { result: [null, Array<{ joined: Date; name: string }>]; params: Record<string, never> };
+    "SELECT count() AS n FROM person GROUP ALL": { result: [Array<{ n: number }>]; params: Record<string, never> };
+    "SELECT name FROM person WHERE age > ${}": { result: [Array<{ name: string }>]; params: Record<string, never> };
+    "SELECT id, name, age FROM person": { result: [Array<{ age: number; id: RecordId<"person">; name: string }>]; params: Record<string, never> };
+    "SELECT id, name, status FROM person": { result: [Array<{ id: RecordId<"person">; name: string; status: "active" | "retired" }>]; params: Record<string, never> };
   }
 }
 

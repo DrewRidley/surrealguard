@@ -146,8 +146,10 @@ ignore = ["target/**", "node_modules/**", ".git/**"]
 [analysis]
 # Tighten otherwise-advisory checks.
 strict = false
-# Target SurrealDB version for version-gated behavior.
-surrealdb_version = "2"
+# Target SurrealDB release ("2.2", "3", "3.0.2"): a call to a function or a
+# piece of syntax that release lacks or removed is reported (8xxx). Leave
+# empty to target the latest release.
+surrealdb_version = ""
 
 [diagnostics]
 # Promote every warning to an error (useful in CI).
@@ -570,30 +572,18 @@ fn remap_finding_to_host(
     host_id: &str,
 ) -> Finding {
     let host_sid = SourceId::new(host_id);
-    let map_span = |span: &SourceSpan| -> SourceSpan {
+    finding.map_spans(|span| {
         if span.source() != embed_source {
             return span.clone();
         }
         let range = span.range();
         let mapped = query.host_span(range.start() as usize..range.end() as usize);
-        let byte_range = ByteRange::new(mapped.start as u32, mapped.end as u32)
-            .unwrap_or_else(|_| ByteRange::new(0, 1).expect("0..1 is ordered"));
-        SourceSpan::new(host_sid.clone(), byte_range)
-    };
-
-    let mut rebuilt = Finding::new(
-        map_span(finding.span()),
-        finding.code(),
-        finding.severity(),
-        finding.message(),
-    );
-    for help in finding.help() {
-        rebuilt = rebuilt.with_help(help.message.clone());
-    }
-    for related in finding.related() {
-        rebuilt = rebuilt.with_related(map_span(&related.span), related.message.clone());
-    }
-    rebuilt
+        SourceSpan::new(
+            host_sid.clone(),
+            ByteRange::new(mapped.start as u32, mapped.end as u32)
+                .expect("an embedded query's host span is ordered"),
+        )
+    })
 }
 
 /// Scans host sources for embedded queries, analyzes them against the
@@ -670,37 +660,17 @@ fn run_generate(
         return Err(Box::new(GenerateFailed { rendered, errors }));
     }
 
+    // Entry construction (the per-statement response tuple, the params) is
+    // the codegen crate's, shared with its `tsc`-checked golden test so the
+    // module this writes is the module that test compiles.
     let entries: Vec<surrealguard_codegen::QueryEntry> = queries
         .iter()
         .filter_map(|(source_id, query, _host_id)| {
             let output = analysis.sources.get(source_id)?;
-            // The SurrealDB SDK returns one result per statement, in order. Build
-            // the per-statement response tuple: a responding statement contributes
-            // its rendered result kind, a non-responder contributes `null`.
-            let elements: Vec<String> = output
-                .statements
-                .iter()
-                .map(|statement| {
-                    // A tuple slot: no key to omit, so an `option<T>` result
-                    // stays `T | undefined` rather than becoming optional.
-                    statement.response_kind.as_ref().map_or_else(
-                        || "null".into(),
-                        |kind| {
-                            surrealguard_codegen::ts_type(
-                                kind,
-                                surrealguard_codegen::TsContext::Value,
-                            )
-                            .text
-                        },
-                    )
-                })
-                .collect();
-            let result_type = format!("[{}]", elements.join(", "));
-            Some(surrealguard_codegen::QueryEntry {
-                parts: query.parts(),
-                result_type,
-                params: output.inferred_params.clone(),
-            })
+            Some(surrealguard_codegen::QueryEntry::from_analysis(
+                query.parts(),
+                output,
+            ))
         })
         .collect();
 
@@ -1275,7 +1245,8 @@ mod tests {
             .queries
             .iter()
             .any(|glob| glob.contains("queries")));
-        assert_eq!(config.analysis.surrealdb_version, "2");
+        assert_eq!(config.analysis.surrealdb_version, "");
+        assert_eq!(config.analysis.target_version(), None);
     }
 
     #[test]
@@ -1337,7 +1308,8 @@ mod tests {
         let err = run_check(&root, StylePair::both(Styles::plain()))
             .expect_err("syntax diagnostics should fail check");
 
-        assert!(err.to_string().contains("S0001"));
+        // `FROM ;` is a missing table name: a MISSING node (S0002), not skipped input.
+        assert!(err.to_string().contains("S0002"));
         assert!(err.to_string().contains("bad.surql"));
     }
 
@@ -1370,13 +1342,16 @@ mod tests {
         assert_eq!(value["summary"]["sources_checked"], 1);
         assert_eq!(value["summary"]["diagnostics"], 1);
         assert_eq!(value["summary"]["errors"], 1);
-        assert_eq!(value["diagnostics"][0]["code"], "S0001");
+        assert_eq!(value["diagnostics"][0]["code"], "S0002");
         assert_eq!(value["diagnostics"][0]["severity"], "error");
         assert!(value["diagnostics"][0]["source"]
             .as_str()
             .unwrap()
             .contains("bad.surql"));
-        assert_eq!(value["diagnostics"][0]["message"], "SurrealQL syntax error");
+        assert_eq!(
+            value["diagnostics"][0]["message"],
+            "missing SurrealQL syntax node `Ident`"
+        );
         assert!(value["diagnostics"][0]["range"]["start"].is_number());
         assert!(value["diagnostics"][0]["range"]["end"].is_number());
     }

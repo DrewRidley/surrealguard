@@ -39,7 +39,7 @@ use surrealguard_workspace::analysis::{ParamInference, ValueDomain};
 
 mod registry;
 
-pub use registry::{render_registry, QueryEntry};
+pub use registry::{render_registry, response_tuple, QueryEntry};
 
 /// Where the rendered text is going to sit in a TypeScript type.
 ///

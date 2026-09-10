@@ -27,7 +27,17 @@ import type { Equal, Expect, IsAny } from "./assert.js";
 // Stand in for what `surrealguard generate` emits. Each `result` is the
 // per-statement response tuple: one element per statement, `null` for a
 // non-responder. A single-statement query is a one-element tuple.
-declare module "../src/registry.js" {
+//
+// Augmented through the package name, exactly as the generated file does, and
+// not through `../src/registry.js` where the interface is declared. TypeScript
+// merges an augmentation into a *clone* of its target; when one interface is
+// augmented through two different specifiers — the declaring module and a
+// re-export of it — it ends up with two clones, and which one a given file
+// sees depends on program order. With `test/` in the program that split made
+// `defineQuery` in `gen/consumer.test-d.ts` report every golden query as "not
+// in the registry" while indexing `SurqlRegistry` still found them. One
+// specifier, one merged interface.
+declare module "@surrealguard/client" {
   interface SurqlRegistry {
     "SELECT id, name, age FROM person": {
       result: [Array<{ id: RecordId<"person">; name: string; age: number }>];

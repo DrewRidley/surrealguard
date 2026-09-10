@@ -2892,6 +2892,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "proptest"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744"
+dependencies = [
+ "bitflags 2.13.1",
+ "num-traits",
+ "rand 0.9.4",
+ "rand_chacha 0.9.0",
+ "rand_xorshift",
+ "regex-syntax",
+ "unarray",
+]
+
+[[package]]
 name = "prost"
 version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2908,7 +2923,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.11.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -3138,6 +3153,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a"
 dependencies = [
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "rand_xorshift"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "513962919efc330f829edb2535844d1b912b0fbe2ca165d613e4e8788bb05a5a"
+dependencies = [
+ "rand_core 0.9.5",
 ]
 
 [[package]]
@@ -4186,7 +4210,11 @@ dependencies = [
 name = "surrealguard-codegen"
 version = "0.5.3"
 dependencies = [
+ "glob",
  "surrealdb-types",
+ "surrealguard-diagnostics",
+ "surrealguard-embed",
+ "surrealguard-syntax",
  "surrealguard-workspace",
 ]
 
@@ -4211,6 +4239,7 @@ name = "surrealguard-lsp"
 version = "0.5.3"
 dependencies = [
  "futures",
+ "glob",
  "serde_json",
  "surrealguard-diagnostics",
  "surrealguard-embed",
@@ -4251,6 +4280,7 @@ dependencies = [
 name = "surrealguard-syntax"
 version = "0.5.3"
 dependencies = [
+ "proptest",
  "serde",
  "surrealguard-tree-sitter-surrealql",
  "tree-sitter",
@@ -4929,6 +4959,12 @@ dependencies = [
  "serde",
  "web-time",
 ]
+
+[[package]]
+name = "unarray"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
 
 [[package]]
 name = "unicase"

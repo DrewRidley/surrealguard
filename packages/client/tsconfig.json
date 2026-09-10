@@ -1,10 +1,15 @@
 {
   "extends": "../../tsconfig.base.json",
-  // `test-d/gen` mimics a real generated file, which imports the package by
-  // name. Map that to source so `pnpm typecheck` needs no prior build.
+  // `test-d/gen/surrealguard.generated.ts` is the codegen golden — real
+  // `surrealguard generate` output over `crates/codegen/tests/fixtures/typecheck`,
+  // checked byte-for-byte by `cargo test -p surrealguard-codegen --test golden`.
+  // Compiling it here is what proves the generator emits valid TypeScript. It
+  // imports the package by name, as a real generated file does; map that to
+  // source so `pnpm typecheck` needs no prior build. (`vitest.config.ts` states
+  // the same alias for the runtime tests.)
   "compilerOptions": {
     "rootDir": ".",
     "paths": { "@surrealguard/client": ["./src/index.ts"] }
   },
-  "include": ["src", "test-d"]
+  "include": ["src", "test", "test-d"]
 }

@@ -15,5 +15,14 @@ description = "TypeScript type generation from SurrealGuard analysis results"
 surrealdb-types.workspace = true
 surrealguard-workspace = { path = "../workspace", version = "0.5.3" }
 
+[dev-dependencies]
+# `tests/golden.rs` runs the CLI's generation path over a fixture workspace:
+# host-file extraction is the embed crate, and the schema/query partition
+# follows the same globs `surrealguard.toml` declares.
+glob = "0.3"
+surrealguard-diagnostics = { path = "../diagnostics" }
+surrealguard-embed = { path = "../embed" }
+surrealguard-syntax = { path = "../syntax" }
+
 [lints]
 workspace = true

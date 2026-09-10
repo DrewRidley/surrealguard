@@ -35,7 +35,7 @@
 //! //     ^ two statements, so the tuple stays: the LET responds with null
 //! ```
 
-use surrealguard_workspace::analysis::ParamInference;
+use surrealguard_workspace::analysis::{AnalysisOutput, ParamInference, StatementAnalysis};
 
 /// One embedded query's generated entry.
 pub struct QueryEntry {
@@ -48,6 +48,45 @@ pub struct QueryEntry {
     pub result_type: String,
     /// The query's inferred parameters (named + `__hostN` substitutions).
     pub params: Vec<ParamInference>,
+}
+
+impl QueryEntry {
+    /// Builds one query's entry from its analysis output: the per-statement
+    /// response tuple from `output.statements` and the inferred parameters.
+    ///
+    /// This is the one step between "analyzed" and "rendered", and it is the
+    /// step the CLI's `generate` runs for every embedded query it finds. It
+    /// lives here rather than in the CLI so `tests/golden.rs` — which compiles
+    /// the rendered module with `tsc` — exercises the same code path a user's
+    /// `surrealguard generate` does, not a re-implementation of it.
+    pub fn from_analysis(parts: Vec<String>, output: &AnalysisOutput) -> Self {
+        Self {
+            parts,
+            result_type: response_tuple(&output.statements),
+            params: output.inferred_params.clone(),
+        }
+    }
+}
+
+/// The per-statement response tuple as TypeScript. The SurrealDB SDK returns
+/// one result per statement, in source order, so the tuple has one element
+/// per statement: a responding statement contributes its rendered result
+/// kind, a non-responder (`LET`, `DEFINE`, …) contributes `null`.
+///
+/// Every element is a [`crate::TsContext::Value`]: a tuple slot has no key
+/// to omit, so an `option<T>` result stays `undefined | T` rather than
+/// becoming an optional slot — dropping it would shorten the tuple.
+pub fn response_tuple(statements: &[StatementAnalysis]) -> String {
+    let elements: Vec<String> = statements
+        .iter()
+        .map(|statement| {
+            statement.response_kind.as_ref().map_or_else(
+                || "null".into(),
+                |kind| crate::ts_type(kind, crate::TsContext::Value).text,
+            )
+        })
+        .collect();
+    format!("[{}]", elements.join(", "))
 }
 
 /// Renders the complete generated declaration file.
@@ -189,10 +228,11 @@ mod tests {
     }
 
     /// The two spellings of one `option<string>`, side by side in the file a
-    /// consumer actually imports. These exact rows are mirrored into
-    /// `packages/client/test-d/gen/surrealguard.generated.ts`, where
-    /// `optionality.test-d.ts` proves `tsc` treats them as different types —
-    /// so this assertion is what keeps that fixture honest.
+    /// consumer actually imports. The same two queries sit in the golden
+    /// fixture (`tests/fixtures/typecheck`), so these exact rows also appear
+    /// in the generated `packages/client/test-d/gen/surrealguard.generated.ts`,
+    /// where `optionality.test-d.ts` proves `tsc` treats them as different
+    /// types.
     #[test]
     fn an_optional_field_and_an_optional_result_spell_differently() {
         use surrealdb_types::KindLiteral;
