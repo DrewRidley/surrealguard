@@ -3,6 +3,7 @@
 //! Handles span-to-range conversion and related information formatting.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use tower_lsp::lsp_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, DiagnosticTag, Location,
@@ -20,7 +21,7 @@ pub fn workspace_finding_to_lsp_diagnostic(
     source: &str,
     finding: &Finding,
     policy: &PolicyConfig,
-    texts: &BTreeMap<String, (Url, String)>,
+    texts: &BTreeMap<String, (Url, Arc<str>)>,
 ) -> Option<Diagnostic> {
     let resolved = policy.resolve_severity(finding.code(), finding.severity())?;
     let range = finding.span().range();
@@ -109,7 +110,7 @@ mod tests {
         let schema_text = "DEFINE TABLE likes TYPE RELATION IN person OUT post;";
         let texts = BTreeMap::from([(
             "file:///workspace/schema.surql".to_string(),
-            (schema_uri.clone(), schema_text.to_string()),
+            (schema_uri.clone(), Arc::from(schema_text)),
         )]);
 
         let source = "SELECT * FROM persn;";

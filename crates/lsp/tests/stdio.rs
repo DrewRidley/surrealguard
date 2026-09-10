@@ -11,6 +11,16 @@
 //! The handshake is **sequenced** on purpose: `initialize`, wait for its
 //! response, then `initialized`, then `didOpen`, then the request. Pipelining
 //! these gets "Server not initialized" back from tower-lsp.
+//!
+//! The server also sends **requests** of its own (`workspace/semanticTokens/
+//! refresh`), and tower-lsp numbers those from 0 — the same ids this harness
+//! uses for its requests. A message is a response only when it carries an
+//! `id` and **no** `method`; matching on `id` alone once took the server's
+//! refresh request for the hover response and failed twelve of these tests
+//! at once. Like a real editor, the harness answers every server request (a
+//! `null` result), so the server is exercised with the protocol it will
+//! actually get — unless a test opts out to observe what an unanswering
+//! client provokes.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -54,6 +64,11 @@ struct Lsp {
     /// The `initialize` result, kept so a test can assert on what the server
     /// advertised without a second (illegal) handshake.
     capabilities: Value,
+    /// The method of every server→client request seen so far, in order.
+    server_requests: Vec<String>,
+    /// Whether to answer server→client requests (a real editor does). A test
+    /// turns this off to observe what a client that never answers provokes.
+    answer_server_requests: bool,
 }
 
 impl Drop for Lsp {
@@ -65,8 +80,15 @@ impl Drop for Lsp {
 }
 
 impl Lsp {
-    /// Spawns the binary and completes the handshake, in order.
+    /// Spawns the binary and completes the handshake, in order, as a client
+    /// advertising no capabilities that answers every server request.
     fn start() -> Self {
+        Self::start_as(json!({}), true)
+    }
+
+    /// Spawns the binary and completes the handshake as a client with the
+    /// given `ClientCapabilities`, answering server requests or not.
+    fn start_as(client_capabilities: Value, answer_server_requests: bool) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_surrealguard-lsp"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -82,10 +104,12 @@ impl Lsp {
             stdout,
             next_id: 1,
             capabilities: Value::Null,
+            server_requests: Vec::new(),
+            answer_server_requests,
         };
 
         // 1. initialize — and WAIT for the response before anything else.
-        let result = lsp.request("initialize", json!({"capabilities": {}}));
+        let result = lsp.request("initialize", json!({"capabilities": client_capabilities}));
         assert_eq!(
             result["serverInfo"]["name"], "surrealguard-lsp",
             "handshake must reach our server, got: {result}"
@@ -128,7 +152,7 @@ impl Lsp {
         self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method}));
         loop {
             let message = self.read_message();
-            if message.get("id").and_then(Value::as_i64) == Some(id) {
+            if Self::is_response_to(&message, id) {
                 assert!(
                     message.get("error").is_none(),
                     "{method} failed: {}",
@@ -149,7 +173,7 @@ impl Lsp {
         }));
         loop {
             let message = self.read_message();
-            if message.get("id").and_then(Value::as_i64) == Some(id) {
+            if Self::is_response_to(&message, id) {
                 if let Some(error) = message.get("error") {
                     panic!("{method} failed: {error}");
                 }
@@ -184,8 +208,64 @@ impl Lsp {
         }
     }
 
-    /// Reads one `Content-Length`-framed message.
+    /// Whether `message` is the response to our request `id` — and not a
+    /// server→client request that happens to carry the same number.
+    fn is_response_to(message: &Value, id: i64) -> bool {
+        message.get("id").and_then(Value::as_i64) == Some(id) && message.get("method").is_none()
+    }
+
+    /// How many `workspace/semanticTokens/refresh` requests the server has
+    /// sent so far.
+    fn refresh_requests(&self) -> usize {
+        self.server_requests
+            .iter()
+            .filter(|method| *method == "workspace/semanticTokens/refresh")
+            .count()
+    }
+
+    /// Reads one `Content-Length`-framed message. A server→client request is
+    /// recorded (and answered, when the harness plays a well-behaved client)
+    /// and then returned like any other message, so callers can never mistake
+    /// it for the response they wait for.
     fn read_message(&mut self) -> Value {
+        let message = self.read_framed();
+        if let (Some(id), Some(method)) = (
+            message.get("id"),
+            message.get("method").and_then(Value::as_str),
+        ) {
+            self.server_requests.push(method.to_string());
+            if self.answer_server_requests {
+                self.send(&json!({"jsonrpc": "2.0", "id": id, "result": Value::Null}));
+            }
+        }
+        message
+    }
+
+    /// Gives a spawned server task time to write, then drains everything the
+    /// server has written by round-tripping one request: the pipe is FIFO, so
+    /// by the time the response arrives every earlier message has been read.
+    fn settle(&mut self) {
+        std::thread::sleep(Duration::from_millis(200));
+        let _ = self.request(
+            "textDocument/hover",
+            json!({"textDocument": {"uri": SCHEMA_URI}, "position": {"line": 0, "character": 0}}),
+        );
+    }
+
+    /// Replaces a document's text and returns the diagnostics published for it.
+    fn did_change(&mut self, uri: &str, version: i64, text: &str) -> Vec<Value> {
+        self.notify(
+            "textDocument/didChange",
+            json!({
+                "textDocument": {"uri": uri, "version": version},
+                "contentChanges": [{"text": text}],
+            }),
+        );
+        self.next_publish(uri)
+    }
+
+    /// Reads one raw `Content-Length`-framed message.
+    fn read_framed(&mut self) -> Value {
         let mut length = None;
         loop {
             let mut line = String::new();
@@ -845,6 +925,94 @@ fn semantic_tokens_cover_a_surql_file_the_same_way() {
     assert!(
         decoded.contains(&("$name".to_string(), "parameter".to_string())),
         "a parameter is a parameter in a .surql file too, got: {decoded:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Semantic-token refresh (server→client requests)
+// ---------------------------------------------------------------------------
+
+/// The client capability that says "I will honor `workspace/semanticTokens/
+/// refresh`".
+fn refresh_capable() -> Value {
+    json!({"workspace": {"semanticTokens": {"refreshSupport": true}}})
+}
+
+#[test]
+fn no_semantic_token_refresh_is_sent_to_a_client_that_did_not_ask_for_one() {
+    // `Lsp::start` advertises no capabilities at all. Every publish used to
+    // send a refresh regardless; a client that ignores unknown requests then
+    // leaked one pending entry per keystroke inside the server, forever.
+    let (mut lsp, _) = Lsp::with_schema("SELECT name FROM organization;\n");
+    for version in 2..6 {
+        let _ = lsp.did_change(
+            QUERY_URI,
+            version,
+            &format!("SELECT name FROM organization; -- {version}\n"),
+        );
+    }
+    lsp.settle();
+
+    assert_eq!(
+        lsp.refresh_requests(),
+        0,
+        "a refresh must never reach a client that did not advertise \
+         `workspace.semanticTokens.refreshSupport`; server requests seen: {:?}",
+        lsp.server_requests
+    );
+}
+
+#[test]
+fn a_client_that_never_answers_a_refresh_is_sent_at_most_one() {
+    // The client advertised refresh support but never replies (a stalled or
+    // careless editor). Every publish asks for a refresh; the server must
+    // fold them onto the one already in flight rather than queue another.
+    let mut lsp = Lsp::start_as(refresh_capable(), false);
+    let _ = lsp.did_open(SCHEMA_URI, SCHEMA);
+    let _ = lsp.did_open(QUERY_URI, "SELECT name FROM organization;\n");
+    for version in 2..8 {
+        let _ = lsp.did_change(
+            QUERY_URI,
+            version,
+            &format!("SELECT name FROM organization; -- {version}\n"),
+        );
+    }
+    lsp.settle();
+
+    assert_eq!(
+        lsp.refresh_requests(),
+        1,
+        "eight publishes with the first refresh still unanswered must send \
+         exactly one refresh, got {:?}",
+        lsp.server_requests
+    );
+}
+
+#[test]
+fn a_client_that_answers_refreshes_gets_one_per_burst_and_never_more_than_one_per_publish() {
+    let mut lsp = Lsp::start_as(refresh_capable(), true);
+    // The `initialized` sweep asks once even before anything is open; each
+    // `didOpen` and `didChange` publishes (and may ask) once more.
+    let mut publishes = 1;
+    let _ = lsp.did_open(SCHEMA_URI, SCHEMA);
+    let _ = lsp.did_open(QUERY_URI, "SELECT name FROM organization;\n");
+    publishes += 2;
+    for version in 2..8 {
+        let _ = lsp.did_change(
+            QUERY_URI,
+            version,
+            &format!("SELECT name FROM organization; -- {version}\n"),
+        );
+        publishes += 1;
+    }
+    lsp.settle();
+
+    let refreshes = lsp.refresh_requests();
+    assert!(
+        (1..=publishes).contains(&refreshes),
+        "an answering client must be told to re-pull at least once and at most \
+         once per publish or sweep ({publishes}), got {refreshes}: {:?}",
+        lsp.server_requests
     );
 }
 

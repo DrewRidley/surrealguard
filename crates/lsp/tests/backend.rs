@@ -2,7 +2,7 @@
 //! service (so the tower-lsp state machine runs — publishes are dropped
 //! before `initialized`) and read what it emits on the client socket.
 
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use serde_json::json;
 use tower::{Service, ServiceExt};
 use tower_lsp::jsonrpc::{Request, Response};
@@ -19,6 +19,11 @@ struct Server {
 
 impl Server {
     async fn started() -> Self {
+        Self::started_as(json!({})).await
+    }
+
+    /// A server whose client advertised the given `ClientCapabilities`.
+    async fn started_as(client_capabilities: serde_json::Value) -> Self {
         let (service, socket) = LspService::new(Backend::new);
         let mut server = Server {
             service,
@@ -26,10 +31,35 @@ impl Server {
             buffered: Vec::new(),
         };
         server
-            .call("initialize", Some(1), json!({"capabilities": {}}))
+            .call(
+                "initialize",
+                Some(1),
+                json!({"capabilities": client_capabilities}),
+            )
             .await;
         server.call("initialized", None, json!({})).await;
         server
+    }
+
+    /// Lets tasks the handlers spawned run, then buffers whatever they sent.
+    /// The harness never answers a server→client request, so this observes
+    /// exactly what an unanswering client provokes.
+    async fn drain_pending(&mut self) {
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+            while let Some(Some(message)) = self.socket.next().now_or_never() {
+                self.buffered.push(message);
+            }
+        }
+    }
+
+    /// How many `workspace/semanticTokens/refresh` requests the server has
+    /// sent so far.
+    fn refresh_requests(&self) -> usize {
+        self.buffered
+            .iter()
+            .filter(|message| message.method() == "workspace/semanticTokens/refresh")
+            .count()
     }
 
     /// Sends one request/notification, draining client-bound messages
@@ -462,4 +492,206 @@ async fn completion_on_an_unparseable_statement_still_offers_the_tables() {
         .iter()
         .filter(|item| item.label == "person")
         .all(|item| item.kind == Some(CompletionItemKind::CLASS)));
+}
+
+fn did_change(uri: &Url, version: i64, text: &str) -> serde_json::Value {
+    json!({
+        "textDocument": {"uri": uri, "version": version},
+        "contentChanges": [{"text": text}],
+    })
+}
+
+#[tokio::test]
+async fn no_semantic_token_refresh_is_sent_to_a_client_without_the_capability() {
+    // `Server::started` advertises no capabilities. A refresh used to go out
+    // on every publish anyway; this harness never answers, so each one would
+    // have stayed pending inside the server forever.
+    let mut server = Server::started().await;
+    let uri = Url::parse("file:///workspace/query.surql").expect("valid url");
+    server
+        .call("textDocument/didOpen", None, did_open(&uri, "RETURN 1;\n"))
+        .await;
+    for version in 2..6 {
+        server
+            .call(
+                "textDocument/didChange",
+                None,
+                did_change(&uri, version, &format!("RETURN {version};\n")),
+            )
+            .await;
+    }
+    server.drain_pending().await;
+
+    assert_eq!(server.refresh_requests(), 0);
+}
+
+#[tokio::test]
+async fn refreshes_are_folded_onto_the_one_in_flight_while_the_client_has_not_answered() {
+    let mut server = Server::started_as(json!({
+        "workspace": {"semanticTokens": {"refreshSupport": true}}
+    }))
+    .await;
+    let uri = Url::parse("file:///workspace/query.surql").expect("valid url");
+    server
+        .call("textDocument/didOpen", None, did_open(&uri, "RETURN 1;\n"))
+        .await;
+    for version in 2..8 {
+        server
+            .call(
+                "textDocument/didChange",
+                None,
+                did_change(&uri, version, &format!("RETURN {version};\n")),
+            )
+            .await;
+    }
+    server.drain_pending().await;
+
+    // Seven publishes, one refresh: the first is still unanswered, and every
+    // later wish is folded onto it rather than queued behind it.
+    assert_eq!(
+        server.refresh_requests(),
+        1,
+        "methods seen: {:?}",
+        server
+            .buffered
+            .iter()
+            .map(|message| message.method().to_string())
+            .collect::<Vec<_>>()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `[analysis] surrealdb_version` — version-compatibility findings (8xxx)
+// ---------------------------------------------------------------------------
+
+/// A workspace root on disk carrying one `surrealguard.toml`, removed when the
+/// test is done with it.
+struct ConfiguredRoot {
+    path: std::path::PathBuf,
+}
+
+impl ConfiguredRoot {
+    fn with_toml(name: &str, toml: &str) -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "surrealguard-lsp-{}-{name}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|since| since.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&path).expect("create workspace root");
+        std::fs::write(path.join("surrealguard.toml"), toml).expect("write surrealguard.toml");
+        Self { path }
+    }
+
+    fn uri(&self) -> Url {
+        Url::from_directory_path(&self.path).expect("root is absolute")
+    }
+}
+
+impl Drop for ConfiguredRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+impl Server {
+    /// A server initialized with `root` as its one workspace folder, so the
+    /// `surrealguard.toml` there speaks for the workspace.
+    async fn started_in(root: &Url) -> Self {
+        let (service, socket) = LspService::new(Backend::new);
+        let mut server = Server {
+            service,
+            socket: Box::pin(socket),
+            buffered: Vec::new(),
+        };
+        server
+            .call(
+                "initialize",
+                Some(1),
+                json!({
+                    "capabilities": {},
+                    "workspaceFolders": [{"uri": root, "name": "root"}],
+                }),
+            )
+            .await;
+        server.call("initialized", None, json!({})).await;
+        server
+    }
+}
+
+/// The rendered codes (`E1001`, `W8001`, ...) of a publish.
+fn codes_of(publish: &PublishDiagnosticsParams) -> Vec<String> {
+    publish
+        .diagnostics
+        .iter()
+        .filter_map(|diagnostic| match &diagnostic.code {
+            Some(NumberOrString::String(code)) => Some(code.clone()),
+            Some(NumberOrString::Number(code)) => Some(code.to_string()),
+            None => None,
+        })
+        .collect()
+}
+
+/// `set::len` arrived in SurrealDB 3.0, so a workspace pinned to 2.2 lacks it.
+const THREE_ONLY_QUERY: &str = "RETURN set::len([1, 2]);\n";
+
+#[tokio::test]
+async fn a_configured_target_version_surfaces_version_findings_in_the_editor() {
+    let root = ConfiguredRoot::with_toml("pinned", "[analysis]\nsurrealdb_version = \"2.2\"\n");
+    let mut server = Server::started_in(&root.uri()).await;
+    let uri = Url::parse("file:///workspace/pinned.surql").expect("valid url");
+
+    server
+        .call(
+            "textDocument/didOpen",
+            None,
+            did_open(&uri, THREE_ONLY_QUERY),
+        )
+        .await;
+    let publish = server.next_publish().await;
+    let codes = codes_of(&publish);
+    assert!(
+        codes.iter().any(|code| code.ends_with("8001")),
+        "the 3.0-only call must be 8001 under a 2.2 target, got: {codes:?}"
+    );
+
+    // An edit takes the query-only incremental path, which analyzes against
+    // the cached catalog: the target version must ride along with it.
+    server
+        .call(
+            "textDocument/didChange",
+            None,
+            did_change(&uri, 2, "RETURN set::len([1, 2, 3]);\n"),
+        )
+        .await;
+    let publish = server.next_publish().await;
+    let codes = codes_of(&publish);
+    assert!(
+        codes.iter().any(|code| code.ends_with("8001")),
+        "8001 must survive an incremental re-analysis, got: {codes:?}"
+    );
+}
+
+#[tokio::test]
+async fn without_a_target_version_no_version_finding_fires() {
+    // A config that says nothing about the target: "the latest release".
+    let root = ConfiguredRoot::with_toml("latest", "[sources]\nqueries = [\"**/*.surql\"]\n");
+    let mut server = Server::started_in(&root.uri()).await;
+    let uri = Url::parse("file:///workspace/latest.surql").expect("valid url");
+
+    server
+        .call(
+            "textDocument/didOpen",
+            None,
+            did_open(&uri, THREE_ONLY_QUERY),
+        )
+        .await;
+    let publish = server.next_publish().await;
+    let codes = codes_of(&publish);
+    assert!(
+        !codes.iter().any(|code| code.ends_with("8001")),
+        "no target means no 8xxx finding, got: {codes:?}"
+    );
 }

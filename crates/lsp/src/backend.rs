@@ -1,17 +1,23 @@
 //! LSP backend — implements the `LanguageServer` trait.
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use surrealguard_diagnostics::PolicyConfig;
-use surrealguard_syntax::parse::parse_source;
+use surrealguard_syntax::parse::{parse_source, ParsedSource};
 use surrealguard_syntax::source::SourceId;
-use surrealguard_workspace::config::WorkspaceConfig;
+use surrealguard_workspace::query::{
+    definition_at_lowered, definition_at_parsed, function_return_hints_parsed, hover_at_lowered,
+    hover_at_parsed, DefinitionTarget, HoverInfo,
+};
+use surrealguard_workspace::{AnalysisOutput, SchemaIndex};
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-use crate::workspace::Workspace;
+use crate::workspace::{load_workspace_config, Workspace};
 use crate::{completion, diagnostics, semantic};
 
 /// The language server: holds the LSP client handle, the tracked workspace,
@@ -24,6 +30,66 @@ pub struct Backend {
     /// the editor exactly as they do in `surrealguard check`. Defaults until
     /// `initialize` locates a config in a workspace root.
     policy: RwLock<PolicyConfig>,
+    /// State of the one `workspace/semanticTokens/refresh` request that may
+    /// be outstanding at a time; see [`Self::refresh_semantic_tokens`].
+    /// Shared with the task that sends it.
+    refresh: Arc<RefreshState>,
+    /// The last semantic-token answer per document, keyed by the text it was
+    /// computed from; see [`Self::semantic_tokens_full`].
+    semantic_cache: Mutex<HashMap<Url, SemanticEntry>>,
+}
+
+/// One document's encoded semantic tokens and the text they describe. The
+/// text is held by `Arc`, so an unchanged document is recognized by pointer
+/// and the entry can never outlive the allocation it points at.
+struct SemanticEntry {
+    text: Arc<str>,
+    data: Arc<Vec<SemanticToken>>,
+}
+
+/// Hover over a source through its cached parse, or — when the source did
+/// not parse — from the analysis facts alone (bindings, params, tables), which
+/// is exactly what a fresh parse attempt would have fallen back to.
+fn hover_from_cache(
+    output: &AnalysisOutput,
+    schema: &SchemaIndex,
+    parsed: Option<&ParsedSource>,
+    source: &SourceId,
+    text: &str,
+    offset: u32,
+) -> Option<HoverInfo> {
+    match parsed {
+        Some(parsed) => hover_at_parsed(output, schema, parsed, offset),
+        None => hover_at_lowered(output, schema, source, text, &[], offset),
+    }
+}
+
+/// Go-to-definition through the cached parse; an unparsed source still
+/// resolves `LET` binding sites, which are keyed on the analysis output.
+fn definition_from_cache(
+    output: &AnalysisOutput,
+    schema: &SchemaIndex,
+    parsed: Option<&ParsedSource>,
+    source: &SourceId,
+    offset: u32,
+) -> Option<DefinitionTarget> {
+    match parsed {
+        Some(parsed) => definition_at_parsed(output, schema, parsed, offset),
+        None => definition_at_lowered(output, schema, source, &[], offset),
+    }
+}
+
+/// Gate and coalescing state for `workspace/semanticTokens/refresh`.
+#[derive(Debug, Default)]
+struct RefreshState {
+    /// Whether the client advertised `workspace.semanticTokens.refreshSupport`
+    /// at `initialize`. Nothing is sent to a client that did not.
+    supported: AtomicBool,
+    /// Whether a refresh request is currently awaiting the client's answer.
+    in_flight: AtomicBool,
+    /// Whether a refresh was asked for while one was in flight, so the
+    /// in-flight task sends one more when its answer lands.
+    dirty: AtomicBool,
 }
 
 impl Backend {
@@ -34,11 +100,53 @@ impl Backend {
             client,
             workspace: RwLock::new(Workspace::new()),
             policy: RwLock::new(PolicyConfig::default()),
+            refresh: Arc::new(RefreshState::default()),
+            semantic_cache: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Analyze a document and publish diagnostics.
+    /// The cached semantic tokens for `uri` if they were computed from
+    /// exactly `text` (same allocation, or a re-upsert of identical bytes);
+    /// otherwise runs `compute`, caches its answer under `text`, and returns
+    /// it. Returns an owned copy because the protocol type owns its data.
+    fn semantic_tokens_for(
+        &self,
+        uri: &Url,
+        text: &Arc<str>,
+        compute: impl FnOnce() -> Vec<SemanticToken>,
+    ) -> Vec<SemanticToken> {
+        let mut cache = self
+            .semantic_cache
+            .lock()
+            .expect("semantic token cache mutex poisoned");
+        if let Some(entry) = cache.get(uri) {
+            if Arc::ptr_eq(&entry.text, text) || *entry.text == **text {
+                return entry.data.to_vec();
+            }
+        }
+        let data = Arc::new(compute());
+        cache.insert(
+            uri.clone(),
+            SemanticEntry {
+                text: Arc::clone(text),
+                data: Arc::clone(&data),
+            },
+        );
+        data.to_vec()
+    }
+
+    /// Analyze one document and publish its diagnostics, then ask the client
+    /// to re-pull semantic tokens. The shape of every single-document edit
+    /// path (`didOpen`, `didChange`).
     async fn publish_diagnostics(&self, uri: &Url) {
+        self.publish_document_diagnostics(uri).await;
+        self.refresh_semantic_tokens();
+    }
+
+    /// Analyze one document and publish its diagnostics — nothing else. The
+    /// analysis result shares the workspace's text by `Arc`, so this costs
+    /// the document's findings and no copy of anything.
+    async fn publish_document_diagnostics(&self, uri: &Url) {
         let result = {
             let ws = self.workspace.read().await;
             ws.diagnostic_analysis(uri)
@@ -64,12 +172,11 @@ impl Backend {
                 )
             })
             .collect();
+        drop(policy);
 
         self.client
             .publish_diagnostics(uri.clone(), lsp_diagnostics, None)
             .await;
-
-        self.refresh_semantic_tokens();
     }
 
     /// Ask the client to re-request semantic tokens.
@@ -90,20 +197,64 @@ impl Backend {
     /// protocol offers, and it is cheap: it makes the client re-ask, and our
     /// answer for an unchanged document comes from the analysis cache.
     ///
-    /// It is spawned rather than awaited. This is a server→client *request*, so
-    /// awaiting it blocks the handler until the client replies — and a client
-    /// that never replies blocks it forever. That is not hypothetical: awaiting
-    /// here deadlocked every `crates/lsp/tests/backend.rs` case that publishes
+    /// It is sent only to a client that advertised
+    /// `workspace.semanticTokens.refreshSupport`. A client without it does not
+    /// merely answer with an error: some never answer at all, and this is a
+    /// server→client *request*, so every unanswered one sits in tower-lsp's
+    /// pending-response table forever — about a kilobyte per keystroke that
+    /// was never freed.
+    ///
+    /// It is also coalesced: at most one refresh is outstanding. A request
+    /// while one is in flight marks it dirty, and the in-flight task sends one
+    /// more when its answer lands — so a burst of keystrokes costs one round
+    /// trip, and a client that never answers holds exactly one pending entry
+    /// rather than one per edit. Nothing is lost by folding: a refresh carries
+    /// no payload, it only says "ask again".
+    ///
+    /// It is spawned rather than awaited. Awaiting a server→client request
+    /// blocks the handler until the client replies — and a client that never
+    /// replies blocks it forever. That is not hypothetical: awaiting here
+    /// deadlocked every `crates/lsp/tests/backend.rs` case that publishes
     /// diagnostics, because the harness drives the server directly and answers
     /// no requests. A real editor would have replied, so the bug would have
     /// reached a release looking like a hang under some other client.
     fn refresh_semantic_tokens(&self) {
+        let state = &self.refresh;
+        if !state.supported.load(Ordering::Acquire) {
+            return;
+        }
+        // Record the wish first, then try to become the sender. If a sender
+        // already exists it is guaranteed to observe `dirty` after its await
+        // (or hand over below), so the wish is never lost.
+        state.dirty.store(true, Ordering::SeqCst);
+        if state.in_flight.swap(true, Ordering::SeqCst) {
+            return;
+        }
+
         let client = self.client.clone();
+        let state = Arc::clone(state);
         tokio::spawn(async move {
-            // A client without the capability answers with an error; nothing
-            // about the document depends on the outcome, so a failure is not
-            // worth surfacing to the user.
-            let _ = client.semantic_tokens_refresh().await;
+            loop {
+                state.dirty.store(false, Ordering::SeqCst);
+                // Nothing about the document depends on the outcome, so a
+                // failure is not worth surfacing to the user.
+                let _ = client.semantic_tokens_refresh().await;
+
+                if state.dirty.load(Ordering::SeqCst) {
+                    continue;
+                }
+                state.in_flight.store(false, Ordering::SeqCst);
+                // A request that arrived between the load and the store set
+                // `dirty`, saw `in_flight`, and did not spawn. Pick it up here
+                // — unless a newer request already re-took the slot, in which
+                // case that one owns it now.
+                if state.dirty.load(Ordering::SeqCst)
+                    && !state.in_flight.swap(true, Ordering::SeqCst)
+                {
+                    continue;
+                }
+                break;
+            }
         });
     }
 
@@ -121,9 +272,10 @@ impl Backend {
             (host_text, ws.host_feature_analysis(uri, offset)?)
         };
 
-        let info = surrealguard_workspace::hover_at(
+        let info = hover_from_cache(
             &analysis.output,
             &analysis.schema,
+            analysis.parsed.as_deref(),
             &analysis.source,
             &analysis.text,
             analysis.offset as u32,
@@ -146,32 +298,21 @@ impl Backend {
         })
     }
 
-    /// Publish diagnostics for all tracked documents in a single workspace
-    /// analysis pass (avoids re-analyzing the whole workspace once per file).
+    /// Publish diagnostics for every tracked document. The first `.surql`
+    /// document warms the shared whole-workspace analysis once; every later
+    /// one reads the cache. Documents are analyzed and published one at a
+    /// time — never a list of every result at once — so the sweep holds one
+    /// document's findings in flight, not the workspace's. On a 500-file
+    /// workspace the old all-at-once list, each entry carrying its own copy
+    /// of every text, was the difference between 90 MB and 900 MB resident.
     async fn publish_all_diagnostics(&self) {
-        let results = {
+        let uris = {
             let ws = self.workspace.read().await;
-            ws.analyze_all()
+            ws.tracked_uris()
         };
-        let policy = self.policy.read().await;
-        for (uri, result) in results {
-            let lsp_diagnostics: Vec<Diagnostic> = result
-                .diagnostics
-                .iter()
-                .filter_map(|d| {
-                    diagnostics::workspace_finding_to_lsp_diagnostic(
-                        &result.source,
-                        d,
-                        &policy,
-                        &result.texts,
-                    )
-                })
-                .collect();
-            self.client
-                .publish_diagnostics(uri, lsp_diagnostics, None)
-                .await;
+        for uri in &uris {
+            self.publish_document_diagnostics(uri).await;
         }
-        drop(policy);
 
         // One request for the whole sweep: this runs when the schema moved, so
         // every open document's tokens are suspect, and the protocol has no
@@ -180,35 +321,50 @@ impl Backend {
     }
 }
 
-/// Loads and parses `surrealguard.toml` from a workspace root. Returns
-/// `None` when the root has no config file; a malformed config is treated as
-/// absent (the editor falls back to the default policy rather than failing to
-/// start).
-fn load_workspace_config(root: &Path) -> Option<WorkspaceConfig> {
-    let config_path = root.join("surrealguard.toml");
-    let text = std::fs::read_to_string(config_path).ok()?;
-    WorkspaceConfig::from_toml_str(&text).ok()
-}
-
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        // Whether the client will honor `workspace/semanticTokens/refresh`.
+        // Decided once, here: a refresh is never sent to a client that did
+        // not ask for one (see `refresh_semantic_tokens`).
+        let refresh_support = params
+            .capabilities
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.semantic_tokens.as_ref())
+            .and_then(|tokens| tokens.refresh_support)
+            .unwrap_or(false);
+        self.refresh
+            .supported
+            .store(refresh_support, Ordering::Release);
+
         if let Some(folders) = &params.workspace_folders {
             let roots: Vec<_> = folders
                 .iter()
                 .filter_map(|f| f.uri.to_file_path().ok())
                 .collect();
 
-            // Resolve `[lints]` levels from the first workspace root that
-            // carries a surrealguard.toml, so the editor honors the same
-            // policy as `surrealguard check`. No config leaves the default.
-            if let Some(config) = roots.iter().find_map(|root| load_workspace_config(root)) {
+            // The first workspace root that carries a surrealguard.toml
+            // speaks for the workspace: its `[lints]` levels become the
+            // editor's policy and its `[sources]` globs decide what the scan
+            // loads, so the editor honors the same config as
+            // `surrealguard check`. No config leaves the defaults.
+            let config = roots.iter().find_map(|root| load_workspace_config(root));
+            if let Some(config) = &config {
                 *self.policy.write().await = config.policy();
             }
 
             let mut ws = self.workspace.write().await;
             ws.roots = roots;
-            ws.scan_folders();
+            if let Some(config) = config {
+                // `[analysis]` (the target SurrealDB version behind the 8xxx
+                // checks) and `[diagnostics]` are analysis inputs, not
+                // presentation: they go into the analysis itself.
+                ws.scan_folders(Some(&config.sources));
+                ws.set_config(config);
+            } else {
+                ws.scan_folders(None);
+            }
         }
 
         Ok(InitializeResult {
@@ -282,13 +438,16 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
+        // A document that did not parse has no `DEFINE FUNCTION` to ghost a
+        // return type onto; its `LET` hints still come from the analysis.
+        let return_hints = analysis
+            .parsed
+            .as_deref()
+            .map(|parsed| function_return_hints_parsed(parsed, &analysis.schema))
+            .unwrap_or_default();
         let hints = surrealguard_workspace::let_binding_hints(&analysis.output)
             .into_iter()
-            .chain(surrealguard_workspace::function_return_hints(
-                &analysis.text,
-                &analysis.source,
-                &analysis.schema,
-            ))
+            .chain(return_hints)
             .map(|hint| {
                 // The grey `: <kind>` sits right after the `$name` token.
                 let position = crate::text::offset_to_position(
@@ -326,9 +485,10 @@ impl LanguageServer for Backend {
         };
 
         let offset = crate::text::position_to_offset(&analysis.text, position) as u32;
-        let Some(info) = surrealguard_workspace::hover_at(
+        let Some(info) = hover_from_cache(
             &analysis.output,
             &analysis.schema,
+            analysis.parsed.as_deref(),
             &analysis.source,
             &analysis.text,
             offset,
@@ -359,12 +519,22 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri;
         let ws = self.workspace.read().await;
 
+        // Tokens are a function of the document's text alone, and the client
+        // re-pulls them for every open document whenever `refresh` is sent —
+        // after a save, or a schema edit that moved nothing in this file. The
+        // answer is cached against the text it came from, so only a document
+        // whose text actually changed is tokenized again (`did_change` hands
+        // the document a new text, which is the invalidation).
+
         // A `.surql` document is tokenized whole, from the parse the analysis
         // cache already holds.
         if let Some((text, parsed)) = ws.parsed_surql(&uri) {
+            let data = self.semantic_tokens_for(&uri, &text, || {
+                semantic::encode(&text, &semantic::tokens(&parsed))
+            });
             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                 result_id: None,
-                data: semantic::encode(&text, &semantic::tokens(&parsed)),
+                data,
             })));
         }
 
@@ -373,18 +543,21 @@ impl LanguageServer for Backend {
         let Some((text, queries)) = ws.host_queries(&uri) else {
             return Ok(None);
         };
-        let mut tokens = Vec::new();
-        for (index, query) in queries.iter().enumerate() {
-            let source = SourceId::new(format!("embedded://{}#{index}", uri.as_str()));
-            let Ok(parsed) = parse_source(source, query.text.as_str()) else {
-                continue;
-            };
-            tokens.extend(semantic::map_to_host(query, semantic::tokens(&parsed)));
-        }
+        let data = self.semantic_tokens_for(&uri, &text, || {
+            let mut tokens = Vec::new();
+            for (index, query) in queries.iter().enumerate() {
+                let source = SourceId::new(format!("embedded://{}#{index}", uri.as_str()));
+                let Ok(parsed) = parse_source(source, query.text.as_str()) else {
+                    continue;
+                };
+                tokens.extend(semantic::map_to_host(query, semantic::tokens(&parsed)));
+            }
+            semantic::encode(&text, &tokens)
+        });
 
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
             result_id: None,
-            data: semantic::encode(&text, &tokens),
+            data,
         })))
     }
 
@@ -456,11 +629,11 @@ impl LanguageServer for Backend {
         };
 
         let offset = crate::text::position_to_offset(&analysis.text, position) as u32;
-        let Some(target) = surrealguard_workspace::definition_at(
+        let Some(target) = definition_from_cache(
             &analysis.output,
             &analysis.schema,
+            analysis.parsed.as_deref(),
             &analysis.source,
-            &analysis.text,
             offset,
         ) else {
             return Ok(None);
@@ -543,6 +716,9 @@ impl LanguageServer for Backend {
         {
             let mut ws = self.workspace.write().await;
             ws.remove(&uri);
+        }
+        if let Ok(mut cache) = self.semantic_cache.lock() {
+            cache.remove(&uri);
         }
         self.client.publish_diagnostics(uri, Vec::new(), None).await;
     }
