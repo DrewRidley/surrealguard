@@ -13,6 +13,7 @@
 use std::path::{Path, PathBuf};
 
 use surrealdb_types::{Kind, KindLiteral};
+use surrealguard_diagnostics::Finding;
 use surrealguard_syntax::source::SourceId;
 use surrealguard_workspace::{analyze_workspace, render_kind, Workspace, WorkspaceAnalysis};
 
@@ -289,4 +290,30 @@ pub fn diff_lines(expected: &str, actual: &str) -> String {
         out.push_str("(no line differences — trailing whitespace or newline only)\n");
     }
     out
+}
+
+/// How many findings with catalog number `number` a whole-workspace pass
+/// raised, across every source.
+pub fn codes(output: &WorkspaceAnalysis, number: u16) -> usize {
+    output
+        .diagnostics
+        .iter()
+        .filter(|finding| finding.code().number() == number)
+        .count()
+}
+
+/// A parsed fixture must reach semantic analysis: any `S`-category
+/// finding means a syntax error short-circuited the pipeline, so a
+/// semantic assertion that follows would be vacuous.
+pub fn assert_no_syntax_findings(diagnostics: &[Finding]) {
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|finding| finding.code().to_string().starts_with('S')),
+        "fixture failed to parse: {:?}",
+        diagnostics
+            .iter()
+            .map(|f| (f.code().to_string(), f.message().to_string()))
+            .collect::<Vec<_>>()
+    );
 }

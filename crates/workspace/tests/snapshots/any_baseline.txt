@@ -12,7 +12,7 @@
 #
 # Regenerating PRESERVES the `# expected:` notes on sites that still exist.
 #
-# total: 15 any/unknown leaves across 15 site(s)
+# total: 42 any/unknown leaves across 42 site(s)
 
 1  queries/20_graph.surql/stmt/select@98:1  # expected: a traversal that RESUMES after a field tail. The engine nests rather than flattening — `SELECT ->wrote->post.author->follows->user` is `[[user:bob]]` on 3.2.3, one level per distribution — and how deep the nesting goes is not modelled, so a resolved-looking `array<record<organization>>` would be wrong where `any` is merely imprecise. The site reports 6003 rather than staying silent.
 1  queries/41_iterables.surql/let/$from_range@58:5
@@ -23,6 +23,33 @@
 1  queries/41_iterables.surql/let/$range_expr_elem@69:6
 1  queries/41_iterables.surql/let/$range_inclusive_elem@64:6
 1  queries/41_iterables.surql/stmt/return@84:1
+1  queries/81_select_clauses.surql/stmt/select@24:1  # expected: an EXPLAIN plan is a tree — `children` holds further plan nodes of the same shape, and a recursive kind is not expressible
+1  queries/81_select_clauses.surql/stmt/select@26:1  # expected: an EXPLAIN FULL plan is a tree — `children` holds further plan nodes of the same shape, and a recursive kind is not expressible
+1  queries/81_select_clauses.surql/stmt/select@28:1  # expected: an EXPLAIN plan is a tree — `children` holds further plan nodes of the same shape, and a recursive kind is not expressible (the prefix spelling of the site above)
+1  queries/81_select_clauses.surql/stmt/select@60:1
+1  queries/81_select_clauses.surql/stmt/select@65:1
+1  queries/81_select_clauses.surql/stmt/select@72:1
+1  queries/81_select_clauses.surql/stmt/select@74:1
+1  queries/83_operators.surql/stmt/return@101:1
+1  queries/83_operators.surql/stmt/return@103:1
+1  queries/84_casts_literals.surql/stmt/return@155:1
+1  queries/84_casts_literals.surql/stmt/return@157:1
+1  queries/84_casts_literals.surql/stmt/return@168:1
+1  queries/84_casts_literals.surql/stmt/return@194:1
+1  queries/85_mutations.surql/stmt/create@115:1  # expected: RETURN DIFF yields JSON-patch operations whose `value` is whatever field each patch touches — no single kind
+1  queries/85_mutations.surql/stmt/create@193:1
+1  queries/85_mutations.surql/stmt/delete@119:1  # expected: RETURN NONE yields an always-empty array (`array<any, 0>`); the element kind of an empty array is vacuous
+1  queries/85_mutations.surql/stmt/delete@191:1
+1  queries/85_mutations.surql/stmt/insert@50:1  # expected: RETURN NONE yields an always-empty array (`array<any, 0>`); the element kind of an empty array is vacuous
+1  queries/85_mutations.surql/stmt/relate@148:1  # expected: RETURN NONE yields an always-empty array (`array<any, 0>`); the element kind of an empty array is vacuous
+1  queries/85_mutations.surql/stmt/update@101:1  # expected: RETURN DIFF yields JSON-patch operations whose `value` is whatever field each patch touches — no single kind
+1  queries/85_mutations.surql/stmt/update@189:1
+1  queries/85_mutations.surql/stmt/update@95:1  # expected: RETURN NONE yields an always-empty array (`array<any, 0>`); the element kind of an empty array is vacuous
+1  queries/86_context_control.surql/let/$i@70:5
+1  queries/86_context_control.surql/let/$i@74:5
+1  queries/86_context_control.surql/stmt/return@137:1
+1  queries/86_context_control.surql/stmt/return@141:1
+1  queries/86_context_control.surql/stmt/return@143:1
 1  queries/90_opaque.surql/let/$payload@6:5  # expected: binds `webhook_event.payload`, which is declared `any`
 1  queries/90_opaque.surql/stmt/return@10:1  # expected: returns the `any`-declared payload
 1  queries/90_opaque.surql/stmt/select@16:1  # expected: `external.*` splats a link to `external_record`, which declares no fields — there is no row shape to expand to, exactly where `SELECT * FROM external_record` gives up. The site reports 7008 rather than staying silent.

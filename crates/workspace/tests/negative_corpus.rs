@@ -158,9 +158,9 @@ fn render() -> String {
             .diagnostics
             .iter()
             .map(|finding| {
-                let line = index
-                    .map(|index| index.line_column(finding.span().range().start()).line + 1)
-                    .unwrap_or(0);
+                let line = index.map_or(0, |index| {
+                    index.line_column(finding.span().range().start()).line + 1
+                });
                 format!("  {line:>4}  {}", finding.code())
             })
             .collect();

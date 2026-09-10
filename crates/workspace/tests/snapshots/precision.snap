@@ -16,6 +16,21 @@ table account  [schemafull]
   field settings                     : { locale: option<string>, notify: bool, timezone: string }  [default]
   field updated_at                   : datetime  [computed, default]
   field username                     : string
+table article  [schemafull]
+  field author                       : record<account>
+  field body                         : string
+  field created_at                   : datetime  [default, readonly]
+  field embedding                    : array<float>
+  field is_published                 : bool  [computed, default]
+  field location                     : option<geometry<point>>
+  field published_at                 : option<datetime>
+  field rating                       : option<float>
+  field slug                         : string  [default]
+  field tags                         : array<string>  [default]
+  field title                        : string
+  field updated_at                   : datetime  [computed, default]
+  field views                        : int  [default]
+  field word_count                   : int  [computed, default]
 table assigned_to  [schemafull, relation organization_unit -> organization_role]
   field weight                       : int  [default]
 table document  [schemafull]
@@ -38,7 +53,7 @@ table document_note  [schemafull]
   field body                         : string
   field self_body                    : string  [computed, default]
   field this_body                    : string  [computed, default]
-  field trimmed                      : string  [computed, default]
+  field trimmed                      : string  [default]
 table employee_of  [schemafull, relation account -> organization]
   field joined_at                    : datetime  [default]
   field role                         : record<organization_role>
@@ -46,6 +61,10 @@ table employee_of  [schemafull, relation account -> organization]
   field title                        : option<string>
   field unit                         : record<organization_unit>
 table external_record
+table likes  [schemafull, relation account -> article]
+  field liked_at                     : datetime  [default]
+  field note                         : option<string>
+  field weight                       : float  [default]
 table milestone  [schemafull]
   field label                        : string
   field project                      : record<project>  [reference]
@@ -69,7 +88,7 @@ table organization_role  [schemafull]
   field organization                 : record<organization>
   field permissions                  : array<record<organization_permission>>  [default]
 table organization_settings  [schemafull]
-  field data_region                  : 'us' | 'eu'  [computed, default]
+  field data_region                  : 'us' | 'eu'  [default]
   field organization                 : record<organization>
   field retention_days               : 30 | 90 | 365  [default]
   field security                     : { byok: { kms_provider: option<string>, mode: 'lazy' | 'immediate', progress: int, status: 'not_started' | 'running' | 'completed' | 'failed' } }
@@ -96,6 +115,23 @@ table sector  [schemafull]
 table task  [schemafull]
   field project                      : record<project>  [reference]
   field title                        : string
+table ticket  [schemafull]
+  field article                      : option<record<article>>
+  field closed_at                    : option<datetime>
+  field label                        : string  [computed, default]
+  field number                       : int  [default, readonly]
+  field opened_at                    : datetime  [default, readonly]
+  field priority                     : int  [default]
+  field reporter                     : record<account>
+  field status                       : 'open' | 'closed'  [default]
+  field subject                      : string
+table ticket_log  [schemafull]
+  field at                           : datetime  [default]
+  field from_priority                : option<int>
+  field kind                         : 'CREATE' | 'UPDATE' | 'DELETE'
+  field ticket                       : record<ticket>
+  field to_priority                  : option<int>
+table ticket_stats
 table webhook_event  [schemafull]
   field external                     : record<external_record>
   field headers                      : object
@@ -133,8 +169,11 @@ table webhook_event  [schemafull]
 
 == schema: params ==
   $default_tier
+  $max_priority
+  $search_limit
 
 == schema: analyzers ==
+  english  tokenizers=[blank, class, punct] filters=[lowercase, snowball(english)]
   simple  tokenizers=[blank, class] filters=[lowercase, ascii]
 
 == source: schema/01_account.surql ==
@@ -289,6 +328,60 @@ table webhook_event  [schemafull]
   let      40:6 $event_this      : string
   let      41:6 $event_self      : string
   let      42:6 $event_input     : string
+
+== source: schema/91_content.surql ==
+  stmt     11:1 define_analyzer  : (no response)
+  stmt     13:1 define_table     : (no response)
+  stmt     15:1 define_field     : (no response)
+  stmt     19:1 define_field     : (no response)
+  stmt     21:1 define_field     : (no response)
+  stmt     23:1 define_field     : (no response)
+  stmt     25:1 define_field     : (no response)
+  stmt     29:1 define_field     : (no response)
+  stmt     31:1 define_field     : (no response)
+  stmt     33:1 define_field     : (no response)
+  stmt     35:1 define_field     : (no response)
+  stmt     37:1 define_field     : (no response)
+  stmt     40:1 define_field     : (no response)
+  stmt     42:1 define_field     : (no response)
+  stmt     44:1 define_field     : (no response)
+  stmt     46:1 define_field     : (no response)
+  stmt     48:1 define_index     : (no response)
+  stmt     50:1 define_index     : (no response)
+  stmt     52:1 define_index     : (no response)
+  stmt     54:1 define_index     : (no response)
+
+== source: schema/92_engagement.surql ==
+  stmt      9:1 define_table     : (no response)
+  stmt     11:1 define_field     : (no response)
+  stmt     13:1 define_field     : (no response)
+  stmt     15:1 define_field     : (no response)
+  stmt     18:1 define_index     : (no response)
+  stmt     20:1 define           : (no response)
+  stmt     22:1 define_param     : (no response)
+  stmt     24:1 define_param     : (no response)
+  stmt     26:1 define_table     : (no response)
+  stmt     30:1 define_field     : (no response)
+  stmt     32:1 define_field     : (no response)
+  stmt     34:1 define_field     : (no response)
+  stmt     36:1 define_field     : (no response)
+  stmt     38:1 define_field     : (no response)
+  stmt     40:1 define_field     : (no response)
+  stmt     42:1 define_field     : (no response)
+  stmt     44:1 define_field     : (no response)
+  stmt     46:1 define_field     : (no response)
+  stmt     48:1 define_table     : (no response)
+  stmt     50:1 define_field     : (no response)
+  stmt     54:1 define_field     : (no response)
+  stmt     56:1 define_field     : (no response)
+  stmt     58:1 define_field     : (no response)
+  stmt     60:1 define_field     : (no response)
+  stmt     62:1 define_event     : (no response)
+  stmt     66:1 define_event     : (no response)
+  stmt     70:1 define_event     : (no response)
+  stmt     75:1 define_table     : (no response)
+  stmt     78:1 define           : (no response)
+  stmt     83:1 define           : (no response)
 
 == source: queries/10_select.surql ==
   stmt      4:1 select           : array<{ created_at: datetime, name: string, tier: 'free' | 'pro' | 'enterprise' }>
@@ -669,6 +762,7 @@ table webhook_event  [schemafull]
   let      61:5 $on_both         : string
   let      63:5 $on_coalesced    : string
   diag    32:23 W7005     Warning
+  diag    34:27 W7005     Warning
 
 == source: queries/37_discriminants.surql ==
   stmt     18:1 let              : (no response)
@@ -1066,7 +1160,7 @@ table webhook_event  [schemafull]
        modifier group      row_preserving=false
   stmt     16:1 select           : array<{ address: { city: string, country: string, line1: string, line2: option<string> }, contacts: { email: string, label: string, primary: bool }, created_at: datetime, employees: array<record<employee_of>>, id: record<organization>, legal_name: string, logo: option<string>, name: string, owner: record<account>, parent: option<record<organization>>, sectors: array<record<sector>>, subsidiaries: array<record<organization>>, tier: 'free' | 'pro' | 'enterprise' }>
        modifier split      row_preserving=false
-  stmt     18:1 select           : array<{ name: string, year: int }>
+  stmt     18:1 select           : array<{ name: array<string>, year: int }>
        modifier group      row_preserving=false
   stmt     22:1 select           : array<{ names: array<string>, tier: 'free' | 'pro' | 'enterprise' }>
        modifier group      row_preserving=false
@@ -1078,6 +1172,7 @@ table webhook_event  [schemafull]
   diag    14:34 I7014     Hint
   diag     16:8 I7015     Hint
   diag    16:15 I7014     Hint
+  diag     18:8 W4027     Warning
   diag    18:50 I7014     Hint
   diag    22:50 I7014     Hint
 
@@ -1126,6 +1221,7 @@ table webhook_event  [schemafull]
   param $since                  : datetime  [required]
   param $tier                   : 'free' | 'pro' | 'enterprise'  [required]
   diag      6:8 I7015     Hint
+  diag     6:53 I7016     Hint
   diag     16:5 W7001     Warning
   diag     20:8 I7015     Hint
 
@@ -1151,6 +1247,565 @@ table webhook_event  [schemafull]
   let      20:5 $when            : datetime
   let      22:5 $parsed          : int
   diag     4:48 I7014     Hint
+
+== source: queries/81_select_clauses.surql ==
+  stmt      8:1 select           : array<{ author: record<account>, created_at: datetime, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     10:1 select           : array<{ author: record<account>, body: string, created_at: datetime, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+       modifier where      row_preserving=true
+  stmt     12:1 select           : array<{ active: bool, created_at: datetime, deactivated_reason: option<string | null>, email: string, id: record<account>, liked: array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>, person: option<record<person>>, settings: { locale: option<string>, notify: bool, timezone: string }, updated_at: datetime, username: string }>
+  stmt     14:1 select           : array<{ author: { active: bool, created_at: datetime, deactivated_reason: option<string | null>, email: string, id: record<account>, person: option<record<person>>, settings: { locale: option<string>, notify: bool, timezone: string }, updated_at: datetime, username: string }, title: string }>
+  stmt     16:1 select           : array<{ author: { username: string }, title: string }>
+  stmt     18:1 select           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: { active: bool, created_at: datetime, deactivated_reason: option<string | null>, email: string, id: record<account>, person: option<record<person>>, settings: { locale: option<string>, notify: bool, timezone: string }, updated_at: datetime, username: string }, status: 'open' | 'closed', subject: string }>
+  stmt     20:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+       modifier timeout    row_preserving=true
+  stmt     22:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+       modifier timeout    row_preserving=true
+  stmt     24:1 select           : array<{ attributes: object, children: array<any>, context: string, metrics: object, operator: string, total_rows: int }>
+       modifier where      row_preserving=true
+       modifier explain    row_preserving=false
+  stmt     26:1 select           : array<{ attributes: object, children: array<any>, context: string, metrics: object, operator: string, total_rows: int }>
+       modifier where      row_preserving=true
+       modifier explain    row_preserving=false
+  stmt     28:1 select           : array<{ attributes: object, children: array<any>, context: string, metrics: object, operator: string, total_rows: int }>
+       modifier where      row_preserving=true
+       modifier explain    row_preserving=false
+  stmt     30:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     32:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     34:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     36:1 select           : array<{ title: string, views: int }, 5>
+       modifier order      row_preserving=true
+       modifier limit      row_preserving=true max=5
+       modifier start      row_preserving=true
+  stmt     38:1 select           : array<{ title: string }, 3>
+       modifier limit      row_preserving=true max=3
+  stmt     40:1 select           : array<{ title: string, views: int }>
+       modifier order      row_preserving=true
+  stmt     42:1 select           : array<{ title: string }>
+       modifier order      row_preserving=true
+  stmt     45:1 select           : array<{ title: string }>
+  stmt     47:1 select           : array<{ title: string }>
+  stmt     49:1 select           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     51:1 select           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     53:1 select           : array<{ title: string }>
+  stmt     56:1 select           : array<{ title: string, views: int }>
+  stmt     58:1 select           : array<{ title: string }>
+  stmt     60:1 select           : any
+  stmt     62:1 select           : option<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     65:1 select           : any
+       modifier where      row_preserving=true
+  stmt     68:1 select           : array<{ status: 'open' | 'closed', total: int }>
+       modifier order      row_preserving=true
+       modifier group      row_preserving=false
+  stmt     70:1 select           : array<{ author: record<account>, tag_count: int, top: int }>
+       modifier group      row_preserving=false
+  stmt     72:1 select           : any
+  stmt     74:1 select           : any
+       modifier where      row_preserving=true
+  stmt     77:1 select           : array<{ article_title: option<string> }>
+  stmt     79:1 select           : array<{ article: { title: option<string> }, reporter: { username: string } }>
+  diag      8:8 I7015     Hint
+  diag     8:36 I7014     Hint
+  diag     10:8 I7015     Hint
+  diag    12:42 I7014     Hint
+  diag    14:27 I7014     Hint
+  diag    16:36 I7014     Hint
+  diag     18:8 I7015     Hint
+  diag    18:15 I7014     Hint
+  diag    40:26 I7014     Hint
+  diag    42:19 I7014     Hint
+  diag     49:8 I7015     Hint
+  diag     51:8 I7015     Hint
+  diag     62:8 I7015     Hint
+  diag    68:38 I7014     Hint
+  diag    70:90 I7014     Hint
+  diag     72:8 I7015     Hint
+  diag    72:15 I7008     Hint
+  diag    72:15 I7014     Hint
+  diag    74:27 I7008     Hint
+  diag    77:44 I7014     Hint
+  diag    79:46 I7014     Hint
+
+== source: queries/82_search.surql ==
+  stmt      6:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt      8:1 select           : array<{ score: float, title: string }>
+       modifier where      row_preserving=true
+       modifier order      row_preserving=true
+  stmt     10:1 select           : array<{ highlighted: string, title: string }>
+       modifier where      row_preserving=true
+  stmt     12:1 select           : array<{ offsets: object, title: string }>
+       modifier where      row_preserving=true
+  stmt     14:1 select           : array<{ score: float, title: string }>
+       modifier where      row_preserving=true
+  stmt     16:1 select           : array<{ title: string }, 10>
+       modifier where      row_preserving=true
+       modifier limit      row_preserving=true max=10
+  stmt     18:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+       modifier limit      row_preserving=true
+  stmt     20:1 select           : array<string>
+       modifier where      row_preserving=true
+  stmt     22:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     24:1 select           : array<{ distance: number, title: string }>
+       modifier where      row_preserving=true
+       modifier order      row_preserving=true
+  stmt     26:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     28:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     30:1 select           : array<{ similarity: number, title: string }, 5>
+       modifier order      row_preserving=true
+       modifier limit      row_preserving=true max=5
+  stmt     32:1 select           : array<{ distance: number, title: string }, 5>
+       modifier where      row_preserving=true
+       modifier order      row_preserving=true
+       modifier limit      row_preserving=true max=5
+  stmt     34:1 let              : (no response)
+  stmt     36:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     38:1 let              : (no response)
+  stmt     40:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  let      34:5 $query_vector    : array<float, 3>
+  let      38:5 $term            : string
+  param $search_limit           : int  [optional]  domain=Range { min: Some(0), max: None }
+  diag    16:67 I7016     Hint
+  diag    18:53 I7016     Hint
+
+== source: queries/83_operators.surql ==
+  stmt      7:1 return           : bool
+  stmt      9:1 return           : bool
+  stmt     11:1 return           : bool
+  stmt     13:1 return           : bool
+  stmt     15:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     17:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     19:1 select           : array<{ subject: string }>
+       modifier where      row_preserving=true
+  stmt     21:1 return           : bool | string
+  stmt     23:1 return           : option<string>
+  stmt     25:1 return           : int
+  stmt     27:1 select           : array<{ rating_or_zero: option<float | int>, title: string }>
+  stmt     29:1 select           : array<{ shown_at: datetime, title: string }>
+  stmt     31:1 return           : int
+  stmt     33:1 return           : float
+  stmt     35:1 return           : int
+  stmt     37:1 return           : int
+  stmt     39:1 select           : array<{ last_digit: int, title: string }>
+  stmt     41:1 select           : array<{ squared: number, squared_too: int, title: string }>
+  stmt     43:1 return           : bool
+  stmt     45:1 return           : bool
+  stmt     47:1 return           : bool
+  stmt     49:1 return           : bool
+  stmt     51:1 return           : bool
+  stmt     53:1 return           : bool
+  stmt     55:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     57:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     59:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     61:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     63:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     65:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     67:1 return           : bool
+  stmt     69:1 return           : bool
+  stmt     71:1 return           : bool
+  stmt     73:1 return           : bool
+  stmt     75:1 return           : bool
+  stmt     77:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     79:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     81:1 select           : option<{ subject: string }>
+       modifier where      row_preserving=true
+       modifier limit      row_preserving=true max=1
+  stmt     83:1 return           : bool
+  stmt     85:1 return           : bool
+  stmt     87:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     89:1 select           : array<{ subject: string }>
+       modifier where      row_preserving=true
+  stmt     91:1 select           : array<{ subject: string }>
+       modifier where      row_preserving=true
+  stmt     93:1 select           : array<{ subject: string }>
+       modifier where      row_preserving=true
+  stmt     96:1 let              : (no response)
+  stmt    101:1 return           : any
+  stmt    103:1 return           : any
+  stmt    105:1 return           : bool
+  stmt    107:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt    109:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt    111:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt    114:1 return           : bool
+  stmt    116:1 return           : bool
+  stmt    120:1 return           : bool
+  stmt    122:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt    124:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt    126:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt    129:1 select           : array<{ engagement: array<record<likes>> }>
+  stmt    131:1 select           : array<{ people: array<record<account>> }>
+  stmt    133:1 select           : array<{ articles: array<record<article>> }>
+  stmt    135:1 select           : array<{ liked_titles: array<string> }>
+  stmt    137:1 select           : array<{ fans: array<string> }>
+  stmt    139:1 select           : array<{ strong_likes: array<record<article>> }>
+  stmt    141:1 select           : array<{ weights: array<float> }>
+  stmt    143:1 select           : array<{ like_count: int }>
+  stmt    149:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt    151:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt    153:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt    155:1 select           : array<{ subject: string }>
+       modifier where      row_preserving=true
+  let      96:5 $london          : { coordinates: array<array<array<float, 2>, 5>, 1>, type: 'Polygon' }
+  param $max_priority           : int  [optional]
+  diag     13:8 W7005     Warning
+  diag    27:50 I7014     Hint
+  diag    29:59 I7014     Hint
+  diag    39:45 I7014     Hint
+  diag    41:78 I7014     Hint
+  diag   129:36 I7014     Hint
+  diag   131:42 I7014     Hint
+  diag   133:44 I7014     Hint
+  diag   135:52 I7014     Hint
+  diag   137:47 I7014     Hint
+  diag   139:66 I7014     Hint
+  diag   141:39 I7014     Hint
+  diag   143:42 I7014     Hint
+
+== source: queries/84_casts_literals.surql ==
+  stmt      6:1 return           : float
+  stmt      8:1 return           : float
+  stmt     10:1 return           : bool
+  stmt     12:1 return           : bool
+  stmt     14:1 return           : decimal
+  stmt     16:1 return           : decimal
+  stmt     18:1 return           : duration
+  stmt     20:1 return           : uuid
+  stmt     22:1 return           : number
+  stmt     24:1 return           : number
+  stmt     26:1 return           : int
+  stmt     28:1 return           : int
+  stmt     30:1 return           : string
+  stmt     32:1 return           : string
+  stmt     34:1 return           : string
+  stmt     36:1 return           : datetime
+  stmt     38:1 return           : set<int>
+  stmt     40:1 return           : set<int>
+  stmt     42:1 return           : set<string>
+  stmt     44:1 return           : array<int>
+  stmt     46:1 return           : array<int>
+  stmt     48:1 return           : array<string>
+  stmt     50:1 return           : option<int>
+  stmt     52:1 return           : option<int>
+  stmt     54:1 return           : option<string>
+  stmt     56:1 return           : record
+  stmt     58:1 return           : record<article>
+  stmt     60:1 return           : record<article | ticket>
+  stmt     62:1 return           : object
+  stmt     64:1 return           : bytes
+  stmt     66:1 return           : geometry<point>
+  stmt     68:1 return           : int | string
+  stmt     70:1 return           : float | int
+  stmt     73:1 select           : array<{ title: string, views_float: float, views_text: string }>
+  stmt     75:1 select           : array<{ priority_text: string, subject: string }>
+  stmt     77:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt     79:1 let              : (no response)
+  stmt     81:1 return           : int
+  stmt     83:1 update           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     86:1 return           : datetime
+  stmt     88:1 return           : datetime
+  stmt     90:1 return           : record<article>
+  stmt     92:1 return           : record<ticket>
+  stmt     94:1 return           : uuid
+  stmt     96:1 return           : uuid
+  stmt     98:1 return           : bytes
+  stmt    100:1 return           : bytes
+  stmt    102:1 return           : string
+  stmt    104:1 return           : string
+  stmt    106:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt    109:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt    111:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt    113:1 select           : array<{ title: string }>
+       modifier where      row_preserving=true
+  stmt    116:1 return           : int
+  stmt    118:1 return           : float
+  stmt    120:1 return           : float
+  stmt    122:1 return           : decimal
+  stmt    124:1 return           : duration
+  stmt    126:1 return           : duration
+  stmt    128:1 return           : duration
+  stmt    130:1 return           : float
+  stmt    132:1 return           : float
+  stmt    135:1 return           : range
+  stmt    137:1 return           : range
+  stmt    139:1 return           : range
+  stmt    141:1 return           : range
+  stmt    143:1 return           : range
+  stmt    145:1 return           : array<record<article>>
+  stmt    147:1 return           : array<record<article>>
+  stmt    149:1 return           : array<record<ticket>>
+  stmt    151:1 return           : array<record<ticket>>
+  stmt    155:1 return           : array<any>
+  stmt    157:1 return           : array<any>
+  stmt    159:1 return           : int
+  stmt    161:1 return           : int
+  stmt    163:1 return           : int
+  stmt    165:1 return           : int
+  stmt    168:1 return           : any
+  stmt    170:1 return           : { coordinates: array<float, 2>, type: 'Point' }
+  stmt    172:1 return           : { coordinates: array<array<int, 2>, 3>, type: 'LineString' }
+  stmt    174:1 return           : { coordinates: array<array<array<int, 2>, 5>, 1>, type: 'Polygon' }
+  stmt    176:1 return           : { coordinates: array<array<int, 2>, 2>, type: 'MultiPoint' }
+  stmt    178:1 return           : { coordinates: array<array<array<int, 2>, 2>, 2>, type: 'MultiLineString' }
+  stmt    180:1 return           : { coordinates: array<array<array<array<int, 2>, 4>, 1>, 2>, type: 'MultiPolygon' }
+  stmt    182:1 return           : { geometries: array<{ coordinates: array<int, 2>, type: 'Point' } | { coordinates: array<array<int, 2>, 2>, type: 'LineString' }, 2>, type: 'GeometryCollection' }
+  stmt    185:1 return           : regex
+  stmt    187:1 return           : regex
+  stmt    189:1 let              : (no response)
+  stmt    191:1 return           : bool
+  stmt    194:1 return           : { id: uuid, raw: bytes, span: range, tags: set<string>, wait: duration, when: datetime, where: any, who: record<account> }
+  stmt    205:1 return           : array<float | decimal | int, 5>
+  let      79:5 $count_text      : string
+  let     189:5 $slug_shape      : regex
+  diag    73:79 I7014     Hint
+  diag    75:57 I7014     Hint
+  diag    205:8 I7003     Hint
+
+== source: queries/85_mutations.surql ==
+  stmt      7:1 create           : array<{ active: bool, created_at: datetime, deactivated_reason: option<string | null>, email: string, id: record<account>, person: option<record<person>>, settings: { locale: option<string>, notify: bool, timezone: string }, updated_at: datetime, username: string }>
+  stmt      9:1 create           : array<{ active: bool, created_at: datetime, deactivated_reason: option<string | null>, email: string, id: record<account>, person: option<record<person>>, settings: { locale: option<string>, notify: bool, timezone: string }, updated_at: datetime, username: string }>
+  stmt     11:1 create           : array<{ active: bool, created_at: datetime, deactivated_reason: option<string | null>, email: string, id: record<account>, person: option<record<person>>, settings: { locale: option<string>, notify: bool, timezone: string }, updated_at: datetime, username: string }>
+  stmt     13:1 create           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     15:1 create           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     17:1 create           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     19:1 create           : { author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }
+  stmt     21:1 create           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     23:1 create           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     25:1 create           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     27:1 create           : array<{ label: string, number: int }>
+  stmt     30:1 insert           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     32:1 insert           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     34:1 insert           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     36:1 insert           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     38:1 insert           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     40:1 insert           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     42:1 insert           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     44:1 insert           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     46:1 insert           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     48:1 insert           : array<{ label: string }>
+  stmt     50:1 insert           : array<any, 0>
+  stmt     53:1 update           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     55:1 update           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     57:1 update           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     59:1 update           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     61:1 update           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     63:1 update           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     65:1 update           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     67:1 update           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     69:1 update           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     71:1 update           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     73:1 update           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     78:1 create           : array<{ id: record<sector>, name: string }>
+  stmt     80:1 update           : array<{ id: record<sector>, name: string }>
+  stmt     82:1 update           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     84:1 update           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     86:1 update           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     88:1 update           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     90:1 update           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     92:1 update           : { article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }
+  stmt     95:1 update           : array<any, 0>
+  stmt     97:1 update           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt     99:1 update           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt    101:1 update           : array<array<{ op: string, path: string, value: any }>>
+  stmt    103:1 update           : array<{ title: string, views: int }>
+  stmt    105:1 update           : array<{ hits: int, word_count: int }>
+  stmt    107:1 update           : array<{ author: record<account>, body: string, created_at: datetime, embedding: array<float>, hits: int, id: record<article>, is_published: bool, location: option<geometry<point>>, published_at: option<datetime>, rating: option<float>, slug: string, tags: array<string>, title: string, updated_at: datetime, views: int, word_count: int }>
+  stmt    109:1 update           : { views: int }
+  stmt    111:1 create           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt    113:1 create           : array<{ label: string, number: int }>
+  stmt    115:1 create           : array<array<{ op: string, path: string, value: any }>>
+  stmt    117:1 delete           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt    119:1 delete           : array<any, 0>
+  stmt    122:1 upsert           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt    124:1 upsert           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt    126:1 upsert           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt    128:1 upsert           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt    130:1 upsert           : array<{ id: record<sector>, name: string }>
+  stmt    132:1 upsert           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt    134:1 upsert           : { subject: string }
+  stmt    138:1 relate           : array<{ id: record<likes>, in: record<account>, liked_at: datetime, note: option<string>, out: record<article>, weight: float }>
+  stmt    140:1 relate           : array<{ id: record<likes>, in: record<account>, liked_at: datetime, note: option<string>, out: record<article>, weight: float }>
+  stmt    142:1 relate           : { id: record<likes>, in: record<account>, liked_at: datetime, note: option<string>, out: record<article>, weight: float }
+  stmt    144:1 relate           : array<{ id: record<likes>, in: record<account>, liked_at: datetime, note: option<string>, out: record<article>, weight: float }>
+  stmt    146:1 relate           : array<{ note: option<string>, weight: float }>
+  stmt    148:1 relate           : array<any, 0>
+  stmt    150:1 relate           : array<{ id: record<likes>, in: record<account>, liked_at: datetime, note: option<string>, out: record<article>, weight: float }>
+  stmt    152:1 relate           : array<{ id: record<likes>, in: record<account>, liked_at: datetime, note: option<string>, out: record<article>, weight: float }>
+  stmt    154:1 insert           : array<{ id: record<likes>, in: record<account>, liked_at: datetime, note: option<string>, out: record<article>, weight: float }>
+  stmt    157:1 update           : array<{ id: record<likes>, in: record<account>, liked_at: datetime, note: option<string>, out: record<article>, weight: float }>
+  stmt    159:1 update           : array<{ id: record<likes>, in: record<account>, liked_at: datetime, note: option<string>, out: record<article>, weight: float }>
+  stmt    161:1 delete           : array<{ id: record<likes>, in: record<account>, liked_at: datetime, note: option<string>, out: record<article>, weight: float }>
+  stmt    164:1 let              : (no response)
+  stmt    166:1 let              : (no response)
+  stmt    168:1 relate           : array<{ id: record<likes>, in: record<account>, liked_at: datetime, note: option<string>, out: record<article>, weight: float }>
+  stmt    170:1 delete           : array<{ id: record<likes>, in: record<account>, liked_at: datetime, note: option<string>, out: record<article>, weight: float }>
+  stmt    172:1 delete           : array<{ id: record<likes>, in: record<account>, liked_at: datetime, note: option<string>, out: record<article>, weight: float }>
+  stmt    174:1 select           : array<{ titles: array<string> }>
+  stmt    176:1 select           : array<{ weights: array<float> }>
+  stmt    178:1 select           : array<{ weight: float, what: string, who: string }>
+  stmt    180:1 select           : array<{ in: record<account>, out: record<article>, weight: float }>
+       modifier where      row_preserving=true
+       modifier order      row_preserving=true
+  stmt    183:1 let              : (no response)
+  stmt    185:1 update           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt    187:1 update           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt    189:1 update           : any
+  stmt    191:1 delete           : any
+  stmt    193:1 create           : any
+  stmt    195:1 delete           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  let     164:5 $liker           : record<account>
+  let     166:5 $liked           : record<article>
+  let     183:5 $target          : record<ticket>
+  diag   178:59 I7014     Hint
+
+== source: queries/86_context_control.surql ==
+  stmt      9:1 return           : { ac: string, db: string, id: string, ip: string, ns: string, or: string, rd: record, tk: object }
+  stmt     11:1 return           : string
+  stmt     13:1 return           : string
+  stmt     15:1 return           : string
+  stmt     17:1 return           : object
+  stmt     19:1 return           : string
+  stmt     21:1 return           : option<record>
+  stmt     23:1 return           : { access: string, db: string, ns: string, token: object }
+  stmt     25:1 select           : array<{ author_name: array<string>, title: string }>
+  stmt     27:1 select           : array<{ about: array<string>, subject: string }>
+  stmt     29:1 select           : array<{ like_count: int, title: string }>
+  stmt     32:1 return           : int
+  stmt     34:1 return           : int
+  stmt     36:1 select           : array<{ subject: string }>
+       modifier where      row_preserving=true
+       modifier limit      row_preserving=true
+  stmt     38:1 update           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     40:1 let              : (no response)
+  stmt     42:1 return           : int
+  stmt     45:1 begin            : (no response)
+  stmt     47:1 create           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     49:1 update           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     51:1 commit           : (no response)
+  stmt     53:1 begin            : (no response)
+  stmt     55:1 create           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     57:1 cancel           : (no response)
+  stmt     59:1 begin            : (no response)
+  stmt     61:1 let              : (no response)
+  stmt     63:1 if_else          : none
+  stmt     65:1 update           : array<{ article: option<record<article>>, closed_at: option<datetime>, id: record<ticket>, label: string, number: int, opened_at: datetime, priority: int, reporter: record<account>, status: 'open' | 'closed', subject: string }>
+  stmt     67:1 commit           : (no response)
+  stmt     70:1 for              : (no response)
+  stmt     74:1 for              : (no response)
+  stmt     78:1 for              : (no response)
+  stmt     84:1 for              : (no response)
+  stmt     88:1 for              : (no response)
+  stmt     93:1 for              : (no response)
+  stmt     99:1 if_else          : none
+  stmt    101:1 if_else          : none
+  stmt    103:1 let              : (no response)
+  stmt    105:1 return           : int
+  stmt    109:1 let              : (no response)
+  stmt    111:1 return           : array<int>
+  stmt    113:1 return           : array<int>
+  stmt    115:1 return           : array<int>
+  stmt    117:1 return           : int
+  stmt    119:1 return           : bool
+  stmt    121:1 return           : bool
+  stmt    123:1 return           : int
+  stmt    125:1 return           : array<int, 3>
+  stmt    127:1 return           : array<string, 2>
+  stmt    129:1 select           : array<{ shouting: array<string>, title: string }>
+  stmt    131:1 select           : array<{ clean_tags: array<string>, title: string }>
+  stmt    133:1 select           : array<{ numbered: array<string>, title: string }>
+  stmt    135:1 let              : (no response)
+  stmt    137:1 return           : any
+  stmt    139:1 let              : (no response)
+  stmt    141:1 return           : any
+  stmt    143:1 return           : any
+  stmt    147:1 live_select      : uuid
+  stmt    149:1 live_select      : uuid
+  stmt    151:1 live_select      : uuid
+  stmt    153:1 live_select      : uuid
+  stmt    155:1 let              : (no response)
+  stmt    157:1 kill             : (no response)
+  stmt    159:1 kill             : (no response)
+  stmt    162:1 show             : array<object>
+  stmt    164:1 show             : array<object>
+  stmt    166:1 show             : array<object>
+  stmt    168:1 rebuild          : (no response)
+  stmt    170:1 rebuild          : (no response)
+  stmt    173:1 return           : int
+  stmt    175:1 select           : array<{ label: string, number: int }, 5>
+       modifier order      row_preserving=true
+       modifier limit      row_preserving=true max=5
+  stmt    178:1 info_for         : (no response)
+  stmt    180:1 info_for         : (no response)
+  stmt    182:1 let              : (no response)
+  stmt    184:1 return           : int
+  stmt    186:1 return           : array<'open' | 'closed'>
+  stmt    188:1 return           : array<int, 2>
+  let      40:5 $capped          : int
+  let      61:5 $open            : int
+  let      70:5 $i               : unknown
+  let      74:5 $i               : unknown
+  let      78:5 $tag             : string
+  let      84:5 $t               : record<ticket>
+  let      88:5 $row             : { id: record<ticket>, priority: int }
+  let      93:5 $n               : int
+  let      94:6 $doubled         : int
+  let     103:5 $guarded         : int
+  let     109:5 $views           : array<int>
+  let     135:5 $adder           : function
+  let     139:5 $increment       : function
+  let     155:5 $live            : uuid
+  let     182:5 $shape           : { closed: int, open: int }
+  param $max_priority           : int  [optional]
+  param $search_limit           : int  [optional]  domain=Range { min: Some(0), max: None }
+  diag    25:98 I7014     Hint
+  diag    27:92 I7014     Hint
+  diag   29:104 I7014     Hint
+  diag    36:66 I7016     Hint
+  diag    99:12 W4024     Warning
+  diag   101:31 I7014     Hint
+  diag   109:39 I7014     Hint
+  diag   129:69 I7014     Hint
+  diag   131:73 I7014     Hint
+  diag   133:96 I7014     Hint
+  diag   147:13 I7015     Hint
+  diag   147:20 I7014     Hint
+  diag   153:13 I7015     Hint
+  diag   186:34 I7014     Hint
+  diag   189:29 I7014     Hint
+  diag   190:29 I7014     Hint
 
 == source: queries/90_opaque.surql ==
   stmt      4:1 select           : array<{ payload: any, provider: 'stripe' | 'github' }>
