@@ -16,5 +16,8 @@ serde = { version = "1", features = ["derive"] }
 tree-sitter.workspace = true
 tree-sitter-surrealql.workspace = true
 
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
+
 [lints]
 workspace = true

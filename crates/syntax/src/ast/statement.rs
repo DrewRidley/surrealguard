@@ -10,8 +10,8 @@
 //! <expr>` predicate.
 
 use super::{
-    DataClause, Expr, GroupClause, Idiom, OrderClause, PartialNode, Projection, ReturnMode,
-    Spanned, TypeExpr,
+    Assignment, DataClause, Expr, GroupClause, Idiom, OrderClause, PartialNode, Projection,
+    ReturnMode, Spanned, TypeExpr,
 };
 use crate::span::ByteRange;
 
@@ -208,6 +208,9 @@ pub struct InsertStmt {
     pub target: Option<Spanned<Expr>>,
     /// The rows/values to insert.
     pub data: InsertData,
+    /// `ON DUPLICATE KEY UPDATE <assignments>` — the writes applied to a
+    /// row that already exists, kept beside the row payload they amend.
+    pub on_duplicate_update: Vec<Assignment>,
     /// `RETURN` mode, if specified.
     pub ret: Option<Spanned<ReturnMode>>,
 }
@@ -233,8 +236,6 @@ pub enum InsertData {
         /// divide evenly by the column count; carries the statement span.
         misaligned: Option<Spanned<(usize, usize)>>,
     },
-    /// `INSERT ... SET`-style field assignments.
-    Assignments(Vec<(Spanned<Idiom>, Spanned<Expr>)>),
     /// A payload that failed to lower.
     Partial(PartialNode),
 }
@@ -264,7 +265,7 @@ pub enum DefineStmt {
     /// `DEFINE TABLE`.
     Table(DefineTable),
     /// `DEFINE FIELD`.
-    Field(DefineField),
+    Field(Box<DefineField>),
     /// `DEFINE INDEX`.
     Index(DefineIndex),
     /// `DEFINE EVENT`.
@@ -286,6 +287,8 @@ pub struct DefineTable {
     pub name: Spanned<String>,
     /// `OVERWRITE` — redefine an existing table.
     pub overwrite: bool,
+    /// `IF NOT EXISTS` — a no-op when the table already exists.
+    pub if_not_exists: bool,
     /// `SCHEMAFULL` (vs `SCHEMALESS`).
     pub schemafull: bool,
     /// `TYPE RELATION ...` — present when the table is an edge table.
@@ -324,6 +327,8 @@ pub struct DefineField {
     pub ty: Option<Spanned<TypeExpr>>,
     /// `OVERWRITE` — redefine an existing field.
     pub overwrite: bool,
+    /// `IF NOT EXISTS` — a no-op when the field already exists.
+    pub if_not_exists: bool,
     /// `DEFAULT <expr>` — supplied when a row is created without the field.
     pub default: Option<Spanned<Expr>>,
     /// `VALUE <expr>` — the field is computed; writes are overwritten.
@@ -351,6 +356,10 @@ pub struct DefineField {
 pub struct DefineIndex {
     /// The index name.
     pub name: Spanned<String>,
+    /// `OVERWRITE` — redefine an existing index.
+    pub overwrite: bool,
+    /// `IF NOT EXISTS` — a no-op when the index already exists.
+    pub if_not_exists: bool,
     /// The table the index is defined on.
     pub table: Spanned<String>,
     /// The indexed field paths.
@@ -378,6 +387,10 @@ pub enum IndexKind {
 pub struct DefineEvent {
     /// The event name.
     pub name: Spanned<String>,
+    /// `OVERWRITE` — redefine an existing event.
+    pub overwrite: bool,
+    /// `IF NOT EXISTS` — a no-op when the event already exists.
+    pub if_not_exists: bool,
     /// The table the event fires on.
     pub table: Spanned<String>,
     /// `WHEN <expr>` — the trigger condition.
@@ -391,6 +404,10 @@ pub struct DefineEvent {
 pub struct DefineParam {
     /// The parameter name (without `$`).
     pub name: Spanned<String>,
+    /// `OVERWRITE` — redefine an existing parameter.
+    pub overwrite: bool,
+    /// `IF NOT EXISTS` — a no-op when the parameter already exists.
+    pub if_not_exists: bool,
     /// `VALUE <expr>` — the parameter's value.
     pub value: Option<Spanned<Expr>>,
 }
@@ -400,6 +417,10 @@ pub struct DefineParam {
 pub struct DefineFunction {
     /// The function name including the `fn::` path.
     pub name: Spanned<String>,
+    /// `OVERWRITE` — redefine an existing function.
+    pub overwrite: bool,
+    /// `IF NOT EXISTS` — a no-op when the function already exists.
+    pub if_not_exists: bool,
     /// Parameters with their declared types, if any.
     pub params: Vec<(Spanned<String>, Option<Spanned<TypeExpr>>)>,
     /// The function body.
@@ -413,6 +434,10 @@ pub struct DefineFunction {
 pub struct DefineAnalyzer {
     /// The analyzer name.
     pub name: Spanned<String>,
+    /// `OVERWRITE` — redefine an existing analyzer.
+    pub overwrite: bool,
+    /// `IF NOT EXISTS` — a no-op when the analyzer already exists.
+    pub if_not_exists: bool,
     /// `TOKENIZERS ...` — the tokenizers in the pipeline.
     pub tokenizers: Vec<Spanned<String>>,
     /// `FILTERS ...` — the token filters in the pipeline.
@@ -445,6 +470,19 @@ pub enum RemoveTarget {
         /// The table the index is on.
         table: Spanned<String>,
     },
+    /// `REMOVE EVENT <event> ON <table>`.
+    Event {
+        /// The event name being removed.
+        event: Spanned<String>,
+        /// The table the event is on.
+        table: Spanned<String>,
+    },
+    /// `REMOVE FUNCTION fn::<name>` — the name includes the `fn::` path.
+    Function(Spanned<String>),
+    /// `REMOVE PARAM $<name>` — the name without `$`.
+    Param(Spanned<String>),
+    /// `REMOVE ANALYZER <name>`.
+    Analyzer(Spanned<String>),
     /// An unmodeled `REMOVE` target.
     Other(PartialNode),
 }
@@ -454,6 +492,11 @@ pub enum RemoveTarget {
 pub struct AlterStmt {
     /// The table being altered.
     pub table: Option<Spanned<String>>,
+    /// `SCHEMAFULL` (`Some(true)`) / `SCHEMALESS` (`Some(false)`), when the
+    /// statement changes the table's schema mode.
+    pub schemafull: Option<bool>,
+    /// `ALTER TABLE ... DROP` — rows are no longer retained.
+    pub drop: bool,
 }
 
 /// `LET $name = value` — binds a statement-scope variable.
@@ -502,10 +545,34 @@ pub struct ForStmt {
 }
 
 /// `LIVE SELECT` — subscribes to changes on a table.
+///
+/// The projection, `WHERE` and `FETCH` clauses are the same positions a
+/// `SELECT` has and are checked by the same analysis; the statement's own
+/// response is the subscription id.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LiveSelectStmt {
-    /// The table subscribed to.
-    pub table: Option<Spanned<String>>,
+    /// `LIVE SELECT DIFF` — notifications carry JSON patches, not rows.
+    pub diff: bool,
+    /// `LIVE SELECT VALUE <expr>`.
+    pub value: bool,
+    /// The projection list (empty for `DIFF`).
+    pub projections: Vec<Projection>,
+    /// `FROM` sources — a table, a record id or a parameter.
+    pub from: Vec<Spanned<Expr>>,
+    /// `WHERE <expr>` filter.
+    pub where_clause: Option<Spanned<Expr>>,
+    /// `FETCH <fields>` — record links to expand in each notification.
+    pub fetch: Vec<Spanned<Idiom>>,
+}
+
+impl LiveSelectStmt {
+    /// The table the subscription reads, when the source names one directly.
+    pub fn table(&self) -> Option<&Spanned<String>> {
+        match self.from.first().map(|source| &source.node) {
+            Some(Expr::Table(name)) => Some(name),
+            _ => None,
+        }
+    }
 }
 
 /// `KILL` — terminates a live query by id.

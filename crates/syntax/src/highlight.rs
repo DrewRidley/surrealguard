@@ -145,7 +145,7 @@ fn token_kind(node: Node<'_>) -> Option<TokenKind> {
         "RecordTbIdent" => Type,
         "RecordIdIdent" => EnumMember,
         "Operator" | "RangeOp" | "LookupLeft" | "LookupRight" | "LookupBoth" | "Any" | "At"
-        | "Optional" | "Pipe" => Operator,
+        | "Optional" | "Flatten" | "Pipe" => Operator,
         // A bare name is a variable; the same name reached through a path is
         // a field of whatever the path walked into.
         "Ident" => {

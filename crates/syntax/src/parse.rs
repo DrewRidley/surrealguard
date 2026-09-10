@@ -163,7 +163,7 @@ fn collect_syntax_diagnostics(
         ));
     }
 
-    if node.is_missing() {
+    if is_missing(node) {
         diagnostics.push(SyntaxDiagnostic::new(
             SyntaxDiagnosticKind::MissingNode,
             node_source_span(node, source_id.clone()),
@@ -183,6 +183,19 @@ fn collect_syntax_diagnostics(
             "SurrealQL syntax error",
         ));
     }
+}
+
+/// Whether `node` is a token the parser inserted rather than read.
+///
+/// tree-sitter sets the MISSING flag on the leaf it inserted. When that leaf
+/// is a *hidden* rule (`Ident` wraps `_idName`, so `SELECT * FROM ;` gets a
+/// zero-width `Ident` whose inserted token is invisible), the visible node
+/// above it is the one a walk reaches — childless, `has_error()`, and yet
+/// `is_missing()` false. Only a MISSING leaf can put it in that state: an
+/// `ERROR` node is never hidden, so a childless non-`ERROR` node with an
+/// error inside has nothing inside it but an inserted token.
+pub(crate) fn is_missing(node: Node<'_>) -> bool {
+    node.is_missing() || (node.child_count() == 0 && node.has_error() && !node.is_error())
 }
 
 fn node_source_span(node: Node<'_>, source_id: SourceId) -> SourceSpan {
@@ -207,6 +220,25 @@ mod tests {
         assert_eq!(parsed.root_kind(), "SurrealQL");
         assert!(!parsed.has_error());
         assert!(parsed.syntax_diagnostics().is_empty());
+    }
+
+    #[test]
+    fn a_missing_hidden_token_is_reported_as_missing_not_as_an_error() {
+        // `Ident` wraps a hidden token; the MISSING flag sits on the hidden
+        // leaf, so the visible zero-width `Ident` must still be reported as
+        // a missing node, at the point where the name should have been.
+        let parsed = parse_source(SourceId::new("query:missing"), "SELECT * FROM ;")
+            .expect("tree-sitter should still return a partial tree");
+
+        let diagnostics = parsed.syntax_diagnostics();
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+        assert_eq!(diagnostics[0].kind(), SyntaxDiagnosticKind::MissingNode);
+        assert_eq!(
+            diagnostics[0].message(),
+            "missing SurrealQL syntax node `Ident`"
+        );
+        let range = diagnostics[0].span().range();
+        assert_eq!((range.start(), range.end()), (13, 13));
     }
 
     #[test]

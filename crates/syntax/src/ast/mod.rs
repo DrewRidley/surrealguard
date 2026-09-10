@@ -17,6 +17,8 @@ mod clause;
 mod expr;
 mod statement;
 mod ty;
+/// Read-only traversal: the [`visit::Visitor`] trait and its `walk_*` functions.
+pub mod visit;
 
 pub use clause::*;
 pub use expr::*;

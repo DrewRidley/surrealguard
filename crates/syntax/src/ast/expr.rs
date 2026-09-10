@@ -23,6 +23,10 @@ pub enum Expr {
     /// (`FROM person`, `CREATE person`): a bare identifier in expression
     /// position is a field path, not a table.
     Table(Spanned<String>),
+    /// A module constant: `math::pi`, `time::EPOCH`. The path is
+    /// case-folded to lowercase (`MaTh::Pi` → `math::pi`), which is how the
+    /// engine resolves it.
+    Constant(Spanned<String>),
     /// A record id literal: `person:one`. The id's internal structure is
     /// kept opaque (ids can be composite; nothing consumes their shape).
     RecordId {
@@ -44,7 +48,11 @@ pub enum Expr {
         /// Right operand.
         rhs: Box<Spanned<Expr>>,
     },
-    /// A prefix operation: `!x`, `-x`.
+    /// A range value: `1..5`, `..=10`, `$a>..$b`. Either bound may be
+    /// absent; a record-id range (`person:1..5`) is an [`Expr::RecordId`]
+    /// with `range` set, not this.
+    Range(Range),
+    /// A prefix operation: `!x`, `-x`, `NOT x`.
     Prefix {
         /// The operator.
         op: Spanned<PrefixOp>,
@@ -74,6 +82,19 @@ pub enum Expr {
     Partial(PartialNode),
 }
 
+/// A range expression's two bounds and their inclusivity.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Range {
+    /// The lower bound, if written.
+    pub start: Option<Box<Spanned<Expr>>>,
+    /// The upper bound, if written.
+    pub end: Option<Box<Spanned<Expr>>>,
+    /// `>..` — the lower bound is excluded.
+    pub start_exclusive: bool,
+    /// `..=` — the upper bound is included.
+    pub end_inclusive: bool,
+}
+
 /// A closure value: `|$x: int| $x + 1` / `|$x| -> int { ... }`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Closure {
@@ -87,8 +108,9 @@ pub struct Closure {
 
 /// A literal value. Carries only what analysis consumes: the `Int` payload
 /// feeds `LIMIT`/array-length facts; the rest matter for their *kind*.
-/// Datetime/Uuid/Regex arise from prefixed strings (`d'…'`/`u'…'`/`r'…'`),
-/// normalized during lowering.
+/// Datetime/Uuid/Bytes/File arise from prefixed strings (`d'…'`/`u'…'`/
+/// `b'…'`/`f'…'`), normalized during lowering; `r'…'` is a record id and
+/// lowers to [`Expr::RecordId`], and a regex is only ever written `/…/`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Literal {
     /// An integer literal; its value feeds `LIMIT`/array-length facts.
@@ -113,6 +135,10 @@ pub enum Literal {
     Uuid(String),
     /// A regex literal's pattern text.
     Regex(String),
+    /// A bytes literal's inner text (`b'…'`).
+    Bytes(String),
+    /// A file literal's inner text (`f'bucket:/path'`).
+    File(String),
 }
 
 /// A dotted / graph path: `profile.email`, `->likes->post.{title, id}`,
@@ -166,6 +192,8 @@ pub enum IdiomPart {
     },
     /// Optional chaining marker: `foo?.bar`.
     Optional,
+    /// Flatten marker: `tags...` — one level of nested arrays is flattened.
+    Flatten,
     /// A path segment that failed to lower.
     Partial(PartialNode),
 }
@@ -203,6 +231,8 @@ pub struct GraphStep {
     /// The step names `?` — every edge, whatever it is (`->?`, `->(?)`).
     /// Legal SurrealQL with no single table behind it.
     pub wildcard: bool,
+    /// `->(likes AS liked)` — the key the step's result is stored under.
+    pub alias: Option<Spanned<String>>,
     /// Target-position syntax the grammar admits and this AST does not model:
     /// `->(post.{title})`, `->(post:one)`, `->(post->wrote)`. SurrealDB
     /// rejects all of these outright, so nothing here names a table — but
@@ -222,20 +252,29 @@ pub struct Call {
     pub args: Vec<Spanned<Expr>>,
 }
 
-/// Binary operators the analyzers understand, plus an explicit escape hatch
-/// for everything else — an unknown operator is a fact, not a guess.
+/// Binary operators, one variant per operator the engine has, plus an
+/// explicit escape hatch — an unknown operator is a fact, not a guess.
+///
+/// The unicode spellings fold onto their keyword (`∈` is `INSIDE`, `×` is
+/// `*`), and case is irrelevant (`contains` is `CONTAINS`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BinaryOp {
     /// `+`
     Add,
     /// `-`
     Sub,
-    /// `*`
+    /// `*` / `×`
     Mul,
-    /// `/`
+    /// `/` / `÷`
     Div,
-    /// `=` / `==`
+    /// `%` — remainder.
+    Rem,
+    /// `**` — exponentiation.
+    Pow,
+    /// `=` — equality.
     Eq,
+    /// `==` — exact (type-strict) equality.
+    Exact,
     /// `!=`
     NotEq,
     /// `<`
@@ -252,14 +291,78 @@ pub enum BinaryOp {
     Or,
     /// `??` — null coalescing.
     NullCoalesce,
+    /// `?:` — truthiness coalescing (the left if truthy, else the right).
+    TruthyCoalesce,
+    /// `IS` — equality, the keyword spelling.
+    Is,
+    /// `IS NOT` — inequality, the keyword spelling.
+    IsNot,
+    /// `IN` — the left is an element of the right collection.
+    In,
+    /// `NOT IN`
+    NotIn,
+    /// `CONTAINS` / `∋` — the left collection holds the right value.
+    Contains,
+    /// `CONTAINSNOT` / `∌`
+    ContainsNot,
+    /// `CONTAINSALL` / `⊇`
+    ContainsAll,
+    /// `CONTAINSANY` / `⊃`
+    ContainsAny,
+    /// `CONTAINSNONE` / `⊅`
+    ContainsNone,
+    /// `INSIDE` / `∈` — the same claim as `IN`.
+    Inside,
+    /// `NOTINSIDE` / `∉`
+    NotInside,
+    /// `ALLINSIDE` / `⊆`
+    AllInside,
+    /// `ANYINSIDE` / `⊂`
+    AnyInside,
+    /// `NONEINSIDE` / `⊄`
+    NoneInside,
+    /// `OUTSIDE` — geometry: the left lies entirely outside the right.
+    Outside,
+    /// `INTERSECTS` — geometry: the two shapes overlap.
+    Intersects,
+    /// `~` — fuzzy match.
+    Match,
+    /// `!~` — fuzzy mismatch.
+    NotMatch,
+    /// `*~` — every element fuzzy-matches.
+    AllMatch,
+    /// `?~` — some element fuzzy-matches.
+    AnyMatch,
+    /// `?=` — some element equals.
+    AnyEq,
+    /// `*=` — every element equals.
+    AllEq,
+    /// `@@` / `@n@` — full-text match, with the optional match reference
+    /// number used by `search::highlight`/`search::score`.
+    Matches(Option<i64>),
+    /// `<|k|>` / `<|k, ef|>` / `<|k, DISTANCE|>` — k-nearest-neighbour
+    /// vector search.
+    Knn(Knn),
     /// Any operator not modeled above, kept as raw text.
     Other(String),
+}
+
+/// The parameters of a `<|…|>` KNN operator.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Knn {
+    /// `k` — how many neighbours to return, when it is a literal.
+    pub k: Option<i64>,
+    /// The `ef` search-effort parameter of the HNSW form (`<|k, ef|>`).
+    pub ef: Option<i64>,
+    /// The distance metric of the brute-force form (`<|k, COSINE|>`),
+    /// uppercased.
+    pub distance: Option<String>,
 }
 
 /// Prefix operators, with an explicit escape hatch for the unmodeled.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PrefixOp {
-    /// `!` — logical negation.
+    /// `!` / `NOT` — logical negation.
     Not,
     /// `-` — arithmetic negation.
     Neg,

@@ -1,0 +1,32 @@
+# Grammar-conformance baseline — the corpus entries that do NOT parse cleanly.
+#
+# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-syntax --test conformance
+#
+# Format:  <corpus index>  # <first 60 characters of the query>
+#
+# Every line is either a grammar gap still to close or a junk extraction (a
+# bare `}`, a trailing `\`, a `.*` placeholder) that is not SurrealQL at all.
+# The set may only shrink: an entry listed here that starts parsing must be
+# removed (regenerate), and an entry not listed here must keep parsing.
+
+  85  # RETURN RETRUN FETCH RETURN
+ 130  # }
+ 131  # a:[
+ 133  # ]
+ 169  # DEFINE FUNCTION fn::greet() { RETURN 'Hello' } PERMISSIONS F
+ 177  # DEFINE ACCESS access ON NAMESPACE TYPE JWT ALGORITHM HS512 K
+ 180  # DEFINE ACCESS access ON DATABASE TYPE JWT ALGORITHM HS512 KE
+ 186  # DEFINE USER user ON NAMESPACE PASSHASH 'secret' ROLES VIEWER
+ 189  # DEFINE USER user ON DATABASE PASSHASH 'secret' ROLES VIEWER 
+ 192  # DEFINE PARAM $param VALUE 'foo' PERMISSIONS FULL\
+ 198  # DEFINE EVENT event ON `TB` WHEN true THEN RETURN 'foo'\
+ 203  # INFO FOR INDEX field1 ON aaa;\    count(SELECT * FROM aaa WH
+ 242  # REMOVE TABLE IF EXISTS node;\n
+ 243  # CREATE node:0;\n
+ 244  # SELECT * FROM
+ 283  # DEFINE USER user ON ROOT PASSHASH .* ROLES VIEWER
+ 285  # DEFINE USER user ON NAMESPACE PASSHASH .* ROLES VIEWER
+ 287  # DEFINE USER user ON DATABASE PASSHASH .* ROLES VIEWER
+ 291  # DEFINE USER user ON ROOT PASSHASH 'secret' ROLES VIEWER DURA
+ 292  # DEFINE USER user ON NAMESPACE PASSHASH 'secret' ROLES VIEWER
+ 293  # DEFINE USER user ON DATABASE PASSHASH 'secret' ROLES VIEWER 

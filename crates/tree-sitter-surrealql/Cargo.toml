@@ -1,9 +1,12 @@
 # Vendored SurrealQL tree-sitter grammar.
 #
 # The grammar sources (grammar.js, src/parser.c, src/scanner.c, src/*.json, and
-# the src/tree_sitter/*.h headers) are vendored verbatim from the merged official
-# grammar `surrealdb/surrealql-tree-sitter` (commit f40a0ede750081b8d49feb40516c28cc49f1cce4),
-# with SurrealGuard's thin Rust binding shim (bindings/rust/*) layered on top.
+# the src/tree_sitter/*.h headers) were vendored from the merged official
+# grammar `surrealdb/surrealql-tree-sitter` (commit f40a0ede750081b8d49feb40516c28cc49f1cce4)
+# and are maintained here: grammar.js carries SurrealGuard's conformance fixes
+# (see docs/grammar-conformance.md), and the generated files are regenerated
+# from it with `npx --yes tree-sitter-cli@0.25.10 generate --abi 14`.
+# SurrealGuard's thin Rust binding shim (bindings/rust/*) is layered on top.
 #
 # The crate is published under the non-squatting name `surrealguard-tree-sitter-surrealql`
 # because the crates.io name `tree-sitter-surrealql` is taken by an unrelated archived

@@ -6,96 +6,49 @@
 //!
 //! The corpus file is a JSON array of query strings. Output is one line
 //! per failing entry with the first ERROR/MISSING region, plus a summary —
-//! the working list for the grammar fork.
+//! the working list for the grammar fork. The committed corpus is also held
+//! against a baseline by `tests/conformance.rs`; this example is the report,
+//! that test is the gate, and both read `tests/support`.
+
+#[path = "../tests/support/mod.rs"]
+mod support;
 
 use std::fmt::Write as _;
+use std::path::Path;
 
 fn main() {
     let path = std::env::args()
         .nth(1)
         .expect("usage: conformance <corpus.json>");
-    let raw = std::fs::read_to_string(&path).expect("corpus file readable");
-    let corpus: Vec<String> = parse_json_strings(&raw);
+    let corpus = support::load_corpus(Path::new(&path));
 
-    let mut failures = 0usize;
+    let failures = support::failures(&corpus);
     let mut report = String::new();
-    for (index, query) in corpus.iter().enumerate() {
-        let source = surrealguard_syntax::source::SourceId::new(format!("corpus:{index}"));
-        let Ok(parsed) = surrealguard_syntax::parse::parse_source(source, query.as_str()) else {
-            failures += 1;
-            let _ = writeln!(report, "#{index}: parser returned no tree");
-            continue;
-        };
-        if let Some(range) = first_broken_range(parsed.tree().root_node()) {
-            failures += 1;
-            let snippet: String = query[range.clone()].chars().take(60).collect();
-            let context: String = query.chars().take(80).collect();
-            let _ = writeln!(
-                report,
-                "#{index}: ERROR at {range:?}: `{}`\n    in: {}",
-                snippet.replace('\n', " "),
-                context.replace('\n', " ")
-            );
+    for failure in &failures {
+        let query = &corpus[failure.index];
+        let context = support::preview(query, 80);
+        match &failure.range {
+            None => {
+                let _ = writeln!(report, "#{}: parser returned no tree", failure.index);
+            }
+            Some(range) => {
+                let snippet = support::preview(&query[range.clone()], 60);
+                let _ = writeln!(
+                    report,
+                    "#{}: ERROR at {range:?}: `{snippet}`\n    in: {context}",
+                    failure.index
+                );
+            }
         }
     }
 
     print!("{report}");
     println!(
-        "---\n{failures}/{} corpus entries fail to parse",
+        "---\n{}/{} corpus entries fail to parse",
+        failures.len(),
         corpus.len()
     );
-    if failures > 0 {
+    if !failures.is_empty() {
         std::process::exit(1);
     }
-}
-
-fn first_broken_range(node: tree_sitter::Node<'_>) -> Option<std::ops::Range<usize>> {
-    if node.is_error() || node.is_missing() {
-        return Some(node.byte_range());
-    }
-    if !node.has_error() {
-        return None;
-    }
-    let mut cursor = node.walk();
-    let children: Vec<_> = node.children(&mut cursor).collect();
-    for child in children {
-        if let Some(range) = first_broken_range(child) {
-            return Some(range);
-        }
-    }
-    Some(node.byte_range())
-}
-
-/// Just enough JSON to read an array of strings without a dependency.
-fn parse_json_strings(raw: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut chars = raw.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '"' {
-            continue;
-        }
-        let mut s = String::new();
-        while let Some(c) = chars.next() {
-            match c {
-                '"' => break,
-                '\\' => match chars.next() {
-                    Some('n') => s.push('\n'),
-                    Some('t') => s.push('\t'),
-                    Some('u') => {
-                        let hex: String = (0..4).filter_map(|_| chars.next()).collect();
-                        if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                            if let Some(ch) = char::from_u32(code) {
-                                s.push(ch);
-                            }
-                        }
-                    }
-                    Some(other) => s.push(other),
-                    None => break,
-                },
-                other => s.push(other),
-            }
-        }
-        out.push(s);
-    }
-    out
 }

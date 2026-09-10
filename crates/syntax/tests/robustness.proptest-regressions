@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3b5f609101692bdb6deeaff629aa8d3a04ca33aa14ca0c33e8e8bbea0867755b # shrinks to text = "`INSIDE` is an explicit alias of `IN`and `CONTAINS` is the same\n-- operator with the operands swapped. So all three must reach the same verdict,\n-- and the shape of the COLLECTION (a param, an array literal, a field, a\n-- subquery) must not change the answer either.\n--\n-- The claim also proves the member is not NONE — nothing is a member of a\n-- collection of `string` unless it is a `string`.\n\nLET $names = (SELECT VALUE name FROM organization);"

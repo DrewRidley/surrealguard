@@ -8,6 +8,8 @@
 //! silently dropped.
 
 mod expr;
+#[cfg(test)]
+mod grammar_tests;
 mod statement;
 
 pub use expr::{lower_expr, lower_type_expr};
@@ -68,8 +70,15 @@ pub(crate) fn node_range(node: Node<'_>) -> ByteRange {
     ByteRange::new(start, end).expect("tree-sitter nodes have ordered byte ranges")
 }
 
+/// Whether `node` is parser recovery rather than syntax: an `ERROR` node, or
+/// a token the parser inserted (see [`crate::parse::is_missing`] for why
+/// `Node::is_missing` alone misses the hidden-token case).
+pub(crate) fn is_broken(node: Node<'_>) -> bool {
+    node.is_error() || crate::parse::is_missing(node)
+}
+
 pub(crate) fn partial(node: Node<'_>) -> PartialNode {
-    let cst_kind = if node.is_missing() {
+    let cst_kind = if crate::parse::is_missing(node) {
         format!("MISSING {}", node.kind())
     } else {
         node.kind().to_string()

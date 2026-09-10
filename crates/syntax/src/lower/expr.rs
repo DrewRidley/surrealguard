@@ -3,10 +3,15 @@
 //! CST shapes this encodes (verified against the grammar, see
 //! `examples/dump_cst.rs` for the inspection tool):
 //!
-//! - `Number` wraps an `Int`/`Float`/`Decimal` child; a leading minus is part
-//!   of the `Number` text, not a prefix expression.
-//! - `String` has no children; `d'…'`/`u'…'`/`r'…'` prefixes select
-//!   datetime/uuid/regex literals, normalized here.
+//! - `Number` wraps an `Int`/`Float`/`Decimal` child; a sign directly on a
+//!   literal is part of the `Number` text (`-5`), while a sign on anything
+//!   else is a `PrefixExpression` (`-$x`). Suffixes (`1.5f`, `1dec`) and `_`
+//!   separators are part of the token text.
+//! - `String` has no children; `d'…'`/`u'…'`/`r'…'`/`b'…'`/`f'…'` prefixes
+//!   select datetime/uuid/regex/bytes/file literals, normalized here.
+//! - `Constant` wraps a `FunctionName` with no argument list (`math::pi`).
+//! - `Range` is `[start?, RangeOp, end?]`; `RangeRecordId` wraps a
+//!   `RecordId` in pipes (`|t:1..10|`).
 //! - `None` covers both `NONE` and `null`, distinguished by text.
 //! - `Path` is `[start, subscript/lookup/filter...]` where `start` is an
 //!   `Ident` (row field) or a value node like `VariableName` (`$user.name`).
@@ -21,11 +26,12 @@
 
 use tree_sitter::Node;
 
-use super::{node_range, partial};
+use super::{is_broken, node_range, partial};
 use crate::ast::{
-    BinaryOp, Block, Call, Closure, Expr, GraphDir, GraphStep, Idiom, IdiomPart, Literal, PrefixOp,
-    Spanned, TypeExpr,
+    BinaryOp, Block, Call, Closure, Expr, GraphDir, GraphStep, Idiom, IdiomPart, Knn, Literal,
+    PrefixOp, Range, Spanned, TypeExpr,
 };
+use crate::span::ByteRange;
 
 /// Lowers an expression-position CST node.
 pub fn lower_expr(node: Node<'_>, text: &str) -> Spanned<Expr> {
@@ -71,7 +77,7 @@ impl Lowerer<'_> {
     }
 
     fn expr(&self, node: Node<'_>) -> Spanned<Expr> {
-        if node.is_error() || node.is_missing() {
+        if is_broken(node) {
             return self.spanned(node, Expr::Partial(partial(node)));
         }
 
@@ -99,6 +105,24 @@ impl Lowerer<'_> {
             )),
             "VariableName" => Expr::Param(self.param_name(node)),
             "RecordId" => self.record_id(node),
+            // `|t:10|` / `|t:1..10|` — a record range in pipes denotes many
+            // records of the table, so it lowers to the record id it wraps
+            // with the range flag forced on.
+            "RangeRecordId" => match first_child_of_kind(node, "RecordId") {
+                Some(inner) => match self.record_id(inner) {
+                    Expr::RecordId { table, id, .. } => Expr::RecordId {
+                        table,
+                        id,
+                        range: true,
+                    },
+                    other => other,
+                },
+                None => Expr::Partial(partial(node)),
+            },
+            "Constant" => {
+                Expr::Constant(self.spanned(node, self.node_text(node).trim().to_ascii_lowercase()))
+            }
+            "Range" => self.range(node),
             "Array" => Expr::Array(
                 named_children(node)
                     .into_iter()
@@ -133,16 +157,61 @@ impl Lowerer<'_> {
 
     fn number_literal(&self, node: Node<'_>) -> Expr {
         // The Int/Float/Decimal child classifies; the Number node's own text
-        // carries the sign.
-        let text = self.node_text(node);
+        // carries the sign. The kind suffix (`1.5f`, `1dec`) and `_`
+        // separators are part of the token and must go before parsing — a
+        // parse failure is not a zero.
+        let text: String = self
+            .node_text(node)
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '_')
+            .collect();
         let literal = match named_children(node).first().map(tree_sitter::Node::kind) {
-            Some("Float") => text
-                .parse::<f64>()
-                .map_or(Literal::Float(0.0), Literal::Float),
+            Some("Float") => {
+                let digits = text.strip_suffix(['f', 'F']).unwrap_or(&text);
+                match digits.parse::<f64>() {
+                    Ok(value) => Literal::Float(value),
+                    Err(_) => return Expr::Partial(partial(node)),
+                }
+            }
             Some("Decimal") => Literal::Decimal,
-            _ => text.parse::<i64>().map_or(Literal::Int(0), Literal::Int),
+            _ => match text.parse::<i64>() {
+                Ok(value) => Literal::Int(value),
+                // An integer literal past `i64` is a real value the engine
+                // accepts (it widens); it just has no payload we can keep.
+                Err(_)
+                    if text
+                        .trim_start_matches(['-', '+'])
+                        .bytes()
+                        .all(|b| b.is_ascii_digit()) =>
+                {
+                    Literal::Decimal
+                }
+                Err(_) => return Expr::Partial(partial(node)),
+            },
         };
         Expr::Literal(literal)
+    }
+
+    /// `a..b` / `..=b` / `a>..` — either bound may be missing; the `RangeOp`
+    /// token spells the inclusivity.
+    fn range(&self, node: Node<'_>) -> Expr {
+        let children = named_children(node);
+        let Some(op_index) = children.iter().position(|c| c.kind() == "RangeOp") else {
+            return Expr::Partial(partial(node));
+        };
+        let op_text = self.node_text(children[op_index]);
+        let start = children[..op_index]
+            .last()
+            .map(|child| Box::new(self.expr(*child)));
+        let end = children
+            .get(op_index + 1)
+            .map(|child| Box::new(self.expr(*child)));
+        Expr::Range(Range {
+            start,
+            end,
+            start_exclusive: op_text.starts_with('>'),
+            end_inclusive: op_text.ends_with('='),
+        })
     }
 
     fn string_literal(&self, node: Node<'_>) -> Expr {
@@ -153,15 +222,54 @@ impl Lowerer<'_> {
         let literal = match bytes.first().map(u8::to_ascii_lowercase) {
             Some(b'd') if prefixed => Literal::Datetime(inner()),
             Some(b'u') if prefixed => Literal::Uuid(inner()),
-            Some(b'r') if prefixed => Literal::Regex(inner()),
-            _ => {
-                let content = text
-                    .trim_start_matches(['d', 'u', 'r'])
-                    .trim_matches(['\'', '"']);
-                Literal::String(content.to_string())
-            }
+            // `r'table:id'` is a record id, not a regex — regex literals are
+            // written `/…/`.
+            Some(b'r') if prefixed => return self.record_id_string(node),
+            Some(b'b') if prefixed => Literal::Bytes(inner()),
+            Some(b'f') if prefixed => Literal::File(inner()),
+            // `s'…'` is an explicitly plain string.
+            Some(b's') if prefixed => Literal::String(inner()),
+            _ => Literal::String(text.trim_matches(['\'', '"']).to_string()),
         };
         Expr::Literal(literal)
+    }
+
+    /// `r'account:ada'` — a record id written as a prefixed string. The
+    /// engine parses the inner text as a record id (`type::of(r'a:b')` is
+    /// `record` and `r'a:1' = a:1` holds on 3.2.3) and rejects anything
+    /// without the `table:id` shape (`r'notarecord'`, `r'a:'`, `r':b'` are
+    /// parse errors), so the same shape lowers to [`Expr::RecordId`] with
+    /// both halves spanned inside the quotes, and anything else stays an
+    /// explicit `Partial` rather than a mistyped string.
+    fn record_id_string(&self, node: Node<'_>) -> Expr {
+        let text = self.node_text(node);
+        let range = node_range(node);
+        // Past the prefix letter and the opening quote, up to the closing one.
+        let inner = text.get(2..).unwrap_or("");
+        let inner = inner.strip_suffix(['\'', '"']).unwrap_or(inner);
+        let Some(colon) = inner.find(':') else {
+            return Expr::Partial(partial(node));
+        };
+        let (table, id) = (&inner[..colon], &inner[colon + 1..]);
+        if table.is_empty() || id.is_empty() {
+            return Expr::Partial(partial(node));
+        }
+        let inner_start = range.start() + 2;
+        let (Ok(colon_at), Ok(inner_len)) = (u32::try_from(colon), u32::try_from(inner.len()))
+        else {
+            return Expr::Partial(partial(node));
+        };
+        let (Ok(table_range), Ok(id_range)) = (
+            ByteRange::new(inner_start, inner_start + colon_at),
+            ByteRange::new(inner_start + colon_at + 1, inner_start + inner_len),
+        ) else {
+            return Expr::Partial(partial(node));
+        };
+        Expr::RecordId {
+            table: Spanned::new(table.to_string(), table_range),
+            id: id_range,
+            range: false,
+        }
     }
 
     fn record_id(&self, node: Node<'_>) -> Expr {
@@ -229,9 +337,43 @@ impl Lowerer<'_> {
 
         Expr::Binary {
             lhs: Box::new(self.expr(lhs)),
-            op: self.spanned(op_node, binary_op(self.node_text(op_node))),
+            op: self.spanned(op_node, self.binary_op(op_node)),
             rhs: Box::new(self.expr(rhs)),
         }
+    }
+
+    /// The operator an `Operator` node spells. Keyword operators may be
+    /// written in any case; `IS NOT` / `NOT IN` are two tokens with
+    /// arbitrary whitespace between them; `@n@` and `<|k, …|>` carry their
+    /// parameters as child nodes.
+    fn binary_op(&self, node: Node<'_>) -> BinaryOp {
+        let text = self.node_text(node);
+        let words: Vec<String> = text
+            .split_whitespace()
+            .map(str::to_ascii_uppercase)
+            .collect();
+        let joined = words.join(" ");
+        if let Some(op) = simple_binary_op(&joined) {
+            return op;
+        }
+        if text.starts_with('@') {
+            let reference = first_child_of_kind(node, "Number")
+                .and_then(|number| self.node_text(number).trim().parse::<i64>().ok());
+            return BinaryOp::Matches(reference);
+        }
+        if text.starts_with("<|") {
+            let mut knn = Knn::default();
+            let mut numbers = named_children(node)
+                .into_iter()
+                .filter(|child| child.kind() == "Number")
+                .filter_map(|number| self.node_text(number).trim().parse::<i64>().ok());
+            knn.k = numbers.next();
+            knn.ef = numbers.next();
+            knn.distance = first_child_of_kind(node, "Distance")
+                .map(|distance| self.node_text(distance).trim().to_ascii_uppercase());
+            return BinaryOp::Knn(knn);
+        }
+        BinaryOp::Other(text.to_string())
     }
 
     fn prefix(&self, node: Node<'_>) -> Expr {
@@ -265,14 +407,15 @@ impl Lowerer<'_> {
         Call { path, args }
     }
 
+    /// `<T> value` — the target is any type expression the grammar admits
+    /// (`<set<int>>`, `<option<int>>`, `<record<t>>`, `<int | string>`,
+    /// `<geometry<point>>`), lowered by the same [`Self::type_expr`] a
+    /// `DEFINE FIELD … TYPE` clause uses; the operand is whatever value
+    /// follows it.
     fn cast(&self, node: Node<'_>) -> Expr {
         let children = named_children(node);
-        let ty = children
-            .iter()
-            .find(|c| matches!(c.kind(), "TypeName" | "Type"));
-        let value = children
-            .iter()
-            .find(|c| !matches!(c.kind(), "TypeName" | "Type"));
+        let ty = children.iter().find(|c| is_type_node(c.kind()));
+        let value = children.iter().find(|c| !is_type_node(c.kind()));
         let (Some(&ty), Some(&value)) = (ty, value) else {
             return Expr::Partial(partial(node));
         };
@@ -298,7 +441,14 @@ impl Lowerer<'_> {
                     return self.spanned(node, TypeExpr::Partial(partial(node)));
                 };
                 let name = self.spanned(*name_node, self.node_text(*name_node).to_string());
-                let args: Vec<_> = args.iter().map(|arg| self.type_expr(*arg)).collect();
+                // `array<T, 3>` / `set<T, 3>` — the trailing `Number` is a
+                // length bound, not a type argument; the element type is the
+                // structure analysis reads.
+                let args: Vec<_> = args
+                    .iter()
+                    .filter(|arg| arg.kind() != "Number")
+                    .map(|arg| self.type_expr(*arg))
+                    .collect();
                 // `option<T>` is sugar for an optional type.
                 if name.node.eq_ignore_ascii_case("option") && args.len() == 1 {
                     TypeExpr::Optional(Box::new(
@@ -455,7 +605,7 @@ impl Lowerer<'_> {
         let mut parts: Vec<Spanned<IdiomPart>> = Vec::new();
 
         for child in named_children(node) {
-            if child.is_error() || child.is_missing() {
+            if is_broken(child) {
                 parts.push(self.spanned(child, IdiomPart::Partial(partial(child))));
                 continue;
             }
@@ -468,6 +618,8 @@ impl Lowerer<'_> {
                         self.spanned(child, IdiomPart::Field(self.node_text(child).to_string())),
                     );
                 }
+                "Optional" => parts.push(self.spanned(child, IdiomPart::Optional)),
+                "Flatten" => parts.push(self.spanned(child, IdiomPart::Flatten)),
                 "Subscript" => self.subscript_parts(child, &mut parts),
                 // One `Lookup` can lower to more than one part: a `SELECT …
                 // FROM` inside it reshapes what the step reached, and that is
@@ -507,7 +659,7 @@ impl Lowerer<'_> {
                 }
                 "IdiomFunction" => self.method_part(child),
                 "Any" => IdiomPart::All,
-                _ if child.is_error() || child.is_missing() => IdiomPart::Partial(partial(child)),
+                "Optional" => IdiomPart::Optional,
                 _ => IdiomPart::Partial(partial(child)),
             };
             parts.push(self.spanned(child, part));
@@ -562,6 +714,7 @@ impl Lowerer<'_> {
             start: None,
             reference: false,
             wildcard: false,
+            alias: None,
             unmodeled: Vec::new(),
         };
         let mut selection = None;
@@ -672,8 +825,20 @@ impl Lowerer<'_> {
         step: &mut GraphStep,
     ) -> Option<Node<'tree>> {
         let mut selection = None;
+        // The keyword that owns the next bare identifier: `AS alias` names
+        // the step's result key, `FIELD f` restricts a reference traversal to
+        // one referencing field.
+        let mut ident_owner: Option<String> = None;
         for child in named_children(node) {
             match child.kind() {
+                "Keyword" => {
+                    ident_owner = Some(self.node_text(child).to_ascii_uppercase());
+                }
+                "Ident" if ident_owner.as_deref() == Some("AS") => {
+                    step.alias = Some(self.spanned(child, self.node_text(child).to_string()));
+                    ident_owner = None;
+                }
+                "Ident" => {}
                 "GraphPredicate" => {
                     // The grammar admits any value in target position; what
                     // SurrealDB accepts is a table name, `?`, or a record
@@ -763,13 +928,18 @@ fn clause_value<'tree>(clause: Node<'tree>) -> Option<Node<'tree>> {
         .rfind(|child| child.kind() != "Keyword")
 }
 
-fn binary_op(text: &str) -> BinaryOp {
-    match text.to_ascii_uppercase().as_str() {
+/// The parameterless operators, keyed by their whitespace-normalized,
+/// uppercased spelling.
+fn simple_binary_op(text: &str) -> Option<BinaryOp> {
+    Some(match text {
         "+" => BinaryOp::Add,
         "-" => BinaryOp::Sub,
-        "*" => BinaryOp::Mul,
-        "/" => BinaryOp::Div,
-        "=" | "==" => BinaryOp::Eq,
+        "*" | "×" => BinaryOp::Mul,
+        "/" | "÷" => BinaryOp::Div,
+        "%" => BinaryOp::Rem,
+        "**" => BinaryOp::Pow,
+        "=" => BinaryOp::Eq,
+        "==" => BinaryOp::Exact,
         "!=" => BinaryOp::NotEq,
         "<" => BinaryOp::Lt,
         "<=" => BinaryOp::LtEq,
@@ -778,13 +948,37 @@ fn binary_op(text: &str) -> BinaryOp {
         "AND" | "&&" => BinaryOp::And,
         "OR" | "||" => BinaryOp::Or,
         "??" => BinaryOp::NullCoalesce,
-        _ => BinaryOp::Other(text.to_string()),
-    }
+        "?:" => BinaryOp::TruthyCoalesce,
+        "IS" => BinaryOp::Is,
+        "IS NOT" => BinaryOp::IsNot,
+        "IN" => BinaryOp::In,
+        "NOT IN" => BinaryOp::NotIn,
+        "CONTAINS" | "∋" => BinaryOp::Contains,
+        "CONTAINSNOT" | "∌" => BinaryOp::ContainsNot,
+        "CONTAINSALL" | "⊇" => BinaryOp::ContainsAll,
+        "CONTAINSANY" | "⊃" => BinaryOp::ContainsAny,
+        "CONTAINSNONE" | "⊅" => BinaryOp::ContainsNone,
+        "INSIDE" | "∈" => BinaryOp::Inside,
+        "NOTINSIDE" | "∉" => BinaryOp::NotInside,
+        "ALLINSIDE" | "⊆" => BinaryOp::AllInside,
+        "ANYINSIDE" | "⊂" => BinaryOp::AnyInside,
+        "NONEINSIDE" | "⊄" => BinaryOp::NoneInside,
+        "OUTSIDE" => BinaryOp::Outside,
+        "INTERSECTS" => BinaryOp::Intersects,
+        "~" => BinaryOp::Match,
+        "!~" => BinaryOp::NotMatch,
+        "*~" => BinaryOp::AllMatch,
+        "?~" => BinaryOp::AnyMatch,
+        "?=" => BinaryOp::AnyEq,
+        "*=" => BinaryOp::AllEq,
+        "@@" => BinaryOp::Matches(None),
+        _ => return None,
+    })
 }
 
 fn prefix_op(text: &str) -> PrefixOp {
-    match text {
-        "!" => PrefixOp::Not,
+    match text.to_ascii_uppercase().as_str() {
+        "!" | "NOT" => PrefixOp::Not,
         "-" => PrefixOp::Neg,
         "+" => PrefixOp::Pos,
         _ => PrefixOp::Other(text.to_string()),
@@ -793,8 +987,37 @@ fn prefix_op(text: &str) -> PrefixOp {
 
 /// `type::is::record` → `type::is_record` (matches the function analyzers'
 /// canonical paths).
+///
+/// Builtin names are case-insensitive on the engine (`STRING::LEN('a')`,
+/// `Count()` and `NOT(true)` all resolve on 3.2.3), so they fold to lowercase
+/// — which is also what makes `NOT (x)`, lexed as a call to a function named
+/// `NOT`, reach the `not` builtin. A user function keeps its case: `fn::Foo`
+/// and `fn::foo` are different functions there.
 fn normalize_function_path(path: &str) -> String {
-    path.trim().replace("::is::", "::is_")
+    let path = path.trim();
+    let is_custom = path
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("fn::"));
+    if is_custom {
+        path.to_string()
+    } else {
+        path.to_ascii_lowercase().replace("::is::", "::is_")
+    }
+}
+
+/// The CST kinds a type expression can take — the target of a cast, as
+/// opposed to the value being cast.
+fn is_type_node(kind: &str) -> bool {
+    matches!(
+        kind,
+        "TypeName"
+            | "Type"
+            | "ParameterizedType"
+            | "UnionType"
+            | "LiteralType"
+            | "ObjectType"
+            | "ArrayType"
+    )
 }
 
 /// The named children of `node`, minus comments.
@@ -931,7 +1154,7 @@ mod tests {
     #[test]
     fn lowers_every_literal_kind_with_prefix_normalization() {
         let parsed = parse(
-            "RETURN [1, -2, 2.5, 1dec, 'hi', \"there\", d'2024-01-01T00:00:00Z', u'0189-aa', r'ab+', true, false, NONE, null, 1h];",
+            "RETURN [1, -2, 2.5, 1dec, 'hi', \"there\", d'2024-01-01T00:00:00Z', u'0189-aa', /ab+/, true, false, NONE, null, 1h];",
         );
 
         let array = lower_first(&parsed, "Array");

@@ -18,7 +18,7 @@
 use tree_sitter::Node;
 
 use super::expr::{lower_expr, lower_idiom_node};
-use super::{node_range, partial};
+use super::{is_broken, node_range, partial};
 use crate::ast::{
     AlterStmt, AssignOp, Assignment, BeginStmt, BreakStmt, CancelStmt, CommitStmt, ContinueStmt,
     CreateStmt, DataClause, DefineAnalyzer, DefineEvent, DefineField, DefineFunction, DefineIndex,
@@ -157,9 +157,7 @@ pub(crate) fn lower_statement(node: Node<'_>, text: &str) -> Spanned<Statement> 
             id: statement_value_expr(node, text),
         }),
         "UseStatement" => Statement::Use(lower_use(node, text)),
-        "LiveSelectStatement" => Statement::LiveSelect(LiveSelectStmt {
-            table: table_after_keyword(node, text, "from"),
-        }),
+        "LiveSelectStatement" => Statement::LiveSelect(lower_live_select(node, text)),
         "InfoForStatement" => Statement::Info(InfoStmt {
             // `INFO FOR TABLE x` and its `TB` short form.
             table: table_after_keyword(node, text, "table")
@@ -171,14 +169,13 @@ pub(crate) fn lower_statement(node: Node<'_>, text: &str) -> Spanned<Statement> 
         // A bare expression in statement position (e.g. a block's trailing
         // value).
         "Number" | "String" | "Bool" | "None" | "Duration" | "Regex" | "VariableName"
-        | "RecordId" | "Array" | "Object" | "BinaryExpression" | "PrefixExpression"
-        | "FunctionCall" | "TypeCast" | "SubQuery" | "Path" | "Idiom" | "Ident" => {
+        | "RecordId" | "RangeRecordId" | "Array" | "Object" | "BinaryExpression"
+        | "PrefixExpression" | "FunctionCall" | "Constant" | "Range" | "TypeCast" | "SubQuery"
+        | "Path" | "Idiom" | "Ident" | "Closure" | "FormatString" | "Set" | "Point" => {
             Statement::Expr(lower_expr(node, text))
         }
         "RemoveStatement" => Statement::Remove(lower_remove(node, text)),
-        "AlterStatement" => Statement::Alter(AlterStmt {
-            table: table_after_keyword(node, text, "table"),
-        }),
+        "AlterStatement" => Statement::Alter(lower_alter(node, text)),
         _ => Statement::Partial(partial(node)),
     };
     Spanned::new(statement, node_range(node))
@@ -233,7 +230,7 @@ fn lower_select(node: Node<'_>, text: &str) -> SelectStmt {
         if !child.is_named() {
             continue;
         }
-        if child.is_error() || child.is_missing() {
+        if is_broken(child) {
             continue;
         }
         match child.kind() {
@@ -243,6 +240,10 @@ fn lower_select(node: Node<'_>, text: &str) -> SelectStmt {
                     saw_from = true;
                 } else if saw_from && keyword.eq_ignore_ascii_case("only") {
                     stmt.only = true;
+                } else if keyword.eq_ignore_ascii_case("explain") {
+                    // The prefix spelling, `EXPLAIN SELECT …`; the trailing
+                    // clause arrives as an `ExplainClause` node below.
+                    stmt.explain = Some(node_range(child));
                 }
             }
             // The first Fields node is the projection list; a later one
@@ -366,10 +367,23 @@ fn lower_source(node: Node<'_>, text: &str) -> Spanned<Expr> {
     }
 }
 
+/// Whether a direct child of a statement in source/target position names
+/// what the statement runs over. `FROM [a:1, a:2]` (and `UPDATE [a:1, a:2]`,
+/// `RELATE [a:1, a:2]->…`) iterate an array of records, so an `Array` is a
+/// source too; a statement's own clauses (`SET`, `CONTENT`, `PATCH [...]`)
+/// wrap their values in clause nodes and never reach this predicate.
 fn is_source_node(node: Node<'_>) -> bool {
     matches!(
         node.kind(),
-        "Ident" | "RecordId" | "VariableName" | "SubQuery" | "Path" | "Thing" | "Identifier"
+        "Ident"
+            | "RecordId"
+            | "RangeRecordId"
+            | "VariableName"
+            | "SubQuery"
+            | "Path"
+            | "Array"
+            | "Thing"
+            | "Identifier"
     )
 }
 
@@ -496,7 +510,7 @@ fn mutation_parts(node: Node<'_>, text: &str) -> MutationParts {
         if !child.is_named() {
             continue;
         }
-        if child.is_error() || child.is_missing() {
+        if is_broken(child) {
             continue;
         }
         match child.kind() {
@@ -578,20 +592,20 @@ fn lower_insert(node: Node<'_>, text: &str) -> InsertStmt {
         relation: false,
         target: None,
         data: InsertData::Values(Vec::new()),
+        on_duplicate_update: Vec::new(),
         ret: None,
     };
     let mut saw_into = false;
     let mut saw_values = false;
     let mut columns: Vec<Spanned<Idiom>> = Vec::new();
     let mut values: Vec<Spanned<Expr>> = Vec::new();
-    let mut assignments: Vec<(Spanned<Idiom>, Spanned<Expr>)> = Vec::new();
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if !child.is_named() {
             continue;
         }
-        if child.is_error() || child.is_missing() {
+        if is_broken(child) {
             continue;
         }
         match child.kind() {
@@ -608,9 +622,12 @@ fn lower_insert(node: Node<'_>, text: &str) -> InsertStmt {
                 }
             }
             "ReturnClause" => stmt.ret = Some(lower_return_mode(child, text)),
+            // `ON DUPLICATE KEY UPDATE a = 1, b += 2` — the grammar hands the
+            // assignments to the statement directly; they amend the row
+            // payload rather than replacing it.
             "FieldAssignment" => {
                 if let Some(assignment) = lower_assignment(child, text) {
-                    assignments.push((assignment.target, assignment.value));
+                    stmt.on_duplicate_update.push(assignment);
                 }
             }
             // The target is the first source after INTO; later bare idents
@@ -624,6 +641,9 @@ fn lower_insert(node: Node<'_>, text: &str) -> InsertStmt {
             _ if saw_into && stmt.target.is_none() && is_source_node(child) => {
                 stmt.target = Some(lower_source(child, text));
             }
+            // `INSERT INTO t (SELECT …)` — a subquery payload; grouping
+            // parentheses around a value lower to that value.
+            "SubQuery" if !saw_values => values.push(lower_expr(child, text)),
             _ if saw_values => values.push(lower_expr(child, text)),
             // `INSERT INTO t [{…}, {…}]` — the grammar gives the bracketed
             // payload its own `BulkInsert` node (`'[' csep(Object) ']'`)
@@ -645,9 +665,7 @@ fn lower_insert(node: Node<'_>, text: &str) -> InsertStmt {
         }
     }
 
-    stmt.data = if !assignments.is_empty() {
-        InsertData::Assignments(assignments)
-    } else if saw_values && !columns.is_empty() {
+    stmt.data = if saw_values && !columns.is_empty() {
         // The grammar flattens `(a, b) VALUES (1, 2), (3, 4)` — rows are
         // rebuilt by chunking on the column count, pairing each value with
         // its column so misalignment is impossible. A total that doesn't
@@ -684,7 +702,7 @@ fn lower_relate(node: Node<'_>, text: &str) -> RelateStmt {
         if !child.is_named() {
             continue;
         }
-        if child.is_error() || child.is_missing() {
+        if is_broken(child) {
             continue;
         }
         match child.kind() {
@@ -823,7 +841,7 @@ fn lower_let(node: Node<'_>, text: &str) -> LetStmt {
                     ));
                 }
             }
-            _ if child.is_error() || child.is_missing() => {}
+            _ if is_broken(child) => {}
             _ if value.is_none() => value = Some(lower_expr(child, text)),
             _ => {}
         }
@@ -869,7 +887,7 @@ fn lower_if_else(node: Node<'_>, text: &str) -> IfElseStmt {
                                 None => stmt.else_branch = Some(body),
                             }
                         }
-                        _ if arm.is_error() || arm.is_missing() => {}
+                        _ if is_broken(arm) => {}
                         _ => pending_condition = Some(lower_expr(arm, text)),
                     }
                 }
@@ -908,7 +926,7 @@ fn lower_legacy_if(node: Node<'_>, text: &str, stmt: &mut IfElseStmt) {
             }
             continue;
         }
-        if child.is_error() || child.is_missing() {
+        if is_broken(child) {
             continue;
         }
         match slot {
@@ -976,7 +994,7 @@ fn lower_for(node: Node<'_>, text: &str) -> ForStmt {
                 ));
             }
             "Block" => body = Some(super::expr::lower_block_node(child, text)),
-            _ if child.is_error() || child.is_missing() => {}
+            _ if is_broken(child) => {}
             _ if iterable.is_none() => iterable = Some(lower_expr(child, text)),
             _ => {}
         }
@@ -988,6 +1006,50 @@ fn lower_for(node: Node<'_>, text: &str) -> ForStmt {
         iterable: iterable.unwrap_or_else(|| Spanned::new(Expr::Partial(partial(node)), span)),
         body: body.unwrap_or_default(),
     }
+}
+
+/// `LIVE SELECT [DIFF | VALUE e | fields] FROM sources [WHERE …] [FETCH …]`.
+/// The grammar lists the projections as bare `Predicate` children (no
+/// `Fields` wrapper) and `DIFF` as a `Literal`.
+fn lower_live_select(node: Node<'_>, text: &str) -> LiveSelectStmt {
+    let mut stmt = LiveSelectStmt {
+        diff: false,
+        value: false,
+        projections: Vec::new(),
+        from: Vec::new(),
+        where_clause: None,
+        fetch: Vec::new(),
+    };
+    let mut saw_from = false;
+
+    for child in named_children(node) {
+        if is_broken(child) {
+            continue;
+        }
+        match child.kind() {
+            "Keyword" => {
+                let keyword = &text[child.byte_range()];
+                if keyword.eq_ignore_ascii_case("from") {
+                    saw_from = true;
+                } else if keyword.eq_ignore_ascii_case("value") {
+                    stmt.value = true;
+                }
+            }
+            "Literal" if text[child.byte_range()].eq_ignore_ascii_case("diff") => {
+                stmt.diff = true;
+            }
+            "Any" if !saw_from => stmt
+                .projections
+                .push(Projection::Wildcard(node_range(child))),
+            "Predicate" if !saw_from => stmt.projections.push(lower_projection(child, text)),
+            "WhereClause" => stmt.where_clause = clause_expr(child, text),
+            "FetchClause" => stmt.fetch = clause_idioms(child, text),
+            _ if saw_from && is_source_node(child) => stmt.from.push(lower_source(child, text)),
+            _ => {}
+        }
+    }
+
+    stmt
 }
 
 fn lower_use(node: Node<'_>, text: &str) -> UseStmt {
@@ -1055,7 +1117,7 @@ fn lower_rebuild(node: Node<'_>, text: &str) -> RebuildStmt {
 fn statement_value_expr(node: Node<'_>, text: &str) -> Option<Spanned<Expr>> {
     named_children(node)
         .into_iter()
-        .find(|child| child.kind() != "Keyword" && !child.is_error() && !child.is_missing())
+        .find(|child| child.kind() != "Keyword" && !is_broken(*child))
         .map(|value| lower_expr(value, text))
 }
 
@@ -1114,7 +1176,7 @@ fn lower_define(node: Node<'_>, text: &str) -> DefineStmt {
 
     match kind.as_str() {
         "table" => DefineStmt::Table(lower_define_table(node, text)),
-        "field" => DefineStmt::Field(lower_define_field(node, text)),
+        "field" => DefineStmt::Field(Box::new(lower_define_field(node, text))),
         "index" => DefineStmt::Index(lower_define_index(node, text)),
         "event" => DefineStmt::Event(lower_define_event(node, text)),
         "param" => DefineStmt::Param(lower_define_param(node, text)),
@@ -1132,6 +1194,7 @@ fn lower_define_table(node: Node<'_>, text: &str) -> DefineTable {
     let mut def = DefineTable {
         name: Spanned::new(String::new(), node_range(node)),
         overwrite: false,
+        if_not_exists: false,
         schemafull: false,
         relation: None,
         drop: false,
@@ -1152,6 +1215,7 @@ fn lower_define_table(node: Node<'_>, text: &str) -> DefineTable {
                 }
             }
             "OverwriteClause" => def.overwrite = true,
+            "IfNotExistsClause" => def.if_not_exists = true,
             "ChangefeedClause" => def.changefeed = true,
             "Ident" if !named => {
                 def.name = spanned_text(child, text);
@@ -1161,10 +1225,10 @@ fn lower_define_table(node: Node<'_>, text: &str) -> DefineTable {
             "PermissionsBasicClause" | "PermissionsForClause" => {
                 lower_permission_predicates(child, text, &mut def.permissions);
             }
-            "CommentClause" | "TableViewClause" | "IfNotExistsClause" => {
+            "CommentClause" | "TableViewClause" | "RatelimitClause" => {
                 // Recognized but not modeled for type inference.
             }
-            _ if child.is_error() || child.is_missing() => {}
+            _ if is_broken(child) => {}
             _ => {}
         }
     }
@@ -1225,6 +1289,7 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
         table: Spanned::new(String::new(), span),
         ty: None,
         overwrite: false,
+        if_not_exists: false,
         default: None,
         value: None,
         computed: None,
@@ -1240,6 +1305,8 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
                 def.overwrite = true;
             }
             "Keyword" => {}
+            "OverwriteClause" => def.overwrite = true,
+            "IfNotExistsClause" => def.if_not_exists = true,
             "Idiom" => {
                 def.path = Spanned::new(
                     super::expr::lower_idiom_node(child, text),
@@ -1278,7 +1345,7 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
             }
             "ReferenceClause" => def.reference = true,
             "CommentClause" => {}
-            _ if child.is_error() || child.is_missing() => {}
+            _ if is_broken(child) => {}
             _ => {}
         }
     }
@@ -1290,6 +1357,8 @@ fn lower_define_index(node: Node<'_>, text: &str) -> DefineIndex {
     let span = node_range(node);
     let mut def = DefineIndex {
         name: Spanned::new(String::new(), span),
+        overwrite: false,
+        if_not_exists: false,
         table: Spanned::new(String::new(), span),
         fields: Vec::new(),
         kind: IndexKind::Normal,
@@ -1299,6 +1368,8 @@ fn lower_define_index(node: Node<'_>, text: &str) -> DefineIndex {
     for child in named_children(node) {
         match child.kind() {
             "Keyword" => {}
+            "OverwriteClause" => def.overwrite = true,
+            "IfNotExistsClause" => def.if_not_exists = true,
             "Ident" if !named => {
                 def.name = spanned_text(child, text);
                 named = true;
@@ -1326,7 +1397,7 @@ fn index_kind_from_clause(clause: Node<'_>) -> IndexKind {
     for child in named_children(clause) {
         match child.kind() {
             "SearchAnalyzerClause" | "FulltextClause" => return IndexKind::Search,
-            "MtreeClause" | "HnswClause" => return IndexKind::Vector,
+            "MtreeClause" | "HnswClause" | "DiskannClause" => return IndexKind::Vector,
             "UniqueClause" => return IndexKind::Unique,
             _ => {}
         }
@@ -1338,6 +1409,8 @@ fn lower_define_event(node: Node<'_>, text: &str) -> DefineEvent {
     let span = node_range(node);
     let mut def = DefineEvent {
         name: Spanned::new(String::new(), span),
+        overwrite: false,
+        if_not_exists: false,
         table: Spanned::new(String::new(), span),
         when: None,
         then: None,
@@ -1347,6 +1420,8 @@ fn lower_define_event(node: Node<'_>, text: &str) -> DefineEvent {
     for child in named_children(node) {
         match child.kind() {
             "Keyword" => {}
+            "OverwriteClause" => def.overwrite = true,
+            "IfNotExistsClause" => def.if_not_exists = true,
             "Ident" if !named => {
                 def.name = spanned_text(child, text);
                 named = true;
@@ -1369,19 +1444,24 @@ fn lower_define_param(node: Node<'_>, text: &str) -> DefineParam {
     let span = node_range(node);
     let mut def = DefineParam {
         name: Spanned::new(String::new(), span),
+        overwrite: false,
+        if_not_exists: false,
         value: None,
     };
 
     for child in named_children(node) {
         match child.kind() {
             "Keyword" => {}
+            "OverwriteClause" => def.overwrite = true,
+            "IfNotExistsClause" => def.if_not_exists = true,
+            "PermissionsBasicClause" | "CommentClause" => {}
             "VariableName" => {
                 def.name = Spanned::new(
                     text[child.byte_range()].trim_start_matches('$').to_string(),
                     node_range(child),
                 );
             }
-            _ if child.is_error() || child.is_missing() => {}
+            _ if is_broken(child) => {}
             _ if def.value.is_none() => def.value = Some(lower_expr(child, text)),
             _ => {}
         }
@@ -1394,6 +1474,8 @@ fn lower_define_function(node: Node<'_>, text: &str) -> DefineFunction {
     let span = node_range(node);
     let mut def = DefineFunction {
         name: Spanned::new(String::new(), span),
+        overwrite: false,
+        if_not_exists: false,
         params: Vec::new(),
         body: None,
         return_ty: None,
@@ -1403,6 +1485,8 @@ fn lower_define_function(node: Node<'_>, text: &str) -> DefineFunction {
     for child in named_children(node) {
         match child.kind() {
             "Keyword" => {}
+            "OverwriteClause" => def.overwrite = true,
+            "IfNotExistsClause" => def.if_not_exists = true,
             "LookupRight" => saw_arrow = true,
             "Type" | "TypeName" | "ParameterizedType" | "UnionType" | "LiteralType"
                 if saw_arrow && def.return_ty.is_none() =>
@@ -1443,6 +1527,8 @@ fn lower_define_analyzer(node: Node<'_>, text: &str) -> DefineAnalyzer {
     let span = node_range(node);
     let mut def = DefineAnalyzer {
         name: Spanned::new(String::new(), span),
+        overwrite: false,
+        if_not_exists: false,
         tokenizers: Vec::new(),
         filters: Vec::new(),
     };
@@ -1451,6 +1537,8 @@ fn lower_define_analyzer(node: Node<'_>, text: &str) -> DefineAnalyzer {
     for child in named_children(node) {
         match child.kind() {
             "Keyword" => {}
+            "OverwriteClause" => def.overwrite = true,
+            "IfNotExistsClause" => def.if_not_exists = true,
             "Ident" if !named => {
                 def.name = spanned_text(child, text);
                 named = true;
@@ -1492,8 +1580,16 @@ fn lower_remove(node: Node<'_>, text: &str) -> RemoveStmt {
     let table = on_table_ident(node, text);
 
     for child in named_children(node) {
-        if child.is_error() || child.is_missing() {}
+        if is_broken(child) {}
     }
+
+    // `REMOVE FUNCTION fn::x` names a `FunctionName`; `REMOVE PARAM $x` a
+    // `VariableName`. Neither is an `Ident`.
+    let child_of_kind = |kind: &str| {
+        named_children(node)
+            .into_iter()
+            .find(|child| child.kind() == kind)
+    };
 
     let span = node_range(node);
     let target = match (kind.as_str(), first_ident, table) {
@@ -1506,6 +1602,22 @@ fn lower_remove(node: Node<'_>, text: &str) -> RemoveStmt {
             index: spanned_text(name, text),
             table,
         },
+        ("event", Some(name), Some(table)) => RemoveTarget::Event {
+            event: spanned_text(name, text),
+            table,
+        },
+        ("analyzer", Some(name), None) => RemoveTarget::Analyzer(spanned_text(name, text)),
+        ("function", _, _) if child_of_kind("FunctionName").is_some() => {
+            let name = child_of_kind("FunctionName").expect("checked above");
+            RemoveTarget::Function(spanned_text(name, text))
+        }
+        ("param", _, _) if child_of_kind("VariableName").is_some() => {
+            let name = child_of_kind("VariableName").expect("checked above");
+            RemoveTarget::Param(Spanned::new(
+                text[name.byte_range()].trim_start_matches('$').to_string(),
+                node_range(name),
+            ))
+        }
         _ => RemoveTarget::Other(crate::ast::PartialNode {
             span,
             cst_kind: format!("RemoveStatement:{kind}"),
@@ -1513,6 +1625,32 @@ fn lower_remove(node: Node<'_>, text: &str) -> RemoveStmt {
     };
 
     RemoveStmt { target }
+}
+
+/// `ALTER TABLE t [DROP] [SCHEMAFULL|SCHEMALESS] ...`: the table plus the flags
+/// that change its `TableDef`. `ALTER INDEX` carries no table (the `TABLE`
+/// keyword is absent) and lowers with every flag unset.
+fn lower_alter(node: Node<'_>, text: &str) -> AlterStmt {
+    let mut stmt = AlterStmt {
+        table: table_after_keyword(node, text, "table"),
+        schemafull: None,
+        drop: false,
+    };
+    if stmt.table.is_none() {
+        return stmt;
+    }
+    for child in named_children(node) {
+        if child.kind() != "Keyword" {
+            continue;
+        }
+        match text[child.byte_range()].to_ascii_lowercase().as_str() {
+            "schemafull" => stmt.schemafull = Some(true),
+            "schemaless" => stmt.schemafull = Some(false),
+            "drop" => stmt.drop = true,
+            _ => {}
+        }
+    }
+    stmt
 }
 
 #[cfg(test)]
@@ -1958,7 +2096,8 @@ mod tests {
             Statement::LiveSelect(stmt) => Some(stmt),
             _ => None,
         });
-        assert_eq!(stmt.table.as_ref().map(|t| t.node.as_str()), Some("person"));
+        assert_eq!(stmt.table().map(|t| t.node.as_str()), Some("person"));
+        assert!(matches!(stmt.projections[0], Projection::Wildcard(_)));
 
         let parsed = parse("REBUILD INDEX idx ON person;");
         let stmt = lower_kind(&parsed, "RebuildStatement", |s| match s {
@@ -2168,6 +2307,66 @@ mod tests {
         };
         assert_eq!(index.node, "idx");
         assert_eq!(table.node, "person");
+    }
+
+    #[test]
+    fn lowers_remove_event_function_param_and_analyzer_targets() {
+        let remove = |query: &str| {
+            let parsed = parse(query);
+            lower_kind(&parsed, "RemoveStatement", |s| match s {
+                Statement::Remove(stmt) => Some(stmt),
+                _ => None,
+            })
+        };
+
+        let stmt = remove("REMOVE EVENT ev ON TABLE person;");
+        let RemoveTarget::Event { event, table } = &stmt.target else {
+            panic!("expected event target, got {:?}", stmt.target);
+        };
+        assert_eq!(event.node, "ev");
+        assert_eq!(table.node, "person");
+
+        let stmt = remove("REMOVE FUNCTION fn::greet;");
+        let RemoveTarget::Function(name) = &stmt.target else {
+            panic!("expected function target, got {:?}", stmt.target);
+        };
+        assert_eq!(name.node, "fn::greet");
+
+        let stmt = remove("REMOVE PARAM $limit;");
+        let RemoveTarget::Param(name) = &stmt.target else {
+            panic!("expected param target, got {:?}", stmt.target);
+        };
+        assert_eq!(name.node, "limit");
+
+        let stmt = remove("REMOVE ANALYZER ascii;");
+        let RemoveTarget::Analyzer(name) = &stmt.target else {
+            panic!("expected analyzer target, got {:?}", stmt.target);
+        };
+        assert_eq!(name.node, "ascii");
+    }
+
+    #[test]
+    fn lowers_alter_table_flags() {
+        let alter = |query: &str| {
+            let parsed = parse(query);
+            lower_kind(&parsed, "AlterStatement", |s| match s {
+                Statement::Alter(stmt) => Some(stmt),
+                _ => None,
+            })
+        };
+
+        let stmt = alter("ALTER TABLE person SCHEMAFULL;");
+        assert_eq!(stmt.table.as_ref().map(|t| t.node.as_str()), Some("person"));
+        assert_eq!(stmt.schemafull, Some(true));
+        assert!(!stmt.drop);
+
+        let stmt = alter("ALTER TABLE person DROP SCHEMALESS;");
+        assert_eq!(stmt.schemafull, Some(false));
+        assert!(stmt.drop);
+
+        let stmt = alter("ALTER TABLE person PERMISSIONS NONE;");
+        assert_eq!(stmt.schemafull, None);
+        assert!(!stmt.drop);
     }
 
     #[test]

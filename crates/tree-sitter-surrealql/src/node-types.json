@@ -40,6 +40,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -61,6 +65,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -108,6 +116,10 @@
           "named": true
         },
         {
+          "type": "RangeRecordId",
+          "named": true
+        },
+        {
           "type": "RecordId",
           "named": true
         },
@@ -139,7 +151,169 @@
     }
   },
   {
+    "type": "AccessStatement",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Array",
+          "named": true
+        },
+        {
+          "type": "BinaryExpression",
+          "named": true
+        },
+        {
+          "type": "Block",
+          "named": true
+        },
+        {
+          "type": "Bool",
+          "named": true
+        },
+        {
+          "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
+          "named": true
+        },
+        {
+          "type": "Duration",
+          "named": true
+        },
+        {
+          "type": "FormatString",
+          "named": true
+        },
+        {
+          "type": "FunctionCall",
+          "named": true
+        },
+        {
+          "type": "FunctionJs",
+          "named": true
+        },
+        {
+          "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
+          "named": true
+        },
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "None",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        },
+        {
+          "type": "Object",
+          "named": true
+        },
+        {
+          "type": "OnRootNsDbClause",
+          "named": true
+        },
+        {
+          "type": "Path",
+          "named": true
+        },
+        {
+          "type": "Point",
+          "named": true
+        },
+        {
+          "type": "PrefixExpression",
+          "named": true
+        },
+        {
+          "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
+          "named": true
+        },
+        {
+          "type": "RecordId",
+          "named": true
+        },
+        {
+          "type": "Regex",
+          "named": true
+        },
+        {
+          "type": "Set",
+          "named": true
+        },
+        {
+          "type": "String",
+          "named": true
+        },
+        {
+          "type": "SubQuery",
+          "named": true
+        },
+        {
+          "type": "TypeCast",
+          "named": true
+        },
+        {
+          "type": "VariableName",
+          "named": true
+        },
+        {
+          "type": "WhereClause",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "AccessTypeClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "AccessWithClause",
+          "named": true
+        },
+        {
+          "type": "JwtClause",
+          "named": true
+        },
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "SigninClause",
+          "named": true
+        },
+        {
+          "type": "SignupClause",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "AccessWithClause",
     "named": true,
     "fields": {},
     "children": {
@@ -159,11 +333,7 @@
           "named": true
         },
         {
-          "type": "SigninClause",
-          "named": true
-        },
-        {
-          "type": "SignupClause",
+          "type": "String",
           "named": true
         }
       ]
@@ -194,11 +364,19 @@
           "named": true
         },
         {
+          "type": "ChangefeedClause",
+          "named": true
+        },
+        {
           "type": "Closure",
           "named": true
         },
         {
           "type": "CommentClause",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -222,6 +400,14 @@
           "named": true
         },
         {
+          "type": "IfElseStatement",
+          "named": true
+        },
+        {
+          "type": "IfExistsClause",
+          "named": true
+        },
+        {
           "type": "IfNotExistsClause",
           "named": true
         },
@@ -239,6 +425,10 @@
         },
         {
           "type": "Object",
+          "named": true
+        },
+        {
+          "type": "OnTableClause",
           "named": true
         },
         {
@@ -262,6 +452,10 @@
           "named": true
         },
         {
+          "type": "RangeRecordId",
+          "named": true
+        },
+        {
           "type": "RecordId",
           "named": true
         },
@@ -279,6 +473,10 @@
         },
         {
           "type": "SubQuery",
+          "named": true
+        },
+        {
+          "type": "TableTypeClause",
           "named": true
         },
         {
@@ -377,6 +575,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "CreateStatement",
           "named": true
         },
@@ -446,6 +648,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -536,6 +742,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -553,6 +763,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -581,6 +795,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -670,6 +888,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -726,6 +948,10 @@
           "named": true
         },
         {
+          "type": "RangeRecordId",
+          "named": true
+        },
+        {
           "type": "RecordId",
           "named": true
         },
@@ -770,7 +996,51 @@
       "required": true,
       "types": [
         {
+          "type": "Array",
+          "named": true
+        },
+        {
+          "type": "BinaryExpression",
+          "named": true
+        },
+        {
           "type": "Block",
+          "named": true
+        },
+        {
+          "type": "Bool",
+          "named": true
+        },
+        {
+          "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
+          "named": true
+        },
+        {
+          "type": "Duration",
+          "named": true
+        },
+        {
+          "type": "FormatString",
+          "named": true
+        },
+        {
+          "type": "FunctionCall",
+          "named": true
+        },
+        {
+          "type": "FunctionJs",
+          "named": true
+        },
+        {
+          "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -778,7 +1048,63 @@
           "named": true
         },
         {
+          "type": "None",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        },
+        {
+          "type": "Object",
+          "named": true
+        },
+        {
+          "type": "Path",
+          "named": true
+        },
+        {
+          "type": "Point",
+          "named": true
+        },
+        {
+          "type": "PrefixExpression",
+          "named": true
+        },
+        {
+          "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
+          "named": true
+        },
+        {
+          "type": "RecordId",
+          "named": true
+        },
+        {
+          "type": "Regex",
+          "named": true
+        },
+        {
+          "type": "Set",
+          "named": true
+        },
+        {
+          "type": "String",
+          "named": true
+        },
+        {
           "type": "SubQuery",
+          "named": true
+        },
+        {
+          "type": "TypeCast",
+          "named": true
+        },
+        {
+          "type": "VariableName",
           "named": true
         }
       ]
@@ -813,6 +1139,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -830,6 +1160,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -862,6 +1196,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -939,6 +1277,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -956,6 +1298,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -988,6 +1334,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -1029,6 +1379,10 @@
       "multiple": true,
       "required": true,
       "types": [
+        {
+          "type": "AccessStatement",
+          "named": true
+        },
         {
           "type": "AlterStatement",
           "named": true
@@ -1075,6 +1429,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -1171,6 +1529,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -1360,6 +1722,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -1377,6 +1743,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -1425,6 +1795,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -1529,6 +1903,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -1585,6 +1963,10 @@
           "named": true
         },
         {
+          "type": "RangeRecordId",
+          "named": true
+        },
+        {
           "type": "RecordId",
           "named": true
         },
@@ -1631,6 +2013,21 @@
     }
   },
   {
+    "type": "Constant",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "FunctionName",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "ContentClause",
     "named": true,
     "fields": {},
@@ -1659,6 +2056,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -1676,6 +2077,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -1708,6 +2113,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -1859,6 +2268,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "DefaultAlways",
           "named": true
         },
@@ -1916,6 +2329,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -2025,6 +2442,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "DefaultClause",
           "named": true
         },
@@ -2081,6 +2502,10 @@
           "named": true
         },
         {
+          "type": "IfElseStatement",
+          "named": true
+        },
+        {
           "type": "IfNotExistsClause",
           "named": true
         },
@@ -2098,6 +2523,10 @@
         },
         {
           "type": "LookupRight",
+          "named": true
+        },
+        {
+          "type": "MaxdepthClause",
           "named": true
         },
         {
@@ -2157,6 +2586,14 @@
           "named": true
         },
         {
+          "type": "RangeRecordId",
+          "named": true
+        },
+        {
+          "type": "RatelimitClause",
+          "named": true
+        },
+        {
           "type": "ReadonlyClause",
           "named": true
         },
@@ -2170,6 +2607,10 @@
         },
         {
           "type": "Regex",
+          "named": true
+        },
+        {
+          "type": "RetryClause",
           "named": true
         },
         {
@@ -2198,6 +2639,10 @@
         },
         {
           "type": "ThenClause",
+          "named": true
+        },
+        {
+          "type": "TimeoutClause",
           "named": true
         },
         {
@@ -2248,6 +2693,10 @@
       "required": true,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -2288,6 +2737,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "ContinueStatement",
           "named": true
         },
@@ -2305,6 +2758,10 @@
         },
         {
           "type": "Duration",
+          "named": true
+        },
+        {
+          "type": "ExplainClause",
           "named": true
         },
         {
@@ -2392,6 +2849,10 @@
           "named": true
         },
         {
+          "type": "RangeRecordId",
+          "named": true
+        },
+        {
           "type": "RebuildStatement",
           "named": true
         },
@@ -2474,6 +2935,10 @@
         {
           "type": "WhereClause",
           "named": true
+        },
+        {
+          "type": "WithClause",
+          "named": true
         }
       ]
     }
@@ -2519,11 +2984,19 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
         {
           "type": "Filter",
+          "named": true
+        },
+        {
+          "type": "Flatten",
           "named": true
         },
         {
@@ -2543,6 +3016,10 @@
           "named": true
         },
         {
+          "type": "IfElseStatement",
+          "named": true
+        },
+        {
           "type": "Lookup",
           "named": true
         },
@@ -2559,6 +3036,10 @@
           "named": true
         },
         {
+          "type": "Optional",
+          "named": true
+        },
+        {
           "type": "Path",
           "named": true
         },
@@ -2572,6 +3053,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -2604,6 +3089,41 @@
         },
         {
           "type": "VariableName",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "DiskannClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "HnswDistClause",
+          "named": true
+        },
+        {
+          "type": "IndexDimensionClause",
+          "named": true
+        },
+        {
+          "type": "IndexHashedVectorClause",
+          "named": true
+        },
+        {
+          "type": "IndexTypeClause",
+          "named": true
+        },
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "Number",
           "named": true
         }
       ]
@@ -2739,6 +3259,10 @@
         {
           "type": "Keyword",
           "named": true
+        },
+        {
+          "type": "None",
+          "named": true
         }
       ]
     }
@@ -2786,11 +3310,115 @@
       "required": true,
       "types": [
         {
-          "type": "Idiom",
+          "type": "Array",
+          "named": true
+        },
+        {
+          "type": "BinaryExpression",
+          "named": true
+        },
+        {
+          "type": "Block",
+          "named": true
+        },
+        {
+          "type": "Bool",
+          "named": true
+        },
+        {
+          "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
+          "named": true
+        },
+        {
+          "type": "Duration",
+          "named": true
+        },
+        {
+          "type": "FormatString",
+          "named": true
+        },
+        {
+          "type": "FunctionCall",
+          "named": true
+        },
+        {
+          "type": "FunctionJs",
+          "named": true
+        },
+        {
+          "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
           "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "None",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        },
+        {
+          "type": "Object",
+          "named": true
+        },
+        {
+          "type": "Path",
+          "named": true
+        },
+        {
+          "type": "Point",
+          "named": true
+        },
+        {
+          "type": "PrefixExpression",
+          "named": true
+        },
+        {
+          "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
+          "named": true
+        },
+        {
+          "type": "RecordId",
+          "named": true
+        },
+        {
+          "type": "Regex",
+          "named": true
+        },
+        {
+          "type": "Set",
+          "named": true
+        },
+        {
+          "type": "String",
+          "named": true
+        },
+        {
+          "type": "SubQuery",
+          "named": true
+        },
+        {
+          "type": "TypeCast",
+          "named": true
+        },
+        {
+          "type": "VariableName",
           "named": true
         }
       ]
@@ -2825,6 +3453,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -2842,6 +3474,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "Idiom",
           "named": true
         },
         {
@@ -2878,6 +3514,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -2962,6 +3602,10 @@
       "required": false,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -3003,6 +3647,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -3103,6 +3751,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -3220,7 +3872,23 @@
           "named": true
         },
         {
+          "type": "BinaryExpression",
+          "named": true
+        },
+        {
           "type": "Block",
+          "named": true
+        },
+        {
+          "type": "Bool",
+          "named": true
+        },
+        {
+          "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -3233,6 +3901,26 @@
         },
         {
           "type": "DeleteStatement",
+          "named": true
+        },
+        {
+          "type": "Duration",
+          "named": true
+        },
+        {
+          "type": "FormatString",
+          "named": true
+        },
+        {
+          "type": "FunctionCall",
+          "named": true
+        },
+        {
+          "type": "FunctionJs",
+          "named": true
+        },
+        {
+          "type": "Ident",
           "named": true
         },
         {
@@ -3252,11 +3940,47 @@
           "named": true
         },
         {
+          "type": "None",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        },
+        {
+          "type": "Object",
+          "named": true
+        },
+        {
+          "type": "Path",
+          "named": true
+        },
+        {
+          "type": "Point",
+          "named": true
+        },
+        {
+          "type": "PrefixExpression",
+          "named": true
+        },
+        {
           "type": "Range",
           "named": true
         },
         {
+          "type": "RangeRecordId",
+          "named": true
+        },
+        {
           "type": "RebuildStatement",
+          "named": true
+        },
+        {
+          "type": "RecordId",
+          "named": true
+        },
+        {
+          "type": "Regex",
           "named": true
         },
         {
@@ -3276,7 +4000,19 @@
           "named": true
         },
         {
+          "type": "Set",
+          "named": true
+        },
+        {
+          "type": "String",
+          "named": true
+        },
+        {
           "type": "SubQuery",
+          "named": true
+        },
+        {
+          "type": "TypeCast",
           "named": true
         },
         {
@@ -3350,6 +4086,10 @@
         },
         {
           "type": "RecordId",
+          "named": true
+        },
+        {
+          "type": "SubQuery",
           "named": true
         },
         {
@@ -3523,6 +4263,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -3540,6 +4284,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -3568,6 +4316,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -3668,6 +4420,10 @@
           "named": true
         },
         {
+          "type": "IndexHashedVectorClause",
+          "named": true
+        },
+        {
           "type": "IndexKeepPrunedConnectionsClause",
           "named": true
         },
@@ -3737,6 +4493,10 @@
       "types": [
         {
           "type": "Any",
+          "named": true
+        },
+        {
+          "type": "Flatten",
           "named": true
         },
         {
@@ -3846,6 +4606,10 @@
       "required": true,
       "types": [
         {
+          "type": "DiskannClause",
+          "named": true
+        },
+        {
           "type": "FulltextClause",
           "named": true
         },
@@ -3908,6 +4672,21 @@
   },
   {
     "type": "IndexExtendCandidatesClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "Keyword",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "IndexHashedVectorClause",
     "named": true,
     "fields": {},
     "children": {
@@ -4023,6 +4802,14 @@
         {
           "type": "Keyword",
           "named": true
+        },
+        {
+          "type": "OnRootNsDbClause",
+          "named": true
+        },
+        {
+          "type": "OnTableClause",
+          "named": true
         }
       ]
     }
@@ -4060,6 +4847,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -4081,6 +4872,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -4113,6 +4908,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -4159,6 +4958,10 @@
       "required": true,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -4204,6 +5007,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -4300,6 +5107,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -4420,6 +5231,10 @@
         {
           "type": "String",
           "named": true
+        },
+        {
+          "type": "VariableName",
+          "named": true
         }
       ]
     }
@@ -4453,6 +5268,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -4470,6 +5289,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -4502,6 +5325,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -4573,6 +5400,10 @@
         },
         {
           "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -4653,6 +5484,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -4824,6 +5659,10 @@
           "named": true
         },
         {
+          "type": "VariableName",
+          "named": true
+        },
+        {
           "type": "WhereClause",
           "named": true
         }
@@ -4918,6 +5757,25 @@
     }
   },
   {
+    "type": "MaxdepthClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "MergeClause",
     "named": true,
     "fields": {},
@@ -4946,6 +5804,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -4963,6 +5825,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -4995,6 +5861,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -5076,6 +5946,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -5093,6 +5967,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -5125,6 +6003,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -5352,6 +6234,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -5405,6 +6291,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -5582,6 +6472,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -5599,6 +6493,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -5631,6 +6529,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -5823,6 +6725,10 @@
           "named": true
         },
         {
+          "type": "Number",
+          "named": true
+        },
+        {
           "type": "ParameterizedType",
           "named": true
         },
@@ -5889,6 +6795,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Destructure",
           "named": true
         },
@@ -5898,6 +6808,10 @@
         },
         {
           "type": "Filter",
+          "named": true
+        },
+        {
+          "type": "Flatten",
           "named": true
         },
         {
@@ -5918,6 +6832,10 @@
         },
         {
           "type": "IdiomFunction",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -5942,6 +6860,10 @@
         },
         {
           "type": "Point",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -5970,10 +6892,6 @@
         },
         {
           "type": "Subscript",
-          "named": true
-        },
-        {
-          "type": "TypeCast",
           "named": true
         },
         {
@@ -6151,6 +7069,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -6168,6 +7090,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -6200,6 +7126,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -6258,6 +7188,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -6275,6 +7209,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -6303,6 +7241,10 @@
         },
         {
           "type": "PrefixExpression",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -6365,6 +7307,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -6382,6 +7328,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -6414,6 +7364,10 @@
         },
         {
           "type": "RangeOp",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -6466,6 +7420,152 @@
         },
         {
           "type": "RecordId",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "RatelimitClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "RatelimitGroup",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "RatelimitGroup",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Array",
+          "named": true
+        },
+        {
+          "type": "BinaryExpression",
+          "named": true
+        },
+        {
+          "type": "Block",
+          "named": true
+        },
+        {
+          "type": "Bool",
+          "named": true
+        },
+        {
+          "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
+          "named": true
+        },
+        {
+          "type": "Duration",
+          "named": true
+        },
+        {
+          "type": "FormatString",
+          "named": true
+        },
+        {
+          "type": "FunctionCall",
+          "named": true
+        },
+        {
+          "type": "FunctionJs",
+          "named": true
+        },
+        {
+          "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
+          "named": true
+        },
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "None",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        },
+        {
+          "type": "Object",
+          "named": true
+        },
+        {
+          "type": "Path",
+          "named": true
+        },
+        {
+          "type": "Point",
+          "named": true
+        },
+        {
+          "type": "PrefixExpression",
+          "named": true
+        },
+        {
+          "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
+          "named": true
+        },
+        {
+          "type": "RecordId",
+          "named": true
+        },
+        {
+          "type": "Regex",
+          "named": true
+        },
+        {
+          "type": "Set",
+          "named": true
+        },
+        {
+          "type": "String",
+          "named": true
+        },
+        {
+          "type": "SubQuery",
+          "named": true
+        },
+        {
+          "type": "TypeCast",
+          "named": true
+        },
+        {
+          "type": "VariableName",
+          "named": true
+        },
+        {
+          "type": "WhereClause",
           "named": true
         }
       ]
@@ -6629,7 +7729,15 @@
           "named": true
         },
         {
+          "type": "Flatten",
+          "named": true
+        },
+        {
           "type": "Lookup",
+          "named": true
+        },
+        {
+          "type": "Optional",
           "named": true
         },
         {
@@ -6672,6 +7780,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -6696,6 +7808,10 @@
           "named": true
         },
         {
+          "type": "IfElseStatement",
+          "named": true
+        },
+        {
           "type": "None",
           "named": true
         },
@@ -6709,6 +7825,10 @@
         },
         {
           "type": "Point",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -6729,10 +7849,6 @@
         },
         {
           "type": "SubQuery",
-          "named": true
-        },
-        {
-          "type": "TypeCast",
           "named": true
         },
         {
@@ -6833,6 +7949,10 @@
           "named": true
         },
         {
+          "type": "SubQuery",
+          "named": true
+        },
+        {
           "type": "TimeoutClause",
           "named": true
         },
@@ -6872,6 +7992,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -6896,6 +8020,10 @@
           "named": true
         },
         {
+          "type": "IfElseStatement",
+          "named": true
+        },
+        {
           "type": "IfExistsClause",
           "named": true
         },
@@ -6916,6 +8044,10 @@
           "named": true
         },
         {
+          "type": "OnRootNsDbClause",
+          "named": true
+        },
+        {
           "type": "OnTableClause",
           "named": true
         },
@@ -6933,6 +8065,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -6986,6 +8122,25 @@
     }
   },
   {
+    "type": "RetryClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "ReturnClause",
     "named": true,
     "fields": {},
@@ -7016,6 +8171,10 @@
       "multiple": true,
       "required": true,
       "types": [
+        {
+          "type": "AccessStatement",
+          "named": true
+        },
         {
           "type": "AlterStatement",
           "named": true
@@ -7054,6 +8213,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -7154,6 +8317,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -7264,6 +8431,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -7281,6 +8452,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -7321,6 +8496,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -7430,6 +8609,10 @@
       "required": true,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -7467,6 +8650,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -7603,6 +8790,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -7764,6 +8955,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -7781,6 +8976,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -7809,6 +9008,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -7897,7 +9100,51 @@
       "required": true,
       "types": [
         {
+          "type": "Array",
+          "named": true
+        },
+        {
+          "type": "BinaryExpression",
+          "named": true
+        },
+        {
           "type": "Block",
+          "named": true
+        },
+        {
+          "type": "Bool",
+          "named": true
+        },
+        {
+          "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
+          "named": true
+        },
+        {
+          "type": "Duration",
+          "named": true
+        },
+        {
+          "type": "FormatString",
+          "named": true
+        },
+        {
+          "type": "FunctionCall",
+          "named": true
+        },
+        {
+          "type": "FunctionJs",
+          "named": true
+        },
+        {
+          "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -7905,7 +9152,63 @@
           "named": true
         },
         {
+          "type": "None",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        },
+        {
+          "type": "Object",
+          "named": true
+        },
+        {
+          "type": "Path",
+          "named": true
+        },
+        {
+          "type": "Point",
+          "named": true
+        },
+        {
+          "type": "PrefixExpression",
+          "named": true
+        },
+        {
+          "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
+          "named": true
+        },
+        {
+          "type": "RecordId",
+          "named": true
+        },
+        {
+          "type": "Regex",
+          "named": true
+        },
+        {
+          "type": "Set",
+          "named": true
+        },
+        {
+          "type": "String",
+          "named": true
+        },
+        {
           "type": "SubQuery",
+          "named": true
+        },
+        {
+          "type": "TypeCast",
+          "named": true
+        },
+        {
+          "type": "VariableName",
           "named": true
         }
       ]
@@ -7920,7 +9223,51 @@
       "required": true,
       "types": [
         {
+          "type": "Array",
+          "named": true
+        },
+        {
+          "type": "BinaryExpression",
+          "named": true
+        },
+        {
           "type": "Block",
+          "named": true
+        },
+        {
+          "type": "Bool",
+          "named": true
+        },
+        {
+          "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
+          "named": true
+        },
+        {
+          "type": "Duration",
+          "named": true
+        },
+        {
+          "type": "FormatString",
+          "named": true
+        },
+        {
+          "type": "FunctionCall",
+          "named": true
+        },
+        {
+          "type": "FunctionJs",
+          "named": true
+        },
+        {
+          "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -7928,7 +9275,63 @@
           "named": true
         },
         {
+          "type": "None",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        },
+        {
+          "type": "Object",
+          "named": true
+        },
+        {
+          "type": "Path",
+          "named": true
+        },
+        {
+          "type": "Point",
+          "named": true
+        },
+        {
+          "type": "PrefixExpression",
+          "named": true
+        },
+        {
+          "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
+          "named": true
+        },
+        {
+          "type": "RecordId",
+          "named": true
+        },
+        {
+          "type": "Regex",
+          "named": true
+        },
+        {
+          "type": "Set",
+          "named": true
+        },
+        {
+          "type": "String",
+          "named": true
+        },
+        {
           "type": "SubQuery",
+          "named": true
+        },
+        {
+          "type": "TypeCast",
+          "named": true
+        },
+        {
+          "type": "VariableName",
           "named": true
         }
       ]
@@ -8009,6 +9412,10 @@
       "required": false,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -8046,6 +9453,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -8142,6 +9553,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -8268,6 +9683,10 @@
       "required": false,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -8305,6 +9724,10 @@
         },
         {
           "type": "CommitStatement",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -8401,6 +9824,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -8534,6 +9961,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -8555,6 +9986,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -8591,6 +10026,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -8690,7 +10129,51 @@
       "required": true,
       "types": [
         {
+          "type": "Array",
+          "named": true
+        },
+        {
+          "type": "BinaryExpression",
+          "named": true
+        },
+        {
           "type": "Block",
+          "named": true
+        },
+        {
+          "type": "Bool",
+          "named": true
+        },
+        {
+          "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
+          "named": true
+        },
+        {
+          "type": "Duration",
+          "named": true
+        },
+        {
+          "type": "FormatString",
+          "named": true
+        },
+        {
+          "type": "FunctionCall",
+          "named": true
+        },
+        {
+          "type": "FunctionJs",
+          "named": true
+        },
+        {
+          "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -8698,7 +10181,63 @@
           "named": true
         },
         {
+          "type": "None",
+          "named": true
+        },
+        {
+          "type": "Number",
+          "named": true
+        },
+        {
+          "type": "Object",
+          "named": true
+        },
+        {
+          "type": "Path",
+          "named": true
+        },
+        {
+          "type": "Point",
+          "named": true
+        },
+        {
+          "type": "PrefixExpression",
+          "named": true
+        },
+        {
+          "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
+          "named": true
+        },
+        {
+          "type": "RecordId",
+          "named": true
+        },
+        {
+          "type": "Regex",
+          "named": true
+        },
+        {
+          "type": "Set",
+          "named": true
+        },
+        {
+          "type": "String",
+          "named": true
+        },
+        {
           "type": "SubQuery",
+          "named": true
+        },
+        {
+          "type": "TypeCast",
+          "named": true
+        },
+        {
+          "type": "VariableName",
           "named": true
         }
       ]
@@ -8733,6 +10272,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -8750,6 +10293,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -8782,6 +10329,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -8917,6 +10468,10 @@
           "named": true
         },
         {
+          "type": "BinaryExpression",
+          "named": true
+        },
+        {
           "type": "Block",
           "named": true
         },
@@ -8926,6 +10481,10 @@
         },
         {
           "type": "Closure",
+          "named": true
+        },
+        {
+          "type": "Constant",
           "named": true
         },
         {
@@ -8949,6 +10508,10 @@
           "named": true
         },
         {
+          "type": "IfElseStatement",
+          "named": true
+        },
+        {
           "type": "LiteralType",
           "named": true
         },
@@ -8969,7 +10532,23 @@
           "named": true
         },
         {
+          "type": "Path",
+          "named": true
+        },
+        {
           "type": "Point",
+          "named": true
+        },
+        {
+          "type": "PrefixExpression",
+          "named": true
+        },
+        {
+          "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -9116,6 +10695,10 @@
       "required": true,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -9156,6 +10739,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "ContentClause",
           "named": true
         },
@@ -9177,6 +10764,10 @@
         },
         {
           "type": "Duration",
+          "named": true
+        },
+        {
+          "type": "ExplainClause",
           "named": true
         },
         {
@@ -9269,6 +10860,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -9365,6 +10960,10 @@
         },
         {
           "type": "WhereClause",
+          "named": true
+        },
+        {
+          "type": "WithClause",
           "named": true
         }
       ]
@@ -9379,6 +10978,10 @@
       "required": true,
       "types": [
         {
+          "type": "AccessStatement",
+          "named": true
+        },
+        {
           "type": "AlterStatement",
           "named": true
         },
@@ -9419,6 +11022,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "ContentClause",
           "named": true
         },
@@ -9440,6 +11047,10 @@
         },
         {
           "type": "Duration",
+          "named": true
+        },
+        {
+          "type": "ExplainClause",
           "named": true
         },
         {
@@ -9532,6 +11143,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -9628,6 +11243,10 @@
         },
         {
           "type": "WhereClause",
+          "named": true
+        },
+        {
+          "type": "WithClause",
           "named": true
         }
       ]
@@ -9681,6 +11300,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -9734,6 +11357,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -9830,6 +11457,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -9847,6 +11478,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -9879,6 +11514,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -9941,6 +11580,10 @@
           "named": true
         },
         {
+          "type": "Constant",
+          "named": true
+        },
+        {
           "type": "Duration",
           "named": true
         },
@@ -9958,6 +11601,10 @@
         },
         {
           "type": "Ident",
+          "named": true
+        },
+        {
+          "type": "IfElseStatement",
           "named": true
         },
         {
@@ -9990,6 +11637,10 @@
         },
         {
           "type": "Range",
+          "named": true
+        },
+        {
+          "type": "RangeRecordId",
           "named": true
         },
         {
@@ -10063,6 +11714,10 @@
     "named": false
   },
   {
+    "type": "%",
+    "named": false
+  },
+  {
     "type": "&&",
     "named": false
   },
@@ -10100,6 +11755,10 @@
   },
   {
     "type": "+=",
+    "named": false
+  },
+  {
+    "type": "+?=",
     "named": false
   },
   {
@@ -10195,6 +11854,10 @@
     "named": false
   },
   {
+    "type": "?~",
+    "named": false
+  },
+  {
     "type": "@",
     "named": false
   },
@@ -10234,6 +11897,10 @@
   },
   {
     "type": "DurationPart",
+    "named": true
+  },
+  {
+    "type": "Flatten",
     "named": true
   },
   {
