@@ -61,6 +61,39 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
     after someone has regenerated the snapshot to accept one. **Do not
     regenerate it to make it pass**: it records a path that no longer exists, so
     rewriting it from the current path turns the check into a tautology.
+  - `crates/syntax/tests/conformance.rs` — the **grammar-conformance
+    ratchet**. `crates/syntax/examples/conformance_corpus.json` is known-valid
+    SurrealQL from SurrealDB's own test suites; a parse error is fatal to the
+    whole source, so every entry the grammar rejects is a place the analyzer
+    is silently wrong. `tests/conformance_expected_failures.txt` lists the
+    indices that still fail (one per line, first 60 chars as a comment). The
+    test fails when a listed-passing entry breaks (a grammar regression) AND
+    when a listed-failing entry starts parsing (progress the baseline must
+    bank). Regenerate with
+    `UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-syntax --test conformance`;
+    the human-readable report is
+    `cargo run -p surrealguard-syntax --example conformance -- crates/syntax/examples/conformance_corpus.json`,
+    and `docs/grammar-conformance.md` records the clusters. The grammar
+    itself is `crates/tree-sitter-surrealql/grammar.js`; after editing it,
+    regenerate with `npx --yes tree-sitter-cli@0.25.10 generate --abi 14` in
+    that directory (the `tree-sitter` CLI is not a workspace dependency).
+  - `crates/syntax/tests/robustness.rs` — the **front-end robustness
+    property**. The LSP runs `parse_source` + `lower_statements` on every
+    keystroke, so their input is mostly half-typed: `proptest` generates
+    random bytes, corpus statements (the conformance corpus plus
+    `crates/workspace/tests/corpus/**/*.surql`) with single-character
+    deletions/insertions/truncations, and concatenations of those, and asserts
+    nothing panics, every span in the lowered AST (walked exhaustively by
+    `tests/support/ast_walk.rs`), every syntax diagnostic and every highlight
+    token is in bounds and on a UTF-8 boundary, and a recovery `Partial`
+    (`ERROR`/`MISSING …`) appears only when the CST has an error. 256 cases
+    by default (`PROPTEST_CASES=<n>` raises it; a failing input is saved under
+    `crates/syntax/proptest-regressions/`). Beside it, `tests/recovery.rs`
+    pins the recovery shape of each common half-typed input (which statement
+    goes `Partial`, where the diagnostic points, that the neighbours keep
+    their spans) and `tests/multibyte.rs` pins spans over `é`/emoji/CJK text;
+    the byte → UTF-16 position conversion itself lives in
+    `crates/lsp/src/text.rs`.
   - `scripts/oracle.py` — the **real-world corpus gate**, run against the
     hand-edited workspace outside this repo (`../workshop/database`). It is a
     *triage* gate, not a count: `tests/oracle_baseline.txt` records every finding
@@ -82,8 +115,28 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
     and so cannot catch a surface that is wrong only over the wire. Requests must
     be sequenced (`initialize` → its response → `initialized` → `didOpen` →
     request) or tower-lsp answers "Server not initialized".
-- **Grammar:** the parser is `tree-sitter-surrealql`, a path dependency at the
-  sibling `../tree-sitter-surrealql`. CI checks it out alongside this repo.
+  - `crates/codegen/tests/golden.rs` — the **generated-TypeScript golden**.
+    `surrealguard generate` emits a module nothing used to compile, so a type
+    error in the emitter's output would ship undetected. The test runs the
+    CLI's generation path (`QueryEntry::from_analysis` + `render_registry`)
+    over the fixture workspace `crates/codegen/tests/fixtures/typecheck/`
+    (schema with option/record/array/literal-union/object fields, an edge
+    table, `fn::` functions, a host `src/queries.ts`) and compares the module
+    byte-for-byte with `packages/client/test-d/gen/surrealguard.generated.ts`.
+    That file is then compiled by `pnpm -r run typecheck` as part of
+    `@surrealguard/client` against the real `surrealdb` types, and
+    `test-d/gen/*.test-d.ts` + `test/generated.test.ts` assert what the
+    resolved types are. Regenerate with
+    `UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-codegen --test golden`, then
+    run the package typecheck — the golden records *current* output, and the
+    Rust side cannot tell whether it is valid TypeScript. Augment
+    `SurqlRegistry` only through `"@surrealguard/client"` in that package
+    (never `../src/registry.js`): one interface augmented through two
+    specifiers gets two merged clones, and which one a file sees depends on
+    program order.
+- **Grammar:** the parser is the vendored `crates/tree-sitter-surrealql`
+  (grammar.js plus its generated parser); see the conformance-ratchet entry
+  above for how to edit and regenerate it.
 - **Design principle — contract-first diagnostics:** every construct has a
   contract; severity derives from the contract violation, never from engine
   tolerance. One code per contract. Don't add denylists or permutation codes.
@@ -92,7 +145,12 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
 ## Layout
 
 - `crates/syntax` — tree-sitter parsing + typed span-carrying AST
-- `crates/workspace` — schema index, analyzers, inference (the engine)
+- `crates/workspace` — schema index, analyzers, inference (the engine).
+  Whole-pipeline tests live in `crates/workspace/tests/pipeline/` (one file
+  per area, shared helpers in `tests/support/mod.rs`); per-contract suites in
+  `tests/{select,mutation,ddl,version}_contracts.rs` and `tests/contract_guards.rs`
+  (a fire + near-miss pair for every Deny code). Do not add tests to
+  `src/analysis.rs`.
 - `crates/diagnostics` — finding codes, severities, policy. `catalog.rs` is the
   single source of truth for the code list; the published catalog page
   (`web/public/docs/diagnostics.html`) is **generated** from it — add a code,

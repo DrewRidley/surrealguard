@@ -127,7 +127,6 @@
     <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
     <div class="nav-links">
       <a href="/docs/">Docs</a>
-      <a href="/playground/">Playground</a>
       <a href="/#agents">For agents</a>
       <a href="/#install">Install</a>
       <a class="nav-cta" href="https://github.com/DrewRidley/surrealguard">GitHub ↗</a>
@@ -214,13 +213,13 @@
     <div class="fam-nav">
       <a class="n0" href="#fam-0"><b>0xxx</b> syntax · 3</a>
       <a class="n1" href="#fam-1"><b>1xxx</b> schema · 11</a>
-      <a class="n2" href="#fam-2"><b>2xxx</b> types · 23</a>
+      <a class="n2" href="#fam-2"><b>2xxx</b> types · 24</a>
       <a class="n3" href="#fam-3"><b>3xxx</b> graph · 5</a>
-      <a class="n4" href="#fam-4"><b>4xxx</b> statement · 23</a>
+      <a class="n4" href="#fam-4"><b>4xxx</b> statement · 21</a>
       <a class="n5" href="#fam-5"><b>5xxx</b> functions · 5</a>
-      <a class="n6" href="#fam-6"><b>6xxx</b> params · 7</a>
-      <a class="n7" href="#fam-7"><b>7xxx</b> lints · 14</a>
-      <a class="n8" href="#fam-8"><b>8xxx</b> compat · 2</a>
+      <a class="n6" href="#fam-6"><b>6xxx</b> params · 6</a>
+      <a class="n7" href="#fam-7"><b>7xxx</b> lints · 15</a>
+      <a class="n8" href="#fam-8"><b>8xxx</b> compat · 3</a>
     </div>
 
     <!-- ============ 0xxx ============ -->
@@ -272,7 +271,7 @@
       <div class="fam-head">
         <span class="fam-badge">2xxx</span>
         <span class="ft">Types &amp; nullability</span>
-        <span class="fc">23 codes</span>
+        <span class="fc">24 codes</span>
       </div>
       <p class="fam-desc">Values must inhabit the kinds their position demands; operators, casts, and clauses require operands they can act on.</p>
       <div class="tbl-wrap"><table>
@@ -301,6 +300,7 @@
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2035</span></span></td><td><span class="lvl deny">deny</span></td><td>DEFINE ANALYZER filter arguments are valid <span class="covers">— <code>edgengram(5, 2)</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2036</span></span></td><td><span class="lvl deny">deny</span></td><td>GeoJSON literals have their declared shape <span class="covers">— <code>{type: &#39;Pointt&#39;, ...}</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2037</span></span></td><td><span class="lvl deny">deny</span></td><td>A field&#39;s DEFAULT satisfies its own ASSERT <span class="covers">— <code>DEFAULT &#39;activ&#39; ASSERT $value IN [&#39;active&#39;,&#39;inactive&#39;]</code></span></td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">2038</span></span></td><td><span class="lvl deny">deny</span></td><td>A constant written to a field satisfies the field&#39;s ASSERT <span class="covers">— <code>DEFINE FIELD status ON t TYPE string ASSERT $value IN [&#39;active&#39;,&#39;inactive&#39;]; CREATE t SET status = &#39;activ&#39;</code> — the same fold as 2037 with <code>$value</code> bound to the written constant, at every constant write (<code>SET</code>, <code>CONTENT</code>/<code>MERGE</code>/<code>REPLACE</code>, <code>INSERT</code> objects and <code>VALUES</code>, <code>RELATE</code>, PATCH <code>add</code>/<code>replace</code>); silent unless the ASSERT folds to <code>false</code> outright, and silent when 2001 already rejected the value</span></td></tr>
         </tbody>
       </table></div>
     </section>
@@ -330,25 +330,21 @@
       <div class="fam-head">
         <span class="fam-badge">4xxx</span>
         <span class="ft">Statement &amp; clause / flow</span>
-        <span class="fc">23 codes</span>
+        <span class="fc">21 codes</span>
       </div>
       <p class="fam-desc">Clauses must be valid on their statement, and control flow must be well-formed and reachable.</p>
       <div class="tbl-wrap"><table>
         <thead><tr><th>Code</th><th>Level</th><th>Contract &amp; what trips it</th></tr></thead>
         <tbody>
-          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4001</span></span></td><td><span class="lvl deny">deny</span></td><td>Clause not valid on this statement <span class="covers">— <code>SELECT ... RETURN NONE</code>, <code>CREATE ... WHERE</code></span></td></tr>
-          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4002</span></span></td><td><span class="lvl deny">deny</span></td><td>SELECT VALUE with multiple projections <span class="covers">— <code>SELECT VALUE a, b FROM t</code> — verified: both SurrealDB&#39;s parser *and* ours reject the syntax, so this is parse-level (0xxx); the code stays reserved, no analyzer emission</span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4003</span></span></td><td><span class="lvl deny">deny</span></td><td>ONLY on a table-wide target without LIMIT 1 <span class="covers">— <code>SELECT * FROM ONLY person</code>, <code>UPDATE ONLY person</code> — deterministic runtime error (<code>SingleOnlyOutput</code>); CREATE is exempt (always one row)</span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4004</span></span></td><td><span class="lvl deny">deny</span></td><td>INSERT tuple column/value count mismatch <span class="covers">— <code>(a, b) VALUES (1)</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4005</span></span></td><td><span class="lvl deny">deny</span></td><td>BREAK/CONTINUE outside a loop <span class="covers">— top-level <code>BREAK</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4006</span></span></td><td><span class="lvl warn">warn</span></td><td>Unreachable statements after RETURN/BREAK/THROW <span class="covers">— <code>RETURN 1; SELECT ...</code> in a block</span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4007</span></span></td><td><span class="lvl deny">deny</span></td><td>Transaction pairing contract: BEGIN opens exactly one transaction that COMMIT/CANCEL closes <span class="covers">— unopened COMMIT/CANCEL, nested BEGIN, BEGIN never closed</span></td></tr>
-          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4009</span></span></td><td><span class="lvl deny">deny</span></td><td>LIVE SELECT with unsupported clause <span class="covers">— <code>LIVE SELECT ... GROUP BY</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4010</span></span></td><td><span class="lvl warn">warn</span></td><td>Duplicate SET target in one statement <span class="covers">— <code>SET age = 1, age = 2</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4011</span></span></td><td><span class="lvl warn">warn</span></td><td>Duplicate projection key/alias <span class="covers">— <code>SELECT age, age FROM t</code>, two <code>AS x</code></span></td></tr>
-          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4012</span></span></td><td><span class="lvl warn">warn</span></td><td>OMIT without a wildcard projection <span class="covers">— verified parser-covered: the grammar only accepts OMIT alongside <code>*</code> — code reserved, no emission</span></td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4012</span></span></td><td><span class="lvl warn">warn</span></td><td>OMIT without a wildcard projection <span class="covers">— <code>SELECT a, b OMIT c FROM t</code> — the grammar accepts <code>OmitClause</code> beside any projection list (the earlier &quot;parser-covered&quot; note was wrong), and the engine applies OMIT to the rows *after* the projection, so without <code>*</code> the clause either names a field that is not returned (a no-op) or strips one the list just asked for; either way the fix is to write the projection you want</span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4013</span></span></td><td><span class="lvl warn">warn</span></td><td>GROUP BY field not in projections <span class="covers">— SurrealDB aggregate rules</span></td></tr>
-          <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">4016</span></span></td><td><span class="lvl allow">allow</span></td><td>Empty block <span class="covers">— verified unreachable: <code>{}</code> in value position is an empty *object* literal, and statement-position blocks don&#39;t have their value consumed — code reserved, no emission</span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4017</span></span></td><td><span class="lvl warn">warn</span></td><td>Block ends with LET — its value is NONE <span class="covers">— <code>{ LET $x = f(); }</code> consumed as a value</span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4018</span></span></td><td><span class="lvl warn">warn</span></td><td>Side-effecting subquery in read position <span class="covers">— <code>SELECT (CREATE log) FROM t</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4019</span></span></td><td><span class="lvl warn">warn</span></td><td>CREATE/INSERT on a relation table without <code>in</code>/<code>out</code> <span class="covers">— <code>CREATE likes SET strength = 1</code></span></td></tr>
@@ -359,6 +355,8 @@
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4024</span></span></td><td><span class="lvl warn">warn</span></td><td>An IF branch is unreachable — its guard provably folds to a constant <span class="covers">— <code>IF false { ... }</code>, the ELSE after <code>IF true { ... }</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4025</span></span></td><td><span class="lvl deny">deny</span></td><td>A wildcard projection cannot be aggregated by a GROUP clause <span class="covers">— <code>SELECT * FROM t GROUP BY k</code>, <code>SELECT * FROM t GROUP ALL</code>, <code>SELECT *, count() FROM t GROUP BY k</code> — 3.0.5 rejects all of them outright (<code>Incorrect selector for aggregate selection, expression \</code>*\<code> … cannot be aggregated in a group</code>); 2.x silently drops the <code>*</code>, so the query never returns what its author asked for under either engine</span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4026</span></span></td><td><span class="lvl warn">warn</span></td><td>A filtered ONLY has no provable single-row target <span class="covers">— <code>SELECT * FROM ONLY t WHERE status = &#39;open&#39;</code> — errors (<code>Expected a single result output when using the ONLY keyword</code>) the moment two rows match, but succeeds while one does; W, not E, because the filter may well be single-row for reasons the schema does not state. Silent when at most one row is provable: a record-id target, <code>WHERE id = …</code>, an equality covering every field of a <code>UNIQUE</code> index, or <code>LIMIT 1</code>. Sibling of 4003, which owns the *unfiltered* table-wide case</span></td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4027</span></span></td><td><span class="lvl warn">warn</span></td><td>Under a GROUP clause every projection is a group key or an aggregate <span class="covers">— <code>SELECT name, count() FROM t GROUP BY city</code> — the engine does not reject <code>name</code>; it silently accumulates every group&#39;s values into an array, so the result shape is not what the projection reads as (inference types it <code>array&lt;string&gt;</code> to match). Fires for a plain non-key field or an expression over one; silent for <code>GROUP ALL</code>, beside a wildcard (4025 owns), and for shapes it cannot prove (subqueries, traversals, methods). Sibling of 4013 (a group key that is not projected) and 4025 (a wildcard)</span></td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4028</span></span></td><td><span class="lvl deny">deny</span></td><td>An aggregate over a column runs under a GROUP clause <span class="covers">— <code>SELECT math::sum(age) FROM person</code> — without <code>GROUP ALL</code> the call runs per row on a scalar and the engine rejects the argument (<code>Expected an array</code>). Only the provable shape fires: every aggregate in the projection over a plain row field whose declared kind is not a collection; <code>math::sum(tags)</code> over <code>array&lt;int&gt;</code>, a param, or a computed argument is inferred the ordinary way. Silent for <code>count()</code>, which 4023 owns; aggregate promotion in inference is gated on a GROUP clause</span></td></tr>
         </tbody>
       </table></div>
     </section>
@@ -388,7 +386,7 @@
       <div class="fam-head">
         <span class="fam-badge">6xxx</span>
         <span class="ft">Parameters</span>
-        <span class="fc">7 codes</span>
+        <span class="fc">6 codes</span>
       </div>
       <p class="fam-desc">A <code>$param</code> in a checkable position produces a <strong>constraint</strong> host adapters discharge, not a finding. Codes here fire only on contradictions and misuse.</p>
       <div class="tbl-wrap"><table>
@@ -399,7 +397,6 @@
           <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">6003</span></span></td><td><span class="lvl allow">allow</span></td><td>Unresolvable dynamic construct (analyzer limitation) <span class="covers">— current <code>dynamic(6001)</code> class</span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">6004</span></span></td><td><span class="lvl warn">warn</span></td><td>Param used before its LET in source order <span class="covers">— <code>RETURN $x; LET $x = 1;</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">6005</span></span></td><td><span class="lvl deny">deny</span></td><td>Context param used outside its context <span class="covers">— <code>$before</code> outside an event, <code>$parent</code> outside a subquery</span></td></tr>
-          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">6006</span></span></td><td><span class="lvl deny">deny</span></td><td>Host-declared type contradicts query constraint <span class="covers">— host binds <code>$age: string</code>, query needs int</span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">6007</span></span></td><td><span class="lvl deny">deny</span></td><td>Assignment to a protected parameter <span class="covers">— <code>LET $auth = {...}</code></span></td></tr>
         </tbody>
       </table></div>
@@ -410,7 +407,7 @@
       <div class="fam-head">
         <span class="fam-badge">7xxx</span>
         <span class="ft">Lints &amp; style</span>
-        <span class="fc">14 codes</span>
+        <span class="fc">15 codes</span>
       </div>
       <p class="fam-desc">Opinions, not contract violations — many ship <span class="lvl allow">allow</span> so you opt into the ones your team wants. All configurable via <code>[lints]</code>.</p>
       <div class="tbl-wrap"><table>
@@ -426,10 +423,11 @@
           <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">7008</span></span></td><td><span class="lvl allow">allow</span></td><td>Schemaless table in a typed workspace <span class="covers">— queries against fieldless tables</span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7009</span></span></td><td><span class="lvl allow">allow</span></td><td>Whole-table UPDATE/DELETE without WHERE <span class="covers">— <code>DELETE person;</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7011</span></span></td><td><span class="lvl warn">warn</span></td><td>Assignment to <code>id</code> in SET <span class="covers">— <code>SET id = ...</code></span></td></tr>
-          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7012</span></span></td><td><span class="lvl warn">warn</span></td><td>Blocking or side-effecting call in a computed context <span class="covers">— <code>http::get(...)</code> / <code>sleep()</code> in a field <code>VALUE</code> or event body</span></td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7012</span></span></td><td><span class="lvl warn">warn</span></td><td>Blocking or side-effecting call in a computed context <span class="covers">— <code>http::get(...)</code> / <code>sleep()</code> in any field clause; <code>rand::*</code> / <code>sequence::next*</code> in a <code>VALUE</code> or <code>COMPUTED</code>, and <code>time::now()</code> in a <code>COMPUTED</code> — clauses that re-run, so the field never holds one value. <code>DEFAULT time::now()</code> / <code>DEFAULT rand::uuid()</code> and <code>VALUE time::now()</code> are the created-at, id and updated-at idioms and stay silent</span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7013</span></span></td><td><span class="lvl warn">warn</span></td><td>A suppression directive names a catalog code (with a reason when required) <span class="covers">— <code>-- surrealguard: allow(ghost)</code>; missing reason under <code>require_suppression_reasons</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">7014</span></span></td><td><span class="lvl allow">allow</span></td><td>Whole-table SELECT without WHERE/LIMIT <span class="covers">— <code>SELECT * FROM person;</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">7015</span></span></td><td><span class="lvl allow">allow</span></td><td>Bare <code>SELECT *</code> (over-fetch / schema-drift brittleness) <span class="covers">— <code>SELECT * FROM person WHERE id = person:tobie;</code></span></td></tr>
+          <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">7016</span></span></td><td><span class="lvl allow">allow</span></td><td>LIMIT/START without ORDER BY (the page is not deterministic) <span class="covers">— <code>SELECT * FROM person LIMIT 10 START 20;</code> — record order is storage order, so two pages can overlap or skip rows. Table targets only; silent for <code>ONLY … LIMIT 1</code> (a cardinality proof, not a page) and <code>GROUP ALL</code> (one row)</span></td></tr>
         </tbody>
       </table></div>
     </section>
@@ -439,14 +437,15 @@
       <div class="fam-head">
         <span class="fam-badge">8xxx</span>
         <span class="ft">Version compatibility</span>
-        <span class="fc">2 codes</span>
+        <span class="fc">3 codes</span>
       </div>
       <p class="fam-desc">Gated on <code>[analysis] surrealdb_version</code>. Checks resolve against a per-version registry of function availability and syntax support.</p>
       <div class="tbl-wrap"><table>
         <thead><tr><th>Code</th><th>Level</th><th>Contract &amp; what trips it</th></tr></thead>
         <tbody>
-          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">8001</span></span></td><td><span class="lvl deny">deny</span></td><td>Every function used exists in the configured target version <span class="covers">— unavailable (<code>array::fold</code> on 1.x) or renamed (<code>string::endsWith</code> — message suggests <code>string::ends_with</code>)</span></td></tr>
-          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">8003</span></span></td><td><span class="lvl deny">deny</span></td><td>Syntax requires a newer version <span class="covers">— closures / <code>??</code> on old targets</span></td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">8001</span></span></td><td><span class="lvl deny">deny</span></td><td>Every function used exists in the configured target version <span class="covers">— added later (<code>file::get</code>, <code>set::len</code> on a 2.x target — &quot;added in 3.0&quot;), or a spelling the target does not have: <code>type::is_record</code> on 2.2 (&quot;before 3.0 it was spelled <code>type::is::record</code>&quot;), <code>type::is::record</code>/<code>time::from::millis</code>/<code>string::startsWith</code> on a target past the rename (&quot;renamed to … in 3.0&quot;/&quot;2.0&quot;; the call is still analyzed under its current name), <code>rand::guid</code>/<code>record::refs</code> on 3.x (&quot;removed in 3.0&quot;)</span></td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">8002</span></span></td><td><span class="lvl deny">deny</span></td><td>Syntax was removed in the configured target version <span class="covers">— on a 3.x target: <code>DEFINE SCOPE</code>/<code>DEFINE TOKEN</code> (→ <code>DEFINE ACCESS</code>), <code>&lt;future&gt;</code> (→ <code>COMPUTED</code>), the fuzzy operators <code>~</code>/<code>!~</code>/<code>?~</code>/<code>*~</code> (→ <code>string::similarity::*</code>), <code>SEARCH ANALYZER</code> (→ <code>FULLTEXT ANALYZER</code>)</span></td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">8003</span></span></td><td><span class="lvl deny">deny</span></td><td>Syntax requires a newer version <span class="covers">— on a 1.x target: closures, <code>UPSERT</code>, <code>ALTER</code>, record-id ranges, <code>?.</code>, <code>.{a, b}</code>, <code>DEFINE ACCESS</code>/<code>CONFIG</code> (2.0); on 2.0: <code>.{1..3}</code> recursion (2.1); on 2.1: <code>REFERENCE</code> fields, <code>&lt;~</code>, <code>DEFINE API</code> (2.2); on 2.x: <code>COMPUTED</code>, <code>DEFINE SEQUENCE</code>/<code>BUCKET</code>, <code>FULLTEXT ANALYZER</code> (3.0); on 3.1: <code>ASSERT</code>/<code>DEFAULT</code> on <code>id</code> (3.2). Unsourced and therefore ungated: <code>??</code>/<code>?:</code> (already in 1.5), <code>set&lt;T&gt;</code> kinds (pre-3.0 as deduplicated arrays), <code>DEFAULT ALWAYS</code> and the <code>+path</code>/<code>+collect</code> recursion algorithms (not in the AST), the 3.0 <code>?.</code>→<code>.?</code> respelling</span></td></tr>
         </tbody>
       </table></div>
     </section>

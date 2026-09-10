@@ -1,0 +1,7 @@
+# CI builds with `dtolnay/rust-toolchain@stable`; pin local builds to the same
+# channel so `cargo test --workspace` behaves identically. Nightly currently
+# fails to compile a transitive dependency (`diskann-wide`) of the `surrealdb`
+# dev-dependency in `crates/rs`.
+[toolchain]
+channel = "stable"
+components = ["clippy", "rustfmt"]
