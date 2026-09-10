@@ -133,7 +133,15 @@ fn every_embedded_query_reaches_the_registry() {
     let (_, queries, _) = load(&root);
     let module = generate(&root);
     for (_, query, _) in &queries {
-        let key = query.parts().join("${}");
+        // A hole is keyed by the name the analyzer bound it to (`$__host0`,
+        // `$__host1`, …), which is what the client reconstructs at call time.
+        let mut key = String::new();
+        for (index, part) in query.parts().iter().enumerate() {
+            if index > 0 {
+                key.push_str(&format!("${}{}", surrealguard_embed::HOST_PARAM_PREFIX, index - 1));
+            }
+            key.push_str(part);
+        }
         assert!(
             module.contains(&format!("    \"{}\": {{", key.replace('"', "\\\""))),
             "embedded query is missing from the generated registry: {key}"

@@ -4,6 +4,8 @@
  * - {@link setClient} / {@link useClient} — provide the typed client via context.
  * - {@link createQuery} — a one-shot query with loading and error state.
  * - {@link createLive} — a live query; `data` stays reconciled.
+ * - `<Query>` / `<LiveQuery>` — the same two, in markup, with the row type
+ *   flowing into the `children` snippet.
  * - {@link createMutation} — a write plus the invalidation that follows it.
  * - {@link preload} — SSR data that remembers which query it is.
  *
@@ -12,6 +14,8 @@
  * can live in your own `.svelte.ts` module without `effect_orphan`.
  */
 
+export { default as Query } from "./Query.svelte";
+export { default as LiveQuery } from "./LiveQuery.svelte";
 export { setClient, useClient } from "./context.js";
 export { resolveSource, type Source } from "./source.js";
 export {

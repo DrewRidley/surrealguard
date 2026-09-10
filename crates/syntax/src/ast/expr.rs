@@ -248,6 +248,13 @@ pub struct GraphStep {
 pub struct Call {
     /// The canonicalized function path (`type::is_record`).
     pub path: Spanned<String>,
+    /// The path **exactly as written**, before canonicalization — so
+    /// `type::is::record` and `type::is_record` stay distinguishable. They are
+    /// not interchangeable: 3.x retired every `::is::` spelling and rejects it
+    /// as a parse error, and canonicalizing before anyone looks is what made
+    /// the dead one indistinguishable from the live one. Shares `path`'s span;
+    /// equal to `path.node` for every path canonicalization does not touch.
+    pub written: String,
     /// The argument expressions, each retaining its own span.
     pub args: Vec<Spanned<Expr>>,
 }

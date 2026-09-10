@@ -35,19 +35,7 @@ pub(crate) static CATALOG: &[BuiltinEntry] = &[
         from_days::analyze_duration_from_days,
     ),
     BuiltinEntry::new(
-        "duration::from::days",
-        "A duration of the given number of days.",
-        from_days::signature,
-        from_days::analyze_duration_from_days,
-    ),
-    BuiltinEntry::new(
         "duration::from_hours",
-        "A duration of the given number of hours.",
-        from_hours::signature,
-        from_hours::analyze_duration_from_hours,
-    ),
-    BuiltinEntry::new(
-        "duration::from::hours",
         "A duration of the given number of hours.",
         from_hours::signature,
         from_hours::analyze_duration_from_hours,
@@ -59,19 +47,7 @@ pub(crate) static CATALOG: &[BuiltinEntry] = &[
         from_micros::analyze_duration_from_micros,
     ),
     BuiltinEntry::new(
-        "duration::from::micros",
-        "A duration of the given number of microseconds.",
-        from_micros::signature,
-        from_micros::analyze_duration_from_micros,
-    ),
-    BuiltinEntry::new(
         "duration::from_millis",
-        "A duration of the given number of milliseconds.",
-        from_millis::signature,
-        from_millis::analyze_duration_from_millis,
-    ),
-    BuiltinEntry::new(
-        "duration::from::millis",
         "A duration of the given number of milliseconds.",
         from_millis::signature,
         from_millis::analyze_duration_from_millis,
@@ -83,19 +59,7 @@ pub(crate) static CATALOG: &[BuiltinEntry] = &[
         from_mins::analyze_duration_from_mins,
     ),
     BuiltinEntry::new(
-        "duration::from::mins",
-        "A duration of the given number of minutes.",
-        from_mins::signature,
-        from_mins::analyze_duration_from_mins,
-    ),
-    BuiltinEntry::new(
         "duration::from_nanos",
-        "A duration of the given number of nanoseconds.",
-        from_nanos::signature,
-        from_nanos::analyze_duration_from_nanos,
-    ),
-    BuiltinEntry::new(
-        "duration::from::nanos",
         "A duration of the given number of nanoseconds.",
         from_nanos::signature,
         from_nanos::analyze_duration_from_nanos,
@@ -107,19 +71,7 @@ pub(crate) static CATALOG: &[BuiltinEntry] = &[
         from_secs::analyze_duration_from_secs,
     ),
     BuiltinEntry::new(
-        "duration::from::secs",
-        "A duration of the given number of seconds.",
-        from_secs::signature,
-        from_secs::analyze_duration_from_secs,
-    ),
-    BuiltinEntry::new(
         "duration::from_weeks",
-        "A duration of the given number of weeks.",
-        from_weeks::signature,
-        from_weeks::analyze_duration_from_weeks,
-    ),
-    BuiltinEntry::new(
-        "duration::from::weeks",
         "A duration of the given number of weeks.",
         from_weeks::signature,
         from_weeks::analyze_duration_from_weeks,

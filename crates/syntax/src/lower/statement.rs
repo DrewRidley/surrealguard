@@ -292,6 +292,61 @@ fn lower_select(node: Node<'_>, text: &str) -> SelectStmt {
     stmt
 }
 
+/// Lowers `LIVE SELECT`.
+///
+/// The projection list is not wrapped in a `Fields` node here the way a
+/// SELECT's is — the grammar spells it out inline — so the projection
+/// children are collected directly. `FROM` is the divider: the same node
+/// kinds appear on both sides of it (a bare `Ident` is a projected field
+/// before `FROM` and the subscribed table after), so every projection arm is
+/// guarded on not having passed it yet.
+fn lower_live_select(node: Node<'_>, text: &str) -> LiveSelectStmt {
+    let mut stmt = LiveSelectStmt {
+        diff: None,
+        value: false,
+        projections: Vec::new(),
+        from: Vec::new(),
+        where_clause: None,
+        fetch: Vec::new(),
+    };
+    let mut saw_from = false;
+
+    for child in named_children(node) {
+        if child.is_error() || child.is_missing() {
+            continue;
+        }
+        match child.kind() {
+            "Keyword" => {
+                let keyword = &text[child.byte_range()];
+                if keyword.eq_ignore_ascii_case("from") {
+                    saw_from = true;
+                } else if keyword.eq_ignore_ascii_case("value") {
+                    stmt.value = true;
+                }
+            }
+            // The grammar aliases the `DIFF` keyword to `Literal`, and only
+            // in leading position. A `DIFF` later in the list arrives as an
+            // ordinary `Predicate` naming a field, which is precisely what
+            // SurrealDB does with it, so it is left to lower as one.
+            "Literal" if !saw_from && text[child.byte_range()].eq_ignore_ascii_case("diff") => {
+                stmt.diff = Some(node_range(child));
+            }
+            "Any" if !saw_from => stmt
+                .projections
+                .push(Projection::Wildcard(node_range(child))),
+            "Predicate" if !saw_from => stmt.projections.push(lower_projection(child, text)),
+            "WhereClause" => stmt.where_clause = clause_expr(child, text),
+            "FetchClause" => stmt.fetch = clause_idioms(child, text),
+            _ if saw_from && is_source_node(child) => {
+                stmt.from.push(lower_source(child, text));
+            }
+            _ => {}
+        }
+    }
+
+    stmt
+}
+
 /// Lowers a `Fields` node to projections plus the `VALUE` flag. Shared by
 /// SELECT projection lists and mutation `RETURN <fields>` clauses.
 fn lower_fields(fields: Node<'_>, text: &str) -> (Vec<Projection>, bool) {
@@ -1008,50 +1063,6 @@ fn lower_for(node: Node<'_>, text: &str) -> ForStmt {
     }
 }
 
-/// `LIVE SELECT [DIFF | VALUE e | fields] FROM sources [WHERE …] [FETCH …]`.
-/// The grammar lists the projections as bare `Predicate` children (no
-/// `Fields` wrapper) and `DIFF` as a `Literal`.
-fn lower_live_select(node: Node<'_>, text: &str) -> LiveSelectStmt {
-    let mut stmt = LiveSelectStmt {
-        diff: false,
-        value: false,
-        projections: Vec::new(),
-        from: Vec::new(),
-        where_clause: None,
-        fetch: Vec::new(),
-    };
-    let mut saw_from = false;
-
-    for child in named_children(node) {
-        if is_broken(child) {
-            continue;
-        }
-        match child.kind() {
-            "Keyword" => {
-                let keyword = &text[child.byte_range()];
-                if keyword.eq_ignore_ascii_case("from") {
-                    saw_from = true;
-                } else if keyword.eq_ignore_ascii_case("value") {
-                    stmt.value = true;
-                }
-            }
-            "Literal" if text[child.byte_range()].eq_ignore_ascii_case("diff") => {
-                stmt.diff = true;
-            }
-            "Any" if !saw_from => stmt
-                .projections
-                .push(Projection::Wildcard(node_range(child))),
-            "Predicate" if !saw_from => stmt.projections.push(lower_projection(child, text)),
-            "WhereClause" => stmt.where_clause = clause_expr(child, text),
-            "FetchClause" => stmt.fetch = clause_idioms(child, text),
-            _ if saw_from && is_source_node(child) => stmt.from.push(lower_source(child, text)),
-            _ => {}
-        }
-    }
-
-    stmt
-}
-
 fn lower_use(node: Node<'_>, text: &str) -> UseStmt {
     let mut stmt = UseStmt {
         namespace: None,
@@ -1291,6 +1302,7 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
         overwrite: false,
         if_not_exists: false,
         default: None,
+        default_always: false,
         value: None,
         computed: None,
         reference: false,
@@ -1301,11 +1313,13 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
 
     for child in named_children(node) {
         match child.kind() {
-            "Keyword" if text[child.byte_range()].eq_ignore_ascii_case("overwrite") => {
-                def.overwrite = true;
-            }
-            "Keyword" => {}
+            // `OVERWRITE` is its own clause node, not a loose keyword — the
+            // shape `lower_define_table` has always read. Matching a bare
+            // `Keyword` here found nothing, so every `DEFINE FIELD OVERWRITE`
+            // lowered as if the word were absent and drew the 1022 that word
+            // exists to answer.
             "OverwriteClause" => def.overwrite = true,
+            "Keyword" => {}
             "IfNotExistsClause" => def.if_not_exists = true,
             "Idiom" => {
                 def.path = Spanned::new(
@@ -1318,7 +1332,12 @@ fn lower_define_field(node: Node<'_>, text: &str) -> DefineField {
                     def.table = table;
                 }
             }
-            "DefaultClause" => def.default = clause_expr(child, text),
+            "DefaultClause" => {
+                def.default = clause_expr(child, text);
+                def.default_always = named_children(child)
+                    .into_iter()
+                    .any(|word| word.kind() == "DefaultAlways");
+            }
             "ValueClause" => def.value = clause_expr(child, text),
             "ComputedClause" => def.computed = clause_expr(child, text),
             "AssertClause" => def.assert = clause_expr(child, text),
@@ -1432,12 +1451,25 @@ fn lower_define_event(node: Node<'_>, text: &str) -> DefineEvent {
                 }
             }
             "WhenClause" => def.when = clause_expr(child, text),
-            "ThenClause" => def.then = clause_expr(child, text),
+            "ThenClause" => def.then = then_clause_expr(child, text),
             _ => {}
         }
     }
 
     def
+}
+
+/// The body of an event's `THEN`. `THEN RETURN <v>` / `THEN THROW <v>` arrive
+/// wrapped in a `ReturnStatement` / `ThrowStatement` node, so the value is one
+/// level further down than a plain `THEN <v>`.
+fn then_clause_expr(clause: Node<'_>, text: &str) -> Option<Spanned<crate::ast::Expr>> {
+    let body = named_children(clause)
+        .into_iter()
+        .rfind(|child| child.kind() != "Keyword")?;
+    if matches!(body.kind(), "ReturnStatement" | "ThrowStatement") {
+        return clause_expr(body, text);
+    }
+    Some(lower_expr(body, text))
 }
 
 fn lower_define_param(node: Node<'_>, text: &str) -> DefineParam {
@@ -2089,16 +2121,79 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn lowers_thin_statements_with_their_table_references() {
-        let parsed = parse("LIVE SELECT * FROM person;");
-        let stmt = lower_kind(&parsed, "LiveSelectStatement", |s| match s {
+    fn lower_live_select_stmt(parsed: &ParsedSource) -> LiveSelectStmt {
+        lower_kind(parsed, "LiveSelectStatement", |s| match s {
             Statement::LiveSelect(stmt) => Some(stmt),
             _ => None,
-        });
+        })
+    }
+
+    /// The source list, which is what tells a subscribable table apart from
+    /// the record id and the second target the engine refuses.
+    #[test]
+    fn lowers_live_select_sources() {
+        let parsed = parse("LIVE SELECT * FROM person;");
+        let stmt = lower_live_select_stmt(&parsed);
+        assert!(matches!(
+            stmt.from.as_slice(),
+            [one] if matches!(&one.node, Expr::Table(name) if name.node == "person")
+        ));
         assert_eq!(stmt.table().map(|t| t.node.as_str()), Some("person"));
         assert!(matches!(stmt.projections[0], Projection::Wildcard(_)));
 
+        let parsed = parse("LIVE SELECT * FROM person:one;");
+        let stmt = lower_live_select_stmt(&parsed);
+        assert!(matches!(
+            stmt.from.as_slice(),
+            [one] if matches!(&one.node, Expr::RecordId { .. })
+        ));
+        assert!(stmt.table().is_none(), "a record id is not a table source");
+
+        let parsed = parse("LIVE SELECT * FROM person, company;");
+        assert_eq!(lower_live_select_stmt(&parsed).from.len(), 2);
+    }
+
+    /// `DIFF` is the diff form only in leading position; later in the list it
+    /// is an ordinary projected field path, which is exactly what SurrealDB
+    /// does with it.
+    #[test]
+    fn lowers_live_select_clauses() {
+        let parsed = parse("LIVE SELECT DIFF FROM person FETCH manager;");
+        let stmt = lower_live_select_stmt(&parsed);
+        assert!(stmt.diff.is_some());
+        assert!(stmt.projections.is_empty());
+        assert_eq!(stmt.fetch.len(), 1);
+
+        let parsed = parse("LIVE SELECT name, DIFF FROM person;");
+        let stmt = lower_live_select_stmt(&parsed);
+        assert!(stmt.diff.is_none());
+        assert_eq!(stmt.projections.len(), 2);
+
+        let parsed = parse("LIVE SELECT VALUE name FROM person;");
+        let stmt = lower_live_select_stmt(&parsed);
+        assert!(stmt.value);
+        assert_eq!(stmt.projections.len(), 1);
+
+        let parsed = parse("LIVE SELECT *, name AS n FROM person WHERE age > 3;");
+        let stmt = lower_live_select_stmt(&parsed);
+        assert!(stmt.where_clause.is_some());
+        assert!(matches!(
+            stmt.projections.as_slice(),
+            [
+                Projection::Wildcard(_),
+                Projection::Expr { alias: Some(_), .. }
+            ]
+        ));
+        // `name` before FROM is a projection, `person` after it is the
+        // source — the same node kind on either side of the divider.
+        assert!(matches!(
+            stmt.from.as_slice(),
+            [one] if matches!(&one.node, Expr::Table(name) if name.node == "person")
+        ));
+    }
+
+    #[test]
+    fn lowers_thin_statements_with_their_table_references() {
         let parsed = parse("REBUILD INDEX idx ON person;");
         let stmt = lower_kind(&parsed, "RebuildStatement", |s| match s {
             Statement::Rebuild(stmt) => Some(stmt),
@@ -2185,6 +2280,53 @@ mod tests {
         assert_eq!(dir.node, crate::ast::GraphDir::In);
         assert!(step.reference, "`<~` is a reference traversal");
         assert_eq!(step.targets[0].node, "team");
+    }
+
+    /// `OVERWRITE` reaches the AST on a field as it always has on a table.
+    /// It arrives as an `OverwriteClause` node, and `lower_define_field` was
+    /// looking for a loose `Keyword` spelled "overwrite" — which the tree does
+    /// not contain — so every `DEFINE FIELD OVERWRITE` lowered as though the
+    /// word were absent and drew the 1022 that word exists to answer.
+    #[test]
+    fn lowers_define_field_overwrite_flag() {
+        let parsed = parse("DEFINE FIELD OVERWRITE title ON ticket TYPE string;");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Field(def)) => Some(def),
+            _ => None,
+        });
+        assert!(stmt.overwrite, "OVERWRITE sets the flag");
+        assert_eq!(stmt.table.node, "ticket", "and the rest still lowers");
+
+        let parsed = parse("DEFINE FIELD title ON ticket TYPE string;");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Field(def)) => Some(def),
+            _ => None,
+        });
+        assert!(!stmt.overwrite, "and its absence leaves it clear");
+    }
+
+    /// `DEFAULT ALWAYS` is a distinct clause to the engine — `id` takes a
+    /// plain `DEFAULT` and rejects this one — so the two must not lower to the
+    /// same thing. The grammar marks it with a `DefaultAlways` node beside the
+    /// value; the `DEFAULT` keyword itself is not even a named child, so
+    /// nothing else in the clause distinguishes them.
+    #[test]
+    fn lowers_define_field_default_always_apart_from_a_plain_default() {
+        let parsed = parse("DEFINE FIELD n ON t DEFAULT ALWAYS 1;");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Field(def)) => Some(def),
+            _ => None,
+        });
+        assert!(stmt.default_always, "ALWAYS sets the flag");
+        assert!(stmt.default.is_some(), "and the value still lowers");
+
+        let parsed = parse("DEFINE FIELD n ON t DEFAULT 1;");
+        let stmt = lower_kind(&parsed, "DefineStatement", |s| match s {
+            Statement::Define(DefineStmt::Field(def)) => Some(def),
+            _ => None,
+        });
+        assert!(!stmt.default_always, "a plain DEFAULT leaves it clear");
+        assert!(stmt.default.is_some());
     }
 
     #[test]

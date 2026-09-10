@@ -212,6 +212,20 @@ impl<'a> AnalysisContext<'a> {
         self.diagnostics
     }
 
+    /// Drops the findings recorded since `start` (a [`Self::diagnostics`]
+    /// length taken earlier) that `keep` rejects — for a caller that reuses
+    /// another statement's analyzer and owns a contract it must not restate.
+    pub(crate) fn retain_since(&mut self, start: usize, mut keep: impl FnMut(&Finding) -> bool) {
+        let mut index = start.min(self.diagnostics.len());
+        while index < self.diagnostics.len() {
+            if keep(&self.diagnostics[index]) {
+                index += 1;
+            } else {
+                self.diagnostics.remove(index);
+            }
+        }
+    }
+
     /// Records a finding, dropping exact duplicates: re-inference of the
     /// same expression (const-value resolution, closure re-inference at a
     /// call site) may re-detect the same violation at the same span.
@@ -312,6 +326,23 @@ impl<'a> AnalysisContext<'a> {
     /// resolves to the narrowed kind.
     pub fn define_narrowed_path(&mut self, key: String, kind: surrealdb_types::Kind) {
         self.env.set_narrowed_path(key, kind);
+    }
+
+    /// Flow-narrows the bare row-field path `path` to `kind`, against the row
+    /// currently in scope. Outside a row context there is no row for the path
+    /// to name, so nothing is recorded.
+    pub fn define_narrowed_row_path(&mut self, path: String, kind: surrealdb_types::Kind) {
+        let Some(table) = self.row_table else {
+            return;
+        };
+        let name = table.name.clone();
+        self.env.set_narrowed_row_path(name, path, kind);
+    }
+
+    /// The flow-narrowed kind for the bare row-field path `path` on the row
+    /// currently in scope, if a guard proved one.
+    pub fn narrowed_row_path(&self, path: &str) -> Option<&surrealdb_types::Kind> {
+        self.env.narrowed_row_path(&self.row_table?.name, path)
     }
 
     /// Rebinds the bare param `name` to `fact` as the result of an *active flow

@@ -36,7 +36,7 @@
 //!
 //! The config file — discovered by walking up from the working directory —
 //! declares the source globs (`[sources]` `schema` / `queries` / `ignore`),
-//! analysis toggles (`[analysis]` `strict`, `surrealdb_version`), diagnostic
+//! analysis toggles (`[analysis]` `strict`), diagnostic
 //! policy (`[diagnostics]` `warnings_as_errors`, `require_suppression_reasons`),
 //! and per-code lint levels (`[lints]`). `surrealguard init` writes a fully
 //! commented example.
@@ -146,10 +146,9 @@ ignore = ["target/**", "node_modules/**", ".git/**"]
 [analysis]
 # Tighten otherwise-advisory checks.
 strict = false
-# Target SurrealDB release ("2.2", "3", "3.0.2"): a call to a function or a
-# piece of syntax that release lacks or removed is reported (8xxx). Leave
-# empty to target the latest release.
-surrealdb_version = ""
+# Opt in to version-compatibility checks (8xxx) by naming the SurrealDB
+# release you deploy to ("2.2", "3", "3.0.2"). Unset means the latest release.
+# surrealdb_version = "3.2"
 
 [diagnostics]
 # Promote every warning to an error (useful in CI).
@@ -295,6 +294,12 @@ fn add_embedded_queries(
         for (index, query) in queries.into_iter().enumerate() {
             let source_id = workspace
                 .add_virtual_source(format!("embedded://{host_id}#{index}"), query.text.clone());
+            // A `defineLive` string is an ordinary SELECT to the parser and a
+            // `LIVE SELECT` to the client. Only the extractor saw which sink it
+            // reached, so this is where that gets recorded.
+            if query.live {
+                workspace.mark_live_query(&source_id);
+            }
             embedded.insert(source_id.to_string(), (query, host_id.clone()));
         }
         source_texts.insert(host_id, text);
@@ -622,6 +627,12 @@ fn run_generate(
         for (index, query) in embedded.into_iter().enumerate() {
             let source_id = workspace
                 .add_virtual_source(format!("embedded://{host_id}#{index}"), query.text.clone());
+            // Same as the check path: `generate` must hold a `defineLive`
+            // string to the live contract too, or the two disagree about the
+            // same file.
+            if query.live {
+                workspace.mark_live_query(&source_id);
+            }
             queries.push((source_id, query, host_id.clone()));
         }
         host_texts.insert(host_id, text);
@@ -1245,7 +1256,7 @@ mod tests {
             .queries
             .iter()
             .any(|glob| glob.contains("queries")));
-        assert_eq!(config.analysis.surrealdb_version, "");
+        assert!(!config.analysis.strict);
         assert_eq!(config.analysis.target_version(), None);
     }
 

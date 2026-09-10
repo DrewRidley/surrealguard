@@ -284,7 +284,7 @@ service directly and never read `compilerOptions.plugins`.
   subquery inference, and constant-value evaluation.
 - **A contract catalog of 87 diagnostics** in families (1xxx schema references,
   2xxx types, 3xxx graph, 4xxx statement misuse, 5xxx functions, 6xxx parameters,
-  7xxx lints, 8xxx version compatibility). Severities are intrinsic to each
+  7xxx lints). Severities are intrinsic to each
   finding; consumers apply policy (warnings-as-errors, lint levels) at their edge,
   rustc-style. Messages lead with the consequence and attach `help:` fixes and
   `note:` spans pointing at the relevant definition.
@@ -314,7 +314,6 @@ ignore = ["node_modules/**", "target/**"]
 
 [analysis]
 strict = false
-surrealdb_version = "2"
 
 [diagnostics]
 warnings_as_errors = false

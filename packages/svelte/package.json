@@ -36,6 +36,15 @@
       "types": "./dist/transport.d.ts",
       "svelte": "./dist/transport.js",
       "default": "./dist/transport.js"
+    },
+    "./preprocess": {
+      "types": "./dist/preprocess.d.ts",
+      "default": "./dist/preprocess.js"
+    },
+    "./inline": {
+      "types": "./dist/inline.d.ts",
+      "svelte": "./dist/inline.js",
+      "default": "./dist/inline.js"
     }
   },
   "publishConfig": {
@@ -43,7 +52,8 @@
   },
   "dependencies": {
     "@surrealguard/client": "0.5.3",
-    "@surrealguard/query": "0.5.3"
+    "@surrealguard/query": "0.5.3",
+    "magic-string": "^0.30.0"
   },
   "peerDependencies": {
     "svelte": "^5",

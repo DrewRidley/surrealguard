@@ -1,0 +1,4 @@
+# `adapter-static` writes the production bundle here.
+build/
+.svelte-kit/
+node_modules/

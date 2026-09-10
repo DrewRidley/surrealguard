@@ -23,6 +23,7 @@
 //! client provokes.
 
 use std::io::{BufRead, BufReader, Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Duration;
 
@@ -89,6 +90,40 @@ impl Lsp {
     /// Spawns the binary and completes the handshake as a client with the
     /// given `ClientCapabilities`, answering server requests or not.
     fn start_as(client_capabilities: Value, answer_server_requests: bool) -> Self {
+        Self::handshake(
+            json!({"capabilities": client_capabilities}),
+            answer_server_requests,
+        )
+    }
+
+    /// The handshake a *modern* editor performs: a workspace root on disk, and
+    /// the two capabilities the suppression actions are gated behind — code
+    /// action literals, and file watching so an edited `surrealguard.toml` is
+    /// noticed. Server requests are answered, as a real editor would.
+    fn start_in(root: &Path) -> Self {
+        Self::handshake(
+            json!({
+                "capabilities": {
+                    "textDocument": {
+                        "codeAction": {
+                            "codeActionLiteralSupport": {
+                                "codeActionKind": {"valueSet": ["quickfix"]},
+                            },
+                        },
+                    },
+                    "workspace": {
+                        "didChangeWatchedFiles": {"dynamicRegistration": true},
+                    },
+                },
+                "workspaceFolders": [{"uri": file_uri(root), "name": "workspace"}],
+            }),
+            true,
+        )
+    }
+
+    /// Spawns the binary and runs the sequenced handshake with the given
+    /// `initialize` params.
+    fn handshake(params: Value, answer_server_requests: bool) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_surrealguard-lsp"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -109,7 +144,7 @@ impl Lsp {
         };
 
         // 1. initialize — and WAIT for the response before anything else.
-        let result = lsp.request("initialize", json!({"capabilities": client_capabilities}));
+        let result = lsp.request("initialize", params);
         assert_eq!(
             result["serverInfo"]["name"], "surrealguard-lsp",
             "handshake must reach our server, got: {result}"
@@ -321,6 +356,21 @@ impl Lsp {
             .collect()
     }
 
+    /// The code actions offered for one published diagnostic, asked for
+    /// exactly the way an editor asks: the diagnostic's own range, and the
+    /// diagnostic itself in the request context.
+    fn code_actions(&mut self, uri: &str, diagnostic: &Value) -> Vec<Value> {
+        let result = self.request(
+            "textDocument/codeAction",
+            json!({
+                "textDocument": {"uri": uri},
+                "range": diagnostic["range"],
+                "context": {"diagnostics": [diagnostic], "triggerKind": 1},
+            }),
+        );
+        result.as_array().cloned().unwrap_or_default()
+    }
+
     fn hover_markdown(&mut self, text: &str, cursor: usize) -> Option<String> {
         let position = position_of(text, cursor);
         let result = self.request(
@@ -334,6 +384,99 @@ impl Lsp {
             .as_str()
             .map(std::string::ToString::to_string)
     }
+}
+
+/// A workspace root on disk, removed when the test that made it finishes.
+struct TempRoot {
+    path: PathBuf,
+}
+
+impl TempRoot {
+    fn new(tag: &str) -> Self {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "surrealguard-code-action-{tag}-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&path).expect("create workspace root");
+        TempRoot { path }
+    }
+
+    /// Writes a file into the root and returns its `file://` URI.
+    fn write(&self, name: &str, text: &str) -> String {
+        let path = self.path.join(name);
+        std::fs::write(&path, text).expect("write workspace file");
+        file_uri(&path)
+    }
+
+    fn read(&self, name: &str) -> String {
+        std::fs::read_to_string(self.path.join(name)).expect("read workspace file")
+    }
+}
+
+impl Drop for TempRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+/// The `file://` URI form the server itself produces for a path, so a document
+/// the server scanned off disk and one the test opens are the same document.
+fn file_uri(path: &Path) -> String {
+    let mut uri = String::from("file://");
+    for byte in path.to_str().expect("utf-8 path").bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                uri.push(byte as char);
+            }
+            _ => uri.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    uri
+}
+
+/// Applies a `TextEdit`'s JSON to text, the way the client would.
+fn apply_lsp_edit(text: &str, edit: &Value) -> String {
+    let start = offset_at(text, &edit["range"]["start"]);
+    let end = offset_at(text, &edit["range"]["end"]);
+    let mut result = text.to_string();
+    result.replace_range(
+        start..end,
+        edit["newText"].as_str().expect("edit carries newText"),
+    );
+    result
+}
+
+/// `{line, character}` → byte offset. The fixtures here are ASCII.
+fn offset_at(text: &str, position: &Value) -> usize {
+    let line = position["line"].as_u64().expect("line") as usize;
+    let character = position["character"].as_u64().expect("character") as usize;
+    let mut offset = 0;
+    for _ in 0..line {
+        offset += text[offset..].find('\n').expect("line exists") + 1;
+    }
+    offset + character
+}
+
+/// The single-file edit an action carries, as `(uri, edit)`.
+fn sole_edit(action: &Value) -> (String, Value) {
+    let changes = action["edit"]["changes"]
+        .as_object()
+        .unwrap_or_else(|| panic!("action must carry a `changes` workspace edit: {action}"));
+    assert_eq!(changes.len(), 1, "one file per action: {action}");
+    let (uri, edits) = changes.iter().next().expect("one entry");
+    let edits = edits.as_array().expect("edit list");
+    assert_eq!(edits.len(), 1, "one edit per action: {action}");
+    (uri.clone(), edits[0].clone())
+}
+
+fn titles(actions: &[Value]) -> Vec<String> {
+    actions
+        .iter()
+        .map(|action| action["title"].as_str().unwrap_or_default().to_string())
+        .collect()
 }
 
 /// UTF-8 byte offset → LSP `{line, character}`. The corpus in these tests is
@@ -1014,6 +1157,322 @@ fn a_client_that_answers_refreshes_gets_one_per_burst_and_never_more_than_one_pe
          once per publish or sweep ({publishes}), got {refreshes}: {:?}",
         lsp.server_requests
     );
+}
+
+// ---------------------------------------------------------------------------
+// Code actions: suppress here / suppress workspace-wide
+// ---------------------------------------------------------------------------
+
+/// The schema the code-action fixtures resolve against, on disk in the root.
+const ROOT_SCHEMA: &str = "\
+DEFINE TABLE account SCHEMAFULL;
+DEFINE FIELD username ON account TYPE string;
+";
+
+/// A `surrealguard.toml` written by hand: leading comment, an existing
+/// `[lints]` table with comments *inside* it, and another table after it.
+/// Mangling any of that would be the visible failure.
+const COMMENTED_CONFIG: &str = "\
+# SurrealGuard workspace config for the demo app.
+
+[sources]
+# .svelte-kit holds generated route types; never scan it.
+ignore = [\"node_modules/**\", \".svelte-kit/**\"]
+
+[lints]
+# Everything stylistic stays advisory in this workspace.
+\"7xxx\" = \"warn\"
+
+[analysis]
+strict = false
+";
+
+fn diagnostic_with_code<'a>(diagnostics: &'a [Value], code: &str) -> &'a Value {
+    diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic["code"] == code)
+        .unwrap_or_else(|| panic!("expected a {code} diagnostic, got: {diagnostics:?}"))
+}
+
+#[test]
+fn a_surql_diagnostic_offers_both_suppressions_and_the_inline_one_actually_silences_it() {
+    let root = TempRoot::new("surql");
+    root.write("a_schema.surql", ROOT_SCHEMA);
+    // Indented on purpose: the inserted directive has to line up with the
+    // statement it covers, not sit at column zero above it.
+    let query = "BEGIN;\n    SELECT * FROM persn;\nCOMMIT;\n";
+    let query_uri = root.write("b_query.surql", query);
+    root.write("surrealguard.toml", "[analysis]\nstrict = false\n");
+
+    let mut lsp = Lsp::start_in(&root.path);
+    assert!(
+        lsp.capabilities["codeActionProvider"].is_object(),
+        "a client that declared codeActionLiteralSupport must be offered the \
+         provider, got: {}",
+        lsp.capabilities
+    );
+
+    let diagnostics = lsp.did_open(&query_uri, query);
+    let unknown_table = diagnostic_with_code(&diagnostics, "E1001").clone();
+    let actions = lsp.code_actions(&query_uri, &unknown_table);
+
+    assert_eq!(
+        titles(&actions),
+        vec![
+            "Suppress E1001 here".to_string(),
+            "Suppress E1001 workspace-wide (surrealguard.toml)".to_string(),
+        ],
+        "got: {actions:?}"
+    );
+    for action in &actions {
+        assert_eq!(action["kind"], "quickfix");
+        assert_eq!(action["diagnostics"][0]["code"], "E1001");
+    }
+
+    // The inline edit, applied.
+    let (uri, edit) = sole_edit(&actions[0]);
+    assert_eq!(uri, query_uri, "the inline edit belongs to the query file");
+    let suppressed = apply_lsp_edit(query, &edit);
+    assert_eq!(
+        suppressed,
+        "BEGIN;\n    -- surrealguard: allow(E1001)\n    SELECT * FROM persn;\nCOMMIT;\n"
+    );
+
+    // Some clients send an empty context when the request comes from a
+    // keybinding rather than a lightbulb; the same actions must still appear.
+    let bare = lsp.request(
+        "textDocument/codeAction",
+        json!({
+            "textDocument": {"uri": query_uri},
+            "range": unknown_table["range"],
+            "context": {"diagnostics": [], "triggerKind": 1},
+        }),
+    );
+    assert_eq!(
+        titles(bare.as_array().expect("an action list")),
+        titles(&actions),
+        "an empty context must fall back to our own findings at that range"
+    );
+
+    // Round trip: the directive the action wrote really does silence it.
+    let after = lsp.did_change(&query_uri, 2, &suppressed);
+    assert!(
+        !after.iter().any(|d| d["code"] == "E1001"),
+        "the suppressed finding must be gone, got: {after:?}"
+    );
+    assert!(
+        !after.iter().any(|d| d["code"].as_str() == Some("W7013")),
+        "the directive must not itself be a malformed-directive finding: {after:?}"
+    );
+}
+
+#[test]
+fn a_workspace_requiring_reasons_gets_a_directive_carrying_one() {
+    let root = TempRoot::new("reasons");
+    root.write("a_schema.surql", ROOT_SCHEMA);
+    let query = "SELECT * FROM persn;\n";
+    let query_uri = root.write("b_query.surql", query);
+    root.write(
+        "surrealguard.toml",
+        "[diagnostics]\nrequire_suppression_reasons = true\n",
+    );
+
+    let mut lsp = Lsp::start_in(&root.path);
+    let diagnostics = lsp.did_open(&query_uri, query);
+    let unknown_table = diagnostic_with_code(&diagnostics, "E1001").clone();
+    let actions = lsp.code_actions(&query_uri, &unknown_table);
+
+    let (_, edit) = sole_edit(&actions[0]);
+    let suppressed = apply_lsp_edit(query, &edit);
+    assert_eq!(
+        suppressed,
+        "-- surrealguard: allow(E1001) reason=\"TODO: explain why this is allowed\"\n\
+         SELECT * FROM persn;\n"
+    );
+
+    let after = lsp.did_change(&query_uri, 2, &suppressed);
+    assert!(
+        after.is_empty(),
+        "a reason-carrying directive suppresses cleanly in a workspace that \
+         requires one, got: {after:?}"
+    );
+}
+
+#[test]
+fn a_single_line_host_string_gets_the_workspace_action_only_and_it_works() {
+    let root = TempRoot::new("svelte");
+    root.write("a_schema.surql", ROOT_SCHEMA);
+    root.write("surrealguard.toml", COMMENTED_CONFIG);
+    // The demo shape: the query is inside a single-line attribute string. A
+    // `--` comment cannot be put anywhere in it without breaking the file.
+    let page = "<Query q=\"SELECT * FROM persn\" />\n";
+    let page_uri = root.write("Page.svelte", page);
+
+    let mut lsp = Lsp::start_in(&root.path);
+    let diagnostics = lsp.did_open(&page_uri, page);
+    let unknown_table = diagnostic_with_code(&diagnostics, "E1001").clone();
+    let actions = lsp.code_actions(&page_uri, &unknown_table);
+
+    assert_eq!(
+        titles(&actions),
+        vec!["Suppress E1001 workspace-wide (surrealguard.toml)".to_string()],
+        "an inline directive would corrupt this file, so it must not be \
+         offered here. Got: {actions:?}"
+    );
+
+    let (config_uri, edit) = sole_edit(&actions[0]);
+    assert_eq!(config_uri, file_uri(&root.path.join("surrealguard.toml")));
+    let edited = apply_lsp_edit(COMMENTED_CONFIG, &edit);
+    assert_eq!(
+        edited,
+        "\
+# SurrealGuard workspace config for the demo app.
+
+[sources]
+# .svelte-kit holds generated route types; never scan it.
+ignore = [\"node_modules/**\", \".svelte-kit/**\"]
+
+[lints]
+# Everything stylistic stays advisory in this workspace.
+\"7xxx\" = \"warn\"
+E1001 = \"allow\"
+
+[analysis]
+strict = false
+",
+        "every comment and every existing entry must survive verbatim"
+    );
+
+    // Round trip: write what the client would have written, tell the server
+    // the way a client with file watching would, and the finding is gone.
+    root.write("surrealguard.toml", &edited);
+    lsp.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({"changes": [{"uri": config_uri, "type": 2}]}),
+    );
+    let after = lsp.next_publish(&page_uri);
+    assert!(
+        !after.iter().any(|d| d["code"] == "E1001"),
+        "an allowed code must stop being published, got: {after:?}"
+    );
+    assert_eq!(
+        root.read("Page.svelte"),
+        page,
+        "the host file itself is never touched by the workspace action"
+    );
+}
+
+#[test]
+fn a_multi_line_template_takes_an_inline_directive_that_silences_it() {
+    let root = TempRoot::new("template");
+    root.write("a_schema.surql", ROOT_SCHEMA);
+    root.write("surrealguard.toml", COMMENTED_CONFIG);
+    // A backtick template that already spans lines: column zero of the
+    // diagnostic's line is query text, so a directive line is safe there.
+    let module = "const rows = await db.query(`\n  SELECT * FROM persn;\n`);\n";
+    let module_uri = root.write("queries.ts", module);
+
+    let mut lsp = Lsp::start_in(&root.path);
+    let diagnostics = lsp.did_open(&module_uri, module);
+    let unknown_table = diagnostic_with_code(&diagnostics, "E1001").clone();
+    let actions = lsp.code_actions(&module_uri, &unknown_table);
+
+    assert_eq!(
+        titles(&actions),
+        vec![
+            "Suppress E1001 here".to_string(),
+            "Suppress E1001 workspace-wide (surrealguard.toml)".to_string(),
+        ],
+        "got: {actions:?}"
+    );
+
+    let (uri, edit) = sole_edit(&actions[0]);
+    assert_eq!(uri, module_uri);
+    let suppressed = apply_lsp_edit(module, &edit);
+    assert_eq!(
+        suppressed,
+        "const rows = await db.query(`\n  -- surrealguard: allow(E1001)\n  \
+         SELECT * FROM persn;\n`);\n"
+    );
+
+    let after = lsp.did_change(&module_uri, 2, &suppressed);
+    assert!(
+        !after.iter().any(|d| d["code"] == "E1001"),
+        "the directive must silence the embedded finding too, got: {after:?}"
+    );
+}
+
+/// The footgun this feature exists to not step in: a lint is *displayed* as
+/// `W7015` (its resolved severity) but *suppressed* as `L7015` (its category).
+/// Copying what the editor showed would produce a directive that parses,
+/// reads plausibly, and silences nothing at all.
+#[test]
+fn a_lint_is_suppressed_by_its_category_code_not_the_one_the_editor_displays() {
+    let root = TempRoot::new("lint");
+    root.write("a_schema.surql", ROOT_SCHEMA);
+    let query = "SELECT * FROM account;\n";
+    let query_uri = root.write("b_query.surql", query);
+    // 7015 is off by default; turn it on so the editor publishes it as W7015.
+    root.write("surrealguard.toml", "[lints]\n7015 = \"warn\"\n");
+
+    let mut lsp = Lsp::start_in(&root.path);
+    let diagnostics = lsp.did_open(&query_uri, query);
+    let select_star = diagnostic_with_code(&diagnostics, "W7015").clone();
+    let actions = lsp.code_actions(&query_uri, &select_star);
+
+    assert_eq!(
+        titles(&actions),
+        vec![
+            "Suppress W7015 here".to_string(),
+            "Suppress W7015 workspace-wide (surrealguard.toml)".to_string(),
+        ],
+        "the title names the code the user sees; the edit must not. Got: {actions:?}"
+    );
+
+    let (_, inline) = sole_edit(&actions[0]);
+    let suppressed = apply_lsp_edit(query, &inline);
+    assert_eq!(
+        suppressed, "-- surrealguard: allow(L7015)\nSELECT * FROM account;\n",
+        "`allow(W7015)` would parse and suppress nothing"
+    );
+    let after = lsp.did_change(&query_uri, 2, &suppressed);
+    assert!(
+        !after.iter().any(|d| d["code"] == "W7015"),
+        "got: {after:?}"
+    );
+
+    // The existing entry is re-levelled in place rather than duplicated —
+    // TOML rejects a table with the same key twice.
+    let (_, in_config) = sole_edit(&actions[1]);
+    assert_eq!(
+        apply_lsp_edit("[lints]\n7015 = \"warn\"\n", &in_config),
+        "[lints]\n7015 = \"allow\"\n"
+    );
+}
+
+#[test]
+fn a_client_that_never_asked_for_code_actions_is_offered_none() {
+    // `Lsp::start` handshakes with empty capabilities — no
+    // codeActionLiteralSupport, so the server must advertise no provider and
+    // answer the request with nothing rather than a shape the client cannot
+    // read.
+    let (mut lsp, _) = Lsp::with_schema("SELECT * FROM persn;\n");
+    assert!(
+        lsp.capabilities["codeActionProvider"].is_null(),
+        "got: {}",
+        lsp.capabilities
+    );
+
+    let result = lsp.request(
+        "textDocument/codeAction",
+        json!({
+            "textDocument": {"uri": QUERY_URI},
+            "range": {"start": {"line": 0, "character": 14},
+                      "end": {"line": 0, "character": 19}},
+            "context": {"diagnostics": [], "triggerKind": 1},
+        }),
+    );
+    assert!(result.is_null(), "got: {result}");
 }
 
 // ---------------------------------------------------------------------------

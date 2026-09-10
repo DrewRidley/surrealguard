@@ -22,8 +22,9 @@ DEFINE FUNCTION fn::bad::returns_int() -> string { RETURN 1; };
 -- 2015: an optional value in a position that needs one.
 SELECT rating + 1 AS bumped FROM article WHERE id = article:hello;
 
--- 2017: an ORDER BY key the result rows do not have.
-SELECT title FROM article WHERE views > 0 ORDER BY nope;
+-- 2017: an ORDER BY key the result rows do not have (`views` is a field of
+-- the table, but not of this projection; a key the table lacks is 1002 alone).
+SELECT title FROM article WHERE views > 0 ORDER BY views;
 
 -- 2018: a negative LIMIT / START.
 SELECT title FROM article WHERE views > 0 LIMIT -1;

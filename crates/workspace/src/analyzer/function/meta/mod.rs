@@ -3,7 +3,6 @@
 use crate::analyzer::function::BuiltinEntry;
 
 pub mod id;
-pub mod table;
 pub mod tb;
 
 /// Every `meta::` built-in the analyzer resolves, in dispatch order.
@@ -13,12 +12,6 @@ pub(crate) static CATALOG: &[BuiltinEntry] = &[
         "The id part of a record id (deprecated: use `record::id`).",
         id::signature,
         id::analyze_meta_id,
-    ),
-    BuiltinEntry::new(
-        "meta::table",
-        "The table part of a record id (deprecated: use `record::table`).",
-        table::signature,
-        table::analyze_meta_table,
     ),
     BuiltinEntry::new(
         "meta::tb",

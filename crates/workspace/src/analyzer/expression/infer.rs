@@ -468,14 +468,14 @@ pub fn idiom_prefix_kinds<'i>(
             receiver.and_then(|kind| step_part_kind(&kind, &first.node, ctx))
         }
     };
-    if let Some(narrowed) = narrowed_kind(place.as_ref(), ctx.env()) {
+    if let Some(narrowed) = narrowed_kind(place.as_ref(), ctx) {
         current = Some(narrowed);
     }
     for part in parts {
         result.push((part, current.clone()));
         let stepped = current.and_then(|kind| step_part_kind(&kind, &part.node, ctx));
         place = place.and_then(|prefix| prefix.stepped(&part.node));
-        current = narrowed_kind(place.as_ref(), ctx.env()).or(stepped);
+        current = narrowed_kind(place.as_ref(), ctx).or(stepped);
     }
     result
 }
@@ -489,6 +489,11 @@ pub fn idiom_prefix_kinds<'i>(
 fn start_place(part: &ast::IdiomPart) -> Option<crate::analyzer::facts::Place> {
     match part {
         ast::IdiomPart::Start(expr) => crate::analyzer::facts::place_of(&expr.node),
+        // A bare field names a place too — the row's. It is keyed separately
+        // from the param space (by the row table, see
+        // `StatementEnv::narrowed_row_paths`), which is what makes returning it
+        // here safe where sharing one flat key space would not be.
+        ast::IdiomPart::Field(name) => Some(crate::analyzer::facts::Place::row_field(name)),
         _ => None,
     }
 }
@@ -505,17 +510,20 @@ fn start_place(part: &ast::IdiomPart) -> Option<crate::analyzer::facts::Place> {
 /// `option<string>` the guard ruled out (the F31 false positive).
 fn narrowed_kind(
     place: Option<&crate::analyzer::facts::Place>,
-    env: &StatementEnv,
+    ctx: &AnalysisContext<'_>,
 ) -> Option<Kind> {
     let place = place?;
     // A bare param carries its narrowing in its own binding, not here.
     if place.path.is_empty() {
         return None;
     }
-    if !matches!(place.root, crate::analyzer::facts::PlaceRoot::Param(_)) {
-        return None;
+    let key = place.key()?;
+    match place.root {
+        crate::analyzer::facts::PlaceRoot::Param(_) => ctx.env().narrowed_path(&key).cloned(),
+        // The row side keys on the row table as well as the path, so this
+        // answers for `v` on the row a guard actually narrowed and no other.
+        crate::analyzer::facts::PlaceRoot::RowField => ctx.narrowed_row_path(&key).cloned(),
     }
-    env.narrowed_path(&place.key()?).cloned()
 }
 
 /// The element kind of a collection, distributed over a union.
@@ -726,7 +734,7 @@ fn step_idiom_kind(idiom: &ast::Idiom, ctx: &mut AnalysisContext<'_>) -> Option<
         }),
         _ => return None,
     };
-    if let Some(narrowed) = narrowed_kind(place.as_ref(), ctx.env()) {
+    if let Some(narrowed) = narrowed_kind(place.as_ref(), ctx) {
         current = Some(narrowed);
     }
 
@@ -736,7 +744,7 @@ fn step_idiom_kind(idiom: &ast::Idiom, ctx: &mut AnalysisContext<'_>) -> Option<
         // A narrowing at this prefix supersedes the stepped kind — and stands
         // in for it when stepping failed, which is how an optional
         // intermediate segment stops killing the whole path.
-        current = Some(narrowed_kind(place.as_ref(), ctx.env()).or(stepped)?);
+        current = Some(narrowed_kind(place.as_ref(), ctx).or(stepped)?);
     }
     current
 }
@@ -1715,11 +1723,11 @@ mod tests {
             assert_eq!(fact.kind, Some(expected), "`{query}`");
             assert!(fact.partial.is_empty(), "`{query}`: {:?}", fact.partial);
         }
-        // A path the engine has no constant for is honestly unknown.
+        // A path the engine has no constant for (`math::nope`) is not a
+        // `Constant` at all: the grammar lists the closed set the engine
+        // resolves, so it never reaches inference as one.
         let parsed = parse("RETURN math::nope;");
-        let fact = infer_first(&parsed, "Constant", None, &env);
-        assert_eq!(fact.kind, None);
-        assert!(!fact.partial.is_empty());
+        assert!(surrealguard_syntax::lower::lower_first_expr(&parsed, "Constant").is_none());
     }
 
     #[test]

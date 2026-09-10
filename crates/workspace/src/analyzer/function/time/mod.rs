@@ -73,19 +73,7 @@ pub(crate) static CATALOG: &[BuiltinEntry] = &[
         from_micros::analyze_time_from_micros,
     ),
     BuiltinEntry::new(
-        "time::from::micros",
-        "The datetime for a Unix timestamp in microseconds.",
-        from_micros::signature,
-        from_micros::analyze_time_from_micros,
-    ),
-    BuiltinEntry::new(
         "time::from_millis",
-        "The datetime for a Unix timestamp in milliseconds.",
-        from_millis::signature,
-        from_millis::analyze_time_from_millis,
-    ),
-    BuiltinEntry::new(
-        "time::from::millis",
         "The datetime for a Unix timestamp in milliseconds.",
         from_millis::signature,
         from_millis::analyze_time_from_millis,
@@ -97,19 +85,7 @@ pub(crate) static CATALOG: &[BuiltinEntry] = &[
         from_nanos::analyze_time_from_nanos,
     ),
     BuiltinEntry::new(
-        "time::from::nanos",
-        "The datetime for a Unix timestamp in nanoseconds.",
-        from_nanos::signature,
-        from_nanos::analyze_time_from_nanos,
-    ),
-    BuiltinEntry::new(
         "time::from_secs",
-        "The datetime for a Unix timestamp in seconds.",
-        from_secs::signature,
-        from_secs::analyze_time_from_secs,
-    ),
-    BuiltinEntry::new(
-        "time::from::secs",
         "The datetime for a Unix timestamp in seconds.",
         from_secs::signature,
         from_secs::analyze_time_from_secs,
@@ -121,31 +97,13 @@ pub(crate) static CATALOG: &[BuiltinEntry] = &[
         from_ulid::analyze_time_from_ulid,
     ),
     BuiltinEntry::new(
-        "time::from::ulid",
-        "The datetime embedded in a ULID.",
-        from_ulid::signature,
-        from_ulid::analyze_time_from_ulid,
-    ),
-    BuiltinEntry::new(
         "time::from_unix",
         "The datetime for a Unix timestamp in seconds.",
         from_unix::signature,
         from_unix::analyze_time_from_unix,
     ),
     BuiltinEntry::new(
-        "time::from::unix",
-        "The datetime for a Unix timestamp in seconds.",
-        from_unix::signature,
-        from_unix::analyze_time_from_unix,
-    ),
-    BuiltinEntry::new(
         "time::from_uuid",
-        "The datetime embedded in a UUID v7.",
-        from_uuid::signature,
-        from_uuid::analyze_time_from_uuid,
-    ),
-    BuiltinEntry::new(
-        "time::from::uuid",
         "The datetime embedded in a UUID v7.",
         from_uuid::signature,
         from_uuid::analyze_time_from_uuid,

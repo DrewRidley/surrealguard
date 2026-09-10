@@ -1009,8 +1009,9 @@ SELECT dept, salary FROM emp GROUP BY dept;
 ```
 3.x returns `{dept: 'a', salary: [10, 20]}` — the non-grouped field collapses to the **array** of
 that group's values. 2.x takes the first value. The analyzer types `salary` as the scalar in both
-cases, so under the 3.x target it is a wrong type, not a loose one. Version-gated behavior:
-`analysis.surrealdb_version` already exists in the config.
+cases, so under the 3.x target it is a wrong type, not a loose one. Not version-gated: SurrealGuard
+targets the latest release, so the 3.x answer is simply the answer. (The dead `surrealdb_version`
+config key this once pointed at was removed — it gated nothing and read as a claim to target 2.x.)
 
 ### NEW-8 — `SELECT * … GROUP ALL` has no diagnostic
 **Severity: medium. Effort: small.** SurrealDB 3.x **rejects** a wildcard under any GROUP clause

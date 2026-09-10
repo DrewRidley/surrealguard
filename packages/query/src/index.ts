@@ -259,6 +259,43 @@ export class QueryClient {
     for (const entry of [...this.#cache.values()]) this.#drop(entry);
   }
 
+  /**
+   * Throw away everything the current identity saw, and re-run whatever is
+   * still on screen. Call this after `signin` / `signup` / `authenticate` /
+   * `db.surreal.invalidate()`.
+   *
+   * {@link clear} is not enough on its own, and the difference is a security
+   * one rather than a nicety. A cache key is the query text plus its
+   * parameters; `$auth` appears in neither, so two identities share a key. An
+   * entry with subscribers is held by the observable those subscribers closed
+   * over, so deleting it from the map leaves the old rows on screen *and*
+   * silently kills their subscription — one user's data, rendered to the next
+   * one, no longer updating. So subscribed entries are reset in place instead:
+   * their `LIVE SELECT` is killed (its permission context was captured under
+   * the old identity and cannot be re-pointed), their state goes back to
+   * pending, and they start again under the new one.
+   */
+  async reset(): Promise<void> {
+    const restarted: Promise<void>[] = [];
+    for (const entry of [...this.#cache.values()]) {
+      if (entry.refs === 0) {
+        this.#drop(entry);
+        continue;
+      }
+      this.#kill(entry);
+      // Back to pending, so `#start` actually reloads rather than trusting the
+      // previous identity's rows, and so markup showing a spinner shows one.
+      this.#set(entry, {
+        status: "pending",
+        data: entry.isLive ? [] : undefined,
+        error: undefined,
+      });
+      entry.started = true;
+      restarted.push(this.#start(entry));
+    }
+    await Promise.all(restarted);
+  }
+
   // --- internals ----------------------------------------------------------
 
   #ensure(query: SurqlQuery<unknown, Bound> | SurqlLive<unknown, Bound>): Entry {
@@ -361,9 +398,23 @@ export class QueryClient {
     }
   }
 
-  #stop(entry: Entry): void {
-    if (entry.subscription) void entry.subscription.kill();
+  /**
+   * Drop an entry's subscription, tolerating a `KILL` the server refuses.
+   *
+   * That is not hypothetical: signing in as someone else invalidates the
+   * session's live queries server-side, so the `KILL` that follows reports
+   * "Cannot execute KILL statement using id: …". The subscription is gone
+   * either way; an unhandled rejection on top of it helps nobody.
+   */
+  #kill(entry: Entry): void {
+    entry.subscription?.kill().catch(() => {
+      // Already gone.
+    });
     entry.subscription = undefined;
+  }
+
+  #stop(entry: Entry): void {
+    this.#kill(entry);
     entry.started = false;
     if (this.#gcTime === Infinity) return;
     const timer = setTimeout(() => {
@@ -376,7 +427,7 @@ export class QueryClient {
   }
 
   #drop(entry: Entry): void {
-    if (entry.subscription) void entry.subscription.kill();
+    this.#kill(entry);
     if (entry.gcTimer) clearTimeout(entry.gcTimer);
     this.#cache.delete(entry.key);
   }

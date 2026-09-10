@@ -57,9 +57,8 @@ pub struct BuiltinEntry {
     /// The call path as the analyzer dispatches it (`string::len`,
     /// `type::is_record`, bare `count`).
     pub name: &'static str,
-    /// A one-line description for editors. Empty for a spelling the analyzer
-    /// accepts but SurrealDB does not document (`count::count`); completion
-    /// offers only documented entries.
+    /// A one-line description for editors; completion offers only documented
+    /// entries.
     pub doc: &'static str,
     /// The leaf file's declared signature — shared by its analyzer and by
     /// everything that renders the function.
@@ -106,10 +105,11 @@ impl BuiltinEntry {
         crate::analyzer::version::function_version(self.name)
     }
 
-    /// Whether the name exists in current SurrealDB — `false` for a spelling
-    /// a release removed (`duration::from::days`, renamed in 3.0), which the
-    /// analyzer still dispatches so the 8001 rename hint has a signature to
-    /// stand on, but which no editor should offer.
+    /// Whether the name exists in current SurrealDB — `false` would mean a
+    /// spelling a release removed. The catalog registers only current names
+    /// (a retired one is 5001, or 8001 under a target that still has it, and
+    /// dispatches as its replacement), so this is the guard that keeps an
+    /// editor from ever offering one should a row slip in.
     pub fn is_current(&self) -> bool {
         self.version()
             .is_none_or(|version| version.removed.is_none())
@@ -220,27 +220,59 @@ pub(crate) fn analyze_builtin_function(
     // `type::is_record`); custom `fn::*` functions fall through to `Any`.
     let mut path = call.path.node.as_str();
 
-    // Does the configured target release have this function (8001)? The
-    // question is asked of the name *as written*: lowering has already
-    // folded `type::is::record` into `type::is_record`, and which of the two
-    // a target accepts is exactly the fact at stake. A removed spelling of a
-    // function that still exists is analyzed under its current name — the
-    // rename changed nothing about the signature.
-    if let Some(target) = ctx.target_version() {
-        if !is_synthetic(call) {
-            let written = ctx
-                .source_text()
-                .get(call.path.span.start() as usize..call.path.span.end() as usize)
-                .map_or(path, str::trim);
-            if let Some(mismatch) = crate::analyzer::version::check_function(target, written) {
-                let span = SourceSpan::new(ctx.source().clone(), call.path.span);
-                ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(span, 8001, mismatch.message)
-                        .with_help(mismatch.help),
-                );
-                if let Some(current) = mismatch.dispatch_as {
-                    path = current;
+    // Renamed and removed names are one table (`version::FUNCTIONS`), read
+    // against the spelling *as written*: lowering has already folded
+    // `type::is::record` into `type::is_record`, and which of the two a
+    // release accepts is exactly the fact at stake.
+    let written = call.written.as_str();
+    match ctx.target_version() {
+        // A configured target: does that release have this function (8001)?
+        // A removed spelling of a function that still exists is analyzed
+        // under its current name — the rename changed nothing about the
+        // signature — and a name removed outright has nothing to analyze as.
+        Some(target) => {
+            if !is_synthetic(call) {
+                if let Some(mismatch) = crate::analyzer::version::check_function(target, written) {
+                    let span = SourceSpan::new(ctx.source().clone(), call.path.span);
+                    ctx.emit(
+                        surrealguard_diagnostics::catalog::finding(span, 8001, mismatch.message)
+                            .with_help(mismatch.help),
+                    );
+                    match mismatch.dispatch_as {
+                        Some(current) => path = current,
+                        None => return Kind::Any,
+                    }
                 }
+            }
+            // The target still has a spelling a later release retired
+            // (`time::from::ulid` on 2.2). Renamed, it is the current function
+            // under its old name — the only one the catalog registers.
+            // Removed outright (`rand::guid` on 2.3), there is no signature
+            // left to check it against: the call is an honest `Any`, not an
+            // unknown name.
+            if builtin(path).is_none() {
+                if let Some(version) = crate::analyzer::version::retired(written) {
+                    match version.replacement {
+                        Some(current) => path = current,
+                        None => return Kind::Any,
+                    }
+                }
+            }
+        }
+        // No target: SurrealGuard analyzes for the latest release, which
+        // refuses to *parse* a retired spelling, so the call is an unknown
+        // name (5001) carrying the rename — or the removal — as its help.
+        None => {
+            if let Some(retired) = crate::analyzer::version::retired(written) {
+                return retired_function(ctx, call, written, retired.replacement);
+            }
+            // Lowering canonicalizes exactly one spelling, `::is::`, and
+            // only because 3.0 retired it: a written path in that form is a
+            // retired one even where the registry has no sourced row for it
+            // (`array::is::empty` never existed under that name, and the
+            // engine answers it with "did you maybe mean `array::is_empty`").
+            if written.to_ascii_lowercase().contains("::is::") {
+                return retired_function(ctx, call, written, Some(path));
             }
         }
     }
@@ -293,6 +325,48 @@ pub(crate) fn analyze_builtin_function(
     } else {
         unknown_function(ctx, call)
     }
+}
+
+/// Reports a call to a function SurrealDB has **removed** (5001) and yields
+/// `Any`, exactly as an unknown name does — the call resolves to nothing on
+/// the engine either.
+///
+/// These are not merely unregistered names. SurrealDB 3.2.3 refuses to *parse*
+/// a call to one, so the query never reaches execution at all — verified live:
+///
+/// ```text
+/// RETURN type::thing('person', 'ada');
+///   --< Parse error: Invalid function/constant path, did you maybe mean `type::record`
+/// RETURN type::record('person', 'ada');   -> ["person:ada"]
+/// ```
+///
+/// Which names those are is [`crate::analyzer::version::FUNCTIONS`]'s to say —
+/// the one sourced table of renames and removals, which 8001 reads too — so
+/// the message quotes the spelling as written and the help names the
+/// replacement the table records. A removal with no replacement inside its
+/// namespace (`record::refs` is the `<~` idiom) says only that the engine
+/// rejects it.
+fn retired_function(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    written: &str,
+    replacement: Option<&str>,
+) -> Kind {
+    if !is_synthetic(call) {
+        let span = SourceSpan::new(ctx.source().clone(), call.path.span);
+        let finding = surrealguard_diagnostics::catalog::finding(
+            span,
+            5001,
+            format!("`{written}` was removed from SurrealQL; it is not a known function"),
+        );
+        ctx.emit(match replacement {
+            Some(replacement) => finding.with_help(format!("use `{replacement}` instead")),
+            None => finding.with_help(
+                "SurrealDB 3.2.3 rejects this call while parsing, so the query never runs",
+            ),
+        });
+    }
+    Kind::Any
 }
 
 /// Fallthrough for a call that resolved to no builtin: emits 5001 unless
@@ -376,6 +450,11 @@ pub(crate) fn synthetic_call(path: &str) -> ast::Call {
             path.to_string(),
             surrealguard_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered"),
         ),
+        // Nothing wrote a synthetic call, so its written spelling is its
+        // canonical one — and never a retired form, which is what keeps a
+        // method-call desugaring from reporting a spelling the author did not
+        // use.
+        written: path.to_string(),
         args: Vec::new(),
     }
 }
@@ -656,8 +735,8 @@ mod tests {
         for entry in catalog {
             assert!(names.insert(entry.name), "duplicate entry `{}`", entry.name);
             assert!(
-                entry.is_documented() || entry.name == "count::count",
-                "`{}` has no doc; every documented spelling needs one",
+                entry.is_documented(),
+                "`{}` has no doc; every spelling needs one",
                 entry.name
             );
         }
@@ -693,6 +772,7 @@ mod tests {
                     surrealguard_syntax::span::ByteRange::new(0, source.len() as u32)
                         .expect("ordered"),
                 ),
+                written: entry.name.to_string(),
                 args: Vec::new(),
             };
             let _ = analyze_builtin_function(&mut ctx, &call, &[]);
@@ -734,9 +814,9 @@ mod tests {
                 );
             }
         }
-        assert!(!super::builtin("duration::from::days")
-            .expect("dispatched for the rename hint")
-            .is_current());
+        // A removed spelling is not a catalog row at all: it reports (5001
+        // or 8001) and dispatches as the name that replaced it.
+        assert!(super::builtin("duration::from::days").is_none());
         assert!(super::builtin("duration::from_days")
             .expect("current spelling")
             .is_current());
@@ -803,8 +883,13 @@ mod tests {
             ("RETURN string::html::encode('<b>');", Kind::String),
             ("RETURN geo::hash::encode((0, 0), 8);", Kind::String),
             ("RETURN schema::table::exists('user');", Kind::Bool),
-            ("RETURN duration::from::days(3);", Kind::Duration),
-            ("RETURN time::from::unix(1);", Kind::Datetime),
+            // The underscore spellings, which are the only ones 3.2.3 parses.
+            // These rows said `duration::from::days` / `time::from::unix` and
+            // asserted they analyze CLEANLY — a 2.x assumption. Both are parse
+            // errors on the engine now, and both are reported as 5001; the
+            // retired-spelling test below is where they are pinned.
+            ("RETURN duration::from_days(3);", Kind::Duration),
+            ("RETURN time::from_unix(1);", Kind::Datetime),
             ("RETURN type::is_set([1]);", Kind::Bool),
             ("RETURN array::index_of([1, 2], 2);", Kind::Int),
         ];
@@ -816,6 +901,118 @@ mod tests {
                 "`{query}` must analyze cleanly"
             );
             assert_eq!(response_kind_of(query), Some(expected), "kind of `{query}`");
+        }
+    }
+
+    /// A name the engine no longer parses is not a name we can type-check.
+    /// SurrealDB 3.2.3 answers `RETURN type::thing('person', 'ada')` with
+    /// "Parse error: Invalid function/constant path, did you maybe mean
+    /// `type::record`" — the query never runs, so silently inferring a
+    /// `record<person>` for it was assurance about a query that cannot execute.
+    #[test]
+    fn a_removed_function_is_reported_with_the_spelling_that_replaced_it() {
+        let findings = diagnostics_of("RETURN type::thing('person', 'ada');");
+        let finding = findings
+            .iter()
+            .find(|finding| finding.code().number() == 5001)
+            .expect("expected 5001 for a removed function");
+        assert!(
+            finding.message().contains("`type::thing` was removed"),
+            "unexpected message: {}",
+            finding.message()
+        );
+        assert!(
+            finding
+                .help()
+                .iter()
+                .any(|help| help.message.contains("`type::record`")),
+            "the finding must name the replacement: {:?}",
+            finding.help()
+        );
+
+        // The replacement itself stays clean, and keeps its inference.
+        assert_eq!(
+            diagnostics_of("RETURN type::record('person', 'ada');"),
+            Vec::new()
+        );
+        assert_eq!(
+            response_kind_of("RETURN type::record('person', 'ada');"),
+            Some(Kind::Record(vec!["person".into()]))
+        );
+    }
+
+    /// Every removed row of the version registry, and the live spelling each
+    /// one names.
+    ///
+    /// The table is data, and data rots quietly: a row whose retired name the
+    /// analyzer stopped routing through this check, or one whose replacement
+    /// is itself not a function, would both go unnoticed. This walks the whole
+    /// thing — a retired name must report 5001 (with no target configured,
+    /// the latest release is the target), and the name it points at must not.
+    ///
+    /// Both halves matter. The first is the contract. The second is the guard
+    /// against the failure this fix nearly shipped: the completion catalog
+    /// listed only the `type::is::x` spelling of that family, so retiring the
+    /// colon form silently removed the underscore form as well and
+    /// `age.is_none()` stopped resolving.
+    #[test]
+    fn every_retired_spelling_reports_and_every_replacement_it_names_does_not() {
+        for version in crate::analyzer::version::FUNCTIONS {
+            if version.removed.is_none() {
+                continue;
+            }
+            let retired = version.name;
+            let findings = diagnostics_of(&format!("RETURN {retired}();"));
+            assert!(
+                findings
+                    .iter()
+                    .any(|finding| finding.code().number() == 5001
+                        && finding
+                            .message()
+                            .contains(&format!("`{retired}` was removed"))),
+                "`{retired}` is retired but was not reported: {findings:?}"
+            );
+            let Some(replacement) = version.replacement else {
+                continue;
+            };
+            // Called with no arguments, so an arity finding (5002) is expected
+            // and uninteresting; what must not appear is 5001, which would mean
+            // we are pointing the author at a name we do not know either.
+            let findings = diagnostics_of(&format!("RETURN {replacement}();"));
+            assert!(
+                !findings
+                    .iter()
+                    .any(|finding| finding.code().number() == 5001),
+                "`{retired}`'s replacement `{replacement}` is not a known function: {findings:?}"
+            );
+        }
+    }
+
+    /// The colon spellings are the ones lowering used to erase: it rewrote
+    /// `::is::` to `::is_` before any analyzer saw a path, so the dead spelling
+    /// and the live one were the same string by the time anything could tell
+    /// them apart. `call.written` is what keeps them distinct.
+    #[test]
+    fn the_colon_spellings_report_while_their_underscore_forms_stay_clean() {
+        for (retired, live) in [
+            ("type::is::string", "type::is_string"),
+            ("string::is::email", "string::is_email"),
+            ("array::is::empty", "array::is_empty"),
+            ("duration::from::days", "duration::from_days"),
+            ("time::from::unix", "time::from_unix"),
+        ] {
+            assert!(
+                diagnostics_of(&format!("RETURN {retired}('x');"))
+                    .iter()
+                    .any(|finding| finding.code().number() == 5001),
+                "`{retired}` must report 5001"
+            );
+            assert!(
+                !diagnostics_of(&format!("RETURN {live}('x');"))
+                    .iter()
+                    .any(|finding| finding.code().number() == 5001),
+                "`{live}` must stay a known function"
+            );
         }
     }
 

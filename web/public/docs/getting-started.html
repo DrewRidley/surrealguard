@@ -78,7 +78,6 @@ ignore  = [<span class="s">"target/**"</span>, <span class="s">"node_modules/**"
 
 [analysis]
 strict = <span class="k">false</span>
-surrealdb_version = <span class="s">"2"</span>
 
 [diagnostics]
 warnings_as_errors = <span class="k">false</span>
@@ -100,7 +99,6 @@ E1002 = <span class="s">"allow"</span>          <span class="c"># specific code 
         <tr><td>[sources]</td><td>queries</td><td><code>**/*.surql</code></td><td>Globs analyzed as queries against that schema.</td></tr>
         <tr><td>[sources]</td><td>ignore</td><td><code>target/**</code>, <code>node_modules/**</code>, <code>.git/**</code></td><td>Directories excluded from discovery.</td></tr>
         <tr><td>[analysis]</td><td>strict</td><td><code>false</code></td><td>Tighten otherwise-advisory checks.</td></tr>
-        <tr><td>[analysis]</td><td>surrealdb_version</td><td><code>"2"</code></td><td>Target version for version-gated behavior.</td></tr>
         <tr><td>[diagnostics]</td><td>warnings_as_errors</td><td><code>false</code></td><td>Promote every warning to an error (affects exit code).</td></tr>
         <tr><td>[diagnostics]</td><td>require_suppression_reasons</td><td><code>false</code></td><td>Require a written reason on every inline suppression.</td></tr>
         <tr><td>[lints]</td><td>named lint, specific code, or family wildcard</td><td>built-in</td><td>Level override (<code>allow</code>, <code>warn</code>, or <code>deny</code>) keyed by a named lint (<code>select_star</code>, <code>dynamic_query</code>, <code>permission_gated_field</code>), a specific code (<code>E1002</code> or bare <code>7002</code>), or a whole-family wildcard (<code>"7xxx"</code>/<code>"7*"</code>). A specific code overrides a family that also covers it.</td></tr>

@@ -17,12 +17,13 @@ surrealguard-workspace = { path = "../workspace", version = "0.5.3" }
 
 [dev-dependencies]
 # `tests/golden.rs` runs the CLI's generation path over a fixture workspace:
-# host-file extraction is the embed crate, and the schema/query partition
-# follows the same globs `surrealguard.toml` declares.
+# host-file extraction is the embed crate (also used to assert the
+# host-parameter prefix restated here still matches its definition), and the
+# schema/query partition follows the same globs `surrealguard.toml` declares.
 glob = "0.3"
-surrealguard-diagnostics = { path = "../diagnostics" }
-surrealguard-embed = { path = "../embed" }
-surrealguard-syntax = { path = "../syntax" }
+surrealguard-diagnostics = { path = "../diagnostics", version = "0.5.3" }
+surrealguard-embed = { path = "../embed", version = "0.5.3" }
+surrealguard-syntax = { path = "../syntax", version = "0.5.3" }
 
 [lints]
 workspace = true

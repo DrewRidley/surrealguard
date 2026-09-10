@@ -21,6 +21,8 @@ surrealguard-embed = { path = "../embed", version = "0.5.3" }
 surrealguard-syntax = { path = "../syntax", version = "0.5.3" }
 surrealguard-workspace = { path = "../workspace", version = "0.5.3" }
 tower-lsp = "0.20"
+# Dynamic capability registration carries its options as a raw JSON value.
+serde_json = "1"
 tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync"] }
 # Semantic tokens read the grammar's node kinds straight off the parse tree
 # `surrealguard-syntax` already produced.
@@ -32,7 +34,6 @@ glob = "0.3"
 
 [dev-dependencies]
 futures = "0.3"
-serde_json = "1"
 tower = { version = "0.4", features = ["util"] }
 
 [lints]

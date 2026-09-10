@@ -85,6 +85,11 @@ const GUARDS: &[Guard] = &[
     ),
     // 2xxx — types
     guard(
+        1033,
+        "DEFINE FIELD OVERWRITE id ON user VALUE rand::uuid();",
+        "DEFINE FIELD OVERWRITE id ON user DEFAULT rand::uuid();",
+    ),
+    guard(
         2001,
         "UPDATE user:a SET age = 'x';",
         "UPDATE user:a SET age = 1;",
@@ -101,9 +106,11 @@ const GUARDS: &[Guard] = &[
         "DEFINE FUNCTION fn::bad() -> string { RETURN 1; };",
         "DEFINE FUNCTION fn::good() -> string { RETURN 'x'; };",
     ),
+    // A key the table lacks is 1002 alone; 2017 is a key the table has but
+    // this query's rows do not.
     guard(
         2017,
-        "SELECT name FROM user ORDER BY nope;",
+        "SELECT name FROM user ORDER BY age;",
         "SELECT name FROM user ORDER BY name;",
     ),
     guard(
@@ -201,6 +208,11 @@ const GUARDS: &[Guard] = &[
     ),
     guard(4005, "BREAK;", "FOR $x IN [1] { BREAK; };"),
     guard(4007, "COMMIT;", "BEGIN; COMMIT;"),
+    guard(
+        4009,
+        "LIVE SELECT name FROM user:ada;",
+        "LIVE SELECT name FROM user;",
+    ),
     guard(
         4025,
         "SELECT * FROM user GROUP BY age;",

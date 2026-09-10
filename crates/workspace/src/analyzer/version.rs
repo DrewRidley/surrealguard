@@ -3,7 +3,10 @@
 //! syntax).
 //!
 //! Every check gates on [`AnalysisContext::target_version`]; an unset
-//! `analysis.surrealdb_version` is "the latest" and nothing here fires.
+//! `analysis.surrealdb_version` is "the latest" and nothing here fires. The
+//! function table is also what 5001 reads when there is no target: a spelling
+//! the latest release removed is an unknown name there, carrying the rename
+//! ([`retired`]) — one table for every removed or renamed name.
 //!
 //! # Sources
 //!
@@ -458,6 +461,13 @@ pub(crate) fn check_function(target: TargetVersion, written: &str) -> Option<Fun
         }
     }
     None
+}
+
+/// The version facts for a spelling the latest release no longer has — the
+/// one table 5001 reads for a name the engine refuses to parse (no target
+/// configured) and 8001 reads for a target past the removal.
+pub(crate) fn retired(written: &str) -> Option<&'static FunctionVersion> {
+    function_version(written).filter(|entry| entry.removed.is_some())
 }
 
 /// The rename hint for a name that resolves to no function, whatever the

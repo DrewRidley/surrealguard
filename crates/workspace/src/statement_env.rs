@@ -30,6 +30,18 @@ pub struct StatementEnv {
     /// declared `option<record<folder>>`. Keyed on the `param.field.field`
     /// path; only the exact path narrows (never the base param or siblings).
     narrowed_paths: BTreeMap<String, surrealdb_types::Kind>,
+    /// Flow-narrowed **row** field paths — the same thing
+    /// [`narrowed_paths`](Self::narrowed_paths) does for `$param.field`, for a
+    /// bare field of the row in scope: `IF type::is_string(v)` records
+    /// `("mixed", "v") -> string`, so the guarded branch reads `v` as a
+    /// `string` rather than the declared `string | int`.
+    ///
+    /// Keyed by **table name as well as path**, and that is not decoration. A
+    /// row field named `x` and a `$x.y` would otherwise share the flat key
+    /// space, and a nested `SELECT` inside a guarded branch keeps this
+    /// environment while swapping the row underneath it — so `v` narrowed on
+    /// `mixed` must not answer for a `v` on some other table.
+    narrowed_row_paths: BTreeMap<(String, String), surrealdb_types::Kind>,
     /// Bare params whose binding was tightened by an *active flow narrowing*
     /// in this scope (a prior guard's positive/negative effect), as opposed to
     /// their base declared/seeded binding. Dead-branch folding consults this so
@@ -64,6 +76,7 @@ impl StatementEnv {
             params: BTreeMap::new(),
             table_discriminants: self.table_discriminants.clone(),
             narrowed_paths: self.narrowed_paths.clone(),
+            narrowed_row_paths: self.narrowed_row_paths.clone(),
             narrowed_params: self.narrowed_params.clone(),
             // Child records are collected fresh and drained back on merge, so
             // the parent's already-recorded bindings are not re-emitted.
@@ -116,6 +129,23 @@ impl StatementEnv {
     /// The flow-narrowed kind for the idiom path `key`, if a guard proved one.
     pub fn narrowed_path(&self, key: &str) -> Option<&surrealdb_types::Kind> {
         self.narrowed_paths.get(key)
+    }
+
+    /// Records that the bare row-field path `path` on `table` is flow-narrowed
+    /// to `kind` in this scope.
+    pub fn set_narrowed_row_path(
+        &mut self,
+        table: String,
+        path: String,
+        kind: surrealdb_types::Kind,
+    ) {
+        self.narrowed_row_paths.insert((table, path), kind);
+    }
+
+    /// The flow-narrowed kind for row-field path `path` on `table`.
+    pub fn narrowed_row_path(&self, table: &str, path: &str) -> Option<&surrealdb_types::Kind> {
+        self.narrowed_row_paths
+            .get(&(table.to_string(), path.to_string()))
     }
 
     /// Records that the bare param `name`'s binding was tightened by an active

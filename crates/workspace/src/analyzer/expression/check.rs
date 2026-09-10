@@ -584,13 +584,20 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
 
 /// One field segment, checked against the value it is read off.
 ///
-/// The receiver has to name a single table for there to be anything to check —
-/// `record<user>` and every `option`/`array`/`set` wrapping of it do, a
-/// multi-table link and an open `record` do not. From there this is the ordinary
-/// unknown-field check ([`crate::analyzer::data::check_field_path`]): same code,
-/// same 1002, same "did you mean", same schemaless leniency as a field named
-/// anywhere else. Reusing it is the point — a traversal tail's field is not a
-/// different kind of field.
+/// The receiver has to name its tables for there to be anything to check —
+/// `record<user>` and every `option`/`array`/`set` wrapping of it do, an open
+/// `record` does not. From there this is the ordinary unknown-field check
+/// ([`crate::analyzer::data::check_field_path`]): same code, same 1002, same
+/// "did you mean", same schemaless leniency as a field named anywhere else.
+/// Reusing it is the point — a traversal tail's field is not a different kind
+/// of field.
+///
+/// **A multi-table link is checked against every table at once.** `record<dog |
+/// cat>.bark` is wrong only when *no* arm declares `bark`; one arm that does
+/// makes the read legitimate polymorphic code whose value is simply NONE for
+/// the others, and reporting it would be reporting a program that works. So the
+/// finding is emitted when every arm is missing the field, and the arm named in
+/// it is the first — the one the "did you mean" suggestion is drawn from.
 fn check_field_on_receiver(
     ctx: &mut AnalysisContext<'_>,
     receiver: &Kind,
@@ -600,13 +607,20 @@ fn check_field_on_receiver(
     let Some((_, targets)) = crate::kinds::record_link_shape(receiver) else {
         return;
     };
-    let [target] = targets.as_slice() else {
+    if let [target] = targets.as_slice() {
+        let Some(table) = ctx.schema().tables.get(&target.to_string()) else {
+            return;
+        };
+        crate::analyzer::data::check_field_path(ctx, table, &[name.to_string()], span, 1002);
         return;
-    };
-    let Some(table) = ctx.schema().tables.get(&target.to_string()) else {
-        return;
-    };
-    crate::analyzer::data::check_field_path(ctx, table, &[name.to_string()], span, 1002);
+    }
+    crate::analyzer::data::select::emit_absent_on_every_link_target(
+        ctx,
+        &targets,
+        &[name.to_string()],
+        span,
+        1002,
+    );
 }
 
 fn check_binary(

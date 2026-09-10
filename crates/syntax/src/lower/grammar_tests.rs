@@ -229,7 +229,7 @@ fn live_select_lowers_its_projection_filter_and_fetch() {
     ) else {
         panic!("expected LIVE SELECT");
     };
-    assert!(!live.diff && !live.value);
+    assert!(live.diff.is_none() && !live.value);
     assert_eq!(live.projections.len(), 2);
     assert_eq!(live.table().map(|t| t.node.as_str()), Some("person"));
     assert!(matches!(
@@ -246,7 +246,7 @@ fn live_select_lowers_its_projection_filter_and_fetch() {
     else {
         panic!("expected LIVE SELECT");
     };
-    assert!(live.diff);
+    assert!(live.diff.is_some());
     assert!(live.projections.is_empty());
     assert!(matches!(live.from[0].node, Expr::Param(ref p) if p == "tb"));
     assert!(live.table().is_none());
@@ -476,6 +476,35 @@ fn fetch_accepts_a_filtered_path() {
         select.fetch[0].node.parts[1].node,
         IdiomPart::Where(_)
     ));
+}
+
+/// `FETCH RETURN` fetches the field named `RETURN`: the keyword root arrives
+/// as a `Keyword` node and lowers to an ordinary field, on RETURN's own FETCH
+/// as much as on SELECT's.
+#[test]
+fn fetch_accepts_a_keyword_named_root() {
+    let Statement::Select(select) =
+        statement("SELECT * FROM t FETCH RETURN, a.b;", "SelectStatement")
+    else {
+        panic!("expected SELECT");
+    };
+    assert_eq!(select.fetch.len(), 2);
+    assert!(matches!(
+        &select.fetch[0].node.parts[0].node,
+        IdiomPart::Field(name) if name == "RETURN"
+    ));
+    assert!(matches!(
+        &select.fetch[1].node.parts[..],
+        [a, b] if matches!(&a.node, IdiomPart::Field(x) if x == "a")
+            && matches!(&b.node, IdiomPart::Field(y) if y == "b")
+    ));
+
+    // RETURN carries a FETCH of its own; the AST does not model it yet, but
+    // the statement must parse and its value must still lower.
+    let Statement::Return(ret) = statement("RETURN RETRUN FETCH RETURN;", "ReturnStatement") else {
+        panic!("expected RETURN");
+    };
+    assert!(ret.value.is_some());
 }
 
 // ---- 14. access / users / info ---------------------------------------------------------

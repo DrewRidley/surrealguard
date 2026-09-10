@@ -46,7 +46,7 @@ are never reused.
 | function | 5xxx | Function and closure misuse |
 | param | 6xxx | Parameter constraints and conflicts |
 | lint | 7xxx | Style and suspicious-but-valid constructs |
-| compat | 8xxx | SurrealDB version compatibility |
+| compat | 8xxx | SurrealDB version compatibility — gated on the optional `analysis.surrealdb_version` |
 
 Severity defaults: **error** = provably fails or misbehaves at runtime;
 **warning** = provably suspicious but executable; **info** = analyzer
@@ -91,6 +91,7 @@ carried by the span and message, never by the code.
 | 1027 | an index-backed operator has its supporting index | `@@`/search::* need a SEARCH index; `<\|k\|>` needs MTREE/HNSW | E | ✅ emitting |
 | 1029 | each index covers a distinct field set | two indexes on `(email)` | W | ✅ emitting |
 | 1032 | DEFINE ANALYZER components name known tokenizers/filters/languages | `FILTERS snowball(klingon)` — tokenizer names are parser-covered (the grammar hard-codes them); filter names/languages emit here | E | ✅ emitting |
+| 1033 | a DEFINE FIELD clause is one the field it targets accepts | `id` rejects VALUE / READONLY / COMPUTED / DEFAULT ALWAYS — the engine fails the definition ("Cannot use the `VALUE` keyword on the `id` field"). A plain DEFAULT, TYPE, ASSERT, PERMISSIONS and COMMENT are all accepted on `id`; `in`/`out` were probed against 3.2.3 and have no clause restriction at all | E | ✅ emitting |
 
 Folded by the contract audit (2026-07-09): 1003–1011 → 1002; 1013, 1014,
 1030 → 1012; 1015 → 5001 (function resolution); 1016, 1017, 1018 → 1001;
@@ -157,6 +158,7 @@ contract violation.
 | 4005 | BREAK/CONTINUE outside a loop | top-level `BREAK` | E | ✅ loop depth on ctx |
 | 4006 | unreachable statements after RETURN/BREAK/THROW | `RETURN 1; SELECT ...` in a block | W | ✅ |
 | 4007 | transaction pairing contract: BEGIN opens exactly one transaction that COMMIT/CANCEL closes | unopened COMMIT/CANCEL, nested BEGIN, BEGIN never closed | E | ✅ pipeline tracks the open transaction (nested/unpaired/unclosed variants) |
+| 4009 | LIVE SELECT with unsupported clause | `defineLive("SELECT * FROM ticket ORDER BY title")` / `LIMIT` / `GROUP BY` / `START` / `SPLIT` / `OMIT` / `TIMEOUT` / `PARALLEL` / `EXPLAIN` / `ONLY` — every set-shaping clause, which the engine rejects while parsing once the client prefixes `LIVE`; `FROM ticket:1` and a second FROM target, which it registers (answering a uuid) and then never fires. A real `LIVE SELECT` statement only reaches the last two — the grammar admits only projections/FROM/WHERE/FETCH, so the others are a parse error there | E | ✅ verified on a live 3.2.3 over ws://; the contract belongs to the sink (`EmbeddedQuery::live`), so it runs as a post-pass over `defineLive` sources and inside the LIVE SELECT analyzer |
 | 4010 | duplicate SET target in one statement | `SET age = 1, age = 2` | W | ✅ assignments are structured |
 | 4011 | duplicate projection key/alias | `SELECT age, age FROM t`, two `AS x` | W | ✅ keys computed |
 | 4012 | OMIT without a wildcard projection | `SELECT a, b OMIT c FROM t` — the grammar accepts `OmitClause` beside any projection list (the earlier "parser-covered" note was wrong), and the engine applies OMIT to the rows *after* the projection, so without `*` the clause either names a field that is not returned (a no-op) or strips one the list just asked for; either way the fix is to write the projection you want | W | ✅ emitting (nested SELECTs included) |
@@ -171,8 +173,9 @@ contract violation.
 | 4024 | an IF branch is unreachable — its guard provably folds to a constant | `IF false { ... }`, the ELSE after `IF true { ... }` | W | ✅ constant-folded guard |
 | 4025 | a wildcard projection cannot be aggregated by a GROUP clause | `SELECT * FROM t GROUP BY k`, `SELECT * FROM t GROUP ALL`, `SELECT *, count() FROM t GROUP BY k` — 3.0.5 rejects all of them outright (`Incorrect selector for aggregate selection, expression \`*\` … cannot be aggregated in a group`); 2.x silently drops the `*`, so the query never returns what its author asked for under either engine | E | ✅ verified on a live 3.0.5 |
 | 4026 | a filtered ONLY has no provable single-row target | `SELECT * FROM ONLY t WHERE status = 'open'` — errors (`Expected a single result output when using the ONLY keyword`) the moment two rows match, but succeeds while one does; W, not E, because the filter may well be single-row for reasons the schema does not state. Silent when at most one row is provable: a record-id target, `WHERE id = …`, an equality covering every field of a `UNIQUE` index, or `LIMIT 1`. Sibling of 4003, which owns the *unfiltered* table-wide case | W | ✅ verified on a live 3.0.5 |
-| 4027 | under a GROUP clause every projection is a group key or an aggregate | `SELECT name, count() FROM t GROUP BY city` — the engine does not reject `name`; it silently accumulates every group's values into an array, so the result shape is not what the projection reads as (inference types it `array<string>` to match). Fires for a plain non-key field or an expression over one; silent for `GROUP ALL`, beside a wildcard (4025 owns), and for shapes it cannot prove (subqueries, traversals, methods). Sibling of 4013 (a group key that is not projected) and 4025 (a wildcard) | W | ✅ |
+| 4027 | a live query clause the notification will not reflect | `LIVE SELECT DIFF FROM t FETCH owner` — registers, delivers, and leaves the link a record id: the FETCH is silently dead. Also `LIVE SELECT name, DIFF FROM t`, where DIFF has lost its leading position and reads as an ordinary field path, so every notification carries `DIFF: null`. Sibling of 4009, which owns what the engine *refuses*; this owns what it accepts and then does not honour, hence W rather than E | W | ✅ verified on a live 3.2.3 — raw ws:// notification frames, per action (CREATE/UPDATE/DELETE) |
 | 4028 | an aggregate over a column runs under a GROUP clause | `SELECT math::sum(age) FROM person` — without `GROUP ALL` the call runs per row on a scalar and the engine rejects the argument (`Expected an array`). Only the provable shape fires: every aggregate in the projection over a plain row field whose declared kind is not a collection; `math::sum(tags)` over `array<int>`, a param, or a computed argument is inferred the ordinary way. Silent for `count()`, which 4023 owns; aggregate promotion in inference is gated on a GROUP clause | E | ✅ |
+| 4029 | under a GROUP clause every projection is a group key or an aggregate | `SELECT name, count() FROM t GROUP BY city` — the engine does not reject `name`; it silently accumulates every group's values into an array, so the result shape is not what the projection reads as (inference types it `array<string>` to match). Fires for a plain non-key field or an expression over one; silent for `GROUP ALL`, beside a wildcard (4025 owns), and for shapes it cannot prove (subqueries, traversals, methods). Sibling of 4013 (a group key that is not projected) and 4025 (a wildcard) | W | ✅ |
 
 Folded by the contract audit (2026-07-09): 4008, 4015 → 4007. Deleted:
 4014 — no statable contract (RETURN is legal at top level and in blocks).
@@ -183,6 +186,11 @@ clause-on-the-wrong-statement is a parse error in the vendored grammar except
 `SELECT … RETURN …`, which the grammar over-accepts and lowering drops, and
 that is a grammar-conformance fix (the clause never reaches the AST), not an
 analyzer contract. Deleted numbers are retired, never reused.
+
+Renumbered (2026-09-10): the GROUP projection contract was first assigned 4027
+on a branch while 4027 was, on `master`, given to the live-notification
+contract; the GROUP contract took **4029** at the merge and 4027 stays the live
+one. No release carried the GROUP contract under 4027.
 
 ## 5xxx — Functions and closures
 
@@ -247,22 +255,50 @@ of a construct's `sql/*.rs` file at a tag plus the docs' "since"/"removed"
 notes (syntax) — the sources are listed in the module docs, and anything
 unsourced is deliberately treated as always available.
 
+The same registry is 5001's source of truth for a spelling the current engine
+no longer parses: with no target configured, `type::is::record`, `rand::guid`
+or `string::startsWith` is "not a known function" carrying the rename (or the
+removal) from the table, and nothing else lists removed names. With a target
+configured, the same fact is 8001 — one table, one code per situation.
+
 | Code | Finding | Example | Sev | Status |
 |---|---|---|---|---|
-| 8001 | every function used exists in the configured target version | added later (`file::get`, `set::len` on a 2.x target — "added in 3.0"), or a spelling the target does not have: `type::is_record` on 2.2 ("before 3.0 it was spelled `type::is::record`"), `type::is::record`/`time::from::millis`/`string::startsWith` on a target past the rename ("renamed to … in 3.0"/"2.0"; the call is still analyzed under its current name), `rand::guid`/`record::refs` on 3.x ("removed in 3.0") | E | ✅ emitting; `time::from::ulid`/`uuid` (the 2.x spellings) also stop false-firing 5001 |
+| 8001 | every function used exists in the configured target version | added later (`file::get`, `set::len` on a 2.x target — "added in 3.0"), or a spelling the target does not have: `type::is_record` on 2.2 ("before 3.0 it was spelled `type::is::record`"), `type::is::record`/`time::from::millis`/`string::startsWith` on a target past the rename ("renamed to … in 3.0"/"2.0"; the call is still analyzed under its current name), `rand::guid`/`record::refs` on 3.x ("removed in 3.0") | E | ✅ emitting; `time::from::ulid`/`uuid` (the 2.x spellings) dispatch under their current name on a 2.x target instead of false-firing 5001 |
 | 8002 | syntax was removed in the configured target version | on a 3.x target: `DEFINE SCOPE`/`DEFINE TOKEN` (→ `DEFINE ACCESS`), `<future>` (→ `COMPUTED`), the fuzzy operators `~`/`!~`/`?~`/`*~` (→ `string::similarity::*`), `SEARCH ANALYZER` (→ `FULLTEXT ANALYZER`) | E | ✅ emitting |
 | 8003 | syntax requires a newer version | on a 1.x target: closures, `UPSERT`, `ALTER`, record-id ranges, `?.`, `.{a, b}`, `DEFINE ACCESS`/`CONFIG` (2.0); on 2.0: `.{1..3}` recursion (2.1); on 2.1: `REFERENCE` fields, `<~`, `DEFINE API` (2.2); on 2.x: `COMPUTED`, `DEFINE SEQUENCE`/`BUCKET`, `FULLTEXT ANALYZER` (3.0); on 3.1: `ASSERT`/`DEFAULT` on `id` (3.2). Unsourced and therefore ungated: `??`/`?:` (already in 1.5), `set<T>` kinds (pre-3.0 as deduplicated arrays), `DEFAULT ALWAYS` and the `+path`/`+collect` recursion algorithms (not in the AST), the 3.0 `?.`→`.?` respelling | E | ✅ emitting |
+
+**History (2026-08-08 retired, 2026-09-10 reinstated).** On 2026-08-08 the
+family was retired: 8001 and 8003 had been cataloged for a year with no
+emission site, gated on a key (`[analysis] surrealdb_version`, then written
+into every `surrealguard init` file with a default of `"2"`) that no analyzer
+read, and the reporter on issue #7 cited that key as evidence the tool
+targeted SurrealDB 2 — a catalog row and a config default that together
+misinformed. Retiring them was right for the tool that existed then.
+
+The reinstatement is a different tool, not a reversal of that judgement: the
+version registry above now exists, every row of it is sourced, all three codes
+emit and are held to fire/near-miss pairs (`tests/version_contracts.rs`,
+`tests/contract_guards.rs`), and the key is *optional* — `surrealguard init`
+does not write it, the README does not show it as a default, and an unset key
+means "the latest release", the same claim the retirement made. A key that
+gates real checks and defaults to silence cannot be read as a statement about
+which release the tool targets; the one that could was the one written into
+every file. The "no version axis" argument held only while there was one
+target to compare against; a workspace that states it deploys to 2.2 has two.
 
 **After the contract audit (2026-07-09): ~80 contracts across 8 families**
 (from 135 rows). Every row states its contract; message variants never get
 their own codes; checks that cannot be phrased as contract violations were
 deleted. Folded numbers are retired permanently — never reused.
 
-Retired parser-covered numbers (2026-09-08): **4002** (`SELECT VALUE a, b` —
-the grammar rejects a second VALUE projection) and **4009** (`LIVE SELECT`
-admits only projections/FROM/WHERE/FETCH, so GROUP/ORDER/LIMIT/START are a
-parse error). Both were verified against the grammar with `dump_cst`; S0001
-covers them, so neither has an analyzer emission or a registry entry.
+Retired parser-covered number (2026-09-08): **4002** (`SELECT VALUE a, b` —
+the grammar rejects a second VALUE projection), verified against the grammar
+with `dump_cst`; S0001 covers it, so it has no analyzer emission or registry
+entry. 4009 was retired on the same grounds the same day and reinstated at the
+2026-09-10 merge: the grammar does cover a real `LIVE SELECT`, but the
+contract's owner is the *sink* — `defineLive("SELECT … LIMIT 1")` parses as a
+plain SELECT and only becomes a LIVE statement on the client, where the engine
+refuses it — so the check exists and the number stays.
 
 ---
 
@@ -392,8 +428,10 @@ constraint collection. Exporting these gives host adapters fully typed
 - DDL inside transactions: allowed/atomic? → possible new 4xxx.
 - Use-before-DEFINE in one script: runtime order vs our whole-workspace
   extraction → affects 1001/1026 precision.
-- LIVE SELECT's exact clause restrictions → settled: the grammar admits only
-  projections/FROM/WHERE/FETCH, so 4009 is retired (parser-covered).
+- LIVE SELECT's exact clause restrictions → settled on a live 3.2.3 over
+  ws:// (see 4009 and 4027): the grammar admits only
+  projections/FROM/WHERE/FETCH for a real `LIVE SELECT`; `defineLive` strings
+  reach the engine as SELECTs and need the post-pass.
 - Event cascade semantics (depth limits?) → 5010 severity.
 - `+` semantics on arrays/objects (concat/merge?) → temporal/collection
   operand tables.

@@ -58,7 +58,7 @@ SELECT * FROM article GROUP BY author;
 -- 4026: a filtered ONLY with no single-row proof.
 SELECT title FROM ONLY article WHERE views > 1;
 
--- 4027: a projection that is neither a group key nor an aggregate.
+-- 4029: a projection that is neither a group key nor an aggregate.
 SELECT author, title FROM article GROUP BY author;
 
 -- 4028: an aggregate over a column with no GROUP clause.

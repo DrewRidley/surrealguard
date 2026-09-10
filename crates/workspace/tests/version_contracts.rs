@@ -154,20 +154,20 @@ fn a_renamed_function_reports_the_spelling_the_target_uses() {
         codes(Some("3.0"), "RETURN time::from_millis(1);"),
         Vec::<u16>::new()
     );
-    // Unconfigured: both spellings are accepted by the analyzer (the target is
-    // unknown), and a name that no longer exists at all is a plain 5001 with
-    // the rename as its help.
+    // Unconfigured means the latest release, which refuses to parse a retired
+    // spelling: each is a plain 5001 (not 8001 — there is no target to hold it
+    // against) carrying the rename as its help, and the current spelling is
+    // clean.
+    for retired in [
+        "RETURN type::is::record(user:one);",
+        "RETURN time::from::ulid(rand::ulid());",
+        "RETURN string::startsWith('ab', 'a');",
+    ] {
+        assert_eq!(codes(None, retired), vec![5001], "{retired}");
+    }
     assert_eq!(
-        codes(None, "RETURN type::is::record(user:one);"),
+        codes(None, "RETURN type::is_record(user:one);"),
         Vec::<u16>::new()
-    );
-    assert_eq!(
-        codes(None, "RETURN time::from::ulid(rand::ulid());"),
-        Vec::<u16>::new()
-    );
-    assert_eq!(
-        codes(None, "RETURN string::startsWith('ab', 'a');"),
-        vec![5001]
     );
 }
 
@@ -180,7 +180,8 @@ fn a_function_removed_without_a_replacement_is_8001_past_the_removal() {
         codes(Some("2.3"), "RETURN rand::guid();"),
         Vec::<u16>::new()
     );
-    assert_eq!(codes(None, "RETURN rand::guid();"), Vec::<u16>::new());
+    // Unconfigured is the latest release, where the name is gone: 5001.
+    assert_eq!(codes(None, "RETURN rand::guid();"), vec![5001]);
 }
 
 #[test]

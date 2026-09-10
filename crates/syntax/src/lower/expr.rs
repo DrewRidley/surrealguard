@@ -9,7 +9,8 @@
 //!   separators are part of the token text.
 //! - `String` has no children; `d'…'`/`u'…'`/`r'…'`/`b'…'`/`f'…'` prefixes
 //!   select datetime/uuid/regex/bytes/file literals, normalized here.
-//! - `Constant` wraps a `FunctionName` with no argument list (`math::pi`).
+//! - `Constant` is one token: a module constant path with no argument list
+//!   (`math::PI`, `time::EPOCH`, `duration::MAX`).
 //! - `Range` is `[start?, RangeOp, end?]`; `RangeRecordId` wraps a
 //!   `RecordId` in pipes (`|t:1..10|`).
 //! - `None` covers both `NONE` and `null`, distinguished by text.
@@ -392,10 +393,12 @@ impl Lowerer<'_> {
 
     fn call(&self, node: Node<'_>) -> Call {
         let name = first_child_of_kind(node, "FunctionName");
+        let written = name.map(|name| self.node_text(name).trim().to_string());
         let path = match name {
             Some(name) => self.spanned(name, normalize_function_path(self.node_text(name))),
             None => Spanned::new(String::new(), node_range(node)),
         };
+        let written = written.unwrap_or_else(|| path.node.clone());
         let args = first_child_of_kind(node, "ArgumentList")
             .map(|list| {
                 named_children(list)
@@ -404,7 +407,11 @@ impl Lowerer<'_> {
                     .collect()
             })
             .unwrap_or_default();
-        Call { path, args }
+        Call {
+            path,
+            written,
+            args,
+        }
     }
 
     /// `<T> value` — the target is any type expression the grammar admits
@@ -614,6 +621,14 @@ impl Lowerer<'_> {
                 // nodes (FETCH/SPLIT/GROUP paths) list bare `Ident`s
                 // sequentially — a field is a field at any position.
                 "Ident" => {
+                    parts.push(
+                        self.spanned(child, IdiomPart::Field(self.node_text(child).to_string())),
+                    );
+                }
+                // A FETCH idiom may be rooted at a keyword (`FETCH RETURN`
+                // fetches the field named `RETURN`); the grammar spells that
+                // root as a `Keyword` node, and it is a field like any other.
+                "Keyword" if parts.is_empty() => {
                     parts.push(
                         self.spanned(child, IdiomPart::Field(self.node_text(child).to_string())),
                     );

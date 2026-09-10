@@ -12,7 +12,7 @@ use surrealguard_diagnostics::{catalog, FindingCode, LintLevel, PolicyConfig};
 pub struct WorkspaceConfig {
     /// Which files are schema, which are queries, and which to ignore.
     pub sources: SourceConfig,
-    /// Strictness and the target SurrealDB version.
+    /// Strictness.
     pub analysis: AnalysisConfig,
     /// How findings are escalated and what suppressions must carry.
     pub diagnostics: DiagnosticConfig,
@@ -34,8 +34,11 @@ pub struct SourceConfig {
 /// Settings that steer inference and checking.
 ///
 /// The derived default is the whole default: not strict, and no target
-/// version — "the latest release", so no version-gated check fires until a
-/// workspace states which engine it deploys against.
+/// version — "the latest release" (what SurrealGuard analyzes for), so no
+/// version-gated check fires until a workspace states which engine it deploys
+/// against. The key is optional and `surrealguard init` does not write it:
+/// an unset key cannot be read as a claim about which release the tool
+/// targets.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AnalysisConfig {
     /// Run in strict mode, tightening otherwise-advisory checks.
@@ -459,7 +462,6 @@ queries = ["queries/**/*.surql"]
 
 [analysis]
 strict = true
-surrealdb_version = "2.1"
 
 [diagnostics]
 warnings_as_errors = true
@@ -479,7 +481,6 @@ permission_gated_field = "warn"
         );
         assert_eq!(config.sources.queries, vec!["queries/**/*.surql"]);
         assert!(config.analysis.strict);
-        assert_eq!(config.analysis.surrealdb_version, "2.1");
         assert!(config.diagnostics.warnings_as_errors);
         assert!(config.diagnostics.require_suppression_reasons);
         assert_eq!(config.lints.select_star, Some(LintLevel::Warn));
@@ -628,5 +629,35 @@ W7002 = "deny"
         assert_eq!(TargetVersion::parse("latest"), None);
         assert_eq!(TargetVersion::parse("2.x"), None);
         assert_eq!(TargetVersion::parse("1.2.3.4"), None);
+    }
+
+    /// A key SurrealGuard does not know must not fail the parse, and a key an
+    /// older `surrealguard init` wrote must keep meaning what it meant. Every
+    /// workspace initialized before 2026-08 carries `surrealdb_version = "2"`
+    /// in its file: it is still the target it names, and the tables and keys
+    /// beside it that nothing reads are ignored. No struct here sets
+    /// `deny_unknown_fields`, and this test is what keeps it that way.
+    #[test]
+    fn an_old_config_carrying_the_version_key_and_unknown_keys_still_parses() {
+        let config = WorkspaceConfig::from_toml_str(
+            r#"
+[analysis]
+strict = true
+surrealdb_version = "2"
+retired_knob = true
+
+[not_a_table]
+whatever = 1
+"#,
+        )
+        .expect("an unknown key is ignored, not an error");
+
+        assert!(config.analysis.strict);
+        assert_eq!(config.analysis.surrealdb_version, "2");
+        assert_eq!(
+            config.analysis.target_version(),
+            TargetVersion::parse("2"),
+            "the key an old init wrote is still the target it names"
+        );
     }
 }

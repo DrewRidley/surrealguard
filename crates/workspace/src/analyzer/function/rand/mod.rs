@@ -6,7 +6,6 @@ pub mod bool;
 pub mod duration;
 pub mod r#enum;
 pub mod float;
-pub mod guid;
 pub mod id;
 pub mod int;
 pub mod string;
@@ -88,12 +87,6 @@ pub(crate) static CATALOG: &[BuiltinEntry] = &[
         "A random float between 0 and 1.",
         rand::signature,
         rand::analyze_rand_rand,
-    ),
-    BuiltinEntry::new(
-        "rand::guid",
-        "A random GUID string (removed in 3.0).",
-        guid::signature,
-        guid::analyze_rand_guid,
     ),
     BuiltinEntry::new(
         "rand::uuid::v4",

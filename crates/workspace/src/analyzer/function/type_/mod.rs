@@ -1,5 +1,8 @@
 //! `type` function family: every built-in it dispatches, with its analyzer.
 
+use surrealguard_syntax::ast;
+
+use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::BuiltinEntry;
 
 pub mod array;
@@ -48,7 +51,6 @@ pub mod set;
 pub mod string;
 pub mod string_lossy;
 pub mod table;
-pub mod thing;
 pub mod uuid;
 
 /// Every `type::` built-in the analyzer resolves, in dispatch order.
@@ -312,12 +314,6 @@ pub(crate) static CATALOG: &[BuiltinEntry] = &[
         table::analyze_type_table,
     ),
     BuiltinEntry::new(
-        "type::thing",
-        "A record id from a table and an id.",
-        thing::signature,
-        thing::analyze_type_thing,
-    ),
-    BuiltinEntry::new(
         "type::uuid",
         "Converts a value to a UUID.",
         uuid::signature,
@@ -342,3 +338,33 @@ pub(crate) static CATALOG: &[BuiltinEntry] = &[
         set::analyze_type_set,
     ),
 ];
+
+/// The table a `type::` constructor's table argument names, when the argument
+/// is provably one table and not merely "some table".
+///
+/// `type::record('person', $id)` is a `record<person>` on every run: the table
+/// half is a constant, so the constructed link's table is decided statically
+/// and a schema field declared `record<person>` accepts it (engine-verified on
+/// 3.2.3 — `CREATE ticket SET owner = type::record('person', 'a')` stores
+/// `person:a`, while `type::record('metrics', 'a')` is rejected with
+/// "Expected `record<person>` but found `metrics:a`").
+///
+/// **Prove or stay silent.** `type::record($table, $id)` is a record whose
+/// table nobody knows until the parameter is bound, so it stays the
+/// unconstrained `record` — not `any`, and never a guess. The const channel
+/// resolves a `LET`-bound string too (`LET $t = 'person'` is as constant as the
+/// literal), and nothing else.
+///
+/// The empty string is rejected rather than taken: the engine refuses it
+/// ("Found  for the Record ID but this is not a valid table name"), so there is
+/// no table to name.
+pub(super) fn constant_table_arg(
+    ctx: &mut AnalysisContext<'_>,
+    call: &ast::Call,
+    index: usize,
+) -> Option<surrealdb_types::Table> {
+    match crate::analyzer::function::const_value_arg(ctx, call, index)? {
+        surrealdb_types::Value::String(name) if !name.is_empty() => Some(name.as_str().into()),
+        _ => None,
+    }
+}

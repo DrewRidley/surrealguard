@@ -5,7 +5,6 @@ use crate::analyzer::function::BuiltinEntry;
 pub mod exists;
 pub mod id;
 pub mod is_edge;
-pub mod refs;
 pub mod table;
 pub mod tb;
 
@@ -28,12 +27,6 @@ pub(crate) static CATALOG: &[BuiltinEntry] = &[
         "Whether the record is a relation edge.",
         is_edge::signature,
         is_edge::analyze_record_is_edge,
-    ),
-    BuiltinEntry::new(
-        "record::refs",
-        "The records that reference this record, optionally filtered by table and field.",
-        refs::signature,
-        refs::analyze_record_refs,
     ),
     BuiltinEntry::new(
         "record::table",

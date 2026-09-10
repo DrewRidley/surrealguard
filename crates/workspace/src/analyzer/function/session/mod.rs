@@ -9,8 +9,6 @@ pub mod ip;
 pub mod ns;
 pub mod origin;
 pub mod rd;
-pub mod sc;
-pub mod sd;
 pub mod token;
 
 /// Every `session::` built-in the analyzer resolves, in dispatch order.
@@ -62,17 +60,5 @@ pub(crate) static CATALOG: &[BuiltinEntry] = &[
         "The authentication token claims of the current session.",
         token::signature,
         token::analyze_session_token,
-    ),
-    BuiltinEntry::new(
-        "session::sc",
-        "The scope of the current session (removed in 2.0).",
-        sc::signature,
-        sc::analyze_session_sc,
-    ),
-    BuiltinEntry::new(
-        "session::sd",
-        "The record id the current session authenticated as (removed in 2.0).",
-        sd::signature,
-        sd::analyze_session_sd,
     ),
 ];

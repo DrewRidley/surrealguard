@@ -1191,16 +1191,6 @@ impl Workspace {
     }
 }
 
-/// Loads and parses `surrealguard.toml` from a workspace root. Returns
-/// `None` when the root has no config file; a malformed config is treated as
-/// absent (the editor falls back to the defaults rather than failing to
-/// start).
-pub fn load_workspace_config(root: &Path) -> Option<WorkspaceConfig> {
-    let config_path = root.join("surrealguard.toml");
-    let text = std::fs::read_to_string(config_path).ok()?;
-    WorkspaceConfig::from_toml_str(&text).ok()
-}
-
 /// Directories a scan never descends into, whatever the config says.
 const SKIPPED_DIRS: [&str; 6] = [
     ".git",
@@ -1258,7 +1248,9 @@ impl SourceSelector {
     }
 }
 
-fn is_surrealql_uri(uri: &Url) -> bool {
+/// Whether a document is SurrealQL itself, rather than a host file whose
+/// queries are embedded in string literals.
+pub fn is_surrealql_uri(uri: &Url) -> bool {
     let path = uri.path();
     path.ends_with(".surql") || path.ends_with(".surrealql")
 }

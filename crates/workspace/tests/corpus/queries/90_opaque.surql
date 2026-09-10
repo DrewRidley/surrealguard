@@ -14,3 +14,10 @@ RETURN { payload: $payload, headers: $headers };
 -- to the link kind — after a `.*` the value is the row, and calling it a link
 -- would be a lie rather than an absence.
 SELECT external.* AS external_row FROM webhook_event;
+
+-- A subpath of an open object is not a missing field: `headers` is FLEXIBLE
+-- TYPE object, so `headers.trace_id` may well be there and nobody can say
+-- otherwise. A condition used to claim `webhook_event` had no field
+-- `headers.trace_id` — the projection has always been silent here, and now the
+-- condition resolves the path with the same checker.
+SELECT provider FROM webhook_event WHERE headers.trace_id != NONE;

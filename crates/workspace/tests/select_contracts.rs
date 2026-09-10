@@ -1,5 +1,5 @@
 //! The SELECT clause contracts that depend on the *combination* of clauses:
-//! what a `GROUP` clause does to the projections beside it (4027, 4028) and
+//! what a `GROUP` clause does to the projections beside it (4029, 4028) and
 //! what a page cut without an order is (7016).
 //!
 //! Each contract gets the query that violates it and at least one near miss
@@ -63,13 +63,13 @@ fn fires(query: &str, code: u16) -> bool {
     codes(query).contains(&code)
 }
 
-// ---- 4027: every projection under GROUP BY is a key or an aggregate ----
+// ---- 4029: every projection under GROUP BY is a key or an aggregate ----
 
 #[test]
 fn a_plain_non_key_field_under_group_by_is_reported_once() {
     let codes = codes("SELECT name, count() FROM person GROUP BY city;");
     assert_eq!(
-        codes.iter().filter(|code| **code == 4027).count(),
+        codes.iter().filter(|code| **code == 4029).count(),
         1,
         "{codes:?}"
     );
@@ -81,11 +81,11 @@ fn a_plain_non_key_field_under_group_by_is_reported_once() {
 fn an_expression_over_a_non_key_field_is_reported() {
     assert!(fires(
         "SELECT city, string::uppercase(name) AS n FROM person GROUP BY city;",
-        4027
+        4029
     ));
     assert!(fires(
         "SELECT city, age * 2 AS doubled FROM person GROUP BY city;",
-        4027
+        4029
     ));
 }
 
@@ -108,7 +108,7 @@ fn keys_aggregates_and_expressions_over_them_stay_silent() {
         // No GROUP clause at all.
         "SELECT name, city FROM person;",
     ] {
-        assert!(!fires(query, 4027), "4027 must not fire for {query}");
+        assert!(!fires(query, 4029), "4029 must not fire for {query}");
     }
 }
 
@@ -116,7 +116,7 @@ fn keys_aggregates_and_expressions_over_them_stay_silent() {
 fn a_wildcard_beside_a_non_key_field_is_only_the_wildcard_error() {
     let codes = codes("SELECT *, name FROM person GROUP BY city;");
     assert!(codes.contains(&4025), "{codes:?}");
-    assert!(!codes.contains(&4027), "{codes:?}");
+    assert!(!codes.contains(&4029), "{codes:?}");
 }
 
 #[test]

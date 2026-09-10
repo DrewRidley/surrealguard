@@ -222,7 +222,7 @@ Immediate focus:
 1. host adapters over the parameter-constraint and response-kind exports, Rust proc-macro first
 2. grammar conformance: done — `crates/syntax/tests/conformance.rs` gates SurrealDB's own query corpus in CI (the 21 remaining failures are junk extractions, listed in its baseline)
 3. TypeScript DX polish: LSP-driven regeneration on change (debounced), hover types inside templates, and the 7.1 IPC reverse direction when it stabilizes
-4. catalog machinery: done — 5010 event-trigger cycles, the 8xxx version registry (8001/8002/8003 keyed on `[analysis] surrealdb_version`), and the GROUP contracts (4013/4025/4027/4028) all emit; the LSP still has to load `[analysis]` before it reports 8xxx
+4. catalog machinery: done — 5010 event-trigger cycles, the 8xxx version registry (8001/8002/8003 keyed on the optional `[analysis] surrealdb_version`; unset is the latest release and gates nothing), the GROUP contracts (4013/4025/4028/4029) and the LIVE contracts (4009 for what the engine refuses, 4027 for what it accepts and does not honour) all emit; the LSP still has to load `[analysis]` before it reports 8xxx
 5. richer `Finding.help`/`related` coverage (did-you-mean and declared-here attachments exist for tables, fields, `fn::` names, and relation shapes; extend site by site)
 
 The core readiness gate below has passed; host adapters may start.

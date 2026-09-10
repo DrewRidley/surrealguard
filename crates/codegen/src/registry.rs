@@ -89,15 +89,39 @@ pub fn response_tuple(statements: &[StatementAnalysis]) -> String {
     format!("[{}]", elements.join(", "))
 }
 
+/// The prefix `crates/embed` gives a host substitution, restated because the
+/// dependency runs the other way. `surrealguard_embed::HOST_PARAM_PREFIX` is
+/// the definition; a test below pins the two together.
+const HOST_PARAM_PREFIX: &str = "__host";
+
+/// Rebuild the analyzed text from a template's static parts, restoring the
+/// `$__hostN` parameter each hole became. `parts` is the text split on those
+/// parameters, so interleaving the names back in reverses the split exactly.
+fn join_with_holes(parts: &[String]) -> String {
+    let mut key = String::new();
+    for (index, part) in parts.iter().enumerate() {
+        if index > 0 {
+            key.push('$');
+            key.push_str(HOST_PARAM_PREFIX);
+            key.push_str(&(index - 1).to_string());
+        }
+        key.push_str(part);
+    }
+    key
+}
+
 /// Renders the complete generated declaration file.
 pub fn render_registry(entries: &[QueryEntry]) -> String {
     let mut rows = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     for entry in entries {
-        // Call-form queries have exactly one part; template queries key
-        // by their joined static parts and stay reachable for future
-        // template typing.
-        let key = entry.parts.join("${}");
+        // Call-form queries have exactly one part, so the join is a no-op.
+        // A query carrying substitutions keys by the text the analyzer saw,
+        // holes and all: a Svelte markup attribute reaches the runtime through
+        // the preprocessor, which binds these same names, so the key it looks
+        // up is this string byte for byte. Joining on a hole-shaped placeholder
+        // instead would spell a key nothing ever asks for.
+        let key = join_with_holes(&entry.parts);
         if !seen.insert(key.clone()) {
             continue;
         }
@@ -178,6 +202,28 @@ mod tests {
     use surrealdb_types::Kind;
 
     #[test]
+    fn the_restated_host_prefix_still_matches_extraction() {
+        // Generation restates this rather than depending on extraction. If the
+        // definition moves, every generated key silently stops matching the
+        // text the runtime asks for, and results degrade to `unknown` with no
+        // error anywhere — so fail here instead.
+        assert_eq!(HOST_PARAM_PREFIX, surrealguard_embed::HOST_PARAM_PREFIX);
+    }
+
+    #[test]
+    fn a_hole_keys_by_the_parameter_the_analyzer_bound() {
+        assert_eq!(join_with_holes(&["SELECT 1".into()]), "SELECT 1");
+        assert_eq!(
+            join_with_holes(&["WHERE a > ".into(), "".into()]),
+            "WHERE a > $__host0"
+        );
+        assert_eq!(
+            join_with_holes(&["a = ".into(), " AND b = ".into(), "".into()]),
+            "a = $__host0 AND b = $__host1"
+        );
+    }
+
+    #[test]
     fn registry_renders_keys_results_subs_and_params() {
         let entries = vec![QueryEntry {
             parts: vec![
@@ -205,7 +251,11 @@ mod tests {
 
         let rendered = render_registry(&entries);
 
-        assert!(rendered.contains("\"SELECT name FROM person WHERE age > ${} AND team = $team\""));
+        // The hole keeps the parameter name the analyzer bound, because that is
+        // the string the runtime looks up.
+        assert!(
+            rendered.contains("\"SELECT name FROM person WHERE age > $__host0 AND team = $team\"")
+        );
         assert!(rendered.contains("result: [Array<{ name: string }>];"));
         assert!(rendered.contains("params: { team: string }"));
         assert!(rendered.contains("declare module \"@surrealguard/client\""));

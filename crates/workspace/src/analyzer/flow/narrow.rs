@@ -155,9 +155,20 @@ pub(crate) fn apply_facts(ctx: &mut AnalysisContext<'_>, facts: &Facts) {
 /// the exact `param.field…` string, and a refinement that does not tighten the
 /// kind currently in force records nothing.
 ///
-/// Row-rooted places are skipped. A `Place` can name one, but the flow
-/// environment binds params — the row side is the projection's business
-/// (`data::select::narrow_row_by_facts`).
+/// Row-rooted places are narrowed too, against the row currently in scope.
+/// `data::select::narrow_row_by_facts` answers a different question — what the
+/// projected row *type* is after a `WHERE` — and it cannot answer this one: a
+/// guard inside a projection (`IF type::is_string(v) { v.len() }`) narrows `v`
+/// only for the expressions in that branch, which is a scope, not an output
+/// shape. Until this handled them, `type::is_*` narrowed a `$param` and nothing
+/// else, and every row-field guard in an `IF` was inert.
+///
+/// The two never fight: this one is keyed on the row table and consumed while
+/// *checking* expressions, the other rewrites the row kind a `SELECT` answers.
+///
+/// No hover region is recorded for a row field. Narrowing regions are keyed by
+/// name in an editor-facing channel that params own, and a row field named `x`
+/// would answer for `$x` there.
 ///
 /// Refinements are applied in place order, and each reads the environment as
 /// the previous one left it, so a bare param is narrowed before the paths that
@@ -168,12 +179,13 @@ pub(crate) fn apply_facts_over(
     region: Option<ByteRange>,
 ) {
     for (place, refinement) in facts.iter() {
-        let PlaceRoot::Param(param) = &place.root else {
-            continue;
-        };
         // A subscript ends a path: only the exact written field path is
         // refinable, so a place carrying one names nothing this can key.
         let Some(fields) = place.field_path() else {
+            continue;
+        };
+        let PlaceRoot::Param(param) = &place.root else {
+            narrow_row_field(ctx, &fields, refinement);
             continue;
         };
         let Some(base) = ctx.env().let_fact(param).cloned() else {
@@ -214,6 +226,42 @@ pub(crate) fn apply_facts_over(
             ctx.define_narrowed_path(key, narrowed);
         }
     }
+}
+
+/// Applies one refinement to a bare field of the row in scope.
+///
+/// The kind it tightens is whatever is currently in force — an earlier guard's
+/// narrowing if there is one, the schema's declaration otherwise — so stacked
+/// guards compose (`IF type::is_number(v) { IF type::is_int(v) { … } }`) rather
+/// than each starting over from the declaration.
+///
+/// Outside a row context, or for a path the row does not declare, there is
+/// nothing to narrow and nothing is recorded.
+fn narrow_row_field(
+    ctx: &mut AnalysisContext<'_>,
+    fields: &[String],
+    refinement: &crate::analyzer::facts::Refinement,
+) {
+    if fields.is_empty() {
+        return;
+    }
+    let key = fields.join(".");
+    let current = match ctx.narrowed_row_path(&key) {
+        Some(kind) => kind.clone(),
+        None => {
+            let Some(table) = ctx.row_table() else {
+                return;
+            };
+            let Some(kind) = crate::analyzer::data::select::kind_for_path(table, fields) else {
+                return;
+            };
+            kind
+        }
+    };
+    let Some(narrowed) = refinement.apply(&current) else {
+        return;
+    };
+    ctx.define_narrowed_row_path(key, narrowed);
 }
 
 /// Env-aware branch reachability: the narrowing analogue of
@@ -969,5 +1017,76 @@ mod tests {
         let reach = branch_reachability_in_env(&stmt, &rec_b);
         assert_eq!(reach.branches, vec![BranchReach::Reachable]);
         assert!(reach.else_dead);
+    }
+
+    /// A guard over a **row field** narrows the branch body, which nothing did
+    /// before: `type::is_*` reached `guard_of` all along, and every fact it
+    /// produced about a row was dropped on the floor by `apply_facts_over`.
+    #[test]
+    fn a_type_predicate_narrows_a_row_field_inside_the_branch() {
+        const SCHEMA: &str = "DEFINE TABLE mixed SCHEMAFULL;\n\
+             DEFINE FIELD v ON mixed TYPE string | int;\n";
+
+        // Unguarded, the union has no `len` — `int` does not answer it.
+        assert_eq!(
+            code_count(&format!("{SCHEMA}SELECT (v.len()) AS n FROM mixed;"), 5001),
+            1
+        );
+
+        // Guarded to the arm that does, the same call is correct.
+        assert_eq!(
+            code_count(
+                &format!(
+                    "{SCHEMA}SELECT (IF type::is_string(v) {{ v.len() }} ELSE {{ 0 }}) AS n FROM mixed;"
+                ),
+                5001
+            ),
+            0
+        );
+
+        // Guarded to the arm that does not, it is wrong for a sharper reason
+        // than before — `int` has no `len`, not `string | int`.
+        assert_eq!(
+            code_count(
+                &format!(
+                    "{SCHEMA}SELECT (IF type::is_int(v) {{ v.len() }} ELSE {{ 0 }}) AS n FROM mixed;"
+                ),
+                5001
+            ),
+            1
+        );
+
+        // The ELSE sees the negation, so it is the `int` arm there.
+        assert_eq!(
+            code_count(
+                &format!(
+                    "{SCHEMA}SELECT (IF type::is_string(v) {{ 0 }} ELSE {{ v.len() }}) AS n FROM mixed;"
+                ),
+                5001
+            ),
+            1
+        );
+    }
+
+    /// The row a narrowing was proved on is part of its key, so a field of the
+    /// same name on another table is untouched by it.
+    #[test]
+    fn a_row_narrowing_does_not_answer_for_another_row() {
+        const SCHEMA: &str = "DEFINE TABLE mixed SCHEMAFULL;\n\
+             DEFINE FIELD v ON mixed TYPE string | int;\n\
+             DEFINE TABLE other SCHEMAFULL;\n\
+             DEFINE FIELD v ON other TYPE string | int;\n";
+
+        // `v` is narrowed on `mixed`; the subquery's `v` is `other`'s and is
+        // still the declared union.
+        assert_eq!(
+            code_count(
+                &format!(
+                    "{SCHEMA}SELECT (IF type::is_string(v) {{ (SELECT (v.len()) AS m FROM other) }} ELSE {{ [] }}) AS n FROM mixed;"
+                ),
+                5001
+            ),
+            1
+        );
     }
 }

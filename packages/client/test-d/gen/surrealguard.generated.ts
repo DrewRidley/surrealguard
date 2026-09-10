@@ -51,7 +51,7 @@ declare module "@surrealguard/client" {
     "RETURN fn::greet($name)": { result: [string]; params: { name: string } };
     "LET $cutoff = time::now() - 1w; SELECT name, joined FROM person WHERE joined > $cutoff": { result: [null, Array<{ joined: Date; name: string }>]; params: Record<string, never> };
     "SELECT count() AS n FROM person GROUP ALL": { result: [Array<{ n: number }>]; params: Record<string, never> };
-    "SELECT name FROM person WHERE age > ${}": { result: [Array<{ name: string }>]; params: Record<string, never> };
+    "SELECT name FROM person WHERE age > $__host0": { result: [Array<{ name: string }>]; params: Record<string, never> };
     "SELECT id, name, age FROM person": { result: [Array<{ age: number; id: RecordId<"person">; name: string }>]; params: Record<string, never> };
     "SELECT id, name, status FROM person": { result: [Array<{ id: RecordId<"person">; name: string; status: "active" | "retired" }>]; params: Record<string, never> };
   }

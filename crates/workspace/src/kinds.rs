@@ -526,16 +526,28 @@ pub(crate) fn project(kind: &Kind, step: &FieldStep, schema: Option<&SchemaIndex
             if targets.is_empty() {
                 return None;
             }
+            // A multi-table link steps into every table at once. An arm that
+            // does not declare the field answers NONE — a kind, not an absence
+            // of one (3.2.3: `type::of(owner.username)` over a
+            // `record<account | organization>` is `['string', 'none']`) — so
+            // the read is the union of what the arms answer, and only a field
+            // absent on EVERY arm is no field at all (the caller's 1002).
             let mut projected = Vec::with_capacity(targets.len());
+            let mut declared = false;
             for target in targets {
                 let table = schema.tables.get(&target.to_string())?;
-                if let Some(member) =
-                    crate::analyzer::data::select::kind_for_path(table, std::slice::from_ref(name))
-                {
-                    projected.push(member);
+                match crate::analyzer::data::select::kind_for_path(
+                    table,
+                    std::slice::from_ref(name),
+                ) {
+                    Some(member) => {
+                        declared = true;
+                        projected.push(member);
+                    }
+                    None => projected.push(Kind::None),
                 }
             }
-            (!projected.is_empty()).then(|| Kind::either(projected))
+            declared.then(|| Kind::either(projected))
         }
         Kind::Array(element, len) => match step {
             FieldStep::Element => Some((**element).clone()),
@@ -1497,14 +1509,17 @@ mod tests {
             Some(user.clone())
         );
         assert_eq!(project(&user, &field("ghost"), Some(&schema)), None);
-        // Several tables: the union over the tables that have the field.
+        // Several tables: the union of what every arm answers — and an arm
+        // that does not declare the field answers `none` (3.2.3:
+        // `type::of(owner.username)` over `record<account | organization>` is
+        // `['string', 'none']`), so `model` is `none | string`, not `string`.
         assert_eq!(
             project(&both, &field("name"), Some(&schema)),
             Some(Kind::either(vec![Kind::String, option_of(Kind::String)]))
         );
         assert_eq!(
             project(&both, &field("model"), Some(&schema)),
-            Some(Kind::String)
+            Some(Kind::either(vec![Kind::None, Kind::String]))
         );
         assert_eq!(project(&both, &field("ghost"), Some(&schema)), None);
         // Without a schema, through an unknown table, or on `record<>`: unprovable.

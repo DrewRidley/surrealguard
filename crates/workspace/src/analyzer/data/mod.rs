@@ -7,6 +7,7 @@ pub mod delete;
 pub mod graph;
 pub mod insert;
 pub mod kill;
+pub(crate) mod live_contract;
 pub mod live_select;
 pub(crate) mod mutation;
 pub mod relate;
@@ -116,6 +117,12 @@ pub(crate) fn check_field_path(
 /// Walks an expression for plain field-path references and checks each
 /// against the row table with `code`. Graph idioms belong to the graph
 /// family; parameters and subqueries resolve elsewhere.
+///
+/// Each path goes through [`select::validate_field_path`] — the same
+/// link-crossing checker the projection uses — so a condition reads a path
+/// exactly as a projection of it would. `WHERE owner.ghost = 1` is the same
+/// wrong read as `SELECT owner.ghost`, and `WHERE meta.anything = 1` over a
+/// `TYPE object` field is the same legitimate one.
 pub(crate) fn check_expression_field_paths(
     ctx: &mut crate::analyzer::context::AnalysisContext<'_>,
     table: &crate::schema::TableDef,
@@ -129,7 +136,7 @@ pub(crate) fn check_expression_field_paths(
             }
             if let Some(segments) = crate::analyzer::expression::infer::plain_field_segments(idiom)
             {
-                check_field_path(ctx, table, &segments, expr.span, code);
+                select::validate_field_path(ctx, table, &segments, expr.span, code);
             }
         }
         surrealguard_syntax::ast::Expr::Binary { lhs, rhs, .. } => {

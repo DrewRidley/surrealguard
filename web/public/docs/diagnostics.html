@@ -157,7 +157,7 @@
   <main class="docs-main">
     <span class="eyebrow-doc">// reference</span>
     <h1>Diagnostics &amp; lints</h1>
-    <p class="lead-p">Every construct in SurrealQL has a <strong>contract</strong> — what the author must mean for the statement to make sense. A diagnostic fires when that contract is provably violated, whether or not SurrealDB would run the query. This is the complete catalog: <strong>90 codes</strong> across eight families, plus the parser's own <a class="link" href="#fam-0">0xxx</a> codes.</p>
+    <p class="lead-p">Every construct in SurrealQL has a <strong>contract</strong> — what the author must mean for the statement to make sense. A diagnostic fires when that contract is provably violated, whether or not SurrealDB would run the query. This is the complete catalog: <strong>93 codes</strong> across eight families, plus the parser's own <a class="link" href="#fam-0">0xxx</a> codes.</p>
 
     <div class="genbar">
       <span>generated from <code>crates/diagnostics/src/catalog.rs</code></span>
@@ -212,10 +212,10 @@
     <p>Codes are <code>&lt;family&gt;&lt;3 digits&gt;</code>. Jump to a family, or read the full catalog below — every code, its severity, its default level, and what trips it.</p>
     <div class="fam-nav">
       <a class="n0" href="#fam-0"><b>0xxx</b> syntax · 3</a>
-      <a class="n1" href="#fam-1"><b>1xxx</b> schema · 11</a>
+      <a class="n1" href="#fam-1"><b>1xxx</b> schema · 12</a>
       <a class="n2" href="#fam-2"><b>2xxx</b> types · 24</a>
       <a class="n3" href="#fam-3"><b>3xxx</b> graph · 5</a>
-      <a class="n4" href="#fam-4"><b>4xxx</b> statement · 21</a>
+      <a class="n4" href="#fam-4"><b>4xxx</b> statement · 23</a>
       <a class="n5" href="#fam-5"><b>5xxx</b> functions · 5</a>
       <a class="n6" href="#fam-6"><b>6xxx</b> params · 6</a>
       <a class="n7" href="#fam-7"><b>7xxx</b> lints · 15</a>
@@ -245,7 +245,7 @@
       <div class="fam-head">
         <span class="fam-badge">1xxx</span>
         <span class="ft">Schema references</span>
-        <span class="fc">11 codes</span>
+        <span class="fc">12 codes</span>
       </div>
       <p class="fam-desc">Every name a query uses must resolve against the schema, wherever the schema constrains it.</p>
       <div class="tbl-wrap"><table>
@@ -262,6 +262,7 @@
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">1027</span></span></td><td><span class="lvl deny">deny</span></td><td>An index-backed operator has its supporting index <span class="covers">— <code>@@</code>/search::* need a SEARCH index; <code>&lt;|k|&gt;</code> needs MTREE/HNSW</span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">1029</span></span></td><td><span class="lvl warn">warn</span></td><td>Each index covers a distinct field set <span class="covers">— two indexes on <code>(email)</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">1032</span></span></td><td><span class="lvl deny">deny</span></td><td>DEFINE ANALYZER components name known tokenizers/filters/languages <span class="covers">— <code>FILTERS snowball(klingon)</code> — tokenizer names are parser-covered (the grammar hard-codes them); filter names/languages emit here</span></td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">1033</span></span></td><td><span class="lvl deny">deny</span></td><td>A DEFINE FIELD clause is one the field it targets accepts (<code>id</code> rejects VALUE/READONLY/COMPUTED/DEFAULT ALWAYS) <span class="covers">— <code>id</code> rejects VALUE / READONLY / COMPUTED / DEFAULT ALWAYS — the engine fails the definition (&quot;Cannot use the <code>VALUE</code> keyword on the <code>id</code> field&quot;). A plain DEFAULT, TYPE, ASSERT, PERMISSIONS and COMMENT are all accepted on <code>id</code>; <code>in</code>/<code>out</code> were probed against 3.2.3 and have no clause restriction at all</span></td></tr>
         </tbody>
       </table></div>
     </section>
@@ -330,7 +331,7 @@
       <div class="fam-head">
         <span class="fam-badge">4xxx</span>
         <span class="ft">Statement &amp; clause / flow</span>
-        <span class="fc">21 codes</span>
+        <span class="fc">23 codes</span>
       </div>
       <p class="fam-desc">Clauses must be valid on their statement, and control flow must be well-formed and reachable.</p>
       <div class="tbl-wrap"><table>
@@ -341,6 +342,7 @@
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4005</span></span></td><td><span class="lvl deny">deny</span></td><td>BREAK/CONTINUE outside a loop <span class="covers">— top-level <code>BREAK</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4006</span></span></td><td><span class="lvl warn">warn</span></td><td>Unreachable statements after RETURN/BREAK/THROW <span class="covers">— <code>RETURN 1; SELECT ...</code> in a block</span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4007</span></span></td><td><span class="lvl deny">deny</span></td><td>Transaction pairing contract: BEGIN opens exactly one transaction that COMMIT/CANCEL closes <span class="covers">— unopened COMMIT/CANCEL, nested BEGIN, BEGIN never closed</span></td></tr>
+          <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4009</span></span></td><td><span class="lvl deny">deny</span></td><td>LIVE SELECT with unsupported clause <span class="covers">— <code>defineLive(&quot;SELECT * FROM ticket ORDER BY title&quot;)</code> / <code>LIMIT</code> / <code>GROUP BY</code> / <code>START</code> / <code>SPLIT</code> / <code>OMIT</code> / <code>TIMEOUT</code> / <code>PARALLEL</code> / <code>EXPLAIN</code> / <code>ONLY</code> — every set-shaping clause, which the engine rejects while parsing once the client prefixes <code>LIVE</code>; <code>FROM ticket:1</code> and a second FROM target, which it registers (answering a uuid) and then never fires. A real <code>LIVE SELECT</code> statement only reaches the last two — the grammar admits only projections/FROM/WHERE/FETCH, so the others are a parse error there</span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4010</span></span></td><td><span class="lvl warn">warn</span></td><td>Duplicate SET target in one statement <span class="covers">— <code>SET age = 1, age = 2</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4011</span></span></td><td><span class="lvl warn">warn</span></td><td>Duplicate projection key/alias <span class="covers">— <code>SELECT age, age FROM t</code>, two <code>AS x</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4012</span></span></td><td><span class="lvl warn">warn</span></td><td>OMIT without a wildcard projection <span class="covers">— <code>SELECT a, b OMIT c FROM t</code> — the grammar accepts <code>OmitClause</code> beside any projection list (the earlier &quot;parser-covered&quot; note was wrong), and the engine applies OMIT to the rows *after* the projection, so without <code>*</code> the clause either names a field that is not returned (a no-op) or strips one the list just asked for; either way the fix is to write the projection you want</span></td></tr>
@@ -355,8 +357,9 @@
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4024</span></span></td><td><span class="lvl warn">warn</span></td><td>An IF branch is unreachable — its guard provably folds to a constant <span class="covers">— <code>IF false { ... }</code>, the ELSE after <code>IF true { ... }</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4025</span></span></td><td><span class="lvl deny">deny</span></td><td>A wildcard projection cannot be aggregated by a GROUP clause <span class="covers">— <code>SELECT * FROM t GROUP BY k</code>, <code>SELECT * FROM t GROUP ALL</code>, <code>SELECT *, count() FROM t GROUP BY k</code> — 3.0.5 rejects all of them outright (<code>Incorrect selector for aggregate selection, expression \</code>*\<code> … cannot be aggregated in a group</code>); 2.x silently drops the <code>*</code>, so the query never returns what its author asked for under either engine</span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4026</span></span></td><td><span class="lvl warn">warn</span></td><td>A filtered ONLY has no provable single-row target <span class="covers">— <code>SELECT * FROM ONLY t WHERE status = &#39;open&#39;</code> — errors (<code>Expected a single result output when using the ONLY keyword</code>) the moment two rows match, but succeeds while one does; W, not E, because the filter may well be single-row for reasons the schema does not state. Silent when at most one row is provable: a record-id target, <code>WHERE id = …</code>, an equality covering every field of a <code>UNIQUE</code> index, or <code>LIMIT 1</code>. Sibling of 4003, which owns the *unfiltered* table-wide case</span></td></tr>
-          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4027</span></span></td><td><span class="lvl warn">warn</span></td><td>Under a GROUP clause every projection is a group key or an aggregate <span class="covers">— <code>SELECT name, count() FROM t GROUP BY city</code> — the engine does not reject <code>name</code>; it silently accumulates every group&#39;s values into an array, so the result shape is not what the projection reads as (inference types it <code>array&lt;string&gt;</code> to match). Fires for a plain non-key field or an expression over one; silent for <code>GROUP ALL</code>, beside a wildcard (4025 owns), and for shapes it cannot prove (subqueries, traversals, methods). Sibling of 4013 (a group key that is not projected) and 4025 (a wildcard)</span></td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4027</span></span></td><td><span class="lvl warn">warn</span></td><td>A live query clause the notification will not reflect <span class="covers">— <code>LIVE SELECT DIFF FROM t FETCH owner</code> — registers, delivers, and leaves the link a record id: the FETCH is silently dead. Also <code>LIVE SELECT name, DIFF FROM t</code>, where DIFF has lost its leading position and reads as an ordinary field path, so every notification carries <code>DIFF: null</code>. Sibling of 4009, which owns what the engine *refuses*; this owns what it accepts and then does not honour, hence W rather than E</span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">4028</span></span></td><td><span class="lvl deny">deny</span></td><td>An aggregate over a column runs under a GROUP clause <span class="covers">— <code>SELECT math::sum(age) FROM person</code> — without <code>GROUP ALL</code> the call runs per row on a scalar and the engine rejects the argument (<code>Expected an array</code>). Only the provable shape fires: every aggregate in the projection over a plain row field whose declared kind is not a collection; <code>math::sum(tags)</code> over <code>array&lt;int&gt;</code>, a param, or a computed argument is inferred the ordinary way. Silent for <code>count()</code>, which 4023 owns; aggregate promotion in inference is gated on a GROUP clause</span></td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">4029</span></span></td><td><span class="lvl warn">warn</span></td><td>Under a GROUP clause every projection is a group key or an aggregate <span class="covers">— <code>SELECT name, count() FROM t GROUP BY city</code> — the engine does not reject <code>name</code>; it silently accumulates every group&#39;s values into an array, so the result shape is not what the projection reads as (inference types it <code>array&lt;string&gt;</code> to match). Fires for a plain non-key field or an expression over one; silent for <code>GROUP ALL</code>, beside a wildcard (4025 owns), and for shapes it cannot prove (subqueries, traversals, methods). Sibling of 4013 (a group key that is not projected) and 4025 (a wildcard)</span></td></tr>
         </tbody>
       </table></div>
     </section>
@@ -439,7 +442,7 @@
         <span class="ft">Version compatibility</span>
         <span class="fc">3 codes</span>
       </div>
-      <p class="fam-desc">Gated on <code>[analysis] surrealdb_version</code>. Checks resolve against a per-version registry of function availability and syntax support.</p>
+      <p class="fam-desc">Opt in with <code>[analysis] surrealdb_version</code>; unset means the latest release and nothing here fires. A call to a function, or a piece of syntax, that the named release lacks or removed is reported against a registry sourced from SurrealDB's own tags and docs.</p>
       <div class="tbl-wrap"><table>
         <thead><tr><th>Code</th><th>Level</th><th>Contract &amp; what trips it</th></tr></thead>
         <tbody>

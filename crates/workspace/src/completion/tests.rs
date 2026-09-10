@@ -979,8 +979,9 @@ fn builtins_are_rendered_from_the_analyzer_catalog() {
             entry.name
         );
     }
-    // A spelling a release removed is dispatched (for the rename hint) but
-    // never offered; the current spelling is.
+    // A spelling a release removed is not a catalog row (it reports 5001, or
+    // 8001 under a target that has it) and is never offered; the current
+    // spelling is.
     assert!(!offered.contains("duration::from::days"));
     assert!(offered.contains("duration::from_days"));
     assert!(!offered.contains("count::count"));

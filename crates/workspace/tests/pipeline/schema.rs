@@ -1035,7 +1035,7 @@ fn analyze_workspace_validates_table_references_for_non_select_statement_forms()
     let mut workspace = Workspace::default();
     workspace.add_virtual_source(
         "query".into(),
-        "UPSERT ghost SET seen = true;\nINSERT INTO phantom { seen: true };\nLIVE SELECT * FROM missing;\nALTER TABLE shadow SCHEMAFULL;\nREMOVE TABLE stale;\nREBUILD INDEX by_name ON TABLE absent;\nSHOW CHANGES FOR TABLE vanished;\nINFO FOR TABLE hidden;\nINFO FOR TB obscured;".into(),
+        "UPSERT ghost SET seen = true;\nINSERT INTO phantom { seen: true };\nLIVE SELECT * FROM missing;\nALTER TABLE shadow SCHEMAFULL;\nREMOVE TABLE stale;\nREBUILD INDEX by_name ON TABLE absent;\nSHOW CHANGES FOR TABLE vanished SINCE 0;\nINFO FOR TABLE hidden;\nINFO FOR TB obscured;".into(),
     );
 
     let output = analyze_workspace(&workspace);

@@ -66,7 +66,7 @@ What it analyzes:
  literals for known rows, IF/ELSE unions, record-link and graph-edge shapes,
  the full builtin function table plus `fn::` declarations, closure and subquery
  inference, and constant-value evaluation.
-- **90 contract diagnostics** across eight families, with rust-analyzer-style
+- **93 contract diagnostics** across eight families, with rust-analyzer-style
  messages (lead with the consequence, `help:` fixes, `note:` definition spans).
 - **Flow-sensitive analysis** - control-flow type narrowing (occurrence typing
  that narrows `option<T>` and `record<A|B>` unions via `= NONE` guards and
@@ -251,7 +251,6 @@ ignore = ["target/**", "node_modules/**", ".git/**"] # default: same
 
 [analysis]
 strict = false # tighten otherwise-advisory checks
-surrealdb_version = "2" # target version for version-gated behavior
 
 [diagnostics]
 warnings_as_errors = false # promote every warning to an error
@@ -288,14 +287,13 @@ severity at render time, and parse-level findings keep an `S` prefix. Severity
 classes: **error** (provably fails or misbehaves), **warning** (provably
 suspicious but executable), **hint** (analyzer limitation or style note).
 Severity is intrinsic data; consumers apply policy at their edge. Errors are
-never demotable; lints are fully configurable. 90 contracts span the
+never demotable; lints are fully configurable. 93 contracts span the
 eight families below (0xxx syntax is emitted by the parser). The listing below is
 representative, not exhaustive; the full catalog is in
 `crates/diagnostics/src/catalog.rs`.
 
 Families: 0xxx syntax - 1xxx schema references - 2xxx types - 3xxx graph -
-4xxx statement misuse - 5xxx functions - 6xxx parameters - 7xxx lints -
-8xxx version compatibility.
+4xxx statement misuse - 5xxx functions - 6xxx parameters - 7xxx lints.
 
 Some codes fire from cross-cutting passes rather than a single statement kind.
 Control-flow narrowing (occurrence typing on `option<T>` and `record<A|B>` unions
@@ -398,7 +396,7 @@ Contract: a traversal or RELATE must use relations as declared (`in`->edge->`out
 - `5002` (E) - a call matches the function's signature (arity, per-argument
  kinds, `fn::` declared params, closure arity).
 - `5005` (E) - a const argument satisfies the function's value contract
- (`type::field('aeg')` naming no field, `type::thing('ghost', ...)`).
+ (`type::field('aeg')` naming no field, `type::record('ghost', ...)`).
 - `5009` (W) - `fn::` definitions terminate (no recursion cycles).
 - `5010` (W) - events do not trigger themselves, directly or in a cycle.
 
@@ -437,14 +435,6 @@ Contract: a traversal or RELATE must use relations as declared (`in`->edge->`out
  (`http::get(...)` / `sleep()` in a field VALUE or event body).
 - `7013` (W) - a suppression directive names a catalog code (with a reason when
  required).
-
-### 8xxx - Version compatibility
-
-Gated on `[analysis] surrealdb_version`.
-
-- `8001` (E) - every function used exists in the configured target version
- (unavailable or renamed - the message suggests the new name).
-- `8003` (E) - syntax requires a newer version (closures, `??` on old targets).
 
 ---
 

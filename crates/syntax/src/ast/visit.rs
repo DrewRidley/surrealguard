@@ -733,6 +733,7 @@ pub fn walk_define_field<V: Visitor>(visitor: &mut V, field: &DefineField) {
         overwrite: _,
         if_not_exists: _,
         default,
+        default_always: _,
         value,
         computed,
         reference: _,
@@ -1203,7 +1204,11 @@ pub fn walk_range<V: Visitor>(visitor: &mut V, range: &Range) {
 
 /// Visits a call's arguments.
 pub fn walk_call<V: Visitor>(visitor: &mut V, call: &Call) {
-    let Call { path: _, args } = call;
+    let Call {
+        path: _,
+        written: _,
+        args,
+    } = call;
     for arg in args {
         visitor.visit_expr(arg);
     }

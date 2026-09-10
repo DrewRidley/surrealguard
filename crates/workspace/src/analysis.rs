@@ -26,6 +26,13 @@ use crate::source_registry::SourceRegistry;
 pub struct Workspace {
     config: WorkspaceConfig,
     registry: SourceRegistry,
+    /// Sources whose text a host runs as a **live query** rather than a
+    /// one-shot one (`defineLive`). The text is an ordinary SELECT and is
+    /// analyzed as one; this is the only record that it will be wrapped in
+    /// `LIVE SELECT`, which accepts far less. Empty for every workspace that
+    /// has no host files, which is why it is a set and not a field on the
+    /// source.
+    live_sources: std::collections::BTreeSet<SourceId>,
 }
 
 /// Everything analysis produced for one source: its findings, one record
@@ -194,6 +201,7 @@ impl Workspace {
         Self {
             config,
             registry: SourceRegistry::default(),
+            live_sources: std::collections::BTreeSet::new(),
         }
     }
 
@@ -222,6 +230,18 @@ impl Workspace {
     /// [`SourceId`].
     pub fn add_virtual_source(&mut self, name: String, text: String) -> SourceId {
         self.registry.add_virtual(name, text)
+    }
+
+    /// Records that `source`'s text will be run as a live query, so analysis
+    /// holds it to [`the live contract`](crate::analyzer::data::live_contract)
+    /// on top of everything it checks about a SELECT.
+    pub fn mark_live_query(&mut self, source: &SourceId) {
+        self.live_sources.insert(source.clone());
+    }
+
+    /// Whether `source` was marked by [`Self::mark_live_query`].
+    pub fn is_live_query(&self, source: &SourceId) -> bool {
+        self.live_sources.contains(source)
     }
 }
 
@@ -326,6 +346,31 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
                 );
             }
         }
+    }
+
+    // The live contract, for the sources a host runs as a subscription. It is
+    // a post-pass rather than part of the pipeline because it is not a
+    // property of the SurrealQL: the same SELECT is correct through
+    // `defineQuery` and wrong through `defineLive`, and only the host knows
+    // which sink it reached.
+    for parsed in &parsed_sources {
+        if !workspace.is_live_query(parsed.source_id()) {
+            continue;
+        }
+        let mut live = Vec::new();
+        for statement in &surrealguard_syntax::lower::lower(parsed).statements {
+            if let surrealguard_syntax::ast::Statement::Select(select) = &statement.node {
+                crate::analyzer::data::live_contract::check_live_select(
+                    select,
+                    parsed.source_id(),
+                    &mut live,
+                );
+            }
+        }
+        if let Some(output) = sources.get_mut(parsed.source_id()) {
+            output.diagnostics.extend(live.iter().cloned());
+        }
+        diagnostics.extend(live);
     }
 
     let pipeline_output = pipeline::analyze_sources_with(
