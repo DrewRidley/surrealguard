@@ -124,6 +124,7 @@ removed table unknown); 1028 → 1027.
 | 2035 | DEFINE ANALYZER filter arguments are valid | `edgengram(5, 2)` | E | ✅ emitting |
 | 2036 | GeoJSON literals have their declared shape | `{type: 'Pointt', ...}` | E | ✅ emitting |
 | 2037 | a field's DEFAULT satisfies its own ASSERT | `DEFAULT 'activ' ASSERT $value IN ['active','inactive']` | E | ✅ emitting |
+| 2038 | a constant written to a field satisfies the field's ASSERT | `DEFINE FIELD status ON t TYPE string ASSERT $value IN ['active','inactive']; CREATE t SET status = 'activ'` — the same fold as 2037 with `$value` bound to the written constant, at every constant write (`SET`, `CONTENT`/`MERGE`/`REPLACE`, `INSERT` objects and `VALUES`, `RELATE`, PATCH `add`/`replace`); silent unless the ASSERT folds to `false` outright, and silent when 2001 already rejected the value | E | ✅ emitting |
 
 Folded by the contract audit (2026-07-09): 2002, 2003, 2009, 2010, 2027 →
 2001; 2006, 2011 → 2005; 2013 → 2012; 2014, 2029 → 2004; 2023 → 2008;
@@ -151,19 +152,15 @@ contract violation.
 
 | Code | Finding | Example | Sev | Status |
 |---|---|---|---|---|
-| 4001 | clause not valid on this statement | `SELECT ... RETURN NONE`, `CREATE ... WHERE` | E | ✅ lowering already isolates them |
-| 4002 | SELECT VALUE with multiple projections | `SELECT VALUE a, b FROM t` — verified: both SurrealDB's parser *and* ours reject the syntax, so this is parse-level (0xxx); the code stays reserved, no analyzer emission | E | ☑ parser-covered |
 | 4003 | ONLY on a table-wide target without LIMIT 1 | `SELECT * FROM ONLY person`, `UPDATE ONLY person` — deterministic runtime error (`SingleOnlyOutput`); CREATE is exempt (always one row) | E | ✅ |
 | 4004 | INSERT tuple column/value count mismatch | `(a, b) VALUES (1)` | E | ✅ lowering counts |
 | 4005 | BREAK/CONTINUE outside a loop | top-level `BREAK` | E | ✅ loop depth on ctx |
 | 4006 | unreachable statements after RETURN/BREAK/THROW | `RETURN 1; SELECT ...` in a block | W | ✅ |
 | 4007 | transaction pairing contract: BEGIN opens exactly one transaction that COMMIT/CANCEL closes | unopened COMMIT/CANCEL, nested BEGIN, BEGIN never closed | E | ✅ pipeline tracks the open transaction (nested/unpaired/unclosed variants) |
-| 4009 | LIVE SELECT with unsupported clause | `LIVE SELECT ... GROUP BY` | E | ☑ parser-covered — the grammar admits only projections/FROM/WHERE/FETCH on LIVE SELECT, so GROUP/ORDER/LIMIT/etc. are a parse error, never a lowered clause |
 | 4010 | duplicate SET target in one statement | `SET age = 1, age = 2` | W | ✅ assignments are structured |
 | 4011 | duplicate projection key/alias | `SELECT age, age FROM t`, two `AS x` | W | ✅ keys computed |
-| 4012 | OMIT without a wildcard projection | verified parser-covered: the grammar only accepts OMIT alongside `*` — code reserved, no emission | W | ☑ parser-covered |
+| 4012 | OMIT without a wildcard projection | `SELECT a, b OMIT c FROM t` — the grammar accepts `OmitClause` beside any projection list (the earlier "parser-covered" note was wrong), and the engine applies OMIT to the rows *after* the projection, so without `*` the clause either names a field that is not returned (a no-op) or strips one the list just asked for; either way the fix is to write the projection you want | W | ✅ emitting (nested SELECTs included) |
 | 4013 | GROUP BY field not in projections | SurrealDB aggregate rules | W | ✅ a group key absent from the projection can't label its rows (SurrealDB runs it → warning); `SELECT VALUE`/`*` exempt |
-| 4016 | empty block | verified unreachable: `{}` in value position is an empty *object* literal, and statement-position blocks don't have their value consumed — code reserved, no emission | I | ☑ unreachable |
 | 4017 | block ends with LET — its value is NONE | `{ LET $x = f(); }` consumed as a value | W | ✅ block value known |
 | 4018 | side-effecting subquery in read position | `SELECT (CREATE log) FROM t` | W | ✅ statement kinds known |
 | 4019 | CREATE/INSERT on a relation table without `in`/`out` | `CREATE likes SET strength = 1` | W | ✅ relation-ness known |
@@ -174,9 +171,18 @@ contract violation.
 | 4024 | an IF branch is unreachable — its guard provably folds to a constant | `IF false { ... }`, the ELSE after `IF true { ... }` | W | ✅ constant-folded guard |
 | 4025 | a wildcard projection cannot be aggregated by a GROUP clause | `SELECT * FROM t GROUP BY k`, `SELECT * FROM t GROUP ALL`, `SELECT *, count() FROM t GROUP BY k` — 3.0.5 rejects all of them outright (`Incorrect selector for aggregate selection, expression \`*\` … cannot be aggregated in a group`); 2.x silently drops the `*`, so the query never returns what its author asked for under either engine | E | ✅ verified on a live 3.0.5 |
 | 4026 | a filtered ONLY has no provable single-row target | `SELECT * FROM ONLY t WHERE status = 'open'` — errors (`Expected a single result output when using the ONLY keyword`) the moment two rows match, but succeeds while one does; W, not E, because the filter may well be single-row for reasons the schema does not state. Silent when at most one row is provable: a record-id target, `WHERE id = …`, an equality covering every field of a `UNIQUE` index, or `LIMIT 1`. Sibling of 4003, which owns the *unfiltered* table-wide case | W | ✅ verified on a live 3.0.5 |
+| 4027 | under a GROUP clause every projection is a group key or an aggregate | `SELECT name, count() FROM t GROUP BY city` — the engine does not reject `name`; it silently accumulates every group's values into an array, so the result shape is not what the projection reads as (inference types it `array<string>` to match). Fires for a plain non-key field or an expression over one; silent for `GROUP ALL`, beside a wildcard (4025 owns), and for shapes it cannot prove (subqueries, traversals, methods). Sibling of 4013 (a group key that is not projected) and 4025 (a wildcard) | W | ✅ |
+| 4028 | an aggregate over a column runs under a GROUP clause | `SELECT math::sum(age) FROM person` — without `GROUP ALL` the call runs per row on a scalar and the engine rejects the argument (`Expected an array`). Only the provable shape fires: every aggregate in the projection over a plain row field whose declared kind is not a collection; `math::sum(tags)` over `array<int>`, a param, or a computed argument is inferred the ordinary way. Silent for `count()`, which 4023 owns; aggregate promotion in inference is gated on a GROUP clause | E | ✅ |
 
 Folded by the contract audit (2026-07-09): 4008, 4015 → 4007. Deleted:
 4014 — no statable contract (RETURN is legal at top level and in blocks).
+Deleted (2026-09-08): 4016 — unreachable, `{}` in value position lowers as an
+empty *object* literal and a statement-position block's value is never
+consumed, so no analyzer site can observe an "empty block"; 4001 — every
+clause-on-the-wrong-statement is a parse error in the vendored grammar except
+`SELECT … RETURN …`, which the grammar over-accepts and lowering drops, and
+that is a grammar-conformance fix (the clause never reaches the AST), not an
+analyzer contract. Deleted numbers are retired, never reused.
 
 ## 5xxx — Functions and closures
 
@@ -200,8 +206,13 @@ Folded by the contract audit (2026-07-09): 5003, 5004, 5006 → 5002; 5007,
 | 6003 | unresolvable dynamic construct (analyzer limitation) | current `dynamic(6001)` class | I | ✅ |
 | 6004 | param used before its LET in source order | `RETURN $x; LET $x = 1;` | W | ✅ env is source-ordered |
 | 6005 | context param used outside its context | `$before` outside an event, `$parent` outside a subquery | E | 🔶 context-param model below |
-| 6006 | host-declared type contradicts query constraint | host binds `$age: string`, query needs int | E (host-static) | 🔨 adapter layer; registered here so it is never dropped |
 | 6007 | assignment to a protected parameter | `LET $auth = {...}` | E | ✅ protected-name list ($auth, $session, $token, $this, ...) |
+
+Deleted (2026-09-08): 6006 (host-declared type contradicts query constraint) —
+no emission path exists or is half-built anywhere in `crates/`; the check
+belongs to a host adapter comparing its declared binding against the exported
+parameter constraints, and the adapter that lands it registers the code it
+needs then. A row nothing can emit is a promise the catalog cannot keep.
 
 ## 7xxx — Lints
 
@@ -217,26 +228,41 @@ Folded by the contract audit (2026-07-09): 5003, 5004, 5006 → 5002; 5007,
 | 7008 | schemaless table in a typed workspace | queries against fieldless tables | I | ✅ |
 | 7009 | whole-table UPDATE/DELETE without WHERE | `DELETE person;` | W | ✅ (deliberate ones silence per-code) |
 | 7011 | assignment to `id` in SET | `SET id = ...` | W | ✅ |
-| 7012 | blocking or side-effecting call in a computed context | `http::get(...)` / `sleep()` in a field `VALUE` or event body | W | ✅ call paths known |
+| 7012 | blocking or side-effecting call in a computed context | `http::get(...)` / `sleep()` in any field clause; `rand::*` / `sequence::next*` in a `VALUE` or `COMPUTED`, and `time::now()` in a `COMPUTED` — clauses that re-run, so the field never holds one value. `DEFAULT time::now()` / `DEFAULT rand::uuid()` and `VALUE time::now()` are the created-at, id and updated-at idioms and stay silent | W | ✅ emitting |
 | 7013 | a suppression directive names a catalog code (with a reason when required) | `-- surrealguard: allow(ghost)`; missing reason under `require_suppression_reasons` | W | ✅ |
 | 7014 | whole-table SELECT with no WHERE and no LIMIT | `SELECT * FROM person;` | I | ✅ opt-in (allow by default) |
 | 7015 | any bare `SELECT *` (over-fetch / schema-drift brittleness) | `SELECT * FROM person WHERE id = person:tobie;` | I | ✅ opt-in (allow by default) |
+| 7016 | LIMIT/START without ORDER BY (the page is not deterministic) | `SELECT * FROM person LIMIT 10 START 20;` — record order is storage order, so two pages can overlap or skip rows. Table targets only; silent for `ONLY … LIMIT 1` (a cardinality proof, not a page) and `GROUP ALL` (one row) | I | ✅ opt-in (allow by default) |
 
 ## 8xxx — Version compatibility
 
-The workspace config gains `surrealdb_version`; checks gate on it. Needs a
-small version registry (function → introduced/removed/renamed-in), built
-from the surrealdb source the same way the signature table was.
+`analysis.surrealdb_version` in `surrealguard.toml` names the release a
+workspace deploys against (`"2"`, `"2.2"`, `"3.0.2"`); every check here gates
+on it and an unset key is "the latest", which gates nothing. An omitted
+component reads as the newest release with that prefix (`"2"` is every 2.x),
+the reading with no false positives. The registry is
+`crates/workspace/src/analyzer/version.rs`; every row is the diff of
+SurrealDB's own `fnc/mod.rs` between release tags (functions) or the presence
+of a construct's `sql/*.rs` file at a tag plus the docs' "since"/"removed"
+notes (syntax) — the sources are listed in the module docs, and anything
+unsourced is deliberately treated as always available.
 
 | Code | Finding | Example | Sev | Status |
 |---|---|---|---|---|
-| 8001 | every function used exists in the configured target version | unavailable (`array::fold` on 1.x) or renamed (`string::endsWith` — message suggests `string::ends_with`) | E | 🔨 version registry |
-| 8003 | syntax requires a newer version | closures / `??` on old targets | E | 🔨 same |
+| 8001 | every function used exists in the configured target version | added later (`file::get`, `set::len` on a 2.x target — "added in 3.0"), or a spelling the target does not have: `type::is_record` on 2.2 ("before 3.0 it was spelled `type::is::record`"), `type::is::record`/`time::from::millis`/`string::startsWith` on a target past the rename ("renamed to … in 3.0"/"2.0"; the call is still analyzed under its current name), `rand::guid`/`record::refs` on 3.x ("removed in 3.0") | E | ✅ emitting; `time::from::ulid`/`uuid` (the 2.x spellings) also stop false-firing 5001 |
+| 8002 | syntax was removed in the configured target version | on a 3.x target: `DEFINE SCOPE`/`DEFINE TOKEN` (→ `DEFINE ACCESS`), `<future>` (→ `COMPUTED`), the fuzzy operators `~`/`!~`/`?~`/`*~` (→ `string::similarity::*`), `SEARCH ANALYZER` (→ `FULLTEXT ANALYZER`) | E | ✅ emitting |
+| 8003 | syntax requires a newer version | on a 1.x target: closures, `UPSERT`, `ALTER`, record-id ranges, `?.`, `.{a, b}`, `DEFINE ACCESS`/`CONFIG` (2.0); on 2.0: `.{1..3}` recursion (2.1); on 2.1: `REFERENCE` fields, `<~`, `DEFINE API` (2.2); on 2.x: `COMPUTED`, `DEFINE SEQUENCE`/`BUCKET`, `FULLTEXT ANALYZER` (3.0); on 3.1: `ASSERT`/`DEFAULT` on `id` (3.2). Unsourced and therefore ungated: `??`/`?:` (already in 1.5), `set<T>` kinds (pre-3.0 as deduplicated arrays), `DEFAULT ALWAYS` and the `+path`/`+collect` recursion algorithms (not in the AST), the 3.0 `?.`→`.?` respelling | E | ✅ emitting |
 
 **After the contract audit (2026-07-09): ~80 contracts across 8 families**
 (from 135 rows). Every row states its contract; message variants never get
 their own codes; checks that cannot be phrased as contract violations were
 deleted. Folded numbers are retired permanently — never reused.
+
+Retired parser-covered numbers (2026-09-08): **4002** (`SELECT VALUE a, b` —
+the grammar rejects a second VALUE projection) and **4009** (`LIVE SELECT`
+admits only projections/FROM/WHERE/FETCH, so GROUP/ORDER/LIMIT/START are a
+parse error). Both were verified against the grammar with `dump_cst`; S0001
+covers them, so neither has an analyzer emission or a registry entry.
 
 ---
 
@@ -366,7 +392,8 @@ constraint collection. Exporting these gives host adapters fully typed
 - DDL inside transactions: allowed/atomic? → possible new 4xxx.
 - Use-before-DEFINE in one script: runtime order vs our whole-workspace
   extraction → affects 1001/1026 precision.
-- LIVE SELECT's exact clause restrictions → 4009.
+- LIVE SELECT's exact clause restrictions → settled: the grammar admits only
+  projections/FROM/WHERE/FETCH, so 4009 is retired (parser-covered).
 - Event cascade semantics (depth limits?) → 5010 severity.
 - `+` semantics on arrays/objects (concat/merge?) → temporal/collection
   operand tables.

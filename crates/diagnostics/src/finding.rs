@@ -83,6 +83,34 @@ impl Finding {
         self
     }
 
+    /// Rebuilds the finding with every span — the primary one and each
+    /// `related` location — passed through `map`, keeping the code, severity,
+    /// message, help, and tags untouched.
+    ///
+    /// This is how a finding raised on an *embedded* query (a template
+    /// literal in a `.ts` file, a `query!` string in Rust) is re-addressed to
+    /// its host file: every surface (CLI, LSP, WASM) used to hand-roll this
+    /// and each dropped a different attachment. One implementation means all
+    /// three explain the same facts at the same places.
+    pub fn map_spans(&self, mut map: impl FnMut(&SourceSpan) -> SourceSpan) -> Self {
+        Self {
+            span: map(&self.span),
+            code: self.code,
+            severity: self.severity,
+            message: self.message.clone(),
+            help: self.help.clone(),
+            related: self
+                .related
+                .iter()
+                .map(|related| RelatedInfo {
+                    span: map(&related.span),
+                    message: related.message.clone(),
+                })
+                .collect(),
+            tags: self.tags.clone(),
+        }
+    }
+
     /// The primary source location the finding points at.
     pub fn span(&self) -> &SourceSpan {
         &self.span
