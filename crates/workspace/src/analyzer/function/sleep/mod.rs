@@ -1,24 +1,17 @@
-//! `sleep` function-family analysis dispatch.
+//! `sleep` function family: every built-in it dispatches, with its analyzer.
 
 // One-file-per-function layout: this namespace has a single function
 // sharing its name, which is intentional.
 #![allow(clippy::module_inception)]
 
-use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-
-use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::function::BuiltinEntry;
 
 pub mod sleep;
 
-pub(crate) fn analyze_sleep_function(
-    ctx: &mut AnalysisContext<'_>,
-    call: &ast::Call,
-    path: &str,
-    args: &[Kind],
-) -> Kind {
-    match path {
-        "sleep::sleep" => sleep::analyze_sleep_sleep(ctx, call, args),
-        _ => crate::analyzer::function::unknown_function(ctx, call),
-    }
-}
+/// Every `sleep::` built-in the analyzer resolves, in dispatch order.
+pub(crate) static CATALOG: &[BuiltinEntry] = &[BuiltinEntry::new(
+    "sleep::sleep",
+    "Pauses execution for the given duration.",
+    sleep::signature,
+    sleep::analyze_sleep_sleep,
+)];

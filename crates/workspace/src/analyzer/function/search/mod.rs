@@ -1,9 +1,6 @@
-//! `search` function-family analysis dispatch.
+//! `search` function family: every built-in it dispatches, with its analyzer.
 
-use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-
-use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::function::BuiltinEntry;
 
 pub mod analyze;
 pub mod highlight;
@@ -12,19 +9,42 @@ pub mod offsets;
 pub mod rrf;
 pub mod score;
 
-pub(crate) fn analyze_search_function(
-    ctx: &mut AnalysisContext<'_>,
-    call: &ast::Call,
-    path: &str,
-    args: &[Kind],
-) -> Kind {
-    match path {
-        "search::analyze" => analyze::analyze_search_analyze(ctx, call, args),
-        "search::highlight" => highlight::analyze_search_highlight(ctx, call, args),
-        "search::linear" => linear::analyze_search_linear(ctx, call, args),
-        "search::offsets" => offsets::analyze_search_offsets(ctx, call, args),
-        "search::rrf" => rrf::analyze_search_rrf(ctx, call, args),
-        "search::score" => score::analyze_search_score(ctx, call, args),
-        _ => crate::analyzer::function::unknown_function(ctx, call),
-    }
-}
+/// Every `search::` built-in the analyzer resolves, in dispatch order.
+pub(crate) static CATALOG: &[BuiltinEntry] = &[
+    BuiltinEntry::new(
+        "search::analyze",
+        "The tokens an analyzer produces for a string.",
+        analyze::signature,
+        analyze::analyze_search_analyze,
+    ),
+    BuiltinEntry::new(
+        "search::highlight",
+        "The matched terms of a full-text `@@` match, wrapped in the given markers.",
+        highlight::signature,
+        highlight::analyze_search_highlight,
+    ),
+    BuiltinEntry::new(
+        "search::linear",
+        "Reranks search results by a linear combination of scores.",
+        linear::signature,
+        linear::analyze_search_linear,
+    ),
+    BuiltinEntry::new(
+        "search::offsets",
+        "The byte offsets of the terms matched by a full-text `@@` match.",
+        offsets::signature,
+        offsets::analyze_search_offsets,
+    ),
+    BuiltinEntry::new(
+        "search::rrf",
+        "Fuses ranked result lists with reciprocal rank fusion.",
+        rrf::signature,
+        rrf::analyze_search_rrf,
+    ),
+    BuiltinEntry::new(
+        "search::score",
+        "The relevance score of a full-text `@@` match.",
+        score::signature,
+        score::analyze_search_score,
+    ),
+];

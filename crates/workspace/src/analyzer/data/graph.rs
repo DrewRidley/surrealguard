@@ -90,12 +90,8 @@ pub(crate) fn check_graph_idiom_at(
             ast::IdiomPart::Graph { dir, step } => {
                 if !pending_fields.is_empty() {
                     check_source_fields(ctx, require_landing, current.as_deref(), &pending_fields);
-                    current = rebase_through_fields(
-                        ctx,
-                        current.as_deref(),
-                        &pending_fields,
-                        part.span,
-                    );
+                    current =
+                        rebase_through_fields(ctx, current.as_deref(), &pending_fields, part.span);
                     pending_edge = None;
                     pending_fields.clear();
                 }
@@ -191,15 +187,16 @@ pub(crate) fn check_graph_idiom_at(
             // a valid query rather than a missing one.
             //
             // A field read moves the walk onto whatever it names (resolved when
-            // the next step arrives); `.*`, an index, `[$]` and `?` all leave it
-            // standing on the same rows; a `.{…}`, a method and an unlowered
-            // part replace the value with something no traversal can continue
-            // from.
+            // the next step arrives); `.*`, an index, `[$]`, `?` and `...` all
+            // leave it standing on the same rows; a `.{…}`, a method and an
+            // unlowered part replace the value with something no traversal can
+            // continue from.
             ast::IdiomPart::Field(name) => pending_fields.push((name.clone(), part.span)),
             ast::IdiomPart::All
             | ast::IdiomPart::Index(_)
             | ast::IdiomPart::Last
-            | ast::IdiomPart::Optional => {}
+            | ast::IdiomPart::Optional
+            | ast::IdiomPart::Flatten => {}
             ast::IdiomPart::Destructure(_)
             | ast::IdiomPart::Method { .. }
             | ast::IdiomPart::Partial(_)
@@ -334,7 +331,13 @@ fn check_source_fields(
     let Some(span) = span else {
         return;
     };
-    crate::analyzer::data::select::validate_field_path(ctx, table, &field_names(fields), span, 1002);
+    crate::analyzer::data::select::validate_field_path(
+        ctx,
+        table,
+        &field_names(fields),
+        span,
+        1002,
+    );
 }
 
 /// The table a graph step traverses from, after a run of field reads.

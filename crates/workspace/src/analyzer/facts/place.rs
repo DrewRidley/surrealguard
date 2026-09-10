@@ -148,11 +148,10 @@ fn idiom_place(idiom: &ast::Idiom) -> Option<Place> {
     let mut parts = idiom.parts.iter();
     let first = parts.next()?;
     let (root, mut path) = match &first.node {
-        ast::IdiomPart::Start(start) => match place_of(&start.node) {
-            // `$x.f` — and, through `place_of`, `($x).f` and `$x[0].f`.
-            Some(place) => (place.root, place.path),
-            None => return None,
-        },
+        ast::IdiomPart::Start(start) => {
+            let place = place_of(&start.node)?;
+            (place.root, place.path)
+        }
         // A bare row field: `email`, `profile.email`.
         ast::IdiomPart::Field(name) => (PlaceRoot::RowField, vec![Step::Field(name.clone())]),
         _ => return None,

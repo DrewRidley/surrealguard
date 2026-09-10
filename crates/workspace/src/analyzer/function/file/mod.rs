@@ -1,9 +1,6 @@
-//! `file` function-family analysis dispatch.
+//! `file` function family: every built-in it dispatches, with its analyzer.
 
-use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-
-use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::function::BuiltinEntry;
 
 pub mod bucket;
 pub mod copy;
@@ -19,32 +16,84 @@ pub mod put_if_not_exists;
 pub mod rename;
 pub mod rename_if_not_exists;
 
-pub(crate) fn analyze_file_function(
-    ctx: &mut AnalysisContext<'_>,
-    call: &ast::Call,
-    path: &str,
-    args: &[Kind],
-) -> Kind {
-    match path {
-        "file::bucket" => bucket::analyze_file_bucket(ctx, call, args),
-        "file::copy" => copy::analyze_file_copy(ctx, call, args),
-        "file::copy_if_not_exists" => {
-            copy_if_not_exists::analyze_file_copy_if_not_exists(ctx, call, args)
-        }
-        "file::delete" => delete::analyze_file_delete(ctx, call, args),
-        "file::exists" => exists::analyze_file_exists(ctx, call, args),
-        "file::get" => get::analyze_file_get(ctx, call, args),
-        "file::head" => head::analyze_file_head(ctx, call, args),
-        "file::key" => key::analyze_file_key(ctx, call, args),
-        "file::list" => list::analyze_file_list(ctx, call, args),
-        "file::put" => put::analyze_file_put(ctx, call, args),
-        "file::put_if_not_exists" => {
-            put_if_not_exists::analyze_file_put_if_not_exists(ctx, call, args)
-        }
-        "file::rename" => rename::analyze_file_rename(ctx, call, args),
-        "file::rename_if_not_exists" => {
-            rename_if_not_exists::analyze_file_rename_if_not_exists(ctx, call, args)
-        }
-        _ => crate::analyzer::function::unknown_function(ctx, call),
-    }
-}
+/// Every `file::` built-in the analyzer resolves, in dispatch order.
+pub(crate) static CATALOG: &[BuiltinEntry] = &[
+    BuiltinEntry::new(
+        "file::bucket",
+        "The bucket name of a file pointer.",
+        bucket::signature,
+        bucket::analyze_file_bucket,
+    ),
+    BuiltinEntry::new(
+        "file::copy",
+        "Copies a file to a new key in its bucket, overwriting any existing file.",
+        copy::signature,
+        copy::analyze_file_copy,
+    ),
+    BuiltinEntry::new(
+        "file::copy_if_not_exists",
+        "Copies a file to a new key in its bucket unless the target exists.",
+        copy_if_not_exists::signature,
+        copy_if_not_exists::analyze_file_copy_if_not_exists,
+    ),
+    BuiltinEntry::new(
+        "file::delete",
+        "Deletes a file from its bucket.",
+        delete::signature,
+        delete::analyze_file_delete,
+    ),
+    BuiltinEntry::new(
+        "file::exists",
+        "Whether a file exists in its bucket.",
+        exists::signature,
+        exists::analyze_file_exists,
+    ),
+    BuiltinEntry::new(
+        "file::get",
+        "The raw contents of a file.",
+        get::signature,
+        get::analyze_file_get,
+    ),
+    BuiltinEntry::new(
+        "file::head",
+        "The metadata of a file, or NONE.",
+        head::signature,
+        head::analyze_file_head,
+    ),
+    BuiltinEntry::new(
+        "file::key",
+        "The key of a file pointer within its bucket.",
+        key::signature,
+        key::analyze_file_key,
+    ),
+    BuiltinEntry::new(
+        "file::list",
+        "Lists the files in a bucket, with optional filtering options.",
+        list::signature,
+        list::analyze_file_list,
+    ),
+    BuiltinEntry::new(
+        "file::put",
+        "Writes contents to a file, overwriting any existing file.",
+        put::signature,
+        put::analyze_file_put,
+    ),
+    BuiltinEntry::new(
+        "file::put_if_not_exists",
+        "Writes contents to a file unless it already exists.",
+        put_if_not_exists::signature,
+        put_if_not_exists::analyze_file_put_if_not_exists,
+    ),
+    BuiltinEntry::new(
+        "file::rename",
+        "Renames a file within its bucket, overwriting any existing file.",
+        rename::signature,
+        rename::analyze_file_rename,
+    ),
+    BuiltinEntry::new(
+        "file::rename_if_not_exists",
+        "Renames a file within its bucket unless the target exists.",
+        rename_if_not_exists::signature,
+        rename_if_not_exists::analyze_file_rename_if_not_exists,
+    ),
+];

@@ -1154,10 +1154,7 @@ impl Env<'_> {
         // Walk left over `<root> -> name -> name ->▏`, collecting the hops.
         let mut hops: Vec<(Dir, String)> = Vec::new();
         let mut leftmost_arrow = arrow_index;
-        loop {
-            let Some(mut name_at) = leftmost_arrow.checked_sub(1) else {
-                break;
-            };
+        while let Some(mut name_at) = leftmost_arrow.checked_sub(1) {
             // A step may carry its own filter: `->likes[WHERE …]->▏`.
             if token_text(self.tokens, self.source, name_at) == Some("]") {
                 let Some(open) = matching_open(self.tokens, self.source, name_at) else {
@@ -1279,7 +1276,7 @@ impl Env<'_> {
         match token.kind {
             TokenKind::Param => {
                 let kind = self.params.get(text.trim_start_matches('$'));
-                kind.map_or(Standing::Unknown, |kind| tables_standing(kind))
+                kind.map_or(Standing::Unknown, tables_standing)
             }
             TokenKind::Ident => {
                 // A keyword is not a receiver — `SELECT ->▏` starts at the row.
@@ -1449,10 +1446,8 @@ impl Env<'_> {
         if let Some(function) = self.schema.function(name) {
             return function.args.get(argument).and_then(|arg| arg.kind.clone());
         }
-        let builtin = super::builtins::BUILTINS
-            .iter()
-            .find(|builtin| builtin.name == name)?;
-        super::kind_text::parameter_kind(builtin.params, argument)
+        let builtin = crate::analyzer::function::builtin(name)?;
+        super::builtins::parameter_kind(builtin, argument)
     }
 }
 
@@ -1467,9 +1462,7 @@ fn accepts(relation: &crate::schema::RelationDef, dir: Dir, standing: &Standing)
     match standing {
         Standing::Any => true,
         Standing::Unknown => false,
-        Standing::Tables(tables) => tables
-            .iter()
-            .any(|table| near.iter().any(|end| *end == table)),
+        Standing::Tables(tables) => tables.iter().any(|table| near.contains(&table)),
     }
 }
 

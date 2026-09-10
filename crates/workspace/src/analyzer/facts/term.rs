@@ -227,56 +227,57 @@ fn binary_term(
     bindings: Bindings<'_>,
 ) -> Term {
     use ast::BinaryOp;
-    let folded = match op {
-        // `AND`/`OR` short-circuit: one provable side can decide the whole even
-        // when the other cannot fold (`false AND $x` is provably false).
-        BinaryOp::And => {
-            let left = fold_bool(lhs, bindings);
-            let right = fold_bool(rhs, bindings);
-            if left == Some(false) || right == Some(false) {
-                Some(ConstValue::Bool(false))
-            } else if left == Some(true) && right == Some(true) {
-                Some(ConstValue::Bool(true))
-            } else {
-                None
+    let folded =
+        match op {
+            // `AND`/`OR` short-circuit: one provable side can decide the whole even
+            // when the other cannot fold (`false AND $x` is provably false).
+            BinaryOp::And => {
+                let left = fold_bool(lhs, bindings);
+                let right = fold_bool(rhs, bindings);
+                if left == Some(false) || right == Some(false) {
+                    Some(ConstValue::Bool(false))
+                } else if left == Some(true) && right == Some(true) {
+                    Some(ConstValue::Bool(true))
+                } else {
+                    None
+                }
             }
-        }
-        BinaryOp::Or => {
-            let left = fold_bool(lhs, bindings);
-            let right = fold_bool(rhs, bindings);
-            if left == Some(true) || right == Some(true) {
-                Some(ConstValue::Bool(true))
-            } else if left == Some(false) && right == Some(false) {
-                Some(ConstValue::Bool(false))
-            } else {
-                None
+            BinaryOp::Or => {
+                let left = fold_bool(lhs, bindings);
+                let right = fold_bool(rhs, bindings);
+                if left == Some(true) || right == Some(true) {
+                    Some(ConstValue::Bool(true))
+                } else if left == Some(false) && right == Some(false) {
+                    Some(ConstValue::Bool(false))
+                } else {
+                    None
+                }
             }
-        }
-        BinaryOp::Eq => pair(lhs, rhs, bindings)
-            .and_then(|(a, b)| const_eq(&a, &b))
-            .map(ConstValue::Bool),
-        BinaryOp::NotEq => pair(lhs, rhs, bindings)
-            .and_then(|(a, b)| const_eq(&a, &b))
-            .map(|equal| ConstValue::Bool(!equal)),
-        BinaryOp::Lt => {
-            const_order(lhs, rhs, bindings).map(|o| ConstValue::Bool(o == std::cmp::Ordering::Less))
-        }
-        BinaryOp::LtEq => const_order(lhs, rhs, bindings)
-            .map(|o| ConstValue::Bool(o != std::cmp::Ordering::Greater)),
-        BinaryOp::Gt => const_order(lhs, rhs, bindings)
-            .map(|o| ConstValue::Bool(o == std::cmp::Ordering::Greater)),
-        BinaryOp::GtEq => {
-            const_order(lhs, rhs, bindings).map(|o| ConstValue::Bool(o != std::cmp::Ordering::Less))
-        }
-        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul => arithmetic(op, lhs, rhs, bindings),
-        BinaryOp::Other(name) if matches!(name.to_ascii_uppercase().as_str(), "IN" | "INSIDE") => {
-            membership(lhs, rhs, bindings).map(ConstValue::Bool)
-        }
-        BinaryOp::Other(name) if name.eq_ignore_ascii_case("contains") => {
-            membership(rhs, lhs, bindings).map(ConstValue::Bool)
-        }
-        _ => None,
-    };
+            // `IS` / `IS NOT` are `=` / `!=` spelled out.
+            BinaryOp::Eq | BinaryOp::Is => pair(lhs, rhs, bindings)
+                .and_then(|(a, b)| const_eq(&a, &b))
+                .map(ConstValue::Bool),
+            // `==` is type-strict: `1 == 1.0` is false where `1 = 1.0` is true, so
+            // it folds only for operands of the same constant kind.
+            BinaryOp::Exact => pair(lhs, rhs, bindings)
+                .and_then(|(a, b)| const_exact_eq(&a, &b))
+                .map(ConstValue::Bool),
+            BinaryOp::NotEq | BinaryOp::IsNot => pair(lhs, rhs, bindings)
+                .and_then(|(a, b)| const_eq(&a, &b))
+                .map(|equal| ConstValue::Bool(!equal)),
+            BinaryOp::Lt => const_order(lhs, rhs, bindings)
+                .map(|o| ConstValue::Bool(o == std::cmp::Ordering::Less)),
+            BinaryOp::LtEq => const_order(lhs, rhs, bindings)
+                .map(|o| ConstValue::Bool(o != std::cmp::Ordering::Greater)),
+            BinaryOp::Gt => const_order(lhs, rhs, bindings)
+                .map(|o| ConstValue::Bool(o == std::cmp::Ordering::Greater)),
+            BinaryOp::GtEq => const_order(lhs, rhs, bindings)
+                .map(|o| ConstValue::Bool(o != std::cmp::Ordering::Less)),
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul => arithmetic(op, lhs, rhs, bindings),
+            BinaryOp::In | BinaryOp::Inside => membership(lhs, rhs, bindings).map(ConstValue::Bool),
+            BinaryOp::Contains => membership(rhs, lhs, bindings).map(ConstValue::Bool),
+            _ => None,
+        };
     folded.map_or(Term::Opaque, Term::Const)
 }
 
@@ -348,6 +349,15 @@ fn membership(element: &ast::Expr, collection: &ast::Expr, bindings: Bindings<'_
 /// Constant equality. `None` when the two values are not comparable under a
 /// shape the folder proves (bail rather than assume unequal). Numeric kinds
 /// compare across `int`/`float`.
+/// `==`: equal *and* of the same kind — an int and a float are never exactly
+/// equal, whatever their values.
+fn const_exact_eq(a: &ConstValue, b: &ConstValue) -> Option<bool> {
+    if std::mem::discriminant(a) != std::mem::discriminant(b) {
+        return Some(false);
+    }
+    const_eq(a, b)
+}
+
 fn const_eq(a: &ConstValue, b: &ConstValue) -> Option<bool> {
     match (a, b) {
         (ConstValue::Int(x), ConstValue::Int(y)) => Some(x == y),

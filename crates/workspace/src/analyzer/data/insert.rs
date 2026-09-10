@@ -7,9 +7,8 @@ use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
-use crate::analyzer::contract::{Contract, Position};
+use crate::analyzer::contract::Position;
 use crate::analyzer::data::mutation;
-use crate::analyzer::facts::Bindings;
 use crate::schema::TableDef;
 
 pub(crate) fn analyze_insert(ctx: &mut AnalysisContext<'_>, stmt: &ast::InsertStmt) -> Kind {
@@ -21,6 +20,7 @@ pub(crate) fn insert_response_kind(stmt: &ast::InsertStmt, ctx: &mut AnalysisCon
     let row_table = mutation::source_table_name(stmt.target.as_ref())
         .and_then(|name| ctx.schema().tables.get(&name));
     check_insert_payload(ctx, &stmt.data, row_table);
+    check_on_duplicate_update(ctx, stmt);
 
     let Some(table_name) = mutation::source_table_name(stmt.target.as_ref()) else {
         return Kind::Any;
@@ -85,19 +85,23 @@ fn check_insert_payload(
             }
             for row in rows {
                 for (column, value) in row {
-                    let fact =
+                    // One column, one value: a field write, held to the same
+                    // contracts a `SET` is (2001, 2038). The column resolves
+                    // first; a value whose column is unknown, or whose target
+                    // table is, is still walked so its own findings emit.
+                    let resolved = row_table.and_then(|table| {
+                        let segments =
+                            crate::analyzer::expression::infer::plain_field_segments(&column.node)?;
+                        Some((table, segments))
+                    });
+                    let Some((table, segments)) = resolved else {
                         crate::analyzer::expression::infer::infer_expression_fact(value, ctx);
-                    let Some(table) = row_table else {
-                        continue;
-                    };
-                    let Some(segments) =
-                        crate::analyzer::expression::infer::plain_field_segments(&column.node)
-                    else {
                         continue;
                     };
                     let Some(column_kind) =
                         crate::analyzer::data::select::kind_for_path(table, &segments)
                     else {
+                        crate::analyzer::expression::infer::infer_expression_fact(value, ctx);
                         crate::analyzer::data::check_field_path(
                             ctx,
                             table,
@@ -107,56 +111,38 @@ fn check_insert_payload(
                         );
                         continue;
                     };
-                    // One column, one value: the same contract a `SET` obeys,
-                    // so a constant is compared as the literal it is.
-                    let term = crate::analyzer::facts::eval(&value.node, Bindings::NONE);
-                    let contract = Contract::new(Position::InsertValues, column_kind.clone());
-                    if let Some(value_kind) = contract.violation(&term, &fact) {
-                        let span = surrealguard_syntax::span::SourceSpan::new(
-                            ctx.source().clone(),
-                            value.span,
-                        );
-                        let path = segments.join(".");
-                        let mut finding = surrealguard_diagnostics::catalog::finding(
-                            span,
-                            contract.code(),
-                            format!(
-                                "`{path}` is declared `{}`, but this value is `{}`",
-                                crate::render_kind(&column_kind),
-                                crate::render::render_offending(&value_kind, Some(&column_kind))
-                            ),
-                        );
-                        if let Some(def) = table.fields.get(&path) {
-                            finding = finding.with_related(
-                                def.name_span.clone(),
-                                format!("`{path}` is defined here"),
-                            );
-                        }
-                        ctx.emit(finding);
-                    }
-                }
-            }
-        }
-        ast::InsertData::Assignments(assignments) => {
-            for (target, value) in assignments {
-                crate::analyzer::expression::infer::infer_expression_fact(value, ctx);
-                if let Some(table) = row_table {
-                    if let Some(segments) =
-                        crate::analyzer::expression::infer::plain_field_segments(&target.node)
-                    {
-                        crate::analyzer::data::check_field_path(
-                            ctx,
-                            table,
-                            &segments,
-                            target.span,
-                            1002,
-                        );
-                    }
+                    mutation::check_field_write(
+                        ctx,
+                        Position::InsertValues,
+                        table,
+                        &segments,
+                        &column_kind,
+                        value,
+                    );
                 }
             }
         }
         ast::InsertData::Partial(_) => {}
     }
+}
+
+/// `ON DUPLICATE KEY UPDATE a = 1, b += 2` writes fields of a row that
+/// already exists, so the assignments are checked exactly as an `UPDATE …
+/// SET` is (unknown field, declared type, READONLY, duplicate targets) —
+/// through the same walk, with the row payload checked separately above.
+fn check_on_duplicate_update(ctx: &mut AnalysisContext<'_>, stmt: &ast::InsertStmt) {
+    if stmt.on_duplicate_update.is_empty() {
+        return;
+    }
+    let table_name = mutation::source_table_name(stmt.target.as_ref());
+    let update = ast::DataClause::Set(stmt.on_duplicate_update.clone());
+    mutation::analyze_expression_positions_for(
+        ctx,
+        Some(&update),
+        None,
+        table_name.as_deref(),
+        false,
+    );
 }
 
 /// Enforces required-field presence once the target table resolves: every

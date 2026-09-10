@@ -56,8 +56,39 @@ pub enum ParamKind {
     Array,
     /// Any `Object`.
     Object,
+    /// A closure (`|$v| …`), as `array::map` and friends take.
+    Closure,
     /// No constraint; still counts toward arity.
     Any,
+}
+
+impl ParamKind {
+    /// The `Kind` this expectation constrains an argument to — the widest
+    /// kind it accepts, which is also how the parameter is rendered.
+    pub(crate) fn kind(&self) -> Kind {
+        match self {
+            ParamKind::Exact(kind) => kind.clone(),
+            ParamKind::Numeric => Kind::Number,
+            ParamKind::Array => Kind::Array(Box::new(Kind::Any), None),
+            ParamKind::Object => Kind::Object,
+            ParamKind::Closure => Kind::Function(None, None),
+            ParamKind::Any => Kind::Any,
+        }
+    }
+}
+
+impl Signature {
+    /// The expectation for the argument at `index`: the positional entry,
+    /// or — past the end of a variadic signature — the last one, repeated.
+    /// `None` past the end of a bounded signature.
+    pub(crate) fn param_at(&self, index: usize) -> Option<&ParamKind> {
+        self.arg_kinds.get(index).or_else(|| {
+            self.max_args
+                .is_none_or(|max| index < max)
+                .then(|| self.arg_kinds.last())
+                .flatten()
+        })
+    }
 }
 
 pub enum ReturnKind {
@@ -76,9 +107,9 @@ pub enum ReturnKind {
     ///
     /// Engine-verified on 3.0.5 — `math::sum([1,2,3])` is `6`, not `6f`, and
     /// `math::sum([])` is `0`; only a float in the column makes the result a
-    /// float (`math::sum([1.5,2.5])` -> `4f`). The distinction is not cosmetic:
+    /// float: `math::sum([1.5,2.5])` is `4f`. The distinction is not cosmetic:
     /// a `number` written into a `TYPE int` field is a contract violation
-    /// (`Couldn't coerce value ...: Expected `int` but found `4.1f``), so
+    /// ("Couldn't coerce value ...: Expected int but found 4.1f"), so
     /// modelling an int column's total as `number` reported valid schemas.
     ///
     /// `math::mean` and `math::median` are deliberately NOT this: both return a
@@ -165,7 +196,7 @@ fn check_argument_kinds(
                                     .flatten()
                             });
                             if let Some(expected) = expected {
-                                let constraint = param_kind_to_kind(expected);
+                                let constraint = expected.kind();
                                 if constraint != Kind::Any {
                                     let span = SourceSpan::new(ctx.source().clone(), arg_expr.span);
                                     ctx.constrain_param(param, span, constraint, None);
@@ -203,7 +234,7 @@ fn check_argument_kinds(
                 "argument {} to `{}` is a `{}`, but {} is required",
                 index + 1,
                 call.path.node,
-                crate::render::render_offending(kind, Some(&param_kind_to_kind(expected))),
+                crate::render::render_offending(kind, Some(&expected.kind())),
                 param_label(expected),
             ),
         ));
@@ -238,18 +269,8 @@ fn param_matches(expected: &ParamKind, kind: &Kind) -> bool {
         }
         ParamKind::Array => matches!(base, Kind::Array(_, _) | Kind::Set(_, _)),
         ParamKind::Object => matches!(base, Kind::Object),
+        ParamKind::Closure => matches!(base, Kind::Function(_, _)),
         ParamKind::Any => true,
-    }
-}
-
-/// The `Kind` a signature expectation constrains an unbound parameter to.
-fn param_kind_to_kind(expected: &ParamKind) -> Kind {
-    match expected {
-        ParamKind::Exact(kind) => kind.clone(),
-        ParamKind::Numeric => Kind::Number,
-        ParamKind::Array => Kind::Array(Box::new(Kind::Any), None),
-        ParamKind::Object => Kind::Object,
-        ParamKind::Any => Kind::Any,
     }
 }
 
@@ -259,6 +280,7 @@ fn param_label(expected: &ParamKind) -> String {
         ParamKind::Numeric => "a number".to_string(),
         ParamKind::Array => "an array".to_string(),
         ParamKind::Object => "an object".to_string(),
+        ParamKind::Closure => "a closure".to_string(),
         ParamKind::Any => "any value".to_string(),
     }
 }

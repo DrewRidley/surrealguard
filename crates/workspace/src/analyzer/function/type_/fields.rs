@@ -9,7 +9,19 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::const_value_arg;
+use crate::analyzer::function::signature::{ParamKind, ReturnKind, Signature};
 use crate::analyzer::function::type_::field::field_kind_for_path;
+
+/// The declared shape, for the catalog; the analyzer body below derives
+/// the return kind itself rather than checking calls against this.
+pub(crate) fn signature() -> Signature {
+    Signature {
+        min_args: 1,
+        max_args: Some(1),
+        arg_kinds: vec![ParamKind::Exact(Kind::Array(Box::new(Kind::String), None))],
+        return_kind: ReturnKind::Fixed(Kind::Any),
+    }
+}
 
 pub(crate) fn analyze_type_fields(
     ctx: &mut AnalysisContext<'_>,

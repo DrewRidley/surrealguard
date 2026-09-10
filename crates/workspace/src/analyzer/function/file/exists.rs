@@ -6,6 +6,16 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{evaluate, ParamKind, ReturnKind, Signature};
 
+/// The signature calls are checked against.
+pub(crate) fn signature() -> Signature {
+    Signature {
+        min_args: 1,
+        max_args: Some(1),
+        arg_kinds: vec![ParamKind::Any],
+        return_kind: ReturnKind::Fixed(Kind::Bool),
+    }
+}
+
 pub(crate) fn analyze_file_exists(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
@@ -13,29 +23,12 @@ pub(crate) fn analyze_file_exists(
 ) -> Kind {
     let _ = (ctx, call);
     // File-pointer argument left `Any`; see `file::bucket` for why.
-    evaluate(
-        &Signature {
-            min_args: 1,
-            max_args: Some(1),
-            arg_kinds: vec![ParamKind::Any],
-            return_kind: ReturnKind::Fixed(Kind::Bool),
-        },
-        args,
-    )
+    evaluate(&signature(), args)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn signature() -> Signature {
-        Signature {
-            min_args: 1,
-            max_args: Some(1),
-            arg_kinds: vec![ParamKind::Any],
-            return_kind: ReturnKind::Fixed(Kind::Bool),
-        }
-    }
 
     #[test]
     fn exists_of_file_is_bool() {

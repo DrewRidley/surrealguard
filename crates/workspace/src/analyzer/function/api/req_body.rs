@@ -11,6 +11,18 @@ use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::function::signature::{ReturnKind, Signature};
+
+/// The declared shape, for the catalog; the analyzer body below derives
+/// the return kind itself rather than checking calls against this.
+pub(crate) fn signature() -> Signature {
+    Signature {
+        min_args: 0,
+        max_args: None,
+        arg_kinds: vec![],
+        return_kind: ReturnKind::Fixed(Kind::Any),
+    }
+}
 
 pub(crate) fn analyze_api_req_body(
     ctx: &mut AnalysisContext<'_>,

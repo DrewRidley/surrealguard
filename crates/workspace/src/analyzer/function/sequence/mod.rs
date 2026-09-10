@@ -1,22 +1,22 @@
-//! `sequence` function-family analysis dispatch.
+//! `sequence` function family: every built-in it dispatches, with its analyzer.
 
-use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-
-use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::function::BuiltinEntry;
 
 pub mod next;
 pub mod nextval;
 
-pub(crate) fn analyze_sequence_function(
-    ctx: &mut AnalysisContext<'_>,
-    call: &ast::Call,
-    path: &str,
-    args: &[Kind],
-) -> Kind {
-    match path {
-        "sequence::next" => next::analyze_sequence_next(ctx, call, args),
-        "sequence::nextval" => nextval::analyze_sequence_nextval(ctx, call, args),
-        _ => crate::analyzer::function::unknown_function(ctx, call),
-    }
-}
+/// Every `sequence::` built-in the analyzer resolves, in dispatch order.
+pub(crate) static CATALOG: &[BuiltinEntry] = &[
+    BuiltinEntry::new(
+        "sequence::next",
+        "The next value of a sequence (alias of `sequence::nextval`).",
+        next::signature,
+        next::analyze_sequence_next,
+    ),
+    BuiltinEntry::new(
+        "sequence::nextval",
+        "The next value of a sequence.",
+        nextval::signature,
+        nextval::analyze_sequence_nextval,
+    ),
+];

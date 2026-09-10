@@ -5,11 +5,14 @@
 
 use surrealdb_types::{Kind, KindLiteral};
 use surrealguard_syntax::ast;
-use surrealguard_syntax::parse::parse_source;
+use surrealguard_syntax::ast::visit::{self, Visitor};
+use surrealguard_syntax::lower::lower_statements;
+use surrealguard_syntax::parse::{parse_source, ParsedSource};
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analysis::{AnalysisOutput, NarrowingAnalysis};
+use crate::analyzer::expression::infer::collection_element_kind;
 use crate::render::{render, render_kind, KindContext};
 use crate::schema::SchemaIndex;
 
@@ -83,8 +86,32 @@ pub fn function_return_hints(text: &str, source: &SourceId, schema: &SchemaIndex
     let Ok(parsed) = parse_source(source.clone(), text) else {
         return Vec::new();
     };
+    function_return_hints_parsed(&parsed, schema)
+}
+
+/// [`function_return_hints`] over an already-parsed source — for a caller that
+/// holds the document's [`ParsedSource`] (the LSP does), so a request does not
+/// re-parse the whole document.
+pub fn function_return_hints_parsed(parsed: &ParsedSource, schema: &SchemaIndex) -> Vec<TypeHint> {
+    function_return_hints_lowered(
+        &lower_statements(parsed),
+        parsed.text(),
+        parsed.source_id(),
+        schema,
+    )
+}
+
+/// [`function_return_hints`] over already-lowered statements. `text` is the
+/// source they were lowered from: the ghost anchors lexically on the `)` that
+/// closes each parameter list.
+pub fn function_return_hints_lowered(
+    statements: &[ast::Spanned<ast::Statement>],
+    text: &str,
+    source: &SourceId,
+    schema: &SchemaIndex,
+) -> Vec<TypeHint> {
     let mut hints = Vec::new();
-    for statement in &surrealguard_syntax::lower::lower_statements(&parsed) {
+    for statement in statements {
         let ast::Statement::Define(ast::DefineStmt::Function(def)) = &statement.node else {
             continue;
         };
@@ -102,11 +129,10 @@ pub fn function_return_hints(text: &str, source: &SourceId, schema: &SchemaIndex
         };
         // Anchor right after the parameters' closing `)`: scan from the last
         // param's end (or the name, for a no-arg function) to the first `)`.
-        let search_from = def
-            .params
-            .last()
-            .map(|(name, ty)| ty.as_ref().map_or(name.span.end(), |ty| ty.span.end()))
-            .unwrap_or_else(|| def.name.span.end()) as usize;
+        let search_from = def.params.last().map_or_else(
+            || def.name.span.end(),
+            |(name, ty)| ty.as_ref().map_or(name.span.end(), |ty| ty.span.end()),
+        ) as usize;
         let Some(relative) = text.get(search_from..).and_then(|rest| rest.find(')')) else {
             continue;
         };
@@ -213,6 +239,45 @@ pub fn hover_at(
     text: &str,
     offset: u32,
 ) -> Option<HoverInfo> {
+    // A source that fails to parse still answers from the analysis facts
+    // (bindings, params, tables, context params); only the schema-reference
+    // walk needs the tree.
+    let statements = parse_source(source.clone(), text)
+        .map(|parsed| lower_statements(&parsed))
+        .unwrap_or_default();
+    hover_at_lowered(output, schema, source, text, &statements, offset)
+}
+
+/// [`hover_at`] over an already-parsed source — for a caller that holds the
+/// document's [`ParsedSource`] (the LSP does), so a request does not re-parse
+/// the whole document.
+pub fn hover_at_parsed(
+    output: &AnalysisOutput,
+    schema: &SchemaIndex,
+    parsed: &ParsedSource,
+    offset: u32,
+) -> Option<HoverInfo> {
+    hover_at_lowered(
+        output,
+        schema,
+        parsed.source_id(),
+        parsed.text(),
+        &lower_statements(parsed),
+        offset,
+    )
+}
+
+/// [`hover_at`] over already-lowered statements. `text` is still needed: the
+/// context params bound by an enclosing DEFINE construct are located
+/// lexically.
+pub fn hover_at_lowered(
+    output: &AnalysisOutput,
+    schema: &SchemaIndex,
+    source: &SourceId,
+    text: &str,
+    statements: &[ast::Spanned<ast::Statement>],
+    offset: u32,
+) -> Option<HoverInfo> {
     let mut best: Option<(u32, HoverInfo)> = None;
     let mut consider = |span: &SourceSpan, markdown: String| {
         if span.source() != source {
@@ -313,26 +378,24 @@ pub fn hover_at(
 
     // Table references and field names in ordinary positions. The analyzed
     // statements carry no per-reference spans, so — as with context params —
-    // a fresh parse is walked to locate the identifier under the cursor and
+    // the lowered tree is walked to locate the identifier under the cursor and
     // resolve it against the schema. Only definitely-typed references produce
     // a hover; anything uncertain is left untouched (low-FP).
-    if let Ok(parsed) = parse_source(source.clone(), text) {
-        let statements = surrealguard_syntax::lower::lower_statements(&parsed);
-        let mut collector = SchemaHovers {
-            schema,
-            source,
-            offset,
-            let_kinds: &let_kinds,
-            narrowings: &output.narrowings,
-            param_kinds: std::collections::HashMap::new(),
-            out: Vec::new(),
-        };
-        for statement in &statements {
-            collector.walk_statement(statement);
-        }
-        for (span, markdown) in collector.out {
-            consider(&span, markdown);
-        }
+    let mut collector = SchemaHovers {
+        schema,
+        source,
+        offset,
+        let_kinds: &let_kinds,
+        narrowings: &output.narrowings,
+        param_kinds: std::collections::HashMap::new(),
+        root: None,
+        out: Vec::new(),
+    };
+    for statement in statements {
+        collector.visit_statement(statement);
+    }
+    for (span, markdown) in collector.out {
+        consider(&span, markdown);
     }
 
     best.map(|(_, info)| info)
@@ -367,6 +430,40 @@ pub fn definition_at(
     text: &str,
     offset: u32,
 ) -> Option<DefinitionTarget> {
+    // Every target comes from walking the tree, so an unparseable source has
+    // nothing to offer; `LET` binding sites are still keyed against it.
+    let statements = parse_source(source.clone(), text)
+        .map(|parsed| lower_statements(&parsed))
+        .unwrap_or_default();
+    definition_at_lowered(output, schema, source, &statements, offset)
+}
+
+/// [`definition_at`] over an already-parsed source — for a caller that holds
+/// the document's [`ParsedSource`] (the LSP does), so a request does not
+/// re-parse the whole document.
+pub fn definition_at_parsed(
+    output: &AnalysisOutput,
+    schema: &SchemaIndex,
+    parsed: &ParsedSource,
+    offset: u32,
+) -> Option<DefinitionTarget> {
+    definition_at_lowered(
+        output,
+        schema,
+        parsed.source_id(),
+        &lower_statements(parsed),
+        offset,
+    )
+}
+
+/// [`definition_at`] over already-lowered statements.
+pub fn definition_at_lowered(
+    output: &AnalysisOutput,
+    schema: &SchemaIndex,
+    source: &SourceId,
+    statements: &[ast::Spanned<ast::Statement>],
+    offset: u32,
+) -> Option<DefinitionTarget> {
     let mut best: Option<(u32, SourceSpan)> = None;
     let mut consider = |cover: ByteRange, target: SourceSpan| {
         if offset < cover.start() || offset > cover.end() {
@@ -375,7 +472,7 @@ pub fn definition_at(
         let width = cover.end().saturating_sub(cover.start());
         let is_smaller = best
             .as_ref()
-            .map_or(true, |(best_width, _)| width < *best_width);
+            .is_none_or(|(best_width, _)| width < *best_width);
         if is_smaller {
             best = Some((width, target));
         }
@@ -397,27 +494,25 @@ pub fn definition_at(
             .or_insert_with(|| param.name_span.clone());
     }
 
-    // Table, field, and `fn::` references resolved by walking a freshly-lowered
+    // Table, field, and `fn::` references resolved by walking the lowered
     // statement tree — the analyzed statements carry no per-reference spans, so
     // (as hover does) the identifier under the cursor is located here and
     // resolved against the schema. Only definitely-known definitions produce a
     // target; anything uncertain is skipped (low-FP).
-    if let Ok(parsed) = parse_source(source.clone(), text) {
-        let statements = surrealguard_syntax::lower::lower_statements(&parsed);
-        let mut collector = SchemaDefs {
-            schema,
-            source,
-            offset,
-            bindings: &bindings,
-            param_spans: std::collections::HashMap::new(),
-            out: Vec::new(),
-        };
-        for statement in &statements {
-            collector.walk_statement(statement);
-        }
-        for (cover, target) in collector.out {
-            consider(cover, target);
-        }
+    let mut collector = SchemaDefs {
+        schema,
+        source,
+        offset,
+        bindings: &bindings,
+        param_spans: std::collections::HashMap::new(),
+        root: None,
+        out: Vec::new(),
+    };
+    for statement in statements {
+        collector.visit_statement(statement);
+    }
+    for (cover, target) in collector.out {
+        consider(cover, target);
     }
 
     best.map(|(_, span)| DefinitionTarget { span })
@@ -574,10 +669,11 @@ fn table_field_lines(table: &str, schema: &SchemaIndex) -> Vec<String> {
 /// pair the caller feeds through the smallest-covering `consider` closure.
 ///
 /// Field resolution tracks the table in scope (a SELECT's single `FROM`
-/// source, a mutation's target, a `DEFINE FIELD`'s table) and follows
-/// `record<>` links: `author.name` on `post` resolves `name` against the
-/// linked `user`. Ambiguity (multiple sources, an opaque traversal) drops the
-/// scope so nothing misleading is shown.
+/// source, a mutation's target, a `DEFINE FIELD`'s table — delivered by
+/// [`Visitor::visit_row_scope`]) and follows `record<>` links: `author.name`
+/// on `post` resolves `name` against the linked `user`. Ambiguity (multiple
+/// sources, an opaque traversal) drops the scope so nothing misleading is
+/// shown.
 struct SchemaHovers<'a> {
     schema: &'a SchemaIndex,
     source: &'a SourceId,
@@ -594,6 +690,10 @@ struct SchemaHovers<'a> {
     /// restored on exit, so `$param` uses deep in the body hover their declared
     /// type. A `LET` of the same name shadows it (`let_kinds` is checked first).
     param_kinds: std::collections::HashMap<String, Kind>,
+    /// The row table the clause being walked evaluates against, as set by
+    /// [`Visitor::visit_row_scope`]; `None` outside a statement's row clauses
+    /// or when the row source is not a single plain table.
+    root: Option<String>,
     out: Vec<(SourceSpan, String)>,
 }
 
@@ -642,359 +742,6 @@ impl SchemaHovers<'_> {
         }
     }
 
-    /// A table reference (`FROM person`, `ON person`, a graph edge): show the
-    /// `table <name>` popover, but only for a table the schema actually knows.
-    fn table_ref(&mut self, name: &ast::Spanned<String>) {
-        if !self.covers(name.span) {
-            return;
-        }
-        if let Some(def) = self.schema.table(&name.node) {
-            let span = SourceSpan::new(self.source.clone(), name.span);
-            self.out.push((span, table_markdown(def, self.schema)));
-        }
-    }
-
-    /// Walks a statement, threading the row table into the positions where
-    /// field paths resolve against it.
-    fn walk_statement(&mut self, statement: &ast::Spanned<ast::Statement>) {
-        use ast::Statement;
-        match &statement.node {
-            Statement::Select(select) => {
-                let root = single_table(&select.from);
-                for source in &select.from {
-                    self.walk_expr(None, source);
-                }
-                for projection in &select.projections {
-                    if let ast::Projection::Expr { expr, .. } = projection {
-                        self.walk_expr(root, expr);
-                    }
-                }
-                if let Some(where_clause) = &select.where_clause {
-                    self.walk_expr(root, where_clause);
-                }
-                if let Some(group) = &select.group {
-                    for key in &group.keys {
-                        self.walk_idiom(root, &key.node);
-                    }
-                }
-                if let Some(order) = &select.order {
-                    for key in &order.keys {
-                        self.walk_expr(root, &key.expr);
-                    }
-                }
-                for idiom in select.omit.iter().chain(&select.split).chain(&select.fetch) {
-                    self.walk_idiom(root, &idiom.node);
-                }
-                for extra in [&select.limit, &select.start, &select.timeout]
-                    .into_iter()
-                    .flatten()
-                {
-                    self.walk_expr(None, extra);
-                }
-            }
-            Statement::Create(create) => {
-                let root = single_table(&create.targets);
-                for target in &create.targets {
-                    self.walk_expr(None, target);
-                }
-                self.walk_data(root, create.data.as_ref());
-            }
-            Statement::Update(update) => {
-                let root = single_table(&update.targets);
-                for target in &update.targets {
-                    self.walk_expr(None, target);
-                }
-                self.walk_data(root, update.data.as_ref());
-                if let Some(where_clause) = &update.where_clause {
-                    self.walk_expr(root, where_clause);
-                }
-            }
-            Statement::Upsert(upsert) => {
-                let root = single_table(&upsert.targets);
-                for target in &upsert.targets {
-                    self.walk_expr(None, target);
-                }
-                self.walk_data(root, upsert.data.as_ref());
-                if let Some(where_clause) = &upsert.where_clause {
-                    self.walk_expr(root, where_clause);
-                }
-            }
-            Statement::Delete(delete) => {
-                let root = single_table(&delete.targets);
-                for target in &delete.targets {
-                    self.walk_expr(None, target);
-                }
-                if let Some(where_clause) = &delete.where_clause {
-                    self.walk_expr(root, where_clause);
-                }
-            }
-            Statement::Insert(insert) => {
-                let root = insert
-                    .target
-                    .as_ref()
-                    .and_then(|target| expr_table_name(&target.node));
-                if let Some(target) = &insert.target {
-                    self.walk_expr(None, target);
-                }
-                self.walk_insert_data(root, &insert.data);
-            }
-            Statement::Relate(relate) => {
-                for endpoint in [&relate.from, &relate.edge, &relate.to]
-                    .into_iter()
-                    .flatten()
-                {
-                    self.walk_expr(None, endpoint);
-                }
-                let root = relate
-                    .edge
-                    .as_ref()
-                    .and_then(|edge| expr_table_name(&edge.node));
-                self.walk_data(root, relate.data.as_ref());
-            }
-            Statement::Define(define) => self.walk_define(define),
-            Statement::Remove(remove) => match &remove.target {
-                ast::RemoveTarget::Table(name) => self.table_ref(name),
-                ast::RemoveTarget::Field { field, table } => {
-                    self.table_ref(table);
-                    self.walk_idiom(Some(table.node.as_str()), &field.node);
-                }
-                ast::RemoveTarget::Index { table, .. } => self.table_ref(table),
-                ast::RemoveTarget::Other(_) => {}
-            },
-            Statement::Alter(alter) => {
-                if let Some(table) = &alter.table {
-                    self.table_ref(table);
-                }
-            }
-            Statement::LiveSelect(live) => {
-                if let Some(table) = &live.table {
-                    self.table_ref(table);
-                }
-            }
-            Statement::Info(info) => {
-                if let Some(table) = &info.table {
-                    self.table_ref(table);
-                }
-            }
-            Statement::Show(show) => {
-                if let Some(table) = &show.table {
-                    self.table_ref(table);
-                }
-            }
-            Statement::Rebuild(rebuild) => {
-                if let Some(table) = &rebuild.table {
-                    self.table_ref(table);
-                }
-            }
-            Statement::Let(let_stmt) => self.walk_expr(None, &let_stmt.value),
-            Statement::Return(ret) => {
-                if let Some(value) = &ret.value {
-                    self.walk_expr(None, value);
-                }
-            }
-            Statement::Throw(throw) => {
-                if let Some(value) = &throw.value {
-                    self.walk_expr(None, value);
-                }
-            }
-            Statement::Kill(kill) => {
-                if let Some(id) = &kill.id {
-                    self.walk_expr(None, id);
-                }
-            }
-            Statement::IfElse(if_else) => {
-                for branch in &if_else.branches {
-                    self.walk_expr(None, &branch.condition);
-                    self.walk_block(&branch.body);
-                }
-                if let Some(else_branch) = &if_else.else_branch {
-                    self.walk_block(else_branch);
-                }
-            }
-            Statement::For(for_stmt) => {
-                self.walk_expr(None, &for_stmt.iterable);
-                self.walk_block(&for_stmt.body);
-            }
-            Statement::Block(block) => self.walk_block(block),
-            Statement::Expr(expr) => self.walk_expr(None, expr),
-            _ => {}
-        }
-    }
-
-    fn walk_define(&mut self, define: &ast::DefineStmt) {
-        use ast::DefineStmt;
-        match define {
-            DefineStmt::Field(field) => {
-                self.table_ref(&field.table);
-                self.walk_idiom(Some(field.table.node.as_str()), &field.path.node);
-                let root = Some(field.table.node.as_str());
-                for expr in [&field.default, &field.value, &field.assert]
-                    .into_iter()
-                    .flatten()
-                {
-                    self.walk_expr(root, expr);
-                }
-                for predicate in &field.permissions {
-                    self.walk_expr(root, predicate);
-                }
-            }
-            DefineStmt::Table(table) => {
-                if let Some(relation) = &table.relation {
-                    for endpoint in relation.in_tables.iter().chain(&relation.out_tables) {
-                        self.table_ref(endpoint);
-                    }
-                }
-                let root = Some(table.name.node.as_str());
-                for predicate in &table.permissions {
-                    self.walk_expr(root, predicate);
-                }
-            }
-            DefineStmt::Index(index) => {
-                self.table_ref(&index.table);
-                for idiom in &index.fields {
-                    self.walk_idiom(Some(index.table.node.as_str()), &idiom.node);
-                }
-            }
-            DefineStmt::Event(event) => {
-                self.table_ref(&event.table);
-                let root = Some(event.table.node.as_str());
-                for expr in [&event.when, &event.then].into_iter().flatten() {
-                    self.walk_expr(root, expr);
-                }
-            }
-            // A DEFINE FUNCTION body is ordinary statement territory: its
-            // `LET`/`FOR` var uses, `fn::` calls, and idioms all resolve the
-            // same as at top level, so walk it — but first bring the declared
-            // parameters into scope so `$param` uses in the body (and the
-            // signature tokens themselves) hover their declared type.
-            DefineStmt::Function(func) => {
-                let def = self.schema.function(&func.name.node);
-                let saved = std::mem::take(&mut self.param_kinds);
-                for (name, _ty) in &func.params {
-                    let kind = def
-                        .and_then(|def| def.args.iter().find(|arg| arg.name == name.node))
-                        .and_then(|arg| arg.kind.clone());
-                    if let Some(kind) = kind {
-                        // Hover the `$param` token in the signature itself.
-                        if self.covers(name.span) {
-                            let span = SourceSpan::new(self.source.clone(), name.span);
-                            self.out.push((
-                                span,
-                                symbol_markdown(
-                                    Some(&format!("parameter `${}`", name.node)),
-                                    &format!("${}", name.node),
-                                    Some(&kind),
-                                    KindContext::Declared,
-                                    self.schema,
-                                ),
-                            ));
-                        }
-                        self.param_kinds.insert(name.node.clone(), kind);
-                    }
-                }
-                if let Some(body) = &func.body {
-                    self.walk_block(body);
-                }
-                self.param_kinds = saved;
-            }
-            _ => {}
-        }
-    }
-
-    fn walk_block(&mut self, block: &ast::Block) {
-        for statement in &block.statements {
-            self.walk_statement(statement);
-        }
-    }
-
-    fn walk_data(&mut self, root: Option<&str>, data: Option<&ast::DataClause>) {
-        use ast::DataClause;
-        match data {
-            Some(DataClause::Set(assignments)) => {
-                for assignment in assignments {
-                    self.walk_idiom(root, &assignment.target.node);
-                    self.walk_expr(root, &assignment.value);
-                }
-            }
-            Some(DataClause::Unset(idioms)) => {
-                for idiom in idioms {
-                    self.walk_idiom(root, &idiom.node);
-                }
-            }
-            Some(
-                DataClause::Content(expr)
-                | DataClause::Merge(expr)
-                | DataClause::Patch(expr)
-                | DataClause::Replace(expr)
-                | DataClause::Single(expr),
-            ) => self.walk_expr(root, expr),
-            _ => {}
-        }
-    }
-
-    fn walk_insert_data(&mut self, root: Option<&str>, data: &ast::InsertData) {
-        use ast::InsertData;
-        match data {
-            InsertData::Values(exprs) => {
-                for expr in exprs {
-                    self.walk_expr(root, expr);
-                }
-            }
-            InsertData::Rows { rows, .. } => {
-                for row in rows {
-                    for (column, value) in row {
-                        self.walk_idiom(root, &column.node);
-                        self.walk_expr(root, value);
-                    }
-                }
-            }
-            InsertData::Assignments(assignments) => {
-                for (column, value) in assignments {
-                    self.walk_idiom(root, &column.node);
-                    self.walk_expr(root, value);
-                }
-            }
-            InsertData::Partial(_) => {}
-        }
-    }
-
-    /// Recurses through an expression, resolving table references and
-    /// field-path idioms against the row table `root` (when one is in scope).
-    fn walk_expr(&mut self, root: Option<&str>, expr: &ast::Spanned<ast::Expr>) {
-        use ast::Expr;
-        match &expr.node {
-            Expr::Table(name) => self.table_ref(name),
-            Expr::RecordId { table, .. } => self.table_ref(table),
-            Expr::Param(name) => self.param_use(expr.span, name),
-            Expr::Idiom(idiom) => self.walk_idiom(root, idiom),
-            Expr::Binary { lhs, rhs, .. } => {
-                self.walk_expr(root, lhs);
-                self.walk_expr(root, rhs);
-            }
-            Expr::Prefix { expr, .. } | Expr::Cast { expr, .. } => self.walk_expr(root, expr),
-            Expr::Call(call) => {
-                self.call_signature(call);
-                for arg in &call.args {
-                    self.walk_expr(root, arg);
-                }
-            }
-            Expr::Object(entries) => {
-                for (_, value) in entries {
-                    self.walk_expr(root, value);
-                }
-            }
-            Expr::Array(items) => {
-                for item in items {
-                    self.walk_expr(root, item);
-                }
-            }
-            Expr::Subquery(statement) => self.walk_statement(statement),
-            Expr::Block(block) => self.walk_block(block),
-            Expr::Closure(closure) => self.walk_expr(root, &closure.body),
-            _ => {}
-        }
-    }
-
     /// A bare `$var` use whose `LET`/`FOR`/function-parameter kind is known →
     /// its inferred type.
     fn param_use(&mut self, span: ByteRange, name: &str) {
@@ -1030,12 +777,32 @@ impl SchemaHovers<'_> {
         }
     }
 
+    /// The hover for a field segment resolved against a schema table, when the
+    /// cursor is on it and the field has a declared kind.
+    fn table_field_hover(&mut self, field: &ResolvedField<'_>, name: &str, span: ByteRange) {
+        if !self.covers(span) {
+            return;
+        }
+        if let Some(kind) = &field.kind {
+            let source_span = SourceSpan::new(self.source.clone(), span);
+            self.out.push((
+                source_span,
+                symbol_markdown(
+                    Some(&format!("field `{name}` on `{}`", field.def.name)),
+                    name,
+                    Some(kind),
+                    KindContext::Declared,
+                    self.schema,
+                ),
+            ));
+        }
+    }
+
     /// Resolves an idiom rooted in a known-kind `$var` (`$direct[0].role`):
     /// steps a value kind through subscripts (into the array/set element) and
     /// fields (into a literal object's entry, or across a single `record<>`
     /// link into schema-resolved fields), emitting a hover for the `$var`
-    /// token and each resolvable segment. Returns whether it consumed the
-    /// idiom (so the table-based walker can skip it).
+    /// token and each resolvable segment.
     fn resolve_value_idiom(&mut self, name: &str, name_span: ByteRange, idiom: &ast::Idiom) {
         use ast::IdiomPart;
         // Hover the leading `$var` token itself.
@@ -1058,11 +825,10 @@ impl SchemaHovers<'_> {
             ));
         }
         // `current` is a value kind; once traversal crosses a `record<>` link
-        // it switches to `table` mode and the schema-based resolver takes
-        // over (the same code path the row-table walker uses).
+        // it switches to table mode and `scope` — the same schema-based
+        // resolver the row-table walker uses — takes over.
         let mut current = Some(root_kind);
-        let mut table: Option<String> = None;
-        let mut segments: Vec<String> = Vec::new();
+        let mut scope = FieldScope::new(None);
         // The plain `param.field.field` prefix walked so far — the key a field
         // guard (`IF $x.parent = NONE …`) narrows under. Anything that is not a
         // plain field step (a subscript, a link crossing) ends the key, since
@@ -1071,37 +837,30 @@ impl SchemaHovers<'_> {
         for part in idiom.parts.iter().skip(1) {
             match &part.node {
                 IdiomPart::Index(inner) => {
-                    self.walk_expr(None, inner);
-                    current = current.as_ref().and_then(element_kind);
-                    table = None;
-                    segments.clear();
+                    self.visit_expr(inner);
+                    current = current.as_ref().and_then(collection_element_kind);
+                    scope.reset();
                     value_path.clear();
                 }
                 IdiomPart::All | IdiomPart::Last => {
-                    current = current.as_ref().and_then(element_kind);
-                    table = None;
-                    segments.clear();
+                    current = current.as_ref().and_then(collection_element_kind);
+                    scope.reset();
                     value_path.clear();
                 }
                 IdiomPart::Field(field) => {
                     // A value kind that is a single `record<>` link enters its
                     // schema table before this field resolves.
-                    if table.is_none() {
+                    if scope.table.is_none() {
                         if let Some(linked) = current.as_ref().and_then(record_link_target) {
-                            table = Some(linked);
-                            segments.clear();
+                            scope.enter(linked);
                             current = None;
                         }
                     }
                     // Schema-table mode: resolve the field against the table.
-                    if let Some(current_table) = table.clone() {
-                        self.resolve_table_field(
-                            &current_table,
-                            &mut segments,
-                            field,
-                            part.span,
-                            &mut table,
-                        );
+                    if scope.table.is_some() {
+                        if let Some(resolved) = scope.step(self.schema, field) {
+                            self.table_field_hover(&resolved, field, part.span);
+                        }
                         continue;
                     }
                     // Object-value mode: index into a literal object's entry.
@@ -1113,7 +872,7 @@ impl SchemaHovers<'_> {
                     // it downstream, exactly as one on the bare `$x` does.
                     let next = self
                         .narrowed_kind(&format!("{name}.{}", value_path.join(".")))
-                        .or_else(|| field_kind(&kind, field));
+                        .or_else(|| field_kind(&kind, field, self.schema));
                     if self.covers(part.span) {
                         if let Some(next) = &next {
                             let span = SourceSpan::new(self.source.clone(), part.span);
@@ -1131,146 +890,115 @@ impl SchemaHovers<'_> {
                     }
                     current = next;
                 }
-                // Anything else (methods, graph steps, where) is opaque here.
-                _ => return,
+                // Anything else (methods, graph steps, filters, destructuring,
+                // recursion, the chaining markers) is opaque here.
+                IdiomPart::Start(_)
+                | IdiomPart::Graph { .. }
+                | IdiomPart::Destructure(_)
+                | IdiomPart::Where(_)
+                | IdiomPart::Method { .. }
+                | IdiomPart::Recurse { .. }
+                | IdiomPart::Optional
+                | IdiomPart::Flatten
+                | IdiomPart::Partial(_) => return,
             }
         }
     }
+}
 
-    /// Resolves `field` under `table`/`segments` (a schema table reached
-    /// across a record link), emitting its hover and advancing scope
-    /// (`out_table` re-roots on a further link; `segments` grows on a nested
-    /// object; both clear when the shape goes opaque).
-    fn resolve_table_field(
-        &mut self,
-        table: &str,
-        segments: &mut Vec<String>,
-        field: &str,
-        span: ByteRange,
-        out_table: &mut Option<String>,
-    ) {
-        let Some(def) = self.schema.table(table) else {
-            *out_table = None;
+impl Visitor for SchemaHovers<'_> {
+    fn visit_row_scope(&mut self, table: Option<&str>, walk: impl FnOnce(&mut Self)) {
+        let saved = std::mem::replace(&mut self.root, table.map(str::to_string));
+        walk(self);
+        self.root = saved;
+    }
+
+    /// A table reference (`FROM person`, `ON person`, a graph edge): show the
+    /// `table <name>` popover, but only for a table the schema actually knows.
+    fn visit_table_ref(&mut self, name: &ast::Spanned<String>) {
+        if !self.covers(name.span) {
             return;
-        };
-        let mut path = segments.clone();
-        path.push(field.to_string());
-        let kind = crate::analyzer::data::select::resolve_field_path(self.schema, def, &path);
-        if self.covers(span) {
-            if let Some(kind) = &kind {
-                let source_span = SourceSpan::new(self.source.clone(), span);
-                self.out.push((
-                    source_span,
-                    symbol_markdown(
-                        Some(&format!("field `{field}` on `{table}`")),
-                        field,
-                        Some(kind),
-                        KindContext::Declared,
-                        self.schema,
-                    ),
-                ));
-            }
         }
-        match kind.as_ref().and_then(record_link_target) {
-            Some(linked) => {
-                *out_table = Some(linked);
-                segments.clear();
-            }
-            None if kind.is_some() => *segments = path,
-            None => *out_table = None,
+        if let Some(def) = self.schema.table(&name.node) {
+            let span = SourceSpan::new(self.source.clone(), name.span);
+            self.out.push((span, table_markdown(def, self.schema)));
         }
     }
 
-    /// Walks an idiom's field parts, resolving each against the table in scope
-    /// and re-rooting on `record<>` links so linked-table fields type too.
-    fn walk_idiom(&mut self, root: Option<&str>, idiom: &ast::Idiom) {
-        use ast::IdiomPart;
-        // An idiom rooted in a known-kind `$var` (`$direct[0].role`) resolves
-        // through value kinds, not the row table.
-        if let Some(first) = idiom.parts.first() {
-            if let IdiomPart::Start(inner) = &first.node {
-                if let ast::Expr::Param(name) = &inner.node {
-                    if self.var_kind(name).is_some() {
-                        self.resolve_value_idiom(name, inner.span, idiom);
-                        return;
-                    }
+    fn visit_expr(&mut self, expr: &ast::Spanned<ast::Expr>) {
+        if let ast::Expr::Param(name) = &expr.node {
+            self.param_use(expr.span, name);
+        }
+        visit::walk_expr(self, expr);
+    }
+
+    fn visit_call(&mut self, call: &ast::Call) {
+        self.call_signature(call);
+        visit::walk_call(self, call);
+    }
+
+    /// A DEFINE FUNCTION body is ordinary statement territory: its `LET`/`FOR`
+    /// var uses, `fn::` calls, and idioms all resolve the same as at top level,
+    /// so walk it — but first bring the declared parameters into scope so
+    /// `$param` uses in the body (and the signature tokens themselves) hover
+    /// their declared type.
+    fn visit_define_function(&mut self, func: &ast::DefineFunction) {
+        let def = self.schema.function(&func.name.node);
+        let saved = std::mem::take(&mut self.param_kinds);
+        for (name, _ty) in &func.params {
+            let kind = def
+                .and_then(|def| def.args.iter().find(|arg| arg.name == name.node))
+                .and_then(|arg| arg.kind.clone());
+            if let Some(kind) = kind {
+                // Hover the `$param` token in the signature itself.
+                if self.covers(name.span) {
+                    let span = SourceSpan::new(self.source.clone(), name.span);
+                    self.out.push((
+                        span,
+                        symbol_markdown(
+                            Some(&format!("parameter `${}`", name.node)),
+                            &format!("${}", name.node),
+                            Some(&kind),
+                            KindContext::Declared,
+                            self.schema,
+                        ),
+                    ));
+                }
+                self.param_kinds.insert(name.node.clone(), kind);
+            }
+        }
+        visit::walk_define_function(self, func);
+        self.param_kinds = saved;
+    }
+
+    /// An idiom rooted in a known-kind `$var` (`$direct[0].role`) resolves
+    /// through value kinds; every other idiom resolves its field parts against
+    /// the row table in scope, re-rooting on `record<>` links so linked-table
+    /// fields type too.
+    fn visit_idiom(&mut self, idiom: &ast::Idiom) {
+        if let Some(ast::Spanned {
+            node: ast::IdiomPart::Start(inner),
+            ..
+        }) = idiom.parts.first()
+        {
+            if let ast::Expr::Param(name) = &inner.node {
+                if self.var_kind(name).is_some() {
+                    self.resolve_value_idiom(name, inner.span, idiom);
+                    return;
                 }
             }
         }
-        let mut table = root.map(str::to_string);
-        // Field segments accumulated relative to the current `table`.
-        let mut segments: Vec<String> = Vec::new();
-        for part in &idiom.parts {
-            match &part.node {
-                IdiomPart::Start(inner) => {
-                    self.walk_expr(root, inner);
-                    // Rooted in a leading value, not the row table.
-                    table = None;
-                    segments.clear();
-                }
-                IdiomPart::Field(name) => {
-                    let Some(current) = table.clone() else {
-                        continue;
-                    };
-                    let Some(def) = self.schema.table(&current) else {
-                        table = None;
-                        continue;
-                    };
-                    let mut path = segments.clone();
-                    path.push(name.clone());
-                    let kind =
-                        crate::analyzer::data::select::resolve_field_path(self.schema, def, &path);
-                    if self.covers(part.span) {
-                        if let Some(kind) = &kind {
-                            let span = SourceSpan::new(self.source.clone(), part.span);
-                            self.out.push((
-                                span,
-                                symbol_markdown(
-                                    Some(&format!("field `{name}` on `{current}`")),
-                                    name,
-                                    Some(kind),
-                                    KindContext::Declared,
-                                    self.schema,
-                                ),
-                            ));
-                        }
-                    }
-                    // Advance the scope: follow a record link into its table,
-                    // stay on the same table for a nested object, or give up.
-                    match kind.as_ref().and_then(record_link_target) {
-                        Some(linked) => {
-                            table = Some(linked);
-                            segments.clear();
-                        }
-                        None if kind.is_some() => segments = path,
-                        None => table = None,
-                    }
-                }
-                IdiomPart::Index(inner) | IdiomPart::Where(inner) => self.walk_expr(root, inner),
-                IdiomPart::Method { args, .. } => {
-                    for arg in args {
-                        self.walk_expr(root, arg);
-                    }
-                }
-                IdiomPart::Graph { step, .. } => {
-                    for target in &step.targets {
-                        self.table_ref(target);
-                    }
-                    if let Some(where_clause) = &step.where_clause {
-                        self.walk_expr(root, where_clause);
-                    }
-                    // The shape after a graph step is opaque here.
-                    table = None;
-                    segments.clear();
-                }
-                IdiomPart::Destructure(idioms) => {
-                    for sub in idioms {
-                        self.walk_idiom(table.as_deref(), &sub.node);
-                    }
-                }
-                _ => {}
-            }
-        }
+        let schema = self.schema;
+        let root = self.root.clone();
+        walk_field_idiom(
+            self,
+            schema,
+            root.as_deref(),
+            idiom,
+            |this, field, name, span| {
+                this.table_field_hover(field, name, span);
+            },
+        );
     }
 }
 
@@ -1292,6 +1020,8 @@ struct SchemaDefs<'a> {
     /// jumps to its declaration. A `LET`/`DEFINE PARAM` of the same name wins
     /// (`bindings` is checked first).
     param_spans: std::collections::HashMap<String, SourceSpan>,
+    /// The row table in scope, as set by [`Visitor::visit_row_scope`].
+    root: Option<String>,
     out: Vec<(ByteRange, SourceSpan)>,
 }
 
@@ -1299,10 +1029,18 @@ impl SchemaDefs<'_> {
     fn covers(&self, span: ByteRange) -> bool {
         self.offset >= span.start() && self.offset <= span.end()
     }
+}
+
+impl Visitor for SchemaDefs<'_> {
+    fn visit_row_scope(&mut self, table: Option<&str>, walk: impl FnOnce(&mut Self)) {
+        let saved = std::mem::replace(&mut self.root, table.map(str::to_string));
+        walk(self);
+        self.root = saved;
+    }
 
     /// A table reference → its `DEFINE TABLE` name span, for tables the schema
     /// knows.
-    fn table_ref(&mut self, name: &ast::Spanned<String>) {
+    fn visit_table_ref(&mut self, name: &ast::Spanned<String>) {
         if !self.covers(name.span) {
             return;
         }
@@ -1311,462 +1049,201 @@ impl SchemaDefs<'_> {
         }
     }
 
-    fn walk_statement(&mut self, statement: &ast::Spanned<ast::Statement>) {
-        use ast::Statement;
-        match &statement.node {
-            Statement::Select(select) => {
-                let root = single_table(&select.from);
-                for source in &select.from {
-                    self.walk_expr(None, source);
-                }
-                for projection in &select.projections {
-                    if let ast::Projection::Expr { expr, .. } = projection {
-                        self.walk_expr(root, expr);
-                    }
-                }
-                if let Some(where_clause) = &select.where_clause {
-                    self.walk_expr(root, where_clause);
-                }
-                if let Some(group) = &select.group {
-                    for key in &group.keys {
-                        self.walk_idiom(root, &key.node);
-                    }
-                }
-                if let Some(order) = &select.order {
-                    for key in &order.keys {
-                        self.walk_expr(root, &key.expr);
-                    }
-                }
-                for idiom in select.omit.iter().chain(&select.split).chain(&select.fetch) {
-                    self.walk_idiom(root, &idiom.node);
-                }
-                for extra in [&select.limit, &select.start, &select.timeout]
-                    .into_iter()
-                    .flatten()
+    /// A `$param` / `LET` variable use → its binding site. A `LET`/`DEFINE
+    /// PARAM` binding wins over a function parameter of the same name.
+    fn visit_expr(&mut self, expr: &ast::Spanned<ast::Expr>) {
+        if let ast::Expr::Param(name) = &expr.node {
+            if self.covers(expr.span) {
+                if let Some(target) = self
+                    .bindings
+                    .get(name)
+                    .or_else(|| self.param_spans.get(name))
                 {
-                    self.walk_expr(None, extra);
+                    self.out.push((expr.span, target.clone()));
                 }
             }
-            Statement::Create(create) => {
-                let root = single_table(&create.targets);
-                for target in &create.targets {
-                    self.walk_expr(None, target);
-                }
-                self.walk_data(root, create.data.as_ref());
-            }
-            Statement::Update(update) => {
-                let root = single_table(&update.targets);
-                for target in &update.targets {
-                    self.walk_expr(None, target);
-                }
-                self.walk_data(root, update.data.as_ref());
-                if let Some(where_clause) = &update.where_clause {
-                    self.walk_expr(root, where_clause);
-                }
-            }
-            Statement::Upsert(upsert) => {
-                let root = single_table(&upsert.targets);
-                for target in &upsert.targets {
-                    self.walk_expr(None, target);
-                }
-                self.walk_data(root, upsert.data.as_ref());
-                if let Some(where_clause) = &upsert.where_clause {
-                    self.walk_expr(root, where_clause);
-                }
-            }
-            Statement::Delete(delete) => {
-                let root = single_table(&delete.targets);
-                for target in &delete.targets {
-                    self.walk_expr(None, target);
-                }
-                if let Some(where_clause) = &delete.where_clause {
-                    self.walk_expr(root, where_clause);
-                }
-            }
-            Statement::Insert(insert) => {
-                let root = insert
-                    .target
-                    .as_ref()
-                    .and_then(|target| expr_table_name(&target.node));
-                if let Some(target) = &insert.target {
-                    self.walk_expr(None, target);
-                }
-                self.walk_insert_data(root, &insert.data);
-            }
-            Statement::Relate(relate) => {
-                for endpoint in [&relate.from, &relate.edge, &relate.to]
-                    .into_iter()
-                    .flatten()
-                {
-                    self.walk_expr(None, endpoint);
-                }
-                let root = relate
-                    .edge
-                    .as_ref()
-                    .and_then(|edge| expr_table_name(&edge.node));
-                self.walk_data(root, relate.data.as_ref());
-            }
-            Statement::Define(define) => self.walk_define(define),
-            Statement::Remove(remove) => match &remove.target {
-                ast::RemoveTarget::Table(name) => self.table_ref(name),
-                ast::RemoveTarget::Field { field, table } => {
-                    self.table_ref(table);
-                    self.walk_idiom(Some(table.node.as_str()), &field.node);
-                }
-                ast::RemoveTarget::Index { table, .. } => self.table_ref(table),
-                ast::RemoveTarget::Other(_) => {}
-            },
-            Statement::Alter(alter) => {
-                if let Some(table) = &alter.table {
-                    self.table_ref(table);
-                }
-            }
-            Statement::LiveSelect(live) => {
-                if let Some(table) = &live.table {
-                    self.table_ref(table);
-                }
-            }
-            Statement::Info(info) => {
-                if let Some(table) = &info.table {
-                    self.table_ref(table);
-                }
-            }
-            Statement::Show(show) => {
-                if let Some(table) = &show.table {
-                    self.table_ref(table);
-                }
-            }
-            Statement::Rebuild(rebuild) => {
-                if let Some(table) = &rebuild.table {
-                    self.table_ref(table);
-                }
-            }
-            Statement::Let(let_stmt) => self.walk_expr(None, &let_stmt.value),
-            Statement::Return(ret) => {
-                if let Some(value) = &ret.value {
-                    self.walk_expr(None, value);
-                }
-            }
-            Statement::Throw(throw) => {
-                if let Some(value) = &throw.value {
-                    self.walk_expr(None, value);
-                }
-            }
-            Statement::Kill(kill) => {
-                if let Some(id) = &kill.id {
-                    self.walk_expr(None, id);
-                }
-            }
-            Statement::IfElse(if_else) => {
-                for branch in &if_else.branches {
-                    self.walk_expr(None, &branch.condition);
-                    self.walk_block(&branch.body);
-                }
-                if let Some(else_branch) = &if_else.else_branch {
-                    self.walk_block(else_branch);
-                }
-            }
-            Statement::For(for_stmt) => {
-                self.walk_expr(None, &for_stmt.iterable);
-                self.walk_block(&for_stmt.body);
-            }
-            Statement::Block(block) => self.walk_block(block),
-            Statement::Expr(expr) => self.walk_expr(None, expr),
-            _ => {}
         }
+        visit::walk_expr(self, expr);
     }
 
-    fn walk_define(&mut self, define: &ast::DefineStmt) {
-        use ast::DefineStmt;
-        match define {
-            DefineStmt::Field(field) => {
-                self.table_ref(&field.table);
-                self.walk_idiom(Some(field.table.node.as_str()), &field.path.node);
-                let root = Some(field.table.node.as_str());
-                for expr in [&field.default, &field.value, &field.assert]
-                    .into_iter()
-                    .flatten()
-                {
-                    self.walk_expr(root, expr);
-                }
-                for predicate in &field.permissions {
-                    self.walk_expr(root, predicate);
-                }
+    /// A `fn::` call → its `DEFINE FUNCTION` name span.
+    fn visit_call(&mut self, call: &ast::Call) {
+        if self.covers(call.path.span) {
+            if let Some(func) = self.schema.function(&call.path.node) {
+                self.out.push((call.path.span, func.name_span.clone()));
             }
-            DefineStmt::Table(table) => {
-                if let Some(relation) = &table.relation {
-                    for endpoint in relation.in_tables.iter().chain(&relation.out_tables) {
-                        self.table_ref(endpoint);
-                    }
-                }
-                let root = Some(table.name.node.as_str());
-                for predicate in &table.permissions {
-                    self.walk_expr(root, predicate);
-                }
-            }
-            DefineStmt::Index(index) => {
-                self.table_ref(&index.table);
-                for idiom in &index.fields {
-                    self.walk_idiom(Some(index.table.node.as_str()), &idiom.node);
-                }
-            }
-            DefineStmt::Event(event) => {
-                self.table_ref(&event.table);
-                let root = Some(event.table.node.as_str());
-                for expr in [&event.when, &event.then].into_iter().flatten() {
-                    self.walk_expr(root, expr);
-                }
-            }
-            // A DEFINE FUNCTION body is ordinary statement territory: its
-            // `LET`/`FOR` var uses, `fn::` calls, and idioms all resolve the
-            // same as at top level, so walk it — but first bring the declared
-            // parameters into scope so go-to-def on a `$param` use in the body
-            // jumps to its declaration in the signature.
-            DefineStmt::Function(func) => {
-                let saved = std::mem::take(&mut self.param_spans);
-                for (name, _ty) in &func.params {
-                    self.param_spans.insert(
-                        name.node.clone(),
-                        SourceSpan::new(self.source.clone(), name.span),
-                    );
-                }
-                if let Some(body) = &func.body {
-                    self.walk_block(body);
-                }
-                self.param_spans = saved;
-            }
-            _ => {}
         }
+        visit::walk_call(self, call);
     }
 
-    fn walk_block(&mut self, block: &ast::Block) {
-        for statement in &block.statements {
-            self.walk_statement(statement);
+    /// A DEFINE FUNCTION body is ordinary statement territory — walk it with
+    /// the declared parameters in scope, so go-to-def on a `$param` use in the
+    /// body jumps to its declaration in the signature.
+    fn visit_define_function(&mut self, func: &ast::DefineFunction) {
+        let saved = std::mem::take(&mut self.param_spans);
+        for (name, _ty) in &func.params {
+            self.param_spans.insert(
+                name.node.clone(),
+                SourceSpan::new(self.source.clone(), name.span),
+            );
         }
+        visit::walk_define_function(self, func);
+        self.param_spans = saved;
     }
 
-    fn walk_data(&mut self, root: Option<&str>, data: Option<&ast::DataClause>) {
-        use ast::DataClause;
-        match data {
-            Some(DataClause::Set(assignments)) => {
-                for assignment in assignments {
-                    self.walk_idiom(root, &assignment.target.node);
-                    self.walk_expr(root, &assignment.value);
-                }
-            }
-            Some(DataClause::Unset(idioms)) => {
-                for idiom in idioms {
-                    self.walk_idiom(root, &idiom.node);
-                }
-            }
-            Some(
-                DataClause::Content(expr)
-                | DataClause::Merge(expr)
-                | DataClause::Patch(expr)
-                | DataClause::Replace(expr)
-                | DataClause::Single(expr),
-            ) => self.walk_expr(root, expr),
-            _ => {}
-        }
-    }
-
-    fn walk_insert_data(&mut self, root: Option<&str>, data: &ast::InsertData) {
-        use ast::InsertData;
-        match data {
-            InsertData::Values(exprs) => {
-                for expr in exprs {
-                    self.walk_expr(root, expr);
-                }
-            }
-            InsertData::Rows { rows, .. } => {
-                for row in rows {
-                    for (column, value) in row {
-                        self.walk_idiom(root, &column.node);
-                        self.walk_expr(root, value);
-                    }
-                }
-            }
-            InsertData::Assignments(assignments) => {
-                for (column, value) in assignments {
-                    self.walk_idiom(root, &column.node);
-                    self.walk_expr(root, value);
-                }
-            }
-            InsertData::Partial(_) => {}
-        }
-    }
-
-    fn walk_expr(&mut self, root: Option<&str>, expr: &ast::Spanned<ast::Expr>) {
-        use ast::Expr;
-        match &expr.node {
-            Expr::Table(name) => self.table_ref(name),
-            Expr::RecordId { table, .. } => self.table_ref(table),
-            Expr::Param(name) => {
-                // A `$param` / `LET` variable use → its binding site. A
-                // `LET`/`DEFINE PARAM` binding wins over a function parameter
-                // of the same name.
-                if self.covers(expr.span) {
-                    if let Some(target) = self
-                        .bindings
-                        .get(name)
-                        .or_else(|| self.param_spans.get(name))
-                    {
-                        self.out.push((expr.span, target.clone()));
-                    }
-                }
-            }
-            Expr::Idiom(idiom) => self.walk_idiom(root, idiom),
-            Expr::Binary { lhs, rhs, .. } => {
-                self.walk_expr(root, lhs);
-                self.walk_expr(root, rhs);
-            }
-            Expr::Prefix { expr, .. } | Expr::Cast { expr, .. } => self.walk_expr(root, expr),
-            Expr::Call(call) => {
-                // A `fn::` call → its `DEFINE FUNCTION` name span.
-                if self.covers(call.path.span) {
-                    if let Some(func) = self.schema.function(&call.path.node) {
-                        self.out.push((call.path.span, func.name_span.clone()));
-                    }
-                }
-                for arg in &call.args {
-                    self.walk_expr(root, arg);
-                }
-            }
-            Expr::Object(entries) => {
-                for (_, value) in entries {
-                    self.walk_expr(root, value);
-                }
-            }
-            Expr::Array(items) => {
-                for item in items {
-                    self.walk_expr(root, item);
-                }
-            }
-            Expr::Subquery(statement) => self.walk_statement(statement),
-            Expr::Block(block) => self.walk_block(block),
-            Expr::Closure(closure) => self.walk_expr(root, &closure.body),
-            _ => {}
-        }
-    }
-
-    /// Walks an idiom's field parts, resolving each against the table in scope
-    /// (re-rooting on `record<>` links exactly as hover does) and emitting the
-    /// owning `DEFINE FIELD`'s name span. Only a directly-declared field emits;
-    /// object prefixes, implicit `id`/`in`/`out`, and schemaless fields have no
+    /// Resolves an idiom's field parts against the table in scope (re-rooting
+    /// on `record<>` links exactly as hover does) and emits the owning `DEFINE
+    /// FIELD`'s name span. Only a directly-declared field emits; object
+    /// prefixes, implicit `id`/`in`/`out`, and schemaless fields have no
     /// declaration to jump to.
-    fn walk_idiom(&mut self, root: Option<&str>, idiom: &ast::Idiom) {
-        use ast::IdiomPart;
-        let mut table = root.map(str::to_string);
-        let mut segments: Vec<String> = Vec::new();
-        for part in &idiom.parts {
-            match &part.node {
-                IdiomPart::Start(inner) => {
-                    self.walk_expr(root, inner);
-                    table = None;
-                    segments.clear();
+    fn visit_idiom(&mut self, idiom: &ast::Idiom) {
+        let schema = self.schema;
+        let root = self.root.clone();
+        walk_field_idiom(
+            self,
+            schema,
+            root.as_deref(),
+            idiom,
+            |this, field, _name, span| {
+                if !this.covers(span) {
+                    return;
                 }
-                IdiomPart::Field(name) => {
-                    let Some(current) = table.clone() else {
-                        continue;
-                    };
-                    let Some(def) = self.schema.table(&current) else {
-                        table = None;
-                        continue;
-                    };
-                    let mut path = segments.clone();
-                    path.push(name.clone());
-                    let kind =
-                        crate::analyzer::data::select::resolve_field_path(self.schema, def, &path);
-                    if self.covers(part.span) {
-                        if let Some(field) = def.fields.get(&path.join(".")) {
-                            self.out.push((part.span, field.name_span.clone()));
-                        }
-                    }
-                    match kind.as_ref().and_then(record_link_target) {
-                        Some(linked) => {
-                            table = Some(linked);
-                            segments.clear();
-                        }
-                        None if kind.is_some() => segments = path,
-                        None => table = None,
-                    }
+                if let Some(decl) = field.def.fields.get(&field.path.join(".")) {
+                    this.out.push((span, decl.name_span.clone()));
                 }
-                IdiomPart::Index(inner) | IdiomPart::Where(inner) => self.walk_expr(root, inner),
-                IdiomPart::Method { args, .. } => {
-                    for arg in args {
-                        self.walk_expr(root, arg);
-                    }
-                }
-                IdiomPart::Graph { step, .. } => {
-                    for target in &step.targets {
-                        self.table_ref(target);
-                    }
-                    if let Some(where_clause) = &step.where_clause {
-                        self.walk_expr(root, where_clause);
-                    }
-                    table = None;
-                    segments.clear();
-                }
-                IdiomPart::Destructure(idioms) => {
-                    for sub in idioms {
-                        self.walk_idiom(table.as_deref(), &sub.node);
-                    }
-                }
-                _ => {}
+            },
+        );
+    }
+}
+
+/// Where a field path currently resolves: the schema table in scope and the
+/// object-field prefix walked within it (`profile` in `profile.email`).
+/// Shared by the hover and definition walkers so the two agree on which
+/// table every segment names.
+struct FieldScope {
+    /// The table the next field segment resolves against; `None` once the
+    /// shape has gone opaque (a leading value, a graph step, an unknown table).
+    table: Option<String>,
+    /// Field segments accumulated relative to `table` — a nested object path.
+    segments: Vec<String>,
+}
+
+/// One field segment resolved by [`FieldScope::step`].
+struct ResolvedField<'s> {
+    /// The table the segment was resolved against.
+    def: &'s crate::schema::TableDef,
+    /// The full dotted path within that table, this segment included.
+    path: Vec<String>,
+    /// The field's declared kind, when the schema has one for the path.
+    kind: Option<Kind>,
+}
+
+impl FieldScope {
+    fn new(root: Option<&str>) -> Self {
+        Self {
+            table: root.map(str::to_string),
+            segments: Vec::new(),
+        }
+    }
+
+    /// The shape is opaque from here on: nothing further resolves.
+    fn reset(&mut self) {
+        self.table = None;
+        self.segments.clear();
+    }
+
+    /// Re-roots on `table` (a `record<>` link just crossed).
+    fn enter(&mut self, table: String) {
+        self.table = Some(table);
+        self.segments.clear();
+    }
+
+    /// Resolves `field` against the table in scope, then advances the scope:
+    /// into the linked table on a `record<>` link, deeper into the same table
+    /// on a nested object, or out of scope when the shape goes opaque. `None`
+    /// when no known table is in scope (which also ends resolution).
+    fn step<'s>(&mut self, schema: &'s SchemaIndex, field: &str) -> Option<ResolvedField<'s>> {
+        let table = self.table.clone()?;
+        let Some(def) = schema.table(&table) else {
+            self.table = None;
+            return None;
+        };
+        let mut path = self.segments.clone();
+        path.push(field.to_string());
+        let kind = crate::analyzer::data::select::resolve_field_path(schema, def, &path);
+        match kind.as_ref().and_then(record_link_target) {
+            Some(linked) => self.enter(linked),
+            None if kind.is_some() => self.segments.clone_from(&path),
+            None => self.table = None,
+        }
+        Some(ResolvedField { def, path, kind })
+    }
+}
+
+/// Walks an idiom's parts for a schema-resolving visitor: every plain field
+/// segment a known table is in scope for is handed to `on_field` (with the
+/// resolution and the segment's span), sub-expressions are visited through
+/// `visitor`, a leading value or graph step makes the rest opaque, and a
+/// destructure's sub-paths resolve in the scope reached so far.
+fn walk_field_idiom<V: Visitor>(
+    visitor: &mut V,
+    schema: &SchemaIndex,
+    root: Option<&str>,
+    idiom: &ast::Idiom,
+    mut on_field: impl FnMut(&mut V, &ResolvedField<'_>, &str, ByteRange),
+) {
+    use ast::IdiomPart;
+    let mut scope = FieldScope::new(root);
+    for part in &idiom.parts {
+        match &part.node {
+            IdiomPart::Start(inner) => {
+                visitor.visit_expr(inner);
+                // Rooted in a leading value, not the row table.
+                scope.reset();
             }
+            IdiomPart::Field(name) => {
+                if let Some(field) = scope.step(schema, name) {
+                    on_field(visitor, &field, name, part.span);
+                }
+            }
+            IdiomPart::Index(inner) | IdiomPart::Where(inner) => visitor.visit_expr(inner),
+            IdiomPart::Method { name: _, args } => {
+                for arg in args {
+                    visitor.visit_expr(arg);
+                }
+            }
+            IdiomPart::Graph { dir: _, step } => {
+                visitor.visit_graph_step(step);
+                // The shape after a graph step is opaque here.
+                scope.reset();
+            }
+            IdiomPart::Destructure(idioms) => {
+                visitor.visit_row_scope(scope.table.as_deref(), |visitor| {
+                    for sub in idioms {
+                        visitor.visit_idiom(&sub.node);
+                    }
+                });
+            }
+            IdiomPart::All
+            | IdiomPart::Last
+            | IdiomPart::Recurse { .. }
+            | IdiomPart::Optional
+            | IdiomPart::Flatten => {}
+            IdiomPart::Partial(partial) => visitor.visit_partial(partial),
         }
     }
 }
 
-/// The table a set of source/target expressions names, when it is exactly one
-/// plain table (or record id). Any other shape — none, several, a subquery —
-/// leaves the row table unknown so field paths stay unresolved.
-fn single_table(exprs: &[ast::Spanned<ast::Expr>]) -> Option<&str> {
-    match exprs {
-        [only] => expr_table_name(&only.node),
-        _ => None,
-    }
-}
-
-/// The table name a source/target expression names, if it is a bare table or a
-/// record id (`person` / `person:one`).
-fn expr_table_name(expr: &ast::Expr) -> Option<&str> {
-    match expr {
-        ast::Expr::Table(name) => Some(name.node.as_str()),
-        ast::Expr::RecordId { table, .. } => Some(table.node.as_str()),
-        _ => None,
-    }
-}
-
-/// The element kind of an array/set (`array<T>` → `T`), unwrapping an
-/// `option<array<T>>` to the same and unioning across every collection arm of
-/// a mixed union (`array<int> | array<string>` → `int | string`). Anything
-/// else has no element kind, so a subscript into it resolves to nothing
-/// (low-FP).
-///
-/// Shared with the analyzer so hover and inference agree on the answer; taking
-/// only the first arm (the previous behaviour here) reported a confidently
-/// *wrong* element type rather than a loose one.
-fn element_kind(kind: &Kind) -> Option<Kind> {
-    crate::analyzer::expression::infer::collection_element_kind(kind)
-}
-
-/// The kind of `field` within a literal-object value kind (`{ role: string }`
-/// → `.role` is `string`), unwrapping `option<{...}>`. Records resolve their
-/// fields via the schema, not here; a plain `object` is opaque. Returns
-/// nothing when the field is absent or the shape carries no field map.
-fn field_kind(kind: &Kind, field: &str) -> Option<Kind> {
-    match kind {
-        Kind::Literal(KindLiteral::Object(entries)) => entries
-            .iter()
-            .find(|(name, _)| name.as_str() == field)
-            .map(|(_, kind)| kind.clone()),
-        Kind::Either(variants) => variants
-            .iter()
-            .filter(|variant| !matches!(variant, Kind::None | Kind::Null))
-            .find_map(|variant| field_kind(variant, field)),
-        _ => None,
-    }
+/// The kind of `field` within a value kind, for hover: [`crate::kinds::project`]
+/// with the schema in hand, so a literal object is read by key, an
+/// `option<{…}>` keeps its optionality, and a link the table-scope walk did
+/// not enter (a multi-table `record<a | b>`) still resolves through the schema.
+fn field_kind(kind: &Kind, field: &str, schema: &SchemaIndex) -> Option<Kind> {
+    crate::kinds::project(
+        kind,
+        &crate::schema::FieldStep::Field(field.to_string()),
+        Some(schema),
+    )
 }
 
 /// A `fn::` signature popover:
@@ -2201,14 +1678,14 @@ mod tests {
             Kind::Array(Box::new(Kind::String), None),
         ]);
         assert_eq!(
-            element_kind(&mixed),
+            collection_element_kind(&mixed),
             Some(Kind::Either(vec![Kind::Int, Kind::String]))
         );
 
         // `option<array<T>>` still unwraps to the bare element (the `NONE` arm
         // contributes no element kind).
         let optional = Kind::Either(vec![Kind::None, Kind::Array(Box::new(Kind::Int), None)]);
-        assert_eq!(element_kind(&optional), Some(Kind::Int));
+        assert_eq!(collection_element_kind(&optional), Some(Kind::Int));
 
         // A set arm participates in the union just like an array arm.
         let array_or_set = Kind::Either(vec![
@@ -2216,16 +1693,16 @@ mod tests {
             Kind::Set(Box::new(Kind::String), None),
         ]);
         assert_eq!(
-            element_kind(&array_or_set),
+            collection_element_kind(&array_or_set),
             Some(Kind::Either(vec![Kind::Int, Kind::String]))
         );
 
         // No collection arm at all: still no element kind (stay silent).
         assert_eq!(
-            element_kind(&Kind::Either(vec![Kind::None, Kind::Int])),
+            collection_element_kind(&Kind::Either(vec![Kind::None, Kind::Int])),
             None
         );
-        assert_eq!(element_kind(&Kind::String), None);
+        assert_eq!(collection_element_kind(&Kind::String), None);
     }
 
     #[test]

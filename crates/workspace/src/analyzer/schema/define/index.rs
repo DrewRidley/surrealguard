@@ -1,8 +1,8 @@
 //! `DEFINE INDEX` analysis.
 //!
 //! An index must target a known table (1001) over fields that table declares
-//! (1002), and two indexes over the same field set do the same work twice
-//! (1029). The `1012` index-target check for `REBUILD`/`REMOVE INDEX` lives
+//! (1002), is defined once (1022), and two indexes over the same field set do
+//! the same work twice (1029). The `1012` index-target check for `REBUILD`/`REMOVE INDEX` lives
 //! here too, since it is the same catalog reference from the other side.
 
 use surrealdb_types::Kind;
@@ -57,6 +57,24 @@ pub(crate) fn analyze_define_index(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
 
     let table_name_span = table.name_span.clone();
     let field_keys: Vec<String> = table.fields.keys().cloned().collect();
+    let existing = (!stmt.overwrite && !stmt.if_not_exists)
+        .then(|| table.indexes.get(&stmt.name.node))
+        .flatten()
+        .map(|existing| existing.name_span.clone());
+
+    if let Some(existing) = existing {
+        super::emit_duplicate_definition(
+            ctx,
+            stmt.name.span,
+            &format!("`{}` on `{}`", stmt.name.node, stmt.table.node),
+            &format!(
+                "DEFINE INDEX OVERWRITE {} ON {}",
+                stmt.name.node, stmt.table.node
+            ),
+            existing,
+        );
+    }
+
     for (text, span) in unknown_fields {
         let mut finding = surrealguard_diagnostics::catalog::finding(
             span,

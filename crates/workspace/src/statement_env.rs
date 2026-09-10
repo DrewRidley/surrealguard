@@ -292,7 +292,7 @@ impl StatementEnv {
         kind: surrealdb_types::Kind,
         domain: Option<crate::analysis::ValueDomain>,
     ) -> Option<(surrealdb_types::Kind, surrealdb_types::Kind)> {
-        self.constrain_with(name, span, kind, domain, unify_kinds)
+        self.constrain_with(name, span, kind, domain, unify_kinds_strict)
     }
 
     /// Records a constraint derived from a *value comparison* (`in = $param`,
@@ -359,8 +359,31 @@ impl StatementEnv {
 
 /// The kind two constraint sites agree on, when they can: identical kinds,
 /// `any` deferring to the specific one, numeric widening picking the
-/// narrower, and unions intersecting with their members.
-fn unify_kinds(
+/// narrower, and a union matching on its FIRST member that reconciles.
+///
+/// This is deliberately **not** [`crate::lattice::meet`], although a
+/// constraint intersection is a meet and the two agree almost everywhere.
+/// They part on three inputs, and one of them is load-bearing:
+///
+/// * `string` against a literal union (`'red' | 'blue'`), and a collection
+///   against one with disjoint elements (`array<string>` vs `array<int>`):
+///   this says *clash*; the lattice reconciles them to `'red' | 'blue'` and
+///   to `array<any, 0>` (the empty array inhabits both). The lattice is right
+///   about satisfiability — `'red'` satisfies a `string` use and the field —
+///   but [`crate::analyzer::context::AnalysisContext`] only consults the
+///   `ParamDefault` contract (E2001 on `DEFINE PARAM $q VALUE 'green'` reaching
+///   a `'red' | 'blue'` field) when this function reports a clash, so routing
+///   it through `meet` silences that finding
+///   (`tests/contract_positions.rs`, `ParamDefault` × `'red' | 'blue'` and
+///   `array<int>`). Until the default check stops riding on the clash, the
+///   strict answer stays.
+/// * `float` against `decimal`, and `int` against `float`: clash here; the
+///   lattice's coercion order makes `int` the meet of `int`/`float` and
+///   declines to name `float`/`decimal`.
+/// * a union against a kind several of its members reconcile with
+///   (`int | float` against `number`): the FIRST member here (`int`); the meet
+///   keeps every one (`int | float`).
+fn unify_kinds_strict(
     a: &surrealdb_types::Kind,
     b: &surrealdb_types::Kind,
 ) -> Option<surrealdb_types::Kind> {
@@ -376,7 +399,7 @@ fn unify_kinds(
         }
         (Kind::Either(variants), other) | (other, Kind::Either(variants)) => variants
             .iter()
-            .find_map(|variant| unify_kinds(variant, other)),
+            .find_map(|variant| unify_kinds_strict(variant, other)),
         _ => None,
     }
 }
@@ -384,7 +407,7 @@ fn unify_kinds(
 /// The reconciliation for two constraints that both come from *value
 /// comparisons*. Comparisons never make a query unsatisfiable on their own —
 /// SurrealQL compares any two values, yielding a boolean rather than an error —
-/// so this is deliberately looser than [`unify_kinds`]:
+/// so this is deliberately looser than [`unify_kinds_strict`]:
 ///
 /// - `none` is compatible with everything (`$p = NONE` is an existence check,
 ///   never a demand that `$p` BE none), so it defers to the other kind.
@@ -392,7 +415,7 @@ fn unify_kinds(
 ///   different edges' `in`/`out` fields (e.g. `record<account>` and
 ///   `record<team>`) is satisfiable — it just compares unequal to one of them.
 ///
-/// Everything else falls back to [`unify_kinds`], so a genuine scalar clash
+/// Everything else falls back to [`unify_kinds_strict`], so a genuine scalar clash
 /// (a param compared as an `int` in one place and a `string` in another) still
 /// reports a 6001.
 fn unify_comparable(
@@ -414,7 +437,7 @@ fn unify_comparable(
             }
             Some(Kind::Record(tables))
         }
-        _ => unify_kinds(a, b),
+        _ => unify_kinds_strict(a, b),
     }
 }
 

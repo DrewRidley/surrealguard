@@ -18,11 +18,13 @@
 //! a consumer that reads them keeps its own policy about *which* places and
 //! values it is willing to act on.
 
+pub(crate) mod assert;
 pub(crate) mod guard;
 pub(crate) mod place;
 pub(crate) mod refine;
 pub(crate) mod term;
 
+pub(crate) use assert::constant_violates_assert;
 pub(crate) use guard::{guard_of, Guard};
 pub(crate) use place::{place_of, Place, PlaceRoot};
 pub(crate) use refine::{refined_under, Facts, KindOracle, Refinement, RootedKind, Verdict};

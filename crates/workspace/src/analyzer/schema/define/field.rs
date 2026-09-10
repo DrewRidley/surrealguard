@@ -5,8 +5,9 @@
 //! be expressible (6003); a `DEFAULT` (or computed `VALUE`) must inhabit the
 //! declared type (2001); an `ASSERT` is a condition with `$value` in scope
 //! as the declared type (2005 when it can never be a bool, plus the usual
-//! expression checking); and computed contexts should not block or reach out
-//! (7012).
+//! expression checking); a `DEFAULT` must satisfy the field's own `ASSERT`
+//! (2037); and a clause that re-runs on every write or read should neither
+//! block nor draw a fresh value each time (7012).
 
 use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
@@ -35,12 +36,16 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
     // was absent from this loop — so `DEFINE FIELD c ON t TYPE int COMPUTED
     // 'notanint'` was silent while the identical `VALUE 'notanint'` reported.
     // Same contract, same code, one missing row.
-    for (position, clause) in [
-        (Position::FieldDefault, &stmt.default),
-        (Position::FieldValue, &stmt.value),
-        (Position::FieldComputed, &stmt.computed),
+    for (position, clause, expr) in [
+        (Position::FieldDefault, FieldClause::Default, &stmt.default),
+        (Position::FieldValue, FieldClause::Value, &stmt.value),
+        (
+            Position::FieldComputed,
+            FieldClause::Computed,
+            &stmt.computed,
+        ),
     ] {
-        let Some(expr) = clause else {
+        let Some(expr) = expr else {
             continue;
         };
         let fact = with_value_bound(ctx, declared.clone(), &stmt.table.node, |ctx| {
@@ -48,7 +53,7 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
             crate::analyzer::expression::check::check_value_expression(ctx, expr);
             fact
         });
-        check_computed_calls(ctx, expr);
+        check_computed_calls(ctx, expr, clause, &idiom_text(&stmt.path.node));
         // A declared `VALUE`/`DEFAULT` inhabits the field's type under exactly
         // the contract a *written* value does, so it is the same contract: a
         // constant is compared as the literal it is, and a non-constant (call,
@@ -84,7 +89,12 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
             crate::analyzer::expression::check::check_value_expression(ctx, assert);
             fact.kind
         });
-        check_computed_calls(ctx, assert);
+        check_computed_calls(
+            ctx,
+            assert,
+            FieldClause::Assert,
+            &idiom_text(&stmt.path.node),
+        );
         if let Some(kind) = kind {
             if Contract::condition(Position::FieldAssert)
                 .decide(&kind)
@@ -251,7 +261,9 @@ fn check_field_definition(
             ctx.emit(finding);
         }
         Some(table)
-            if !stmt.overwrite && field_is_duplicate(table, &stmt.path.node, &field_key) =>
+            if !stmt.overwrite
+                && !stmt.if_not_exists
+                && field_is_duplicate(table, &stmt.path.node, &field_key) =>
         {
             let mut finding = surrealguard_diagnostics::catalog::finding(
                 surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.path.span),
@@ -392,47 +404,170 @@ fn with_value_bound<T>(
     })
 }
 
-/// Computed contexts run on every write; blocking or side-effecting calls
-/// there are a footgun (7012).
-fn check_computed_calls(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) {
+/// The clause a field-clause expression is written in. The four differ in
+/// *when* they run, which is what decides whether a call is a mistake there
+/// (7012).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FieldClause {
+    /// `DEFAULT` — evaluated once, when a row is created without the field.
+    Default,
+    /// `VALUE` — recomputed on every write to the row.
+    Value,
+    /// `COMPUTED` — evaluated on every read; never stored.
+    Computed,
+    /// `ASSERT` — evaluated on every write to the row.
+    Assert,
+}
+
+/// Why a call does not belong in a field clause.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CallObjection {
+    /// The call blocks or reaches outside the database (`http::*`, `sleep`).
+    /// A mistake in every clause: a `DEFAULT http::get(...)` stalls each
+    /// create, and a `VALUE`/`COMPUTED`/`ASSERT` does so on every write or
+    /// read.
+    Blocking,
+    /// The call gives a different answer each time it runs (`rand::*`,
+    /// `sequence::next`, and on a read path `time::now()`), so the field
+    /// never holds one value. A mistake only where the clause re-runs: a
+    /// `DEFAULT rand::uuid()` or `DEFAULT time::now()` runs once and is the
+    /// idiom for an id or a created-at stamp.
+    Nondeterministic,
+}
+
+impl FieldClause {
+    /// Why `path` should not be called in this clause, or `None` when it is
+    /// at home here.
+    fn objection(self, path: &str) -> Option<CallObjection> {
+        if path.starts_with("http::") || path == "sleep::sleep" || path == "sleep" {
+            return Some(CallObjection::Blocking);
+        }
+        let draws_fresh = path == "rand"
+            || path.starts_with("rand::")
+            || path == "sequence::next"
+            || path == "sequence::nextval";
+        match self {
+            // `VALUE time::now()` is the documented updated-at idiom: the
+            // clock moving is the point of writing it there.
+            FieldClause::Value if draws_fresh => Some(CallObjection::Nondeterministic),
+            // A `COMPUTED` field is never stored, so a clock read there is a
+            // different answer on every read — no row can be said to hold it.
+            FieldClause::Computed if draws_fresh || path == "time::now" => {
+                Some(CallObjection::Nondeterministic)
+            }
+            FieldClause::Default
+            | FieldClause::Value
+            | FieldClause::Computed
+            | FieldClause::Assert => None,
+        }
+    }
+
+    /// When the clause runs, as the finding says it.
+    fn runs(self) -> &'static str {
+        match self {
+            FieldClause::Default => "on every create of this row",
+            FieldClause::Value | FieldClause::Assert => "on every write to this row",
+            FieldClause::Computed => "on every read of this row",
+        }
+    }
+
+    fn keyword(self) -> &'static str {
+        match self {
+            FieldClause::Default => "DEFAULT",
+            FieldClause::Value => "VALUE",
+            FieldClause::Computed => "COMPUTED",
+            FieldClause::Assert => "ASSERT",
+        }
+    }
+}
+
+/// A blocking or non-deterministic call in a field clause that re-runs it
+/// (7012). One code, one contract — "this call does not belong in a clause
+/// that runs this often" — and the message names which of the two ways it
+/// fails: it blocks, or it answers differently each time.
+fn check_computed_calls(
+    ctx: &mut AnalysisContext<'_>,
+    expr: &ast::Spanned<ast::Expr>,
+    clause: FieldClause,
+    field: &str,
+) {
     match &expr.node {
         ast::Expr::Call(call) => {
             let path = call.path.node.as_str();
-            if path.starts_with("http::") || path == "sleep::sleep" || path == "sleep" {
+            if let Some(objection) = clause.objection(path) {
                 let span = surrealguard_syntax::span::SourceSpan::new(
                     ctx.source().clone(),
                     call.path.span,
                 );
-                ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
+                let finding = match objection {
+                    CallObjection::Blocking => surrealguard_diagnostics::catalog::finding(
                         span,
                         7012,
-                        format!("`{path}` runs on every write to this row"),
+                        format!("`{path}` runs {}", clause.runs()),
                     )
-                    .with_help(
-                        "this clause is computed on every write; avoid blocking or side-effecting calls here",
-                    ),
-                );
+                    .with_help(format!(
+                        "this clause is computed {}; avoid blocking or side-effecting calls here",
+                        clause.runs()
+                    )),
+                    CallObjection::Nondeterministic => surrealguard_diagnostics::catalog::finding(
+                        span,
+                        7012,
+                        format!(
+                            "`{path}` gives `{field}` a different value {}",
+                            clause.runs()
+                        ),
+                    )
+                    .with_help(format!(
+                        "`{}` is recomputed {}; a value that should be chosen once belongs in `DEFAULT`",
+                        clause.keyword(),
+                        clause.runs()
+                    )),
+                };
+                ctx.emit(finding);
             }
             for arg in &call.args {
-                check_computed_calls(ctx, arg);
+                check_computed_calls(ctx, arg, clause, field);
             }
         }
         ast::Expr::Binary { lhs, rhs, .. } => {
-            check_computed_calls(ctx, lhs);
-            check_computed_calls(ctx, rhs);
+            check_computed_calls(ctx, lhs, clause, field);
+            check_computed_calls(ctx, rhs, clause, field);
         }
         ast::Expr::Prefix { expr: inner, .. } | ast::Expr::Cast { expr: inner, .. } => {
-            check_computed_calls(ctx, inner);
+            check_computed_calls(ctx, inner, clause, field);
         }
         ast::Expr::Array(elements) => {
             for element in elements {
-                check_computed_calls(ctx, element);
+                check_computed_calls(ctx, element, clause, field);
             }
         }
         ast::Expr::Object(fields) => {
             for (_, value) in fields {
-                check_computed_calls(ctx, value);
+                check_computed_calls(ctx, value, clause, field);
+            }
+        }
+        // `(rand::uuid())` and `rand::uuid().len()`: a call reached through
+        // a parenthesized or method-chained path is the same call.
+        ast::Expr::Subquery(statement) => {
+            if let ast::Statement::Expr(inner) = &statement.node {
+                check_computed_calls(ctx, inner, clause, field);
+            }
+        }
+        ast::Expr::Idiom(idiom) => {
+            for part in &idiom.parts {
+                match &part.node {
+                    ast::IdiomPart::Start(inner)
+                    | ast::IdiomPart::Index(inner)
+                    | ast::IdiomPart::Where(inner) => {
+                        check_computed_calls(ctx, inner, clause, field);
+                    }
+                    ast::IdiomPart::Method { args, .. } => {
+                        for arg in args {
+                            check_computed_calls(ctx, arg, clause, field);
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
         _ => {}
@@ -445,13 +580,14 @@ fn check_computed_calls(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::
 /// outside the ASSERT's allowed set turns every field-omitting CREATE into a
 /// hard runtime error. We fold the DEFAULT to a constant, bind it as
 /// `$value`, and evaluate the ASSERT under that binding — emitting only when
-/// the ASSERT folds to a definite `false`, and BAILing on anything we cannot
+/// the ASSERT folds to a definite `false`, and `BAILing` on anything we cannot
 /// fold so we never guess.
 ///
-/// The folder is the analyzer's one folder ([`crate::analyzer::facts::eval`]);
-/// binding `$value` is the whole of what used to be a second copy of it.
+/// The fold is [`crate::analyzer::facts::constant_violates_assert`] — the
+/// same question 2038 asks of a constant a statement writes, asked here of
+/// the constant the definition supplies.
 fn check_default_satisfies_assert(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineField) {
-    use crate::analyzer::facts::term::{fold, fold_bool, Bindings};
+    use crate::analyzer::facts::term::fold;
 
     let (Some(default), Some(assert)) = (&stmt.default, &stmt.assert) else {
         return;
@@ -459,7 +595,7 @@ fn check_default_satisfies_assert(ctx: &mut AnalysisContext<'_>, stmt: &ast::Def
     let Some(value) = fold(&default.node, Bindings::NONE) else {
         return;
     };
-    if fold_bool(&assert.node, Bindings::value(&value)) == Some(false) {
+    if crate::analyzer::facts::constant_violates_assert(&assert.node, &value) {
         let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), default.span);
         ctx.emit(surrealguard_diagnostics::catalog::finding(
             span,

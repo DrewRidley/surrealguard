@@ -13,20 +13,20 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{apply, ParamKind, ReturnKind, Signature};
 
+/// The signature calls are checked against.
+pub(crate) fn signature() -> Signature {
+    Signature {
+        min_args: 0,
+        max_args: Some(2),
+        arg_kinds: vec![ParamKind::Exact(Kind::Duration)],
+        return_kind: ReturnKind::Fixed(Kind::Duration),
+    }
+}
+
 pub(crate) fn analyze_rand_duration(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     args: &[Kind],
 ) -> Kind {
-    apply(
-        ctx,
-        call,
-        &Signature {
-            min_args: 0,
-            max_args: Some(2),
-            arg_kinds: vec![ParamKind::Exact(Kind::Duration)],
-            return_kind: ReturnKind::Fixed(Kind::Duration),
-        },
-        args,
-    )
+    apply(ctx, call, &signature(), args)
 }

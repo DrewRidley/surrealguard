@@ -1,8 +1,13 @@
 //! Built-in SurrealQL function analyzers.
 //!
-//! `analyze_builtin_function` is the namespace entrypoint. It extracts the
-//! function path from the source text, routes to a category `mod.rs`, and the
-//! category fans out to one analyzer function per documented built-in function.
+//! Every built-in is one [`BuiltinEntry`] in its family's `CATALOG`
+//! (`<family>/mod.rs`): the name as dispatched, a one-line doc, the leaf
+//! file's declared [`Signature`], and the analyzer that infers a call's
+//! kind. [`builtin_catalog`] merges the families into one sorted table, and
+//! `analyze_builtin_function` — the namespace entrypoint — dispatches by
+//! looking a call's path up in it. The table *is* the dispatch, so the set
+//! of names the analyzer resolves and the set completion offers cannot
+//! drift: both read the same rows.
 
 use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
@@ -11,6 +16,8 @@ use surrealguard_syntax::span::SourceSpan;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::contract::{Contract, Position};
 use crate::analyzer::facts::Bindings;
+use crate::analyzer::version::FunctionVersion;
+use signature::Signature;
 
 pub mod api;
 pub mod array;
@@ -43,6 +50,159 @@ pub mod type_;
 pub mod value;
 pub mod vector;
 
+/// One built-in function the analyzer resolves: a row of a family's
+/// `CATALOG`, and of [`builtin_catalog`].
+#[derive(Clone, Copy)]
+pub struct BuiltinEntry {
+    /// The call path as the analyzer dispatches it (`string::len`,
+    /// `type::is_record`, bare `count`).
+    pub name: &'static str,
+    /// A one-line description for editors. Empty for a spelling the analyzer
+    /// accepts but SurrealDB does not document (`count::count`); completion
+    /// offers only documented entries.
+    pub doc: &'static str,
+    /// The leaf file's declared signature — shared by its analyzer and by
+    /// everything that renders the function.
+    signature: fn() -> Signature,
+    /// The analyzer: checks the call where the signature allows, and infers
+    /// its kind.
+    analyze: fn(&mut AnalysisContext<'_>, &ast::Call, &[Kind]) -> Kind,
+}
+
+impl BuiltinEntry {
+    /// A catalog row. `const` so the family tables are plain statics.
+    pub(crate) const fn new(
+        name: &'static str,
+        doc: &'static str,
+        signature: fn() -> Signature,
+        analyze: fn(&mut AnalysisContext<'_>, &ast::Call, &[Kind]) -> Kind,
+    ) -> Self {
+        Self {
+            name,
+            doc,
+            signature,
+            analyze,
+        }
+    }
+
+    /// The leading namespace (`string`, `math`; `count` for the bare
+    /// `count`), which is the family a method call on a typed receiver
+    /// dispatches to.
+    pub fn family(&self) -> &'static str {
+        match self.name.split_once("::") {
+            Some((head, _)) => head,
+            None => self.name,
+        }
+    }
+
+    /// The declared signature: arity, per-argument expectations, and how the
+    /// return kind derives from the arguments.
+    pub(crate) fn signature(&self) -> Signature {
+        (self.signature)()
+    }
+
+    /// The name's version facts, when a release added or removed it.
+    pub fn version(&self) -> Option<&'static FunctionVersion> {
+        crate::analyzer::version::function_version(self.name)
+    }
+
+    /// Whether the name exists in current SurrealDB — `false` for a spelling
+    /// a release removed (`duration::from::days`, renamed in 3.0), which the
+    /// analyzer still dispatches so the 8001 rename hint has a signature to
+    /// stand on, but which no editor should offer.
+    pub fn is_current(&self) -> bool {
+        self.version()
+            .is_none_or(|version| version.removed.is_none())
+    }
+
+    /// Whether SurrealDB documents this spelling; see [`BuiltinEntry::doc`].
+    pub fn is_documented(&self) -> bool {
+        !self.doc.is_empty()
+    }
+}
+
+/// Every built-in the analyzer resolves, sorted by name: the 29 family
+/// `CATALOG` tables merged.
+pub fn builtin_catalog() -> &'static [BuiltinEntry] {
+    static CATALOG: std::sync::OnceLock<Vec<BuiltinEntry>> = std::sync::OnceLock::new();
+    CATALOG.get_or_init(|| {
+        let mut entries: Vec<BuiltinEntry> = FAMILIES
+            .iter()
+            .flat_map(|family| family.iter())
+            .copied()
+            .collect();
+        entries.sort_by(|a, b| a.name.cmp(b.name));
+        entries
+    })
+}
+
+/// The family tables, one per `pub mod` above.
+const FAMILIES: &[&[BuiltinEntry]] = &[
+    api::CATALOG,
+    array::CATALOG,
+    bytes::CATALOG,
+    count::CATALOG,
+    crypto::CATALOG,
+    duration::CATALOG,
+    encoding::CATALOG,
+    eval::CATALOG,
+    file::CATALOG,
+    geo::CATALOG,
+    http::CATALOG,
+    math::CATALOG,
+    meta::CATALOG,
+    not::CATALOG,
+    object::CATALOG,
+    parse::CATALOG,
+    rand::CATALOG,
+    record::CATALOG,
+    schema::CATALOG,
+    search::CATALOG,
+    sequence::CATALOG,
+    session::CATALOG,
+    set::CATALOG,
+    sleep::CATALOG,
+    string::CATALOG,
+    time::CATALOG,
+    type_::CATALOG,
+    value::CATALOG,
+    vector::CATALOG,
+];
+
+/// The catalog entry dispatched for `path` — the exact name, as lowering
+/// produces it (`type::is::record` is already `type::is_record` here).
+pub fn builtin(path: &str) -> Option<&'static BuiltinEntry> {
+    let catalog = builtin_catalog();
+    catalog
+        .binary_search_by(|entry| entry.name.cmp(path))
+        .ok()
+        .map(|index| &catalog[index])
+}
+
+/// Whether `path` names a built-in the analyzer resolves.
+///
+/// This is the *existence* oracle, deliberately separate from what a call
+/// evaluates to. Several built-ins return an honest `Kind::Any` — `record::id`
+/// (a record id is genuinely one of many shapes), `array::at` on an
+/// `array<any>` — so "the analyzer produced `any`" cannot stand in for "no such
+/// function": doing that turned `$r.id()` into a false `E5001 has no method`.
+///
+/// Names are canonicalized by replacing `::` with `_`, which folds the two
+/// spellings of the `type::is::x` family (`type::is::record` as written,
+/// `type::is_record` as lowered and dispatched) onto one key.
+pub(crate) fn is_builtin(path: &str) -> bool {
+    static NAMES: std::sync::OnceLock<std::collections::BTreeSet<String>> =
+        std::sync::OnceLock::new();
+    NAMES
+        .get_or_init(|| {
+            builtin_catalog()
+                .iter()
+                .map(|entry| entry.name.replace("::", "_"))
+                .collect()
+        })
+        .contains(&path.replace("::", "_"))
+}
+
 pub(crate) fn analyze_builtin_function(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
@@ -58,41 +218,40 @@ pub(crate) fn analyze_builtin_function(
 
     // `call.path` is pre-normalized by lowering (`type::is::record` ->
     // `type::is_record`); custom `fn::*` functions fall through to `Any`.
-    let path = call.path.node.as_str();
+    let mut path = call.path.node.as_str();
 
-    match path.split("::").next().unwrap_or_default() {
-        "api" => api::analyze_api_function(ctx, call, path, args),
-        "array" => array::analyze_array_function(ctx, call, path, args),
-        "bytes" => bytes::analyze_bytes_function(ctx, call, path, args),
-        "count" => count::analyze_count_function(ctx, call, path, args),
-        "crypto" => crypto::analyze_crypto_function(ctx, call, path, args),
-        "duration" => duration::analyze_duration_function(ctx, call, path, args),
-        "encoding" => encoding::analyze_encoding_function(ctx, call, path, args),
-        "eval" => eval::analyze_eval_function(ctx, call, path, args),
-        "file" => file::analyze_file_function(ctx, call, path, args),
-        "geo" => geo::analyze_geo_function(ctx, call, path, args),
-        "http" => http::analyze_http_function(ctx, call, path, args),
-        "math" => math::analyze_math_function(ctx, call, path, args),
-        "meta" => meta::analyze_meta_function(ctx, call, path, args),
-        "not" => not::analyze_not_function(ctx, call, path, args),
-        "object" => object::analyze_object_function(ctx, call, path, args),
-        "parse" => parse::analyze_parse_function(ctx, call, path, args),
-        "rand" => rand::analyze_rand_function(ctx, call, path, args),
-        "record" => record::analyze_record_function(ctx, call, path, args),
-        "schema" => schema::analyze_schema_function(ctx, call, path, args),
-        "search" => search::analyze_search_function(ctx, call, path, args),
-        "sequence" => sequence::analyze_sequence_function(ctx, call, path, args),
-        "session" => session::analyze_session_function(ctx, call, path, args),
-        "set" => set::analyze_set_function(ctx, call, path, args),
-        "sleep" => sleep::analyze_sleep_function(ctx, call, path, args),
-        "string" => string::analyze_string_function(ctx, call, path, args),
-        "time" => time::analyze_time_function(ctx, call, path, args),
-        "type" => type_::analyze_type_function(ctx, call, path, args),
-        "value" => value::analyze_value_function(ctx, call, path, args),
-        "vector" => vector::analyze_vector_function(ctx, call, path, args),
+    // Does the configured target release have this function (8001)? The
+    // question is asked of the name *as written*: lowering has already
+    // folded `type::is::record` into `type::is_record`, and which of the two
+    // a target accepts is exactly the fact at stake. A removed spelling of a
+    // function that still exists is analyzed under its current name — the
+    // rename changed nothing about the signature.
+    if let Some(target) = ctx.target_version() {
+        if !is_synthetic(call) {
+            let written = ctx
+                .source_text()
+                .get(call.path.span.start() as usize..call.path.span.end() as usize)
+                .map_or(path, str::trim);
+            if let Some(mismatch) = crate::analyzer::version::check_function(target, written) {
+                let span = SourceSpan::new(ctx.source().clone(), call.path.span);
+                ctx.emit(
+                    surrealguard_diagnostics::catalog::finding(span, 8001, mismatch.message)
+                        .with_help(mismatch.help),
+                );
+                if let Some(current) = mismatch.dispatch_as {
+                    path = current;
+                }
+            }
+        }
+    }
+
+    if let Some(entry) = builtin(path) {
+        return (entry.analyze)(ctx, call, args);
+    }
+    if path.split("::").next() == Some("fn") {
         // User-defined functions carry their declared signature on the
         // schema; calls check against it (5002) like any builtin.
-        "fn" => match ctx.schema().functions.get(path) {
+        match ctx.schema().functions.get(path) {
             Some(function) => {
                 let function = function.clone();
                 check_custom_call(ctx, call, &function, args);
@@ -130,8 +289,9 @@ pub(crate) fn analyze_builtin_function(
                 }
                 Kind::Any
             }
-        },
-        _ => unknown_function(ctx, call),
+        }
+    } else {
+        unknown_function(ctx, call)
     }
 }
 
@@ -146,7 +306,11 @@ pub(crate) fn unknown_function(ctx: &mut AnalysisContext<'_>, call: &ast::Call) 
             5001,
             format!("`{}` is not a known function", call.path.node),
         );
-        if let Some(nearest) = crate::suggest::closest(
+        // A name that stopped existing because it was renamed is unknown for
+        // a reason worth stating, whatever the target (or lack of one).
+        if let Some(hint) = crate::analyzer::version::rename_hint(call.path.node.as_str()) {
+            finding = finding.with_help(hint);
+        } else if let Some(nearest) = crate::suggest::closest(
             call.path.node.as_str(),
             ctx.schema().functions.keys().map(String::as_str),
         ) {
@@ -327,7 +491,8 @@ fn check_custom_call(
 }
 
 /// A consumer invokes its closure with a fixed argument list; declaring
-/// more parameters than it passes leaves the extras unbound (5004).
+/// more parameters than it passes leaves the extras unbound — a signature
+/// mismatch, so it reports as 5002 like every other arity violation.
 pub(crate) fn check_closure_arity(
     ctx: &mut crate::analyzer::context::AnalysisContext<'_>,
     call: &ast::Call,
@@ -374,7 +539,7 @@ mod tests {
     use surrealguard_syntax::parse::parse_source;
     use surrealguard_syntax::source::SourceId;
 
-    use super::{analyze_builtin_function, synthetic_call};
+    use super::{analyze_builtin_function, builtin_catalog, synthetic_call};
     use surrealdb_types::Kind;
 
     use crate::analyzer::context::AnalysisContext;
@@ -444,19 +609,16 @@ mod tests {
         let _ = analyze_builtin_function(&mut ctx, call, &[]);
     }
 
-    /// Sweeps every registered builtin through the dispatcher: each
-    /// dispatch arm (collected from the family dispatchers' own source)
-    /// must analyze a synthetic call at several arities without panicking.
-    /// This executes every signature-literal leaf file.
+    /// Sweeps every catalog entry through the dispatcher at several arities
+    /// without panicking. This executes every leaf file's analyzer and
+    /// signature.
     #[test]
-    fn every_registered_builtin_analyzes_synthetic_calls() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/analyzer/function");
-        let mut names = std::collections::BTreeSet::new();
-        collect_dispatch_arms(&root, &mut names);
+    fn every_catalog_entry_analyzes_synthetic_calls() {
+        let catalog = builtin_catalog();
         assert!(
-            names.len() > 250,
-            "dispatch-arm scan looks broken: found only {} names",
-            names.len()
+            catalog.len() > 400,
+            "catalog looks broken: only {} entries",
+            catalog.len()
         );
 
         let arg_shapes: Vec<Vec<Kind>> = vec![
@@ -474,12 +636,110 @@ mod tests {
             "",
             &mut diagnostics,
         );
-        for name in &names {
-            let call = synthetic_call(name);
+        for entry in catalog {
+            let call = synthetic_call(entry.name);
             for args in &arg_shapes {
                 let _ = analyze_builtin_function(&mut ctx, &call, args);
             }
+            let _ = entry.signature();
         }
+    }
+
+    /// The catalog is the dispatch table, so the two cannot disagree — but
+    /// the table itself has invariants: one row per name, every row in the
+    /// family table that owns its prefix, and a real (non-synthetic) call to
+    /// every current name reaching an analyzer rather than the 5001 fallback.
+    #[test]
+    fn the_catalog_is_well_formed_and_every_row_dispatches() {
+        let catalog = builtin_catalog();
+        let mut names = std::collections::BTreeSet::new();
+        for entry in catalog {
+            assert!(names.insert(entry.name), "duplicate entry `{}`", entry.name);
+            assert!(
+                entry.is_documented() || entry.name == "count::count",
+                "`{}` has no doc; every documented spelling needs one",
+                entry.name
+            );
+        }
+        for (family, table) in super::FAMILIES.iter().enumerate() {
+            let Some(head) = table.first().map(super::BuiltinEntry::family) else {
+                panic!("family table {family} is empty");
+            };
+            for entry in *table {
+                assert_eq!(
+                    entry.family(),
+                    head,
+                    "`{}` sits in the `{head}` table",
+                    entry.name
+                );
+            }
+        }
+
+        let schema = SchemaIndex::default();
+        for entry in catalog {
+            let mut diagnostics: Vec<Finding> = Vec::new();
+            let source = entry.name;
+            let mut ctx = AnalysisContext::new(
+                &schema,
+                surrealguard_syntax::source::SourceId::new("dispatch"),
+                source,
+                &mut diagnostics,
+            );
+            // A written (non-synthetic) call with no arguments: arity findings
+            // are fine, an unknown-function finding is not.
+            let call = ast::Call {
+                path: ast::Spanned::new(
+                    entry.name.to_string(),
+                    surrealguard_syntax::span::ByteRange::new(0, source.len() as u32)
+                        .expect("ordered"),
+                ),
+                args: Vec::new(),
+            };
+            let _ = analyze_builtin_function(&mut ctx, &call, &[]);
+            assert!(
+                diagnostics
+                    .iter()
+                    .all(|finding| finding.code().to_string() != "E5001"),
+                "`{}` is in the catalog but dispatches to unknown-function",
+                entry.name
+            );
+        }
+    }
+
+    /// Every current name in the version registry is a function the analyzer
+    /// resolves, and every removed spelling the analyzer still dispatches is
+    /// marked not-current, so completion never offers it.
+    #[test]
+    fn version_facts_and_the_catalog_agree() {
+        for version in crate::analyzer::version::FUNCTIONS {
+            // `type::is::x` never reaches dispatch: lowering folds it first.
+            if version.name.contains("::is::") {
+                continue;
+            }
+            if version.removed.is_none() {
+                assert!(
+                    super::builtin(version.name).is_some(),
+                    "`{}` has version facts but no catalog entry",
+                    version.name
+                );
+            }
+        }
+        for entry in builtin_catalog() {
+            if let Some(version) = entry.version() {
+                assert_eq!(
+                    entry.is_current(),
+                    version.removed.is_none(),
+                    "`{}` current-ness must follow the version registry",
+                    entry.name
+                );
+            }
+        }
+        assert!(!super::builtin("duration::from::days")
+            .expect("dispatched for the rename hint")
+            .is_current());
+        assert!(super::builtin("duration::from_days")
+            .expect("current spelling")
+            .is_current());
     }
 
     /// The response kind of `query` analyzed as a standalone source.
@@ -616,36 +876,10 @@ mod tests {
                      DEFINE FUNCTION fn::wrap($y: int) { RETURN fn::base($y); };\n\
                      RETURN fn::wrap(3);";
         assert!(
-            matches!(response_kind_of(query), Some(Kind::Int) | Some(Kind::Any)),
+            matches!(response_kind_of(query), Some(Kind::Int | Kind::Any)),
             "cross-udf call must resolve to int or fall back to any, got {:?}",
             response_kind_of(query),
         );
         assert_eq!(diagnostics_of(query), Vec::new());
-    }
-
-    fn collect_dispatch_arms(
-        dir: &std::path::Path,
-        names: &mut std::collections::BTreeSet<String>,
-    ) {
-        for entry in std::fs::read_dir(dir).expect("function tree readable") {
-            let entry = entry.expect("dir entry");
-            let path = entry.path();
-            if path.is_dir() {
-                collect_dispatch_arms(&path, names);
-            } else if path.file_name().is_some_and(|name| name == "mod.rs") {
-                let text = std::fs::read_to_string(&path).expect("dispatcher readable");
-                for line in text.lines() {
-                    let Some(rest) = line.trim().strip_prefix('"') else {
-                        continue;
-                    };
-                    let Some((name, tail)) = rest.split_once('"') else {
-                        continue;
-                    };
-                    if tail.trim_start().starts_with("=>") && name.contains("::") {
-                        names.insert(name.to_string());
-                    }
-                }
-            }
-        }
     }
 }

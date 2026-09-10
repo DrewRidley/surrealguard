@@ -943,49 +943,93 @@ fn completing_anywhere_in_pathological_input_never_panics_and_never_invents_a_na
 }
 
 #[test]
-fn builtins_cover_every_dispatch_arm_the_analyzer_resolves() {
-    // The catalog is generated from these sources; this re-derives the arm set
-    // so a built-in added to the analyzer without being added to the catalog
-    // fails here rather than silently going missing from completion.
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/analyzer/function");
-    let known: BTreeSet<String> = builtins::BUILTINS
-        .iter()
-        .map(|builtin| builtin.name.replace("::", "_"))
-        .collect();
-
-    let mut checked = 0usize;
-    for entry in std::fs::read_dir(&root).expect("the function analyzer tree exists") {
-        let path = entry.expect("readable entry").path().join("mod.rs");
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        for line in text.lines() {
-            let Some(rest) = line.trim().strip_prefix('"') else {
-                continue;
-            };
-            let Some((name, tail)) = rest.split_once('"') else {
-                continue;
-            };
-            if !(tail.trim_start().starts_with("=>") || tail.trim_start().starts_with('|')) {
-                continue;
-            }
-            if !name
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == ':')
-            {
-                continue;
-            }
-            checked += 1;
-            assert!(
-                known.contains(&name.replace("::", "_")),
-                "`{name}` is dispatched by the analyzer but missing from the completion catalog"
-            );
-        }
-    }
+fn builtins_are_rendered_from_the_analyzer_catalog() {
+    // Completion has no catalog of its own: every offered built-in is a row of
+    // the analyzer's dispatch table, rendered with the crate's kind renderer,
+    // and every row the analyzer dispatches under a current, documented name
+    // is offered. The two cannot drift because there is only one table.
+    let catalog = crate::analyzer::function::builtin_catalog();
+    let offered: BTreeSet<&str> = builtins::offered().map(|entry| entry.name).collect();
     assert!(
-        checked > 400,
-        "expected the whole builtin surface, saw {checked}"
+        offered.len() > 400,
+        "expected the whole builtin surface, saw {}",
+        offered.len()
     );
+    for entry in catalog {
+        let expected = entry.is_current() && entry.is_documented();
+        assert_eq!(
+            offered.contains(entry.name),
+            expected,
+            "`{}` offered={} but current={} documented={}",
+            entry.name,
+            !expected,
+            entry.is_current(),
+            entry.is_documented()
+        );
+        // The detail is `name(params) -> kind`, spelled by `render_kind`.
+        let detail = builtins::signature_text(entry);
+        assert!(
+            detail.starts_with(&format!("{}(", entry.name)) && detail.contains(") -> "),
+            "malformed detail for `{}`: {detail}",
+            entry.name
+        );
+        assert!(
+            crate::analyzer::function::is_builtin(entry.name),
+            "`{}` is in the catalog but not a builtin",
+            entry.name
+        );
+    }
+    // A spelling a release removed is dispatched (for the rename hint) but
+    // never offered; the current spelling is.
+    assert!(!offered.contains("duration::from::days"));
+    assert!(offered.contains("duration::from_days"));
+    assert!(!offered.contains("count::count"));
+    assert!(offered.contains("count"));
+}
+
+#[test]
+fn builtin_signatures_render_with_the_crates_kind_spelling() {
+    let detail = |name: &str| {
+        builtins::signature_text(crate::analyzer::function::builtin(name).expect("a builtin"))
+    };
+    assert_eq!(detail("string::len"), "string::len(string) -> int");
+    assert_eq!(detail("math::sum"), "math::sum(array<any>) -> number");
+    // Optional parameters carry `?`; a variadic tail is `...`.
+    assert_eq!(detail("rand::int"), "rand::int(number?, number?) -> int");
+    assert_eq!(detail("rand::enum"), "rand::enum(any, ...) -> any");
+    // Closure-taking functions show the closure parameter.
+    assert_eq!(
+        detail("array::map"),
+        "array::map(array<any>, function) -> array<any>"
+    );
+    // A pass-through return is spelled as the parameter it passes through;
+    // an element return the signature cannot name is `any`.
+    assert_eq!(
+        detail("array::add"),
+        "array::add(array<any>, any) -> array<any>"
+    );
+    assert_eq!(detail("array::first"), "array::first(array<any>) -> any");
+}
+
+#[test]
+fn a_method_candidate_ranks_by_the_return_kind_the_receiver_decides() {
+    // `array::first` returns the element kind — unknowable in the flat list,
+    // known once a receiver is in hand.
+    let first = crate::analyzer::function::builtin("array::first").expect("a builtin");
+    assert_eq!(builtins::return_kind(first), None);
+    assert_eq!(
+        builtins::method_return_kind(first, &Kind::Array(Box::new(Kind::String), None)),
+        Some(Kind::String)
+    );
+    let len = crate::analyzer::function::builtin("array::len").expect("a builtin");
+    assert_eq!(
+        builtins::method_return_kind(len, &Kind::Array(Box::new(Kind::String), None)),
+        Some(Kind::Int)
+    );
+    // A call argument's expectation comes from the same signature.
+    let repeat = crate::analyzer::function::builtin("string::repeat").expect("a builtin");
+    assert_eq!(builtins::parameter_kind(repeat, 0), Some(Kind::String));
+    assert_eq!(builtins::parameter_kind(repeat, 5), None);
 }
 
 // ---------------------------------------------------------------------------

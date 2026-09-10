@@ -26,7 +26,6 @@
 
 pub(crate) mod builtins;
 mod context;
-mod kind_text;
 mod lex;
 
 use std::collections::BTreeMap;
@@ -566,8 +565,7 @@ fn function_candidates(
     if !context.prefix.is_empty() {
         let fulltext = has_fulltext_index(schema, &context.tables);
         out.extend(
-            builtins::BUILTINS
-                .iter()
+            builtins::offered()
                 .filter(|builtin| fulltext || !FULLTEXT_ONLY.contains(&builtin.name))
                 .map(|builtin| {
                     Draft::new(
@@ -575,9 +573,9 @@ fn function_candidates(
                             label: builtin.name.to_string(),
                             insert_text: builtin.name.to_string(),
                             kind: CandidateKind::Function,
-                            detail: Some(builtin.signature()),
-                            documentation: Some("built-in function".to_string()),
-                            candidate_kind: kind_text::return_kind(builtin.returns),
+                            detail: Some(builtins::signature_text(builtin)),
+                            documentation: Some(builtin.doc.to_string()),
+                            candidate_kind: builtins::return_kind(builtin),
                             score: 0.0,
                             sort_text: String::new(),
                             replace: (0, 0),
@@ -614,7 +612,7 @@ fn function_signature(function: &crate::schema::FunctionDef, returns: Option<&Ki
 /// keystroke narrows to a family rather than scrolling 400 functions.
 fn namespace_candidates(weight: f32) -> Vec<Draft> {
     let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
-    for builtin in builtins::BUILTINS {
+    for builtin in builtins::offered() {
         *counts.entry(builtin.family()).or_default() += 1;
     }
     let mut out = Vec::new();
@@ -648,19 +646,23 @@ fn method_candidates(receiver: &Kind, weight: f32) -> Vec<Draft> {
     let Some(family) = method_family(receiver) else {
         return Vec::new();
     };
-    builtins::BUILTINS
-        .iter()
+    builtins::offered()
         .filter(|builtin| builtin.family() == family)
         .filter_map(|builtin| {
             let method = builtin.name.strip_prefix(family)?.strip_prefix("::")?;
+            // A nested path (`array::sort::asc`) is not a method: SurrealQL
+            // has no `.sort::asc()` sugar.
+            if method.contains("::") {
+                return None;
+            }
             Some(Draft::new(
                 CompletionCandidate {
                     label: method.to_string(),
                     insert_text: method.to_string(),
                     kind: CandidateKind::Method,
-                    detail: Some(builtin.signature()),
-                    documentation: Some(format!("`{family}` method")),
-                    candidate_kind: kind_text::return_kind(builtin.returns),
+                    detail: Some(builtins::signature_text(builtin)),
+                    documentation: Some(builtin.doc.to_string()),
+                    candidate_kind: builtins::method_return_kind(builtin, receiver),
                     score: 0.0,
                     sort_text: String::new(),
                     replace: (0, 0),
@@ -917,7 +919,7 @@ fn in_scope_params(
 
     // Applied last, over every origin: a narrowing is a statement about this
     // program point, and it outranks whatever bound the name.
-    for (name, (kind, _)) in seen.iter_mut() {
+    for (name, (kind, _)) in &mut seen {
         if let Some(narrowing) =
             crate::query::narrowing_at(&output.narrowings, parsed.source_id(), name, offset)
         {

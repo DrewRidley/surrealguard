@@ -60,7 +60,7 @@ pub(crate) fn check_table_defined_anywhere(
         1001,
         format!("`{name}` is not a defined table"),
     );
-    finding = match crate::suggest::closest(name, ctx.known_table_names().into_iter()) {
+    finding = match crate::suggest::closest(name, ctx.known_table_names()) {
         Some(nearest) => finding.with_help(format!("did you mean `{nearest}`?")),
         None => finding.with_help(format!("no `DEFINE TABLE {name}` exists in the workspace")),
     };

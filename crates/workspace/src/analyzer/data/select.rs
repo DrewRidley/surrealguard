@@ -732,7 +732,7 @@ fn collect_equality_pinned_fields(cond: &ast::Expr, out: &mut Vec<String>) {
             collect_equality_pinned_fields(&lhs.node, out);
             collect_equality_pinned_fields(&rhs.node, out);
         }
-        ast::BinaryOp::Eq => {
+        ast::BinaryOp::Eq | ast::BinaryOp::Exact | ast::BinaryOp::Is => {
             for (field, other) in [(&lhs.node, &rhs.node), (&rhs.node, &lhs.node)] {
                 let ast::Expr::Idiom(idiom) = field else {
                     continue;
@@ -795,6 +795,8 @@ fn check_select_statement_shape(
     check_count_without_group(stmt, ctx, cardinality_only);
     check_wildcard_under_group(stmt, ctx);
     check_group_key_projection(stmt, ctx);
+    check_non_key_projection_under_group(stmt, ctx);
+    check_page_without_order(stmt, ctx);
 
     // `SELECT *, age` — the explicit field is already inside `*`.
     if has_wildcard_projection(stmt) {
@@ -1018,6 +1020,188 @@ fn check_group_key_projection(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<
             );
         }
     }
+}
+
+/// 4027: under `GROUP BY k` every projection must be a group key, an
+/// aggregate over a column, or an expression built from those. Anything else
+/// — a plain non-key field, an expression over one — is not rejected by the
+/// engine: each group silently *accumulates* every row's value into an array,
+/// so the result shape is not what the projection reads as (`name: string`
+/// comes back as `name: array<string>`). The inference side of the same
+/// contract is [`group_accumulates`], which wraps exactly the projections
+/// this reports.
+///
+/// Sibling of 4013 (a key that is not projected) and 4025 (a wildcard, which
+/// the engine rejects outright — so this stays silent alongside one, as 4013
+/// does: the premise that the query runs does not hold there). `GROUP ALL`
+/// has no keys and every non-aggregate projection accumulates by
+/// construction, but that is what the author asked for, so it is exempt.
+fn check_non_key_projection_under_group(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
+    let Some(group) = &stmt.group else {
+        return;
+    };
+    if group.all || group.keys.is_empty() || has_wildcard_projection(stmt) {
+        return;
+    }
+    for projection in &stmt.projections {
+        let ast::Projection::Expr { expr, alias } = projection else {
+            continue;
+        };
+        let Some(offender) = accumulated_field(expr, alias.as_ref(), group) else {
+            continue;
+        };
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                span,
+                4027,
+                format!(
+                    "`{offender}` is neither a GROUP BY key nor an aggregate, so each group collects every row's value into an array"
+                ),
+            )
+            .with_help(format!(
+                "add `{offender}` to `GROUP BY`, or aggregate it (e.g. `array::group({offender})`) if you want each group's values"
+            )),
+        );
+    }
+}
+
+/// Whether a `GROUP BY` clause accumulates this projection into an array
+/// rather than reducing it — the predicate 4027 reports and inference wraps,
+/// shared so the finding and the type can never disagree. `None` for
+/// `GROUP ALL`, for a wildcard query (rejected; 4025), and for every
+/// projection that is provably fine or not provably wrong.
+fn group_accumulates(
+    stmt: &ast::SelectStmt,
+    expr: &ast::Spanned<ast::Expr>,
+    alias: Option<&ast::Spanned<String>>,
+) -> bool {
+    let Some(group) = &stmt.group else {
+        return false;
+    };
+    if group.all || group.keys.is_empty() || has_wildcard_projection(stmt) {
+        return false;
+    }
+    accumulated_field(expr, alias, group).is_some()
+}
+
+/// The first row field that makes a projection accumulate under `GROUP BY`,
+/// or `None` when the projection is a key, an aggregate, an expression built
+/// from those, or a shape this does not model (then it stays silent).
+///
+/// A projection is a key when its alias is one, or when its plain field path
+/// equals a key, covers one (`address` covers `GROUP BY address.city`), or
+/// sits under one (`address.city` under `GROUP BY address` is constant within
+/// a group). Everything the walk does not recognise — a subquery, a graph
+/// traversal, a method call, a parameter-rooted idiom, a key that is not a
+/// plain path — is treated as unknown, and one unknown anywhere silences the
+/// whole projection.
+fn accumulated_field(
+    expr: &ast::Spanned<ast::Expr>,
+    alias: Option<&ast::Spanned<String>>,
+    group: &ast::GroupClause,
+) -> Option<String> {
+    let mut keys = Vec::with_capacity(group.keys.len());
+    for key in &group.keys {
+        keys.push(plain_field_segments(&key.node)?.join("."));
+    }
+    if alias.is_some_and(|alias| keys.contains(&alias.node)) {
+        return None;
+    }
+    let mut offender = None;
+    if field_walk_is_modeled(&expr.node, &keys, &mut offender) {
+        offender
+    } else {
+        None
+    }
+}
+
+/// Walks an expression looking for a row field that is not covered by the
+/// group keys, outside any aggregate call. Returns `false` the moment it
+/// meets a construct it does not model; `offender` receives the first
+/// uncovered field's dotted path.
+fn field_walk_is_modeled(expr: &ast::Expr, keys: &[String], offender: &mut Option<String>) -> bool {
+    match expr {
+        ast::Expr::Idiom(idiom) => {
+            let Some(segments) = plain_field_segments(idiom) else {
+                return false;
+            };
+            let path = segments.join(".");
+            let covered = keys.iter().any(|key| {
+                *key == path
+                    || key.starts_with(&format!("{path}."))
+                    || path.starts_with(&format!("{key}."))
+            });
+            if !covered && offender.is_none() {
+                *offender = Some(path);
+            }
+            true
+        }
+        // An aggregate reduces whatever column it is handed; its argument is
+        // not a per-row value and is not walked.
+        ast::Expr::Call(call) if is_group_aggregate(call) => true,
+        ast::Expr::Call(call) => call
+            .args
+            .iter()
+            .all(|arg| field_walk_is_modeled(&arg.node, keys, offender)),
+        ast::Expr::Binary { lhs, rhs, .. } => {
+            field_walk_is_modeled(&lhs.node, keys, offender)
+                && field_walk_is_modeled(&rhs.node, keys, offender)
+        }
+        ast::Expr::Prefix { expr, .. } | ast::Expr::Cast { expr, .. } => {
+            field_walk_is_modeled(&expr.node, keys, offender)
+        }
+        ast::Expr::Literal(_) | ast::Expr::Param(_) | ast::Expr::Constant(_) => true,
+        _ => false,
+    }
+}
+
+/// A call the GROUP planner evaluates as an aggregate: the column aggregates
+/// of [`is_column_aggregate`] plus every form of `count`.
+fn is_group_aggregate(call: &ast::Call) -> bool {
+    let path = call.path.node.as_str();
+    is_column_aggregate(path) || matches!(path, "count" | "count::count")
+}
+
+/// 7016 (opt-in, off by default): a `LIMIT`/`START` page cut from rows that
+/// have no `ORDER BY` is cut from storage order, so two pages can overlap or
+/// skip rows and the same query can answer differently run to run.
+///
+/// Only a table target pages: a record id is one row and a param/subquery
+/// source has no order this statement controls. `ONLY … LIMIT 1` asks for a
+/// row, not a page — the `LIMIT 1` is the cardinality proof 4003 wants — and
+/// `GROUP ALL` yields a single row, so neither can be misordered.
+fn check_page_without_order(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
+    let Some(clause) = stmt.limit.as_ref().or(stmt.start.as_ref()) else {
+        return;
+    };
+    if stmt.order.is_some() || stmt.group.as_ref().is_some_and(|group| group.all) {
+        return;
+    }
+    // `LIMIT 1` with no START is the "any one row" idiom: the author has said
+    // which row does not matter, so an unordered cut is not a paging mistake.
+    // With ONLY it is also the single-row contract 4003/4026 own.
+    if stmt.start.is_none() && literal_limit(stmt).is_some_and(|limit| limit <= 1) {
+        return;
+    }
+    let Some(from) = stmt.from.first() else {
+        return;
+    };
+    if !matches!(from.node, ast::Expr::Table(_)) {
+        return;
+    }
+    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), clause.span);
+    ctx.emit(
+        surrealguard_diagnostics::catalog::finding(
+            span,
+            7016,
+            "LIMIT/START without ORDER BY cuts the page from storage order, so which rows it holds is not deterministic"
+                .to_string(),
+        )
+        .with_help(
+            "add an `ORDER BY` (e.g. `ORDER BY id`), or allow this with `7016 = \"allow\"` (it is off by default)",
+        ),
+    );
 }
 
 /// The names this query's result rows carry: each projection's `AS` alias,
@@ -1420,7 +1604,7 @@ fn check_graph_projection(
     // lifetime rather than the caller's (as `computed_kind` does).
     let row = ctx.schema().tables.get(&table.name);
     ctx.with_row_table(row, |ctx| {
-        crate::analyzer::expression::check::check_value_expression(ctx, expr)
+        crate::analyzer::expression::check::check_value_expression(ctx, expr);
     });
 }
 
@@ -1434,10 +1618,28 @@ fn value_projection_kind(
     if !stmt.value {
         return None;
     }
-    let [ast::Projection::Expr { expr, .. }] = stmt.projections.as_slice() else {
+    let [ast::Projection::Expr { expr, alias }] = stmt.projections.as_slice() else {
         return None;
     };
 
+    let kind = value_projection_inner_kind(stmt, expr, row_table_name, table, ctx)?;
+    // Under `GROUP BY` a non-key, non-aggregate value accumulates each
+    // group's rows (4027), so the value is the collected column.
+    Some(if group_accumulates(stmt, expr, alias.as_ref()) {
+        Kind::Array(Box::new(kind), None)
+    } else {
+        kind
+    })
+}
+
+/// The per-row kind of the single `SELECT VALUE` projection.
+fn value_projection_inner_kind(
+    stmt: &ast::SelectStmt,
+    expr: &ast::Spanned<ast::Expr>,
+    row_table_name: &str,
+    table: &'_ TableDef,
+    ctx: &mut AnalysisContext<'_>,
+) -> Option<Kind> {
     match &expr.node {
         ast::Expr::Idiom(idiom) if starts_with_graph(idiom) => {
             check_graph_projection(ctx, table, expr);
@@ -1456,7 +1658,7 @@ fn value_projection_kind(
             if let Some((prefix, selected)) = row_destructure_head(idiom) {
                 validate_row_destructure(ctx, table, &prefix, selected);
             }
-            Some(computed_kind(expr, table, ctx))
+            Some(computed_kind(expr, stmt, table, ctx))
         }
         ast::Expr::Idiom(idiom) => {
             let segments = plain_field_segments(idiom)?;
@@ -1467,7 +1669,7 @@ fn value_projection_kind(
             validate_field_path(ctx, table, &segments, expr.span, 1002);
             Some(kind)
         }
-        _ => Some(computed_kind(expr, table, ctx)),
+        _ => Some(computed_kind(expr, stmt, table, ctx)),
     }
 }
 
@@ -1493,6 +1695,31 @@ fn projected_object_kind(
                 );
             }
             ast::Projection::Expr { expr, alias } => {
+                if group_accumulates(stmt, expr, alias.as_ref()) {
+                    // A non-key, non-aggregate projection under `GROUP BY`
+                    // (4027) lands as the collected column: project it on
+                    // its own, then wrap the value at the key it produced.
+                    let mut own = BTreeMap::new();
+                    project_expr(
+                        expr,
+                        alias.as_ref(),
+                        stmt,
+                        row_table_name,
+                        table,
+                        ctx,
+                        &mut own,
+                        false,
+                    );
+                    let depth = match (alias, &expr.node) {
+                        (None, ast::Expr::Idiom(idiom)) => {
+                            plain_field_segments(idiom).map_or(1, |segments| segments.len())
+                        }
+                        _ => 1,
+                    };
+                    let (path, kind) = accumulated_leaf(own, depth);
+                    insert_kind_at_path(&mut fields, &path, Kind::Array(Box::new(kind), None));
+                    continue;
+                }
                 project_expr(
                     expr,
                     alias.as_ref(),
@@ -1513,6 +1740,27 @@ fn projected_object_kind(
     }
 
     object_literal(fields)
+}
+
+/// Where a lone projection landed in a fresh field map: the path down its
+/// single-key chain, at most `depth` segments long, and the kind at the end
+/// of it. `address.city` (depth 2) lands as `{address: {city: T}}` and yields
+/// `(["address", "city"], T)`; a plain `address` (depth 1) whose kind is an
+/// object stops at `(["address"], {…})`, so the wrap goes around the object,
+/// not each of its fields.
+fn accumulated_leaf(mut fields: BTreeMap<String, Kind>, depth: usize) -> (Vec<String>, Kind) {
+    let mut path = Vec::new();
+    loop {
+        if fields.len() != 1 || path.len() == depth {
+            return (path, object_literal(fields));
+        }
+        let (key, kind) = fields.pop_first().expect("exactly one field");
+        path.push(key);
+        match kind {
+            Kind::Literal(KindLiteral::Object(inner)) if path.len() < depth => fields = inner,
+            other => return (path, other),
+        }
+    }
 }
 
 /// The row key a projection *renames away* when a wildcard also supplies the
@@ -1681,7 +1929,7 @@ fn project_expr(
         // computed projection gets — a method resolves against its receiver's
         // kind (`SELECT name.len()` is an `int`), an index reaches the
         // element kind — with their invariants checked at the same site.
-        let kind = computed_kind(expr, table, ctx);
+        let kind = computed_kind(expr, stmt, table, ctx);
         match alias_name {
             Some(alias) => {
                 fields.insert(alias, kind);
@@ -1709,7 +1957,7 @@ fn project_expr(
             if let Some(paths) = const_field_path_args(call, ctx) {
                 // Check the call as usual (its own 5005 contract) — only the
                 // naming differs.
-                let _ = computed_kind(expr, table, ctx);
+                let _ = computed_kind(expr, stmt, table, ctx);
                 for path in paths {
                     let segments: Vec<String> = path.split('.').map(str::to_string).collect();
                     let kind = kind_for_path(table, &segments).unwrap_or(Kind::Any);
@@ -1722,7 +1970,7 @@ fn project_expr(
 
     // Computed projection: full expression inference.
     let key = alias_name.unwrap_or_else(|| unaliased_computed_key(expr, ctx.source_text()));
-    let kind = computed_kind(expr, table, ctx);
+    let kind = computed_kind(expr, stmt, table, ctx);
     fields.insert(key, kind);
 }
 
@@ -1812,7 +2060,8 @@ pub(crate) fn simplified_key_segments(idiom: &ast::Idiom) -> Option<Vec<String>>
             | ast::IdiomPart::All
             | ast::IdiomPart::Last
             | ast::IdiomPart::Where(_)
-            | ast::IdiomPart::Optional => {}
+            | ast::IdiomPart::Optional
+            | ast::IdiomPart::Flatten => {}
             ast::IdiomPart::Start(_)
             | ast::IdiomPart::Destructure(_)
             | ast::IdiomPart::Recurse { .. }
@@ -1824,13 +2073,18 @@ pub(crate) fn simplified_key_segments(idiom: &ast::Idiom) -> Option<Vec<String>>
 
 fn computed_kind(
     expr: &ast::Spanned<ast::Expr>,
+    stmt: &ast::SelectStmt,
     table: &TableDef,
     ctx: &mut AnalysisContext<'_>,
 ) -> Kind {
-    // An aggregate over a projected column receives the *collected* column,
-    // not one row's value — infer it as such so its `array` argument
-    // contract is satisfied rather than false-positived.
-    if let Some(kind) = aggregate_expression_kind(expr, table, ctx) {
+    if stmt.group.is_some() {
+        // An aggregate over a projected column receives the *collected*
+        // column, not one row's value — infer it as such so its `array`
+        // argument contract is satisfied rather than false-positived.
+        if let Some(kind) = aggregate_expression_kind(expr, table, ctx) {
+            return kind;
+        }
+    } else if let Some(kind) = ungrouped_column_aggregate_kind(expr, table, ctx) {
         return kind;
     }
     // Re-resolve the table from the schema so the borrow carries the
@@ -1904,6 +2158,110 @@ fn column_aggregate_kind(
         call,
         &[collected],
     ))
+}
+
+/// 4028: without a GROUP clause there is no column to collect, so an
+/// aggregate written over a scalar row field (`SELECT math::sum(age) FROM
+/// person`) runs per row on one `int` — the engine rejects the argument
+/// (`Expected an array`), and no total was ever going to come back. Only the
+/// provable shape is reported: every aggregate in the projection takes a
+/// plain row column whose declared kind is definitely not a collection. A
+/// collection column (`math::sum(tags)` over `array<int>`), a parameter, or
+/// a computed argument is inferred the ordinary way and stays silent here —
+/// the ordinary signature contract (5002) covers what it can.
+///
+/// Returns the promoted kind for the shape it reports, so the same call is
+/// not also reported against its signature: one mistake, one code. `count()`
+/// is not in the aggregate set (4023 owns it).
+fn ungrouped_column_aggregate_kind(
+    expr: &ast::Spanned<ast::Expr>,
+    table: &TableDef,
+    ctx: &mut AnalysisContext<'_>,
+) -> Option<Kind> {
+    if !contains_column_aggregate(&expr.node) || !models_aggregate_shape(&expr.node) {
+        return None;
+    }
+    let mut calls = Vec::new();
+    collect_column_aggregates(expr, &mut calls);
+    let mut scalar_columns = Vec::with_capacity(calls.len());
+    for call in &calls {
+        let [arg] = call.node.args.as_slice() else {
+            return None;
+        };
+        let ast::Expr::Idiom(idiom) = &arg.node else {
+            return None;
+        };
+        let segments = plain_field_segments(idiom)?;
+        let column = kind_for_path(table, &segments)?;
+        if !is_definitely_scalar(&column) {
+            return None;
+        }
+        scalar_columns.push((segments.join("."), column));
+    }
+    for (call, (column_name, column)) in calls.iter().zip(&scalar_columns) {
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), call.span);
+        ctx.emit(
+            surrealguard_diagnostics::catalog::finding(
+                span,
+                4028,
+                format!(
+                    "`{}({column_name})` runs per row without a GROUP clause — `{column_name}` is one `{}`, not a column, and SurrealDB rejects the call",
+                    call.node.path.node,
+                    crate::render_kind(column),
+                ),
+            )
+            .with_help(
+                "add `GROUP ALL` for a total over every row, or `GROUP BY <key>` for one per group",
+            ),
+        );
+    }
+    aggregate_operand_kind(expr, table, ctx)
+}
+
+/// Every aggregate call in an expression whose shape [`models_aggregate_shape`]
+/// accepted (so none is nested inside another).
+fn collect_column_aggregates<'e>(
+    expr: &'e ast::Spanned<ast::Expr>,
+    out: &mut Vec<ast::Spanned<&'e ast::Call>>,
+) {
+    match &expr.node {
+        ast::Expr::Call(call) if is_column_aggregate(call.path.node.as_str()) => {
+            out.push(ast::Spanned {
+                node: call,
+                span: expr.span,
+            });
+        }
+        ast::Expr::Call(call) => {
+            for arg in &call.args {
+                collect_column_aggregates(arg, out);
+            }
+        }
+        ast::Expr::Binary { lhs, rhs, .. } => {
+            collect_column_aggregates(lhs, out);
+            collect_column_aggregates(rhs, out);
+        }
+        ast::Expr::Prefix { expr, .. } | ast::Expr::Cast { expr, .. } => {
+            collect_column_aggregates(expr, out);
+        }
+        _ => {}
+    }
+}
+
+/// Whether a declared kind is provably a single value — never a collection,
+/// and never something (`any`, an open object, a function) that might hold
+/// one. `option<int>` is scalar: NONE per row is still not a column.
+fn is_definitely_scalar(kind: &Kind) -> bool {
+    match kind {
+        Kind::Any
+        | Kind::Object
+        | Kind::Array(..)
+        | Kind::Set(..)
+        | Kind::Function(..)
+        | Kind::Range
+        | Kind::Literal(KindLiteral::Array(_) | KindLiteral::Object(_)) => false,
+        Kind::Either(variants) => !variants.is_empty() && variants.iter().all(is_definitely_scalar),
+        _ => true,
+    }
 }
 
 /// A projection may compute *around* an aggregate — `math::sum(age) * 2`,
@@ -2232,22 +2590,11 @@ fn step_reshaping_part(
     }
 }
 
-/// A destructure's sub-path resolved off whatever the destructure stands on: a
-/// record link resolves against its table (crossing further links), and an
-/// object — the value a *nested* destructure leaves behind — is read key by
-/// key.
+/// A destructure's sub-path resolved off whatever the destructure stands on —
+/// a record link (entered through the schema, crossing further links) or the
+/// object a *nested* destructure leaves behind: [`crate::kinds::project_fields`].
 fn kind_at_sub_path(current: &Kind, segments: &[String], schema: &SchemaIndex) -> Option<Kind> {
-    if let Kind::Record(targets) = current {
-        if let [target] = targets.as_slice() {
-            let table = schema.tables.get(&target.to_string())?;
-            return resolve_field_path(schema, table, segments);
-        }
-    }
-    let mut kind = current.clone();
-    for segment in segments {
-        kind = crate::analyzer::expression::infer::field_of_kind(&kind, segment, schema)?;
-    }
-    Some(kind)
+    crate::kinds::project_fields(current, segments, Some(schema))
 }
 
 /// The type of one graph projection (`->likes->post`, `->likes.since`,
@@ -2396,6 +2743,10 @@ fn row_destructure_parts(
     Some((prefix_segments, selected.clone()))
 }
 
+/// The wrappers peeled off a destructured link (re-applied to the whole
+/// projected object) and the resolved `(path, kind)` of each selected field.
+type HoistedLink = (Vec<crate::kinds::KindWrapper>, Vec<(Vec<String>, Kind)>);
+
 /// The selected sub-field kinds of a `.{…}` destructure, plus any wrappers that
 /// belong to the **whole projected object** rather than to its fields.
 ///
@@ -2410,7 +2761,7 @@ fn destructure_kinds(
     table: &TableDef,
     prefix: &[String],
     selected: &[ast::Spanned<ast::Idiom>],
-) -> Option<(Vec<crate::kinds::KindWrapper>, Vec<(Vec<String>, Kind)>)> {
+) -> Option<HoistedLink> {
     // Only a wrapped link hoists; a bare `record<T>` link and a plain nested
     // object both keep today's field-by-field resolution.
     let wrapped_link =
@@ -2483,6 +2834,7 @@ pub(crate) fn validate_graph_tail(ctx: &mut AnalysisContext<'_>, idiom: &ast::Id
             ast::IdiomPart::Method { .. } => "a method call",
             ast::IdiomPart::Recurse { .. } => "a recursion",
             ast::IdiomPart::Optional => "`?`",
+            ast::IdiomPart::Flatten => "`...`",
             ast::IdiomPart::Graph { .. } => "a further traversal step",
             ast::IdiomPart::Start(_) => "a leading value",
             ast::IdiomPart::Partial(_) => "syntax that did not lower",
@@ -2707,7 +3059,7 @@ impl crate::analyzer::facts::KindOracle for ProjectedRow<'_> {
         };
         output_paths(place, self.stmt)
             .into_iter()
-            .find_map(|path| kind_at_path(fields, &path).cloned())
+            .find_map(|path| kind_at_path(fields, &path))
     }
 }
 
@@ -2743,18 +3095,13 @@ fn output_paths(place: &Place, stmt: &ast::SelectStmt) -> Vec<Vec<String>> {
     paths
 }
 
-/// The kind at `segments` in a projected object literal, if that exact path is
-/// present.
-fn kind_at_path<'a>(fields: &'a BTreeMap<String, Kind>, segments: &[String]) -> Option<&'a Kind> {
+/// The kind at `segments` in a projected object literal, if that path is
+/// present: the first segment is a key of the row, the rest is
+/// [`crate::kinds::project_fields`] (schema-less — the row's own shape is all
+/// the oracle answers for).
+fn kind_at_path(fields: &BTreeMap<String, Kind>, segments: &[String]) -> Option<Kind> {
     let (first, rest) = segments.split_first()?;
-    let kind = fields.get(first)?;
-    if rest.is_empty() {
-        return Some(kind);
-    }
-    match kind {
-        Kind::Literal(KindLiteral::Object(child_fields)) => kind_at_path(child_fields, rest),
-        _ => None,
-    }
+    crate::kinds::project_fields(fields.get(first)?, rest, None)
 }
 
 /// Applies a [`Refinement`] to the leaf at `segments` in a projected object
@@ -2994,9 +3341,7 @@ pub(crate) fn kind_for_path(table: &TableDef, segments: &[String]) -> Option<Kin
     // id/in/out — with trailing segments, the path crosses into the LINKED
     // table, which validates its own fields; the traversed kind is opaque
     // here (`Any`). A bare implicit field yields its own record kind.
-    let Some((head, rest)) = segments.split_first() else {
-        return None;
-    };
+    let (head, rest) = segments.split_first()?;
     let head_kind = table
         .fields
         .get(head)
@@ -4721,7 +5066,7 @@ mod tests {
 
         let (kind, diagnostics) = analyze_diagnostics(
             &schema,
-            "SELECT VALUE math::sum(size_bytes) FROM file WHERE status = 'active';",
+            "SELECT VALUE math::sum(size_bytes) FROM file WHERE status = 'active' GROUP ALL;",
         );
         // The column is collected into `array<int>`, so the `array`
         // argument contract holds — no 5002 false positive.
@@ -4733,6 +5078,25 @@ mod tests {
         // `array<int>` in, `int` out — engine-verified: `math::sum([1,2,3])`
         // is `6`, not `6f`.
         assert_eq!(kind, Kind::Array(Box::new(Kind::Int), None));
+
+        // Without a GROUP clause there is no column to collect: the call
+        // runs per row on one `int`, which is 4028 — and only 4028, not a
+        // second report against the signature.
+        let (_, ungrouped) = analyze_diagnostics(
+            &schema,
+            "SELECT VALUE math::sum(size_bytes) FROM file WHERE status = 'active';",
+        );
+        assert_eq!(
+            codes(&ungrouped).iter().filter(|c| **c == 4028).count(),
+            1,
+            "{:?}",
+            codes(&ungrouped)
+        );
+        assert!(
+            !codes(&ungrouped).contains(&5002),
+            "{:?}",
+            codes(&ungrouped)
+        );
     }
 
     #[test]
@@ -5669,9 +6033,12 @@ mod tests {
             &schema,
             "SELECT email FROM user WHERE email != NONE GROUP BY country;",
         );
+        // `email` is neither the group key nor an aggregate, so each group
+        // collects it (4027) — and the collected element is the *declared*
+        // `option<string>`, not the WHERE-narrowed `string`.
         assert_eq!(
             object_fields(array_element(&kind))["email"],
-            option_string()
+            Kind::Array(Box::new(option_string()), None)
         );
     }
 

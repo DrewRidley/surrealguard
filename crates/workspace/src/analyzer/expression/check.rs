@@ -110,14 +110,21 @@ pub fn check_value_expression(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned
             });
         }
         ast::Expr::Closure(closure) => check_closure(ctx, closure),
-        // A param, a table name, a record id and an unlowerable node carry no
-        // position of their own. Exhaustive rather than a catch-all: a new
-        // expression form must decide whether it has inner obligations, and
-        // the `_ => {}` that used to stand here is what made `(THROW …)`,
-        // `({ … })` and every closure body silently unchecked.
+        // A range's bounds are ordinary value positions.
+        ast::Expr::Range(range) => {
+            for bound in [&range.start, &range.end].into_iter().flatten() {
+                check_value_expression(ctx, bound);
+            }
+        }
+        // A param, a table name, a record id, a constant and an unlowerable
+        // node carry no position of their own. Exhaustive rather than a
+        // catch-all: a new expression form must decide whether it has inner
+        // obligations, and the `_ => {}` that used to stand here is what made
+        // `(THROW …)`, `({ … })` and every closure body silently unchecked.
         ast::Expr::Param(_)
         | ast::Expr::Table(_)
         | ast::Expr::RecordId { .. }
+        | ast::Expr::Constant(_)
         | ast::Expr::Partial(_) => {}
     }
 }
@@ -345,6 +352,10 @@ fn check_cast(
 /// "resolves a type, validates nothing" holes lived in the gap that used to be
 /// here, because a graph idiom returned early and every tail form needed its
 /// own hand-written recognizer to be checked at all.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one match arm per idiom tail form; splitting would scatter the contract"
+)]
 fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
     use crate::analyzer::expression::infer::idiom_prefix_kinds;
 
@@ -426,12 +437,9 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
     let mut flattened = false;
 
     for (part, receiver) in idiom_prefix_kinds(idiom, ctx) {
-        let was_collection = receiver
-            .as_ref()
-            .map(|kind| {
-                crate::analyzer::expression::infer::collection_element_kind(kind).is_some()
-            })
-            .unwrap_or(false);
+        let was_collection = receiver.as_ref().is_some_and(|kind| {
+            crate::analyzer::expression::infer::collection_element_kind(kind).is_some()
+        });
         let field_receiver = splat_source.take().or_else(|| receiver.clone());
         splat_source = match &part.node {
             ast::IdiomPart::All => receiver
@@ -453,11 +461,12 @@ fn check_idiom_positions(ctx: &mut AnalysisContext<'_>, idiom: &ast::Idiom) {
             // A traversal answers a fresh array of its own — `->follows->user
             // .len()` is the array's length, not its elements'.
             ast::IdiomPart::Graph { .. } => false,
-            // A filter and a `?` leave the value exactly as it stands; a
-            // recursion, a leading value and an unlowered part leave nothing
-            // resolvable behind them anyway.
+            // A filter, a `?` and a `...` leave the value's element kind as it
+            // stands; a recursion, a leading value and an unlowered part leave
+            // nothing resolvable behind them anyway.
             ast::IdiomPart::Where(_)
             | ast::IdiomPart::Optional
+            | ast::IdiomPart::Flatten
             | ast::IdiomPart::Recurse { .. }
             | ast::IdiomPart::Start(_)
             | ast::IdiomPart::Partial(_) => flattened,
@@ -615,15 +624,11 @@ fn check_binary(
         return;
     };
 
-    // Custom operators carry their own contracts (regex patterns,
-    // membership) and never reach the arithmetic/comparison checks below.
-    if let Op::Other(name) = op {
-        check_regex_pattern_operand(ctx, name, rhs);
-        check_empty_membership(ctx, whole, name, lhs, rhs);
-        check_membership_kind(ctx, whole, name, &left, &right);
-        return;
-    }
-
+    // The pattern and membership operators carry their own contracts (a
+    // compilable pattern, a non-empty collection, a member that can exist).
+    check_regex_pattern_operand(ctx, op, rhs);
+    check_empty_membership(ctx, whole, op, lhs, rhs);
+    check_membership_kind(ctx, whole, op, &left, &right);
     check_none_arithmetic(ctx, op, lhs, &left, rhs, &right);
 
     // One contract, one code: the operands must make sense together for
@@ -639,7 +644,9 @@ fn check_binary(
     //     be that sentinel (`option<datetime> = NULL`, `string = NONE`);
     //   - two record links whose declared table sets are disjoint
     //     (`record<file> = record<folder>`).
-    if matches!(op, Op::Eq | Op::NotEq)
+    // `IS` / `IS NOT` are the keyword spellings of `=` / `!=`, and `==` only
+    // tightens equality, so all five share the constant-result contract.
+    if matches!(op, Op::Eq | Op::Exact | Op::Is | Op::NotEq | Op::IsNot)
         && (literal_union_excludes(ctx, &left, rhs)
             || literal_union_excludes(ctx, &right, lhs)
             || sentinel_mismatch(lhs, rhs, &right)
@@ -655,7 +662,7 @@ fn check_binary(
                 op_text(op),
                 crate::render::render_offending(&left, Some(&right)),
                 crate::render::render_offending(&right, Some(&left)),
-                if matches!(op, Op::Eq) {
+                if matches!(op, Op::Eq | Op::Exact | Op::Is) {
                     "false"
                 } else {
                     "true"
@@ -666,11 +673,34 @@ fn check_binary(
     }
 
     let violated = match op {
-        Op::Add | Op::Sub | Op::Mul | Op::Div => binary_result_kind(op, &left, &right).is_none(),
+        Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Rem | Op::Pow => {
+            binary_result_kind(op, &left, &right).is_none()
+        }
         // NONE/NULL comparisons are the idiomatic existence checks;
         // numerics widen. Truthiness makes AND/OR legal on anything; ??
         // accepts anything by design.
-        Op::Eq | Op::NotEq | Op::Lt | Op::LtEq | Op::Gt | Op::GtEq => !comparable(&left, &right),
+        Op::Eq
+        | Op::Exact
+        | Op::Is
+        | Op::NotEq
+        | Op::IsNot
+        | Op::Lt
+        | Op::LtEq
+        | Op::Gt
+        | Op::GtEq => !comparable(&left, &right),
+        // `CONTAINS…` asks the left operand for its members; `IN`/`…INSIDE`
+        // ask the right one. A kind that has no members (a number, a bool, a
+        // datetime, a record link) can never satisfy either.
+        Op::Contains | Op::ContainsNot | Op::ContainsAll | Op::ContainsAny | Op::ContainsNone => {
+            !may_hold_members(&left)
+        }
+        Op::In
+        | Op::NotIn
+        | Op::Inside
+        | Op::NotInside
+        | Op::AllInside
+        | Op::AnyInside
+        | Op::NoneInside => !may_hold_members(&right),
         _ => false,
     };
     if violated {
@@ -688,6 +718,28 @@ fn check_binary(
     }
 }
 
+/// Whether a value of `kind` can have members — what `CONTAINS…` asks of its
+/// left operand and `IN`/`…INSIDE` of their right. Only a kind that is
+/// *provably* a member-less scalar answers no; `any`, unions with a
+/// collection variant, strings (substrings), objects (keys), geometries and
+/// ranges all answer yes.
+fn may_hold_members(kind: &Kind) -> bool {
+    match kind {
+        Kind::Any
+        | Kind::Object
+        | Kind::String
+        | Kind::Array(..)
+        | Kind::Set(..)
+        | Kind::Geometry(_)
+        | Kind::Range => true,
+        Kind::Either(variants) => variants.iter().any(may_hold_members),
+        Kind::Literal(_) => {
+            crate::kinds::literal_base_kind(kind).is_none_or(|base| may_hold_members(&base))
+        }
+        _ => false,
+    }
+}
+
 /// Index-backed operators (`@@`/`@...` full-text, `<|...>` vector) require a
 /// supporting index on the left-hand field (1027).
 fn check_index_backed_operator(
@@ -696,19 +748,12 @@ fn check_index_backed_operator(
     lhs: &ast::Spanned<ast::Expr>,
     op: &ast::BinaryOp,
 ) {
-    let ast::BinaryOp::Other(name) = op else {
-        return;
+    let required = match op {
+        ast::BinaryOp::Matches(_) => crate::schema::IndexKind::Search,
+        ast::BinaryOp::Knn(_) => crate::schema::IndexKind::Vector,
+        _ => return,
     };
-    let needs = if name == "@@" || name.to_ascii_uppercase().starts_with("@") {
-        Some(crate::schema::IndexKind::Search)
-    } else if name.starts_with("<|") {
-        Some(crate::schema::IndexKind::Vector)
-    } else {
-        None
-    };
-    let Some(required) = needs else {
-        return;
-    };
+    let name = op_text(op);
     let ast::Expr::Idiom(idiom) = &lhs.node else {
         return;
     };
@@ -755,7 +800,7 @@ fn constrain_comparison_params(
     use ast::BinaryOp as Op;
     if !matches!(
         op,
-        Op::Eq | Op::NotEq | Op::Lt | Op::LtEq | Op::Gt | Op::GtEq
+        Op::Eq | Op::Exact | Op::Is | Op::NotEq | Op::IsNot | Op::Lt | Op::LtEq | Op::Gt | Op::GtEq
     ) {
         return;
     }
@@ -776,10 +821,10 @@ fn constrain_comparison_params(
 /// regex (2031).
 fn check_regex_pattern_operand(
     ctx: &mut AnalysisContext<'_>,
-    name: &str,
+    op: &ast::BinaryOp,
     rhs: &ast::Spanned<ast::Expr>,
 ) {
-    if !matches!(name, "~" | "!~") {
+    if !matches!(op, ast::BinaryOp::Match | ast::BinaryOp::NotMatch) {
         return;
     }
     if let Some(surrealdb_types::Value::String(pattern)) = infer_expression_fact(rhs, ctx).value {
@@ -800,20 +845,14 @@ fn check_regex_pattern_operand(
 fn check_empty_membership(
     ctx: &mut AnalysisContext<'_>,
     whole: &ast::Spanned<ast::Expr>,
-    name: &str,
+    op: &ast::BinaryOp,
     lhs: &ast::Spanned<ast::Expr>,
     rhs: &ast::Spanned<ast::Expr>,
 ) {
-    if !matches!(
-        name.to_ascii_uppercase().as_str(),
-        "IN" | "INSIDE" | "CONTAINS"
-    ) {
-        return;
-    }
-    let collection = if name.eq_ignore_ascii_case("contains") {
-        lhs
-    } else {
-        rhs
+    let collection = match op {
+        ast::BinaryOp::In | ast::BinaryOp::Inside => rhs,
+        ast::BinaryOp::Contains => lhs,
+        _ => return,
     };
     if let Some(surrealdb_types::Value::Array(values)) =
         infer_expression_fact(collection, ctx).value
@@ -840,7 +879,10 @@ fn check_none_arithmetic(
     right: &Kind,
 ) {
     use ast::BinaryOp as Op;
-    if !matches!(op, Op::Add | Op::Sub | Op::Mul | Op::Div) {
+    if !matches!(
+        op,
+        Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Rem | Op::Pow
+    ) {
         return;
     }
     for (side, kind) in [(lhs, left), (rhs, right)] {
@@ -1002,21 +1044,15 @@ fn comparable_element(a: &Kind, b: &Kind) -> bool {
 fn check_membership_kind(
     ctx: &mut AnalysisContext<'_>,
     whole: &ast::Spanned<ast::Expr>,
-    name: &str,
+    op: &ast::BinaryOp,
     left: &Kind,
     right: &Kind,
 ) {
-    if !matches!(
-        name.to_ascii_uppercase().as_str(),
-        "IN" | "INSIDE" | "CONTAINS"
-    ) {
-        return;
-    }
     // CONTAINS: the left side is the collection. IN/INSIDE: the right side is.
-    let (collection, element) = if name.eq_ignore_ascii_case("contains") {
-        (left, right)
-    } else {
-        (right, left)
+    let (collection, element) = match op {
+        ast::BinaryOp::Contains => (left, right),
+        ast::BinaryOp::In | ast::BinaryOp::Inside => (right, left),
+        _ => return,
     };
     let elem = match collection {
         Kind::Array(elem, _) | Kind::Set(elem, _) => elem.as_ref(),
@@ -1047,6 +1083,11 @@ fn comparable(left: &Kind, right: &Kind) -> bool {
     {
         return true;
     }
+    // A regex against a string is a match test (`name = /^draft-/`, `/^h/ =
+    // 'hello'`, `slug != /-$/`), on whichever side the pattern sits.
+    if regex_match_operands(left, right) {
+        return true;
+    }
     // A table value compares equal to its name as a string — `type::table($x)
     // = 'folder'` is the idiomatic record-discriminant guard.
     if matches!(
@@ -1075,6 +1116,17 @@ fn comparable(left: &Kind, right: &Kind) -> bool {
             }
         }
     }
+}
+
+/// One operand is a regex and the other a string (or a string literal): the
+/// shape SurrealDB evaluates as a regex match rather than a comparison.
+fn regex_match_operands(left: &Kind, right: &Kind) -> bool {
+    let stringish = |kind: &Kind| {
+        matches!(kind, Kind::String)
+            || crate::kinds::literal_base_kind(kind).is_some_and(|base| base == Kind::String)
+    };
+    (matches!(left, Kind::Regex) && stringish(right))
+        || (matches!(right, Kind::Regex) && stringish(left))
 }
 
 /// An array literal whose elements have several kinds usually wants a
@@ -1155,14 +1207,18 @@ fn known_kind(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) -> 
     (kind != Kind::Any).then_some(kind)
 }
 
-fn op_text(op: &ast::BinaryOp) -> &'static str {
+/// The canonical spelling of an operator, for messages.
+fn op_text(op: &ast::BinaryOp) -> String {
     use ast::BinaryOp as Op;
-    match op {
+    let text = match op {
         Op::Add => "+",
         Op::Sub => "-",
         Op::Mul => "*",
         Op::Div => "/",
+        Op::Rem => "%",
+        Op::Pow => "**",
         Op::Eq => "=",
+        Op::Exact => "==",
         Op::NotEq => "!=",
         Op::Lt => "<",
         Op::LtEq => "<=",
@@ -1171,8 +1227,42 @@ fn op_text(op: &ast::BinaryOp) -> &'static str {
         Op::And => "AND",
         Op::Or => "OR",
         Op::NullCoalesce => "??",
-        _ => "?",
-    }
+        Op::TruthyCoalesce => "?:",
+        Op::Is => "IS",
+        Op::IsNot => "IS NOT",
+        Op::In => "IN",
+        Op::NotIn => "NOT IN",
+        Op::Contains => "CONTAINS",
+        Op::ContainsNot => "CONTAINSNOT",
+        Op::ContainsAll => "CONTAINSALL",
+        Op::ContainsAny => "CONTAINSANY",
+        Op::ContainsNone => "CONTAINSNONE",
+        Op::Inside => "INSIDE",
+        Op::NotInside => "NOTINSIDE",
+        Op::AllInside => "ALLINSIDE",
+        Op::AnyInside => "ANYINSIDE",
+        Op::NoneInside => "NONEINSIDE",
+        Op::Outside => "OUTSIDE",
+        Op::Intersects => "INTERSECTS",
+        Op::Match => "~",
+        Op::NotMatch => "!~",
+        Op::AllMatch => "*~",
+        Op::AnyMatch => "?~",
+        Op::AnyEq => "?=",
+        Op::AllEq => "*=",
+        Op::Matches(None) => "@@",
+        Op::Matches(Some(reference)) => return format!("@{reference}@"),
+        Op::Knn(knn) => {
+            return match (knn.k, knn.ef, &knn.distance) {
+                (Some(k), Some(ef), _) => format!("<|{k},{ef}|>"),
+                (Some(k), None, Some(distance)) => format!("<|{k},{distance}|>"),
+                (Some(k), None, None) => format!("<|{k}|>"),
+                _ => "<|…|>".to_string(),
+            }
+        }
+        Op::Other(text) => text,
+    };
+    text.to_string()
 }
 
 /// A field read out of the object a `.{…}` just built.

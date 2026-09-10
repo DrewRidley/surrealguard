@@ -21,10 +21,12 @@ pub mod expression;
 pub(crate) mod facts;
 pub mod flow;
 pub mod function;
+pub mod omit;
 pub mod pipeline;
 pub mod schema;
 pub mod statement;
 pub mod system;
+pub mod version;
 
 #[cfg(test)]
 pub(crate) mod test_support;

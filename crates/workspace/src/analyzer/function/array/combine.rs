@@ -11,26 +11,32 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{apply, ParamKind, ReturnKind, Signature};
 
+/// The signature calls are checked against. The declared return is
+/// `array<array<any>>`; a call with two typed arrays narrows the pair
+/// element (see [`pair_element_kind`]).
+pub(crate) fn signature() -> Signature {
+    Signature {
+        min_args: 2,
+        max_args: Some(2),
+        arg_kinds: vec![ParamKind::Array, ParamKind::Array],
+        return_kind: ReturnKind::Fixed(Kind::Array(
+            Box::new(Kind::Array(Box::new(Kind::Any), None)),
+            None,
+        )),
+    }
+}
+
 pub(crate) fn analyze_array_combine(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     args: &[Kind],
 ) -> Kind {
-    let pair_element = pair_element_kind(args);
-    apply(
-        ctx,
-        call,
-        &Signature {
-            min_args: 2,
-            max_args: Some(2),
-            arg_kinds: vec![ParamKind::Array, ParamKind::Array],
-            return_kind: ReturnKind::Fixed(Kind::Array(
-                Box::new(Kind::Array(Box::new(pair_element), None)),
-                None,
-            )),
-        },
-        args,
-    )
+    let mut signature = signature();
+    signature.return_kind = ReturnKind::Fixed(Kind::Array(
+        Box::new(Kind::Array(Box::new(pair_element_kind(args)), None)),
+        None,
+    ));
+    apply(ctx, call, &signature, args)
 }
 
 /// The inner element kind of a combined pair: the union of the two input

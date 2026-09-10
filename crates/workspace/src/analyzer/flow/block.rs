@@ -15,10 +15,11 @@
 //!    trailing value.
 //!
 //! No-value diverging exits (`THROW`/`BREAK`/`CONTINUE`) contribute nothing.
-//! The union is built with [`Kind::either`], which flattens, dedupes, and
-//! collapses a singleton (and yields `Kind::None` for the empty set). The
-//! exit set over-approximates the runtime value set: widening (an extra exit,
-//! an extra `None`) is sound; dropping a reachable exit is the failure mode.
+//! The union is the lattice join ([`crate::lattice::join_all`]), which
+//! flattens, dedupes, collapses a singleton, lets `any` absorb, and yields
+//! `Kind::None` for the empty set. The exit set over-approximates the runtime
+//! value set: widening (an extra exit, an extra `None`) is sound; dropping a
+//! reachable exit is the failure mode.
 
 use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
@@ -45,20 +46,17 @@ pub(crate) struct Flow {
 
 impl Flow {
     /// The exit-set union: every `RETURN` exit, plus the trailing value when
-    /// the construct does not provably diverge. `either([]) == Kind::None`.
+    /// the construct does not provably diverge. `join_all([]) == Kind::None`.
     ///
     /// `Kind::Any` is the top type, so a union that includes it *is* `Any` —
     /// any exit typed `Any` (e.g. `record::id(...)`, a recursive UDF call)
-    /// absorbs the whole union. This keeps `T | any` from leaking out (which
-    /// would, for instance, defeat the mutation checker's `Any` short-circuit)
-    /// and is the sound over-approximation.
+    /// absorbs the whole union. That is the join's own rule; it keeps `T | any`
+    /// from leaking out (which would, for instance, defeat the mutation
+    /// checker's `Any` short-circuit) and is the sound over-approximation.
     pub(crate) fn into_kind(self) -> Kind {
         let mut exits = self.returns;
         if !self.diverges {
             exits.push(self.value);
-        }
-        if exits.iter().any(|kind| matches!(kind, Kind::Any)) {
-            return Kind::Any;
         }
         // An empty-array literal (`array<_, 0>` — only the empty array) is a
         // member of every `array<E>`/`set<E>`, so when a concrete collection
@@ -74,7 +72,7 @@ impl Flow {
         if has_concrete_collection {
             exits.retain(|k| !is_empty_collection(k));
         }
-        Kind::either(exits)
+        crate::lattice::join_all(exits)
     }
 }
 

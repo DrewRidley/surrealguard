@@ -1,22 +1,22 @@
-//! `eval` function-family analysis dispatch.
+//! `eval` function family: every built-in it dispatches, with its analyzer.
 
-use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-
-use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::function::BuiltinEntry;
 
 pub mod gql;
 pub mod surql;
 
-pub(crate) fn analyze_eval_function(
-    ctx: &mut AnalysisContext<'_>,
-    call: &ast::Call,
-    path: &str,
-    args: &[Kind],
-) -> Kind {
-    match path {
-        "eval::gql" => gql::analyze_eval_gql(ctx, call, args),
-        "eval::surql" => surql::analyze_eval_surql(ctx, call, args),
-        _ => crate::analyzer::function::unknown_function(ctx, call),
-    }
-}
+/// Every `eval::` built-in the analyzer resolves, in dispatch order.
+pub(crate) static CATALOG: &[BuiltinEntry] = &[
+    BuiltinEntry::new(
+        "eval::gql",
+        "Evaluates a GraphQL query string against the database.",
+        gql::signature,
+        gql::analyze_eval_gql,
+    ),
+    BuiltinEntry::new(
+        "eval::surql",
+        "Evaluates a SurrealQL string, with optional bindings.",
+        surql::signature,
+        surql::analyze_eval_surql,
+    ),
+];

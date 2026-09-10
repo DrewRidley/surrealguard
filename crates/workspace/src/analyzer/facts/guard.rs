@@ -361,13 +361,8 @@ fn binary_guard(
 /// its negation (`!=`, `IS NOT`).
 fn equality_polarity(op: &ast::BinaryOp) -> Option<bool> {
     match op {
-        ast::BinaryOp::Eq => Some(true),
-        ast::BinaryOp::NotEq => Some(false),
-        ast::BinaryOp::Other(text) => match words(text).as_slice() {
-            [a] if a.eq_ignore_ascii_case("IS") => Some(true),
-            [a, b] if a.eq_ignore_ascii_case("IS") && b.eq_ignore_ascii_case("NOT") => Some(false),
-            _ => None,
-        },
+        ast::BinaryOp::Eq | ast::BinaryOp::Exact | ast::BinaryOp::Is => Some(true),
+        ast::BinaryOp::NotEq | ast::BinaryOp::IsNot => Some(false),
         _ => None,
     }
 }
@@ -382,7 +377,7 @@ fn ordering_op(op: &ast::BinaryOp) -> Option<OrdOp> {
     })
 }
 
-/// The membership operator a raw operator text spells, if it is one.
+/// The membership operators, by which operand is the member.
 enum Membership {
     /// The member is the left operand.
     In { negated: bool },
@@ -391,26 +386,13 @@ enum Membership {
 }
 
 fn membership(op: &ast::BinaryOp) -> Option<Membership> {
-    let ast::BinaryOp::Other(text) = op else {
-        return None;
-    };
-    let words = words(text);
-    let (negated, name) = match words.as_slice() {
-        [name] => (false, *name),
-        [not, name] if not.eq_ignore_ascii_case("NOT") => (true, *name),
+    Some(match op {
+        ast::BinaryOp::In | ast::BinaryOp::Inside => Membership::In { negated: false },
+        ast::BinaryOp::NotIn | ast::BinaryOp::NotInside => Membership::In { negated: true },
+        ast::BinaryOp::Contains => Membership::Contains { negated: false },
+        ast::BinaryOp::ContainsNot => Membership::Contains { negated: true },
         _ => return None,
-    };
-    if name.eq_ignore_ascii_case("IN") || name.eq_ignore_ascii_case("INSIDE") {
-        Some(Membership::In { negated })
-    } else if name.eq_ignore_ascii_case("CONTAINS") {
-        Some(Membership::Contains { negated })
-    } else {
-        None
-    }
-}
-
-fn words(text: &str) -> Vec<&str> {
-    text.split_whitespace().collect()
+    })
 }
 
 /// `p = NONE` / `p != NULL` and the six other spellings, from either operand
@@ -530,10 +512,9 @@ fn string_constant(expr: &ast::Expr) -> Option<String> {
 fn ord_atom(lhs: &ast::Expr, rhs: &ast::Expr, op: OrdOp, polarity: bool) -> Option<Atom> {
     let (place, op) = if let Some(place) = place_of(lhs) {
         (place, op)
-    } else if let Some(place) = place_of(rhs) {
-        (place, op.flipped())
     } else {
-        return None;
+        let place = place_of(rhs)?;
+        (place, op.flipped())
     };
     let operand = if place_of(lhs).is_some() { rhs } else { lhs };
     if !is_non_sentinel_operand(operand) {
@@ -921,15 +902,23 @@ mod tests {
     }
 
     #[test]
-    fn lowering_keeps_the_operator_text_this_module_reads() {
-        // The membership and `IS` spellings arrive as raw operator text, so a
-        // lowering change to that text would silently disable half this file.
+    fn lowering_gives_the_operators_this_module_reads_their_own_variants() {
+        // The membership and `IS` spellings must lower to the typed variants
+        // `membership` / `equality_polarity` match on — a lowering change that
+        // sent one back to `Other` would silently disable half this file.
         for (source, expected) in [
-            ("$x IN $y", "IN"),
-            ("$x NOT IN $y", "NOT IN"),
-            ("$x INSIDE $y", "INSIDE"),
-            ("$x CONTAINS $y", "CONTAINS"),
-            ("$x IS NOT NONE", "IS NOT"),
+            ("$x IN $y", ast::BinaryOp::In),
+            ("$x NOT IN $y", ast::BinaryOp::NotIn),
+            ("$x not   in $y", ast::BinaryOp::NotIn),
+            ("$x INSIDE $y", ast::BinaryOp::Inside),
+            ("$x ∈ $y", ast::BinaryOp::Inside),
+            ("$x CONTAINS $y", ast::BinaryOp::Contains),
+            ("$x contains $y", ast::BinaryOp::Contains),
+            ("$x CONTAINSNOT $y", ast::BinaryOp::ContainsNot),
+            ("$x IS NONE", ast::BinaryOp::Is),
+            ("$x IS NOT NONE", ast::BinaryOp::IsNot),
+            ("$x is not NONE", ast::BinaryOp::IsNot),
+            ("$x == 1", ast::BinaryOp::Exact),
         ] {
             let query = format!("RETURN {source};");
             let parsed = parse_source(SourceId::new("guard:test"), query.as_str()).expect("parses");
@@ -939,11 +928,7 @@ mod tests {
             let ast::Expr::Binary { op, .. } = expr else {
                 panic!("expected a binary expression for `{source}`");
             };
-            assert_eq!(
-                op.node,
-                ast::BinaryOp::Other(expected.to_string()),
-                "`{source}`"
-            );
+            assert_eq!(op.node, expected, "`{source}`");
         }
     }
 }

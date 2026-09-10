@@ -1,7 +1,8 @@
 //! `DEFINE EVENT` analysis.
 //!
-//! An event targets a known table (1001) and its `$event.<field>` references
-//! must resolve on that table (1002). Event bodies run with the context
+//! An event targets a known table (1001), is defined once on it (1022), and
+//! its `$event.<field>` references must resolve on that table (1002). Its
+//! trigger graph is checked by the pipeline (5010). Event bodies run with the context
 //! parameters bound: `$event` is the literal union `'CREATE' | 'UPDATE' |
 //! 'DELETE'`, and `$before`/`$after`/`$value` carry the table's row type.
 //! With those in scope the WHEN condition and THEN body get the ordinary
@@ -103,8 +104,9 @@ pub(crate) fn analyze_define_event(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
     Kind::None
 }
 
-/// An event's catalog contracts: a known target table (1001) and resolvable
-/// `$event.<field>` references on it (1002).
+/// An event's catalog contracts: a known target table (1001), one definition
+/// per name on it (1022), and resolvable `$event.<field>` references on it
+/// (1002).
 fn check_event_references(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineEvent) {
     if !ctx.schema().tables.contains_key(&stmt.table.node) {
         let finding = surrealguard_diagnostics::catalog::finding(
@@ -118,6 +120,25 @@ fn check_event_references(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineEvent
         let finding = crate::analyzer::data::with_table_suggestion(finding, ctx, &stmt.table.node);
         ctx.emit(finding);
         return;
+    }
+
+    if !stmt.overwrite && !stmt.if_not_exists {
+        let existing = ctx.schema().tables[&stmt.table.node]
+            .events
+            .get(&stmt.name.node)
+            .map(|existing| existing.name_span.clone());
+        if let Some(existing) = existing {
+            super::emit_duplicate_definition(
+                ctx,
+                stmt.name.span,
+                &format!("`{}` on `{}`", stmt.name.node, stmt.table.node),
+                &format!(
+                    "DEFINE EVENT OVERWRITE {} ON {}",
+                    stmt.name.node, stmt.table.node
+                ),
+                existing,
+            );
+        }
     }
 
     let mut refs = Vec::new();

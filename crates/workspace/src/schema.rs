@@ -1,6 +1,7 @@
 //! Schema extraction: turns lowered `DEFINE`/`REMOVE`/`ALTER` statements
-//! into the `SchemaIndex` (tables, fields, params, functions, analyzers) and
-//! converts declared type syntax to upstream `Kind`s. Extraction only
+//! into the `SchemaIndex` (tables, fields, indexes, events, params,
+//! functions, analyzers) and converts declared type syntax to upstream
+//! `Kind`s. Extraction only
 //! mutates the index; the contract checks that reference these definitions
 //! live in the owning statement analyzers.
 
@@ -150,6 +151,9 @@ pub struct TableDef {
     pub fields: BTreeMap<String, FieldDef>,
     /// Attached indexes, keyed by index name.
     pub indexes: BTreeMap<String, IndexDef>,
+    /// Attached events, keyed by event name.
+    #[serde(default)]
+    pub events: BTreeMap<String, EventDef>,
     /// The `TYPE RELATION` edge spec, when the table is a relation.
     pub relation: Option<RelationDef>,
     /// `DEFINE TABLE ... SCHEMAFULL` — only declared fields are retained.
@@ -185,15 +189,26 @@ pub enum FieldStep {
     Element,
 }
 
+pub use crate::analyzer::facts::assert::FieldAssert;
+
 /// A `DEFINE FIELD` definition: its declared kind and write semantics.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldDef {
     /// The field has a `DEFAULT` clause (or `VALUE`, which supplies one).
     pub has_default: bool,
+    /// `ASSERT <expr>` — the predicate every write must satisfy, kept so a
+    /// constant written to the field can be folded against it (2038). Not
+    /// serialized: it is an expression, and the index's wire form carries
+    /// only what a host adapter reads.
+    #[serde(skip)]
+    pub assert: Option<FieldAssert>,
     /// `READONLY` — writable only at creation.
     pub readonly: bool,
     /// `VALUE <expr>` — computed on write; hand-written values are
     /// overwritten. Also set for a `COMPUTED <expr>` (3.0) derived field.
+    /// NOT set for a `VALUE` clause that reads `$value` or `$input` (`VALUE
+    /// string::slug($value)`): that clause transforms the written value, so
+    /// the field is hand-written by design.
     pub computed: bool,
     /// `REFERENCE` — the field's `record<...>` link is a reference, so a
     /// `<~` back-traversal on the target table can resolve through it.
@@ -271,6 +286,146 @@ struct IndexFieldDef {
     path: Vec<String>,
     text: String,
     span: SourceSpan,
+}
+
+/// A `DEFINE EVENT` definition, reduced to the facts the trigger-cycle check
+/// (5010) reads: which writes fire it and which tables its body writes.
+///
+/// The body itself is not stored — the catalog is a serializable fact set,
+/// not an AST cache — so the extraction happens once, at definition time.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventDef {
+    /// The event name.
+    pub name: String,
+    /// The table the event fires on.
+    pub table: String,
+    /// The write kinds that fire this event, as far as its `WHEN` condition
+    /// constrains `$event`. No `WHEN`, or one that says nothing about
+    /// `$event`, fires on every kind.
+    pub triggers: EventTriggers,
+    /// Every table the `THEN` body writes, with the kind of each write.
+    pub writes: Vec<EventWrite>,
+    /// The source the definition lives in.
+    pub source: SourceId,
+    /// Span of the event name.
+    pub name_span: SourceSpan,
+}
+
+/// One write an event body performs: the target table and the event kind(s)
+/// that write raises on it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventWrite {
+    /// The written table.
+    pub table: String,
+    /// The event kind(s) the write raises: `CREATE` for `CREATE`/`RELATE`/
+    /// `INSERT`, `UPDATE` for `UPDATE`, both for `UPSERT`, `DELETE` for
+    /// `DELETE`.
+    pub kinds: EventTriggers,
+    /// Span of the write's target expression.
+    pub span: SourceSpan,
+}
+
+/// A set of event kinds: the `$event` values `'CREATE'`, `'UPDATE'`,
+/// `'DELETE'`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventTriggers {
+    /// Fires on `CREATE`.
+    pub create: bool,
+    /// Fires on `UPDATE`.
+    pub update: bool,
+    /// Fires on `DELETE`.
+    pub delete: bool,
+}
+
+impl EventTriggers {
+    /// Every kind.
+    pub const ALL: Self = Self {
+        create: true,
+        update: true,
+        delete: true,
+    };
+    /// No kind.
+    pub const NONE: Self = Self {
+        create: false,
+        update: false,
+        delete: false,
+    };
+    /// `CREATE` only.
+    pub const CREATE: Self = Self {
+        create: true,
+        update: false,
+        delete: false,
+    };
+    /// `UPDATE` only.
+    pub const UPDATE: Self = Self {
+        create: false,
+        update: true,
+        delete: false,
+    };
+    /// `DELETE` only.
+    pub const DELETE: Self = Self {
+        create: false,
+        update: false,
+        delete: true,
+    };
+
+    /// The kind named by an `$event` literal, or `NONE` for a value `$event`
+    /// never takes (`'CRATE'` fires on nothing).
+    fn named(value: &str) -> Self {
+        match value {
+            "CREATE" => Self::CREATE,
+            "UPDATE" => Self::UPDATE,
+            "DELETE" => Self::DELETE,
+            _ => Self::NONE,
+        }
+    }
+
+    /// Set union.
+    pub fn union(self, other: Self) -> Self {
+        Self {
+            create: self.create || other.create,
+            update: self.update || other.update,
+            delete: self.delete || other.delete,
+        }
+    }
+
+    /// Set intersection.
+    pub fn intersect(self, other: Self) -> Self {
+        Self {
+            create: self.create && other.create,
+            update: self.update && other.update,
+            delete: self.delete && other.delete,
+        }
+    }
+
+    /// Set complement.
+    pub fn complement(self) -> Self {
+        Self {
+            create: !self.create,
+            update: !self.update,
+            delete: !self.delete,
+        }
+    }
+
+    /// Whether the two sets share a kind.
+    pub fn intersects(self, other: Self) -> bool {
+        self.intersect(other) != Self::NONE
+    }
+
+    /// The kinds, spelled as `$event` spells them.
+    pub fn names(self) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        if self.create {
+            names.push("CREATE");
+        }
+        if self.update {
+            names.push("UPDATE");
+        }
+        if self.delete {
+            names.push("DELETE");
+        }
+        names
+    }
 }
 
 /// The result of building a schema from a batch of sources: the index plus
@@ -436,6 +591,7 @@ impl SchemaIndex {
             }
             table.fields = existing.fields;
             table.indexes = existing.indexes;
+            table.events = existing.events;
         }
         self.tables.insert(table.name.clone(), table);
     }
@@ -491,6 +647,56 @@ impl SchemaIndex {
         if let Some(table_def) = self.tables.get_mut(table) {
             table_def.fields.remove(&path.join("."));
         }
+    }
+
+    /// Attaches an index to its table, replacing any of the same name. An
+    /// index on an unknown table leaves the catalog unchanged.
+    pub fn insert_index(&mut self, index: IndexDef) {
+        if let Some(table) = self.tables.get_mut(&index.table) {
+            table.indexes.insert(index.name.clone(), index);
+        }
+    }
+
+    /// Drops an index from its table, if both exist.
+    pub fn remove_index(&mut self, table: &str, index: &str) {
+        if let Some(table_def) = self.tables.get_mut(table) {
+            table_def.indexes.remove(index);
+        }
+    }
+
+    /// Attaches an event to its table, replacing any of the same name. An
+    /// event on an unknown table leaves the catalog unchanged.
+    pub fn insert_event(&mut self, event: EventDef) {
+        if let Some(table) = self.tables.get_mut(&event.table) {
+            table.events.insert(event.name.clone(), event);
+        }
+    }
+
+    /// Drops an event from its table, if both exist.
+    pub fn remove_event(&mut self, table: &str, event: &str) {
+        if let Some(table_def) = self.tables.get_mut(table) {
+            table_def.events.remove(event);
+        }
+    }
+
+    /// Drops a function by its `fn::` path, if defined.
+    pub fn remove_function(&mut self, name: &str) {
+        self.functions.remove(name);
+    }
+
+    /// Drops a global param, accepting either a leading `$` or none.
+    pub fn remove_param(&mut self, name: &str) {
+        self.params.remove(name.strip_prefix('$').unwrap_or(name));
+    }
+
+    /// Drops an analyzer by name, if defined.
+    pub fn remove_analyzer(&mut self, name: &str) {
+        self.analyzers.remove(name);
+    }
+
+    /// Every event across every table, in `(table, name)` order.
+    pub fn events(&self) -> impl Iterator<Item = &EventDef> {
+        self.tables.values().flat_map(|table| table.events.values())
     }
 }
 
@@ -576,7 +782,7 @@ pub(crate) fn apply_schema_statement_effects(
                 // standalone kind is absent OR still carries an unresolved `Any`.
                 // `infer_field_value_kind` returns `None` for a pure-`Any` result,
                 // so this only ever upgrades to a proven kind — never downgrades.
-                if field.kind.as_ref().map_or(true, kind_contains_any) {
+                if field.kind.as_ref().is_none_or(kind_contains_any) {
                     if let Some(kind) =
                         infer_field_value_kind(def, source, text, Some(&*schema), workspace)
                     {
@@ -586,12 +792,8 @@ pub(crate) fn apply_schema_statement_effects(
                 }
                 schema.insert_field(field, def.overwrite);
             }
-            ast::DefineStmt::Index(def) => {
-                let index = index_def_from_ast(def, source);
-                if let Some(table) = schema.tables.get_mut(&index.table) {
-                    table.indexes.insert(index.name.clone(), index);
-                }
-            }
+            ast::DefineStmt::Index(def) => schema.insert_index(index_def_from_ast(def, source)),
+            ast::DefineStmt::Event(def) => schema.insert_event(event_def_from_ast(def, source)),
             ast::DefineStmt::Param(def) => schema.insert_param(param_def_from_ast(def, source)),
             ast::DefineStmt::Function(def) => {
                 let mut function = function_def_from_ast(def, source, text, stmt.span);
@@ -610,17 +812,41 @@ pub(crate) fn apply_schema_statement_effects(
             ast::DefineStmt::Analyzer(def) => {
                 schema.insert_analyzer(analyzer_def_from_ast(def, source));
             }
-            // Events are validated but never stored; the long tail is unmodeled.
-            ast::DefineStmt::Event(_) | ast::DefineStmt::Other(_) => {}
+            // The long tail (ACCESS/API/BUCKET/CONFIG/...) is unmodeled.
+            ast::DefineStmt::Other(_) => {}
         },
         ast::Statement::Remove(stmt) => match &stmt.target {
             ast::RemoveTarget::Table(table) => schema.remove_table(&table.node),
             ast::RemoveTarget::Field { field, table } => {
                 schema.remove_field(&table.node, &idiom_field_path(&field.node));
             }
-            // REMOVE INDEX is validated against the catalog but not stored.
-            ast::RemoveTarget::Index { .. } | ast::RemoveTarget::Other(_) => {}
+            ast::RemoveTarget::Index { index, table } => {
+                schema.remove_index(&table.node, &index.node);
+            }
+            ast::RemoveTarget::Event { event, table } => {
+                schema.remove_event(&table.node, &event.node);
+            }
+            ast::RemoveTarget::Function(name) => schema.remove_function(&name.node),
+            ast::RemoveTarget::Param(name) => schema.remove_param(&name.node),
+            ast::RemoveTarget::Analyzer(name) => schema.remove_analyzer(&name.node),
+            ast::RemoveTarget::Other(_) => {}
         },
+        // `ALTER TABLE` changes the table in place: its schema mode and DROP
+        // flag are what later field checks and reads consult.
+        ast::Statement::Alter(stmt) => {
+            if let Some(table) = stmt
+                .table
+                .as_ref()
+                .and_then(|table| schema.tables.get_mut(&table.node))
+            {
+                if let Some(schemafull) = stmt.schemafull {
+                    table.schemafull = schemafull;
+                }
+                if stmt.drop {
+                    table.drop_table = true;
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -813,6 +1039,7 @@ pub(crate) fn table_def_from_ast(def: &ast::DefineTable, source: &SourceId) -> T
         name_span: span(source, def.name.span),
         fields: BTreeMap::new(),
         indexes: BTreeMap::new(),
+        events: BTreeMap::new(),
         relation: def.relation.as_ref().map(|relation| RelationDef {
             in_tables: relation.in_tables.iter().map(|t| t.node.clone()).collect(),
             out_tables: relation.out_tables.iter().map(|t| t.node.clone()).collect(),
@@ -849,8 +1076,16 @@ pub(crate) fn field_def_from_ast(
         // A `COMPUTED` field is derived, so — like `VALUE` — it is never a
         // required input and is overwritten by its own expression.
         has_default: def.default.is_some() || def.value.is_some() || def.computed.is_some(),
+        assert: def
+            .assert
+            .as_ref()
+            .map(|assert| FieldAssert::new(&assert.node, span(source, assert.span))),
         readonly: def.readonly,
-        computed: def.value.is_some() || def.computed.is_some(),
+        computed: def.computed.is_some()
+            || def
+                .value
+                .as_ref()
+                .is_some_and(|value| !expr_reads_written_value(value)),
         reference: def.reference,
         path: idiom_field_path(&def.path.node),
         steps: idiom_field_steps(&def.path.node),
@@ -862,6 +1097,30 @@ pub(crate) fn field_def_from_ast(
         table_span: span(source, def.table.span),
         type_span,
     }
+}
+
+/// Whether a field clause's expression reads the value being written — `$value`
+/// (after coercion) or `$input` (before it). A `VALUE` clause that does is a
+/// transform of the write, not a replacement for it.
+fn expr_reads_written_value(expr: &ast::Spanned<ast::Expr>) -> bool {
+    use surrealguard_syntax::ast::visit::{walk_expr, Visitor};
+
+    struct ReadsWrittenValue(bool);
+
+    impl Visitor for ReadsWrittenValue {
+        fn visit_expr(&mut self, expr: &ast::Spanned<ast::Expr>) {
+            if let ast::Expr::Param(name) = &expr.node {
+                if matches!(name.trim_start_matches('$'), "value" | "input") {
+                    self.0 = true;
+                }
+            }
+            walk_expr(self, expr);
+        }
+    }
+
+    let mut visitor = ReadsWrittenValue(false);
+    visitor.visit_expr(expr);
+    visitor.0
 }
 
 pub(crate) fn index_def_from_ast(def: &ast::DefineIndex, source: &SourceId) -> IndexDef {
@@ -906,6 +1165,255 @@ pub(crate) fn index_field_refs(
             (path, text, span(source, field.span))
         })
         .collect()
+}
+
+pub(crate) fn event_def_from_ast(def: &ast::DefineEvent, source: &SourceId) -> EventDef {
+    let mut writes = Vec::new();
+    if let Some(then) = &def.then {
+        collect_expr_writes(then, &def.table.node, source, &mut writes);
+    }
+    EventDef {
+        name: def.name.node.clone(),
+        table: def.table.node.clone(),
+        triggers: def
+            .when
+            .as_ref()
+            .map_or(EventTriggers::ALL, |when| event_triggers(&when.node)),
+        writes,
+        source: source.clone(),
+        name_span: span(source, def.name.span),
+    }
+}
+
+/// The `$event` kinds a `WHEN` condition lets through.
+///
+/// Reads the forms that name `$event` directly — `$event = 'CREATE'`,
+/// `$event IN ['CREATE', 'UPDATE']`, their negations, and `AND`/`OR`/`NOT`
+/// over those. Anything else says nothing about `$event` and passes every
+/// kind, so an unrecognized guard is never treated as a stronger filter than
+/// it is.
+fn event_triggers(when: &ast::Expr) -> EventTriggers {
+    fn is_event_param(expr: &ast::Expr) -> bool {
+        matches!(expr, ast::Expr::Param(name) if name == "event")
+    }
+    fn literal_kind(expr: &ast::Expr) -> Option<EventTriggers> {
+        match expr {
+            ast::Expr::Literal(ast::Literal::String(value)) => Some(EventTriggers::named(value)),
+            _ => None,
+        }
+    }
+    fn literal_kinds(expr: &ast::Expr) -> Option<EventTriggers> {
+        match expr {
+            ast::Expr::Array(items) => items.iter().try_fold(EventTriggers::NONE, |acc, item| {
+                literal_kind(&item.node).map(|kind| acc.union(kind))
+            }),
+            _ => None,
+        }
+    }
+
+    match when {
+        ast::Expr::Binary { lhs, op, rhs } => {
+            let (param, other) = if is_event_param(&lhs.node) {
+                (true, &rhs.node)
+            } else if is_event_param(&rhs.node) {
+                (true, &lhs.node)
+            } else {
+                (false, &rhs.node)
+            };
+            match op.node {
+                ast::BinaryOp::And => {
+                    event_triggers(&lhs.node).intersect(event_triggers(&rhs.node))
+                }
+                ast::BinaryOp::Or => event_triggers(&lhs.node).union(event_triggers(&rhs.node)),
+                ast::BinaryOp::Eq | ast::BinaryOp::Exact | ast::BinaryOp::Is if param => {
+                    literal_kind(other).unwrap_or(EventTriggers::ALL)
+                }
+                ast::BinaryOp::NotEq | ast::BinaryOp::IsNot if param => {
+                    literal_kind(other).map_or(EventTriggers::ALL, EventTriggers::complement)
+                }
+                ast::BinaryOp::In if is_event_param(&lhs.node) => {
+                    literal_kinds(&rhs.node).unwrap_or(EventTriggers::ALL)
+                }
+                ast::BinaryOp::NotIn if is_event_param(&lhs.node) => {
+                    literal_kinds(&rhs.node).map_or(EventTriggers::ALL, EventTriggers::complement)
+                }
+                _ => EventTriggers::ALL,
+            }
+        }
+        ast::Expr::Prefix { op, expr } if matches!(op.node, ast::PrefixOp::Not) => {
+            event_triggers(&expr.node).complement()
+        }
+        // `NOT (...)` lowers as a call named `NOT` (the grammar reads `NOT(` as
+        // a function call); it is the same negation.
+        ast::Expr::Call(call) if call.path.node.eq_ignore_ascii_case("not") => {
+            match call.args.as_slice() {
+                [inner] => event_triggers(&inner.node).complement(),
+                _ => EventTriggers::ALL,
+            }
+        }
+        _ => EventTriggers::ALL,
+    }
+}
+
+/// Collects every table an expression writes (through the statements it
+/// holds — blocks, subqueries, closure bodies), for [`EventDef::writes`].
+///
+/// `own_table` resolves the event's row parameters: `UPDATE $after.id`,
+/// `DELETE $before`, `UPSERT $value.id` all write the event's own table.
+fn collect_expr_writes(
+    expr: &ast::Spanned<ast::Expr>,
+    own_table: &str,
+    source: &SourceId,
+    out: &mut Vec<EventWrite>,
+) {
+    match &expr.node {
+        ast::Expr::Block(block) => collect_block_writes(block, own_table, source, out),
+        ast::Expr::Subquery(stmt) => collect_stmt_writes(stmt, own_table, source, out),
+        ast::Expr::Binary { lhs, rhs, .. } => {
+            collect_expr_writes(lhs, own_table, source, out);
+            collect_expr_writes(rhs, own_table, source, out);
+        }
+        ast::Expr::Prefix { expr: inner, .. } | ast::Expr::Cast { expr: inner, .. } => {
+            collect_expr_writes(inner, own_table, source, out);
+        }
+        ast::Expr::Call(call) => {
+            for arg in &call.args {
+                collect_expr_writes(arg, own_table, source, out);
+            }
+        }
+        ast::Expr::Array(items) => {
+            for item in items {
+                collect_expr_writes(item, own_table, source, out);
+            }
+        }
+        ast::Expr::Object(entries) => {
+            for (_, value) in entries {
+                collect_expr_writes(value, own_table, source, out);
+            }
+        }
+        ast::Expr::Closure(closure) => collect_expr_writes(&closure.body, own_table, source, out),
+        ast::Expr::Idiom(idiom) => {
+            if let Some(ast::IdiomPart::Start(start)) = idiom.parts.first().map(|part| &part.node) {
+                collect_expr_writes(start, own_table, source, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_block_writes(
+    block: &ast::Block,
+    own_table: &str,
+    source: &SourceId,
+    out: &mut Vec<EventWrite>,
+) {
+    for stmt in &block.statements {
+        collect_stmt_writes(stmt, own_table, source, out);
+    }
+}
+
+fn collect_stmt_writes(
+    stmt: &ast::Spanned<ast::Statement>,
+    own_table: &str,
+    source: &SourceId,
+    out: &mut Vec<EventWrite>,
+) {
+    use ast::Statement as S;
+    let mut write = |targets: &[ast::Spanned<ast::Expr>], kinds: EventTriggers| {
+        for target in targets {
+            if let Some(table) = write_target_table(&target.node, own_table) {
+                out.push(EventWrite {
+                    table,
+                    kinds,
+                    span: span(source, target.span),
+                });
+            }
+        }
+    };
+    match &stmt.node {
+        S::Create(s) => write(&s.targets, EventTriggers::CREATE),
+        S::Update(s) => write(&s.targets, EventTriggers::UPDATE),
+        S::Upsert(s) => write(
+            &s.targets,
+            EventTriggers::CREATE.union(EventTriggers::UPDATE),
+        ),
+        S::Delete(s) => write(&s.targets, EventTriggers::DELETE),
+        S::Insert(s) => {
+            // A plain INSERT only ever creates; `ON DUPLICATE KEY UPDATE` can
+            // also update an existing row.
+            let kinds = if s.on_duplicate_update.is_empty() {
+                EventTriggers::CREATE
+            } else {
+                EventTriggers::CREATE.union(EventTriggers::UPDATE)
+            };
+            write(s.target.as_slice(), kinds);
+        }
+        S::Relate(s) => write(s.edge.as_slice(), EventTriggers::CREATE),
+        S::Let(s) => collect_expr_writes(&s.value, own_table, source, out),
+        S::Return(s) => {
+            if let Some(value) = &s.value {
+                collect_expr_writes(value, own_table, source, out);
+            }
+        }
+        S::Throw(s) => {
+            if let Some(value) = &s.value {
+                collect_expr_writes(value, own_table, source, out);
+            }
+        }
+        S::Expr(expr) => collect_expr_writes(expr, own_table, source, out),
+        S::Block(block) => collect_block_writes(block, own_table, source, out),
+        S::IfElse(s) => {
+            for branch in &s.branches {
+                collect_expr_writes(&branch.condition, own_table, source, out);
+                collect_block_writes(&branch.body, own_table, source, out);
+            }
+            if let Some(else_branch) = &s.else_branch {
+                collect_block_writes(else_branch, own_table, source, out);
+            }
+        }
+        S::For(s) => {
+            collect_expr_writes(&s.iterable, own_table, source, out);
+            collect_block_writes(&s.body, own_table, source, out);
+        }
+        S::Select(s) => {
+            for from in &s.from {
+                collect_expr_writes(from, own_table, source, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The table a write target names: a table, a record id, or one of the
+/// event's own row parameters (`$after`, `$before`, `$value`, `$this`, with
+/// or without `.id`).
+fn write_target_table(target: &ast::Expr, own_table: &str) -> Option<String> {
+    fn is_row_param(name: &str) -> bool {
+        matches!(name, "after" | "before" | "value" | "this")
+    }
+    match target {
+        ast::Expr::Table(name) => Some(name.node.clone()),
+        ast::Expr::RecordId { table, .. } => Some(table.node.clone()),
+        ast::Expr::Param(name) if is_row_param(name) => Some(own_table.to_string()),
+        ast::Expr::Idiom(idiom) => {
+            let [start, rest @ ..] = idiom.parts.as_slice() else {
+                return None;
+            };
+            let ast::IdiomPart::Start(start) = &start.node else {
+                return None;
+            };
+            if !matches!(&start.node, ast::Expr::Param(name) if is_row_param(name)) {
+                return None;
+            }
+            let is_row = match rest {
+                [] => true,
+                [only] => matches!(&only.node, ast::IdiomPart::Field(field) if field == "id"),
+                _ => false,
+            };
+            is_row.then(|| own_table.to_string())
+        }
+        _ => None,
+    }
 }
 
 pub(crate) fn analyzer_def_from_ast(def: &ast::DefineAnalyzer, source: &SourceId) -> AnalyzerDef {
@@ -1132,6 +1640,32 @@ pub(crate) struct ParsedFieldKind {
     pub(crate) partial: Vec<PartialReason>,
 }
 
+/// The `Kind::Geometry` for `geometry<point | line | ...>`: every argument
+/// must name a known shape, else `None`.
+fn geometry_kind(
+    args: &[surrealguard_syntax::ast::Spanned<surrealguard_syntax::ast::TypeExpr>],
+) -> Option<Kind> {
+    use surrealdb_types::GeometryKind;
+    use surrealguard_syntax::ast::TypeExpr;
+    let kinds = args
+        .iter()
+        .map(|arg| match &arg.node {
+            TypeExpr::Name(name) => match name.node.to_ascii_lowercase().as_str() {
+                "point" => Some(GeometryKind::Point),
+                "line" => Some(GeometryKind::Line),
+                "polygon" => Some(GeometryKind::Polygon),
+                "multipoint" => Some(GeometryKind::MultiPoint),
+                "multiline" => Some(GeometryKind::MultiLine),
+                "multipolygon" => Some(GeometryKind::MultiPolygon),
+                "collection" => Some(GeometryKind::Collection),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(Kind::Geometry(kinds))
+}
+
 /// Converts a structurally lowered type to an upstream `Kind`:
 /// `array<string>`, `option<int>`, unions, and literal types all resolve.
 /// Anything the conversion can't express reports why as an explicit
@@ -1213,6 +1747,7 @@ pub(crate) fn kind_from_type_expr(
                     Err(unsupported())
                 }
             }
+            "geometry" => geometry_kind(args).ok_or_else(unsupported),
             "array" | "set" => {
                 let mut element = Kind::Any;
                 let mut max_len = None;

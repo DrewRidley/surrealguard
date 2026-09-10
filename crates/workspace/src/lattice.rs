@@ -1,4 +1,5 @@
-//! The `Kind` lattice: `meet` (greatest lower bound) and `subtract`.
+//! The `Kind` lattice: `meet` (greatest lower bound), `join` (least upper
+//! bound) and `subtract`.
 //!
 //! Refinement today is a table of ad-hoc transforms — `strip_variant` removes
 //! `Kind::None`, `narrow_out_none` removes `None` *and* `Null`, `eq_narrow`
@@ -8,13 +9,16 @@
 //! fact with two different answers, and one of them drops a `null` that
 //! survives the guard at runtime.
 //!
-//! All of them are instances of two order-theoretic operations, which is what
-//! this module provides:
+//! All of them are instances of three order-theoretic operations, which is
+//! what this module provides:
 //!
 //! * [`meet`] — the greatest kind below both operands. A positive refinement
 //!   (`p = 'active'`, `type::table(p) = 'user'`, `p IS NOT NONE` read as "p is
 //!   in the non-`NONE` part of its kind") is a meet with the fact's
-//!   characteristic kind.
+//!   characteristic kind; so is reconciling two demands on one parameter
+//!   (`statement_env`).
+//! * [`join`] — the least kind above both operands. Every exit set (a block's
+//!   `RETURN`s, the two sides of a concatenation) is a join.
 //! * [`subtract`] — `a` minus everything `b` covers. A negative refinement
 //!   (`p != NONE`, `type::table(p) != 'user'`) is a subtraction.
 //!
@@ -70,19 +74,22 @@
 //!   A mutually-assignable pair falls through to the structural rules, which
 //!   are symmetric by construction.
 //!
-//! ## No consumers
+//! ## Consumers
 //!
-//! Nothing calls these yet, on purpose: this module must not change a single
-//! inferred type or diagnostic. The property tests below are the deliverable.
-
-#![allow(dead_code)]
+//! `analyzer::facts::refine` narrows with [`meet`] and [`subtract`];
+//! `analyzer::contract` and `render` ask [`kinds_are_disjoint`];
+//! `statement_env` reconciles parameter constraints with [`meet`];
+//! `analyzer::flow::block` and the collection operators in
+//! `analyzer::expression::infer` build their unions with [`join`]. The property
+//! tests below are what lets all of them share one answer.
 
 use std::collections::BTreeMap;
 
 use surrealdb_types::{Kind, KindLiteral};
 
 use crate::kinds::{
-    kind_admits_none, kind_is_assignable_to, literal_base_kind, scalar_literal_base_kind,
+    is_numeric, kind_admits_none, kind_is_assignable_to, literal_base_kind,
+    scalar_literal_base_kind,
 };
 
 /// The result of [`meet`].
@@ -99,28 +106,6 @@ pub(crate) enum KindMeet {
     /// The greatest lower bound exists but cannot be written as a `Kind`.
     /// Callers keep their own input unchanged — see the module docs.
     Unrepresentable,
-}
-
-impl KindMeet {
-    /// The refined kind, or `fallback` when the meet proved nothing usable.
-    /// This is how a refinement consumer will read a meet: narrow if we can,
-    /// keep the input if we cannot.
-    pub(crate) fn or_keep(self, fallback: &Kind) -> Kind {
-        match self {
-            KindMeet::Exact(kind) => kind,
-            KindMeet::Empty | KindMeet::Unrepresentable => fallback.clone(),
-        }
-    }
-
-    /// Chains a third operand onto a meet, so `meet(meet(a, b), c)` is
-    /// expressible. `Empty` absorbs; `Unrepresentable` propagates.
-    pub(crate) fn meet_with(self, other: &Kind) -> KindMeet {
-        match self {
-            KindMeet::Empty => KindMeet::Empty,
-            KindMeet::Exact(kind) => meet(&kind, other),
-            KindMeet::Unrepresentable => KindMeet::Unrepresentable,
-        }
-    }
 }
 
 /// The greatest kind below both `a` and `b`.
@@ -287,6 +272,51 @@ pub(crate) fn subtract(a: &Kind, b: &Kind) -> Option<Kind> {
 /// proof, so a `false` means "not known to be disjoint", not "they overlap".
 pub(crate) fn kinds_are_disjoint(a: &Kind, b: &Kind) -> bool {
     matches!(meet(a, b), KindMeet::Empty)
+}
+
+/// The least kind above both `a` and `b`: their union.
+///
+/// `join(x, any) == any` (`any` is top, so it absorbs — a union with an `any`
+/// arm, at any depth of flattening, *is* `any`), `join(x, x) == x`, and the
+/// operation is associative. It is commutative *as a set of variants*:
+/// `Kind::either` keeps the variants in the order they were given, and that
+/// order is load-bearing for rendering (see [`canonical_union`]), so
+/// `join(a, b)` and `join(b, a)` list the same variants with the left
+/// operand's first.
+///
+/// This is the *syntactic* join — the union in the free lattice over `Kind`,
+/// flattened and de-duplicated by structural equality, which is exactly what
+/// `Kind::either` builds. It does not absorb a variant into a strictly wider
+/// sibling: `join(int, number)` is `int | number`, not `number`. Every
+/// consumer renders its unions as written, so a join that quietly widened
+/// `int` to `number` would change every such type; absorption is a separate
+/// decision for a separate change.
+pub(crate) fn join(a: &Kind, b: &Kind) -> Kind {
+    let union = Kind::either(vec![a.clone(), b.clone()]);
+    let has_any = match &union {
+        Kind::Any => true,
+        Kind::Either(variants) => variants.iter().any(|variant| matches!(variant, Kind::Any)),
+        _ => false,
+    };
+    if has_any {
+        Kind::Any
+    } else {
+        union
+    }
+}
+
+/// [`join`] folded over a set of kinds, in order.
+///
+/// The empty set has no least upper bound a consumer could write — the lattice
+/// has no bottom `Kind` — so it is reported as `Kind::None`, which is what a
+/// construct with no value-producing exit evaluates to and what
+/// `Kind::either(vec![])` has always answered.
+pub(crate) fn join_all(kinds: impl IntoIterator<Item = Kind>) -> Kind {
+    let mut kinds = kinds.into_iter();
+    let Some(first) = kinds.next() else {
+        return Kind::None;
+    };
+    kinds.fold(first, |acc, kind| join(&acc, &kind))
 }
 
 // ---------------------------------------------------------------------------
@@ -513,10 +543,6 @@ fn residual(a: &Kind, b: &Kind) -> Option<Kind> {
     Some(a.clone())
 }
 
-fn is_numeric(kind: &Kind) -> bool {
-    matches!(kind, Kind::Int | Kind::Float | Kind::Decimal | Kind::Number)
-}
-
 /// A union built from the variants that survived, in the order they were
 /// walked.
 ///
@@ -570,6 +596,35 @@ mod tests {
 
     fn option_of(inner: Kind) -> Kind {
         Kind::either(vec![Kind::None, inner])
+    }
+
+    /// Chains a third operand onto a meet, so `meet(meet(a, b), c)` is
+    /// expressible. `Empty` absorbs; `Unrepresentable` propagates.
+    fn meet_with(first: KindMeet, other: &Kind) -> KindMeet {
+        match first {
+            KindMeet::Empty => KindMeet::Empty,
+            KindMeet::Exact(kind) => meet(&kind, other),
+            KindMeet::Unrepresentable => KindMeet::Unrepresentable,
+        }
+    }
+
+    /// How a refinement consumer reads a meet: narrow if it can, keep the
+    /// input if it cannot.
+    fn or_keep(result: KindMeet, fallback: &Kind) -> Kind {
+        match result {
+            KindMeet::Exact(kind) => kind,
+            KindMeet::Empty | KindMeet::Unrepresentable => fallback.clone(),
+        }
+    }
+
+    /// The variants of a kind as a multiset-insensitive, order-insensitive
+    /// set: the equality [`join`] is commutative under.
+    fn variant_set(kind: &Kind) -> std::collections::BTreeSet<String> {
+        kind.clone()
+            .flatten()
+            .iter()
+            .map(ToString::to_string)
+            .collect()
     }
 
     /// A hand-rolled, exhaustive universe rather than a `proptest` dependency.
@@ -743,8 +798,8 @@ mod tests {
         for a in &universe {
             for b in &universe {
                 for c in &universe {
-                    let left = meet(a, b).meet_with(c);
-                    let right = meet(b, c).meet_with(a);
+                    let left = meet_with(meet(a, b), c);
+                    let right = meet_with(meet(b, c), a);
                     if left == KindMeet::Unrepresentable || right == KindMeet::Unrepresentable {
                         continue;
                     }
@@ -834,7 +889,7 @@ mod tests {
                 "meet({a}, {b}) must decline: {why}"
             );
             // …and declining must leave the caller with its own kind.
-            assert_eq!(meet(a, b).or_keep(a), a.clone());
+            assert_eq!(or_keep(meet(a, b), a), a.clone());
         }
     }
 
@@ -859,6 +914,105 @@ mod tests {
                         !(inhabits(c, a) && inhabits(c, b)),
                         "meet({a}, {b}) claimed Empty, but {c} inhabits both"
                     );
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // join: the algebra
+    // -----------------------------------------------------------------------
+
+    /// `join(a, b)` and `join(b, a)` are the same union. Equality is taken on
+    /// the variant SET: `Kind::either` keeps the left operand's variants
+    /// first, and that order is deliberately not normalised away (see
+    /// `canonical_union`).
+    #[test]
+    fn join_is_commutative_as_a_set_of_variants() {
+        for a in &universe() {
+            for b in &universe() {
+                let left = join(a, b);
+                let right = join(b, a);
+                assert_eq!(
+                    variant_set(&left),
+                    variant_set(&right),
+                    "join is not commutative for {a} and {b}: {left} vs {right}"
+                );
+                // …and, as a consequence, each is assignable to the other.
+                assert!(below(&left, &right) && below(&right, &left));
+            }
+        }
+    }
+
+    /// `join(a, a) == a`, structurally.
+    #[test]
+    fn join_is_idempotent() {
+        for a in &universe() {
+            assert_eq!(join(a, a), a.clone(), "join is not idempotent for {a}");
+        }
+    }
+
+    /// `join(join(a, b), c) == join(a, join(b, c))`, structurally — the fold
+    /// in [`join_all`] may group its operands any way it likes.
+    #[test]
+    fn join_is_associative() {
+        let universe = universe();
+        for a in &universe {
+            for b in &universe {
+                for c in &universe {
+                    let left = join(&join(a, b), c);
+                    let right = join(a, &join(b, c));
+                    assert_eq!(left, right, "join is not associative for {a}, {b}, {c}");
+                }
+            }
+        }
+        // `join_all` is that fold, and the empty set is `none`.
+        assert_eq!(join_all(Vec::new()), Kind::None);
+        assert_eq!(
+            join_all(vec![Kind::Int, Kind::String, Kind::Int]),
+            Kind::either(vec![Kind::Int, Kind::String])
+        );
+    }
+
+    /// `join(a, any) == any` and `join(any, a) == any` — `any` is the top of
+    /// the lattice, so a union with it is it. A nested `any` arm absorbs too.
+    #[test]
+    fn any_absorbs_a_join() {
+        for a in &universe() {
+            assert_eq!(join(a, &Kind::Any), Kind::Any, "join({a}, any)");
+            assert_eq!(join(&Kind::Any, a), Kind::Any, "join(any, {a})");
+        }
+        assert_eq!(
+            join(&Kind::Either(vec![Kind::Int, Kind::Any]), &Kind::String),
+            Kind::Any
+        );
+    }
+
+    /// **The soundness core for `join`.** Both operands are below the join
+    /// (it is an upper bound), and the join is below every kind that is above
+    /// both (it is the LEAST one) — so a consumer that joins its exits never
+    /// loses an exit and never claims one it does not have.
+    #[test]
+    fn a_join_is_the_least_upper_bound() {
+        let universe = universe();
+        for a in &universe {
+            for b in &universe {
+                let joined = join(a, b);
+                assert!(
+                    below(a, &joined),
+                    "join({a}, {b}) = {joined} is not above {a}"
+                );
+                assert!(
+                    below(b, &joined),
+                    "join({a}, {b}) = {joined} is not above {b}"
+                );
+                for c in &universe {
+                    if below(a, c) && below(b, c) {
+                        assert!(
+                            below(&joined, c),
+                            "join({a}, {b}) = {joined} is not below the upper bound {c}"
+                        );
+                    }
                 }
             }
         }

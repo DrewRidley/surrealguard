@@ -9,7 +9,19 @@ use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::expression::infer::closure_return_kind;
+use crate::analyzer::function::signature::{ParamKind, ReturnKind, Signature};
 use crate::analyzer::function::{check_closure_arity, closure_arg};
+
+/// The declared shape, for the catalog; the analyzer body below derives
+/// the return kind itself rather than checking calls against this.
+pub(crate) fn signature() -> Signature {
+    Signature {
+        min_args: 3,
+        max_args: Some(3),
+        arg_kinds: vec![ParamKind::Array, ParamKind::Any, ParamKind::Closure],
+        return_kind: ReturnKind::Fixed(Kind::Any),
+    }
+}
 
 pub(crate) fn analyze_array_fold(
     ctx: &mut AnalysisContext<'_>,

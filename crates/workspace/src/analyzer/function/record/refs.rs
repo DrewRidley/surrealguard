@@ -10,20 +10,20 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{apply, ParamKind, ReturnKind, Signature};
 
+/// The signature calls are checked against.
+pub(crate) fn signature() -> Signature {
+    Signature {
+        min_args: 1,
+        max_args: Some(3),
+        arg_kinds: vec![ParamKind::Any],
+        return_kind: ReturnKind::Fixed(Kind::Array(Box::new(Kind::Any), None)),
+    }
+}
+
 pub(crate) fn analyze_record_refs(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     args: &[Kind],
 ) -> Kind {
-    apply(
-        ctx,
-        call,
-        &Signature {
-            min_args: 1,
-            max_args: Some(3),
-            arg_kinds: vec![ParamKind::Any],
-            return_kind: ReturnKind::Fixed(Kind::Array(Box::new(Kind::Any), None)),
-        },
-        args,
-    )
+    apply(ctx, call, &signature(), args)
 }

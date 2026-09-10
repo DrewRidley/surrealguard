@@ -1,9 +1,6 @@
-//! `duration` function-family analysis dispatch.
+//! `duration` function family: every built-in it dispatches, with its analyzer.
 
-use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-
-use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::function::BuiltinEntry;
 
 pub mod days;
 pub mod from_days;
@@ -23,46 +20,156 @@ pub mod secs;
 pub mod weeks;
 pub mod years;
 
-pub(crate) fn analyze_duration_function(
-    ctx: &mut AnalysisContext<'_>,
-    call: &ast::Call,
-    path: &str,
-    args: &[Kind],
-) -> Kind {
-    match path {
-        "duration::days" => days::analyze_duration_days(ctx, call, args),
-        "duration::from_days" | "duration::from::days" => {
-            from_days::analyze_duration_from_days(ctx, call, args)
-        }
-        "duration::from_hours" | "duration::from::hours" => {
-            from_hours::analyze_duration_from_hours(ctx, call, args)
-        }
-        "duration::from_micros" | "duration::from::micros" => {
-            from_micros::analyze_duration_from_micros(ctx, call, args)
-        }
-        "duration::from_millis" | "duration::from::millis" => {
-            from_millis::analyze_duration_from_millis(ctx, call, args)
-        }
-        "duration::from_mins" | "duration::from::mins" => {
-            from_mins::analyze_duration_from_mins(ctx, call, args)
-        }
-        "duration::from_nanos" | "duration::from::nanos" => {
-            from_nanos::analyze_duration_from_nanos(ctx, call, args)
-        }
-        "duration::from_secs" | "duration::from::secs" => {
-            from_secs::analyze_duration_from_secs(ctx, call, args)
-        }
-        "duration::from_weeks" | "duration::from::weeks" => {
-            from_weeks::analyze_duration_from_weeks(ctx, call, args)
-        }
-        "duration::hours" => hours::analyze_duration_hours(ctx, call, args),
-        "duration::micros" => micros::analyze_duration_micros(ctx, call, args),
-        "duration::millis" => millis::analyze_duration_millis(ctx, call, args),
-        "duration::mins" => mins::analyze_duration_mins(ctx, call, args),
-        "duration::nanos" => nanos::analyze_duration_nanos(ctx, call, args),
-        "duration::secs" => secs::analyze_duration_secs(ctx, call, args),
-        "duration::weeks" => weeks::analyze_duration_weeks(ctx, call, args),
-        "duration::years" => years::analyze_duration_years(ctx, call, args),
-        _ => crate::analyzer::function::unknown_function(ctx, call),
-    }
-}
+/// Every `duration::` built-in the analyzer resolves, in dispatch order.
+pub(crate) static CATALOG: &[BuiltinEntry] = &[
+    BuiltinEntry::new(
+        "duration::days",
+        "The whole days in a duration.",
+        days::signature,
+        days::analyze_duration_days,
+    ),
+    BuiltinEntry::new(
+        "duration::from_days",
+        "A duration of the given number of days.",
+        from_days::signature,
+        from_days::analyze_duration_from_days,
+    ),
+    BuiltinEntry::new(
+        "duration::from::days",
+        "A duration of the given number of days.",
+        from_days::signature,
+        from_days::analyze_duration_from_days,
+    ),
+    BuiltinEntry::new(
+        "duration::from_hours",
+        "A duration of the given number of hours.",
+        from_hours::signature,
+        from_hours::analyze_duration_from_hours,
+    ),
+    BuiltinEntry::new(
+        "duration::from::hours",
+        "A duration of the given number of hours.",
+        from_hours::signature,
+        from_hours::analyze_duration_from_hours,
+    ),
+    BuiltinEntry::new(
+        "duration::from_micros",
+        "A duration of the given number of microseconds.",
+        from_micros::signature,
+        from_micros::analyze_duration_from_micros,
+    ),
+    BuiltinEntry::new(
+        "duration::from::micros",
+        "A duration of the given number of microseconds.",
+        from_micros::signature,
+        from_micros::analyze_duration_from_micros,
+    ),
+    BuiltinEntry::new(
+        "duration::from_millis",
+        "A duration of the given number of milliseconds.",
+        from_millis::signature,
+        from_millis::analyze_duration_from_millis,
+    ),
+    BuiltinEntry::new(
+        "duration::from::millis",
+        "A duration of the given number of milliseconds.",
+        from_millis::signature,
+        from_millis::analyze_duration_from_millis,
+    ),
+    BuiltinEntry::new(
+        "duration::from_mins",
+        "A duration of the given number of minutes.",
+        from_mins::signature,
+        from_mins::analyze_duration_from_mins,
+    ),
+    BuiltinEntry::new(
+        "duration::from::mins",
+        "A duration of the given number of minutes.",
+        from_mins::signature,
+        from_mins::analyze_duration_from_mins,
+    ),
+    BuiltinEntry::new(
+        "duration::from_nanos",
+        "A duration of the given number of nanoseconds.",
+        from_nanos::signature,
+        from_nanos::analyze_duration_from_nanos,
+    ),
+    BuiltinEntry::new(
+        "duration::from::nanos",
+        "A duration of the given number of nanoseconds.",
+        from_nanos::signature,
+        from_nanos::analyze_duration_from_nanos,
+    ),
+    BuiltinEntry::new(
+        "duration::from_secs",
+        "A duration of the given number of seconds.",
+        from_secs::signature,
+        from_secs::analyze_duration_from_secs,
+    ),
+    BuiltinEntry::new(
+        "duration::from::secs",
+        "A duration of the given number of seconds.",
+        from_secs::signature,
+        from_secs::analyze_duration_from_secs,
+    ),
+    BuiltinEntry::new(
+        "duration::from_weeks",
+        "A duration of the given number of weeks.",
+        from_weeks::signature,
+        from_weeks::analyze_duration_from_weeks,
+    ),
+    BuiltinEntry::new(
+        "duration::from::weeks",
+        "A duration of the given number of weeks.",
+        from_weeks::signature,
+        from_weeks::analyze_duration_from_weeks,
+    ),
+    BuiltinEntry::new(
+        "duration::hours",
+        "The whole hours in a duration.",
+        hours::signature,
+        hours::analyze_duration_hours,
+    ),
+    BuiltinEntry::new(
+        "duration::micros",
+        "The whole microseconds in a duration.",
+        micros::signature,
+        micros::analyze_duration_micros,
+    ),
+    BuiltinEntry::new(
+        "duration::millis",
+        "The whole milliseconds in a duration.",
+        millis::signature,
+        millis::analyze_duration_millis,
+    ),
+    BuiltinEntry::new(
+        "duration::mins",
+        "The whole minutes in a duration.",
+        mins::signature,
+        mins::analyze_duration_mins,
+    ),
+    BuiltinEntry::new(
+        "duration::nanos",
+        "The nanoseconds in a duration.",
+        nanos::signature,
+        nanos::analyze_duration_nanos,
+    ),
+    BuiltinEntry::new(
+        "duration::secs",
+        "The whole seconds in a duration.",
+        secs::signature,
+        secs::analyze_duration_secs,
+    ),
+    BuiltinEntry::new(
+        "duration::weeks",
+        "The whole weeks in a duration.",
+        weeks::signature,
+        weeks::analyze_duration_weeks,
+    ),
+    BuiltinEntry::new(
+        "duration::years",
+        "The whole years in a duration.",
+        years::signature,
+        years::analyze_duration_years,
+    ),
+];

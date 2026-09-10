@@ -10,37 +10,28 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{apply, ParamKind, ReturnKind, Signature};
 
+/// The signature calls are checked against.
+pub(crate) fn signature() -> Signature {
+    Signature {
+        min_args: 1,
+        max_args: Some(1),
+        arg_kinds: vec![ParamKind::Exact(Kind::String)],
+        return_kind: ReturnKind::Fixed(crate::analyzer::function::json_value_kind()),
+    }
+}
+
 pub(crate) fn analyze_encoding_json_decode(
     ctx: &mut AnalysisContext<'_>,
     call: &ast::Call,
     args: &[Kind],
 ) -> Kind {
-    apply(
-        ctx,
-        call,
-        &Signature {
-            min_args: 1,
-            max_args: Some(1),
-            arg_kinds: vec![ParamKind::Exact(Kind::String)],
-            return_kind: ReturnKind::Fixed(crate::analyzer::function::json_value_kind()),
-        },
-        args,
-    )
+    apply(ctx, call, &signature(), args)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::analyzer::function::signature::evaluate;
-
-    fn signature() -> Signature {
-        Signature {
-            min_args: 1,
-            max_args: Some(1),
-            arg_kinds: vec![ParamKind::Exact(Kind::String)],
-            return_kind: ReturnKind::Fixed(crate::analyzer::function::json_value_kind()),
-        }
-    }
 
     #[test]
     fn returns_the_json_value_union() {

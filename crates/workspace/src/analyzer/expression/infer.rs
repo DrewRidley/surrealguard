@@ -41,18 +41,26 @@ pub fn infer_expression_fact(
             ExpressionValueClass::Literal,
             Kind::Table(vec![name.node.as_str().into()]),
         ),
-        ast::Expr::RecordId { table, .. } => scalar_fact(
-            span,
-            ExpressionValueClass::Literal,
-            Kind::Record(vec![table.node.as_str().into()]),
-        ),
+        // A record *range* (`person:1..5`) denotes many records of the table,
+        // so it is an array of them — a plain id is exactly one.
+        ast::Expr::RecordId { table, range, .. } => {
+            let record = Kind::Record(vec![table.node.as_str().into()]);
+            let kind = if *range {
+                Kind::Array(Box::new(record), None)
+            } else {
+                record
+            };
+            scalar_fact(span, ExpressionValueClass::Literal, kind)
+        }
+        ast::Expr::Constant(path) => constant_fact(path, span),
+        ast::Expr::Range(range) => range_fact(range, span, ctx),
         ast::Expr::Idiom(idiom) => idiom_fact(idiom, span, ctx),
         ast::Expr::Binary { lhs, op, rhs } => binary_fact(lhs, op, rhs, span, ctx),
         ast::Expr::Prefix { op, expr } => prefix_fact(op, expr, span, ctx),
         ast::Expr::Object(fields) => object_fact(fields, span, ctx),
         ast::Expr::Array(elements) => array_fact(elements, span, ctx),
         ast::Expr::Call(call) => call_fact(call, span, ctx),
-        ast::Expr::Cast { ty, .. } => cast_fact(ty, span),
+        ast::Expr::Cast { ty, expr } => cast_fact(ty, expr, span, ctx),
         ast::Expr::Subquery(inner) => {
             let fact = ExpressionFact::new(span, ExpressionValueClass::Subquery);
             match statement_value_kind(inner, ctx) {
@@ -247,10 +255,74 @@ fn literal_fact(literal: &ast::Literal, span: SourceSpan) -> ExpressionFact {
         ast::Literal::Datetime(_) => Kind::Datetime,
         ast::Literal::Uuid(_) => Kind::Uuid,
         ast::Literal::Regex(_) => Kind::Regex,
+        ast::Literal::Bytes(_) => Kind::Bytes,
+        // A file literal names a bucket; the kind lists the buckets a value
+        // may belong to, and a literal may belong to any.
+        ast::Literal::File(_) => Kind::File(Vec::new()),
     };
     let mut fact = scalar_fact(span, ExpressionValueClass::Literal, kind);
     fact.value = const_literal_value(literal);
     fact
+}
+
+/// The kind of a module constant (`math::pi`, `time::epoch`), or `None` for a
+/// path the engine has no constant for.
+pub(crate) fn constant_kind(path: &str) -> Option<Kind> {
+    Some(match path {
+        "math::e"
+        | "math::frac_1_pi"
+        | "math::frac_1_sqrt_2"
+        | "math::frac_2_pi"
+        | "math::frac_2_sqrt_pi"
+        | "math::frac_pi_2"
+        | "math::frac_pi_3"
+        | "math::frac_pi_4"
+        | "math::frac_pi_6"
+        | "math::frac_pi_8"
+        | "math::inf"
+        | "math::infinity"
+        | "math::ln_10"
+        | "math::ln_2"
+        | "math::log10_2"
+        | "math::log10_e"
+        | "math::log2_10"
+        | "math::log2_e"
+        | "math::neg_inf"
+        | "math::neg_infinity"
+        | "math::pi"
+        | "math::sqrt_2"
+        | "math::tau" => Kind::Float,
+        "time::epoch" | "time::minimum" | "time::maximum" => Kind::Datetime,
+        "duration::max" => Kind::Duration,
+        _ => return None,
+    })
+}
+
+fn constant_fact(path: &ast::Spanned<String>, span: SourceSpan) -> ExpressionFact {
+    match constant_kind(&path.node) {
+        Some(kind) => scalar_fact(span, ExpressionValueClass::Literal, kind),
+        // Not a constant the engine defines: the value is unknown, and saying
+        // so is the honest answer (the engine rejects it at runtime).
+        None => partial_fact(
+            span,
+            ExpressionValueClass::Unknown,
+            format!("Constant {}", path.node),
+        ),
+    }
+}
+
+/// `a..b`: always a `range`; the bounds are read for what they depend on.
+fn range_fact(
+    range: &ast::Range,
+    span: SourceSpan,
+    ctx: &mut AnalysisContext<'_>,
+) -> ExpressionFact {
+    let mut fact = ExpressionFact::new(span, ExpressionValueClass::Unknown);
+    for bound in [&range.start, &range.end].into_iter().flatten() {
+        let inner = infer_expression_fact(bound, ctx);
+        merge_dependencies(&mut fact, inner.dependencies);
+    }
+    fact.with_kind(Kind::Range)
 }
 
 /// The literal's static value, for the variants whose value the AST
@@ -568,6 +640,14 @@ fn step_part_kind(
         // not the link, so `Any` — never the receiver — is the honest answer.
         ast::IdiomPart::All => Some(splat_kind(current, ctx.schema()).unwrap_or(Kind::Any)),
         ast::IdiomPart::Where(_) | ast::IdiomPart::Optional => Some(current.clone()),
+        // `...` flattens one level of nesting: an `array<array<T>>` becomes an
+        // `array<T>`; anything else is left as it stands.
+        ast::IdiomPart::Flatten => Some(match current {
+            Kind::Array(element, _) if matches!(**element, Kind::Array(..) | Kind::Set(..)) => {
+                (**element).clone()
+            }
+            other => other.clone(),
+        }),
         ast::IdiomPart::Method { name, args } => {
             let arg_kinds: Vec<Kind> = std::iter::once(current.clone())
                 .chain(
@@ -604,9 +684,9 @@ fn step_part_kind(
         }
         // `Start` is a value, not a step off one; `Recurse` and `Partial` name
         // no single reachable shape.
-        ast::IdiomPart::Start(_)
-        | ast::IdiomPart::Recurse { .. }
-        | ast::IdiomPart::Partial(_) => None,
+        ast::IdiomPart::Start(_) | ast::IdiomPart::Recurse { .. } | ast::IdiomPart::Partial(_) => {
+            None
+        }
     }
 }
 
@@ -630,11 +710,7 @@ pub(crate) fn step_field_path(
     fields: &[String],
     schema: &SchemaIndex,
 ) -> Option<Kind> {
-    let mut current = base.clone();
-    for field in fields {
-        current = field_of_kind(&current, field, schema)?;
-    }
-    Some(current)
+    crate::kinds::project_fields(base, fields, Some(schema))
 }
 
 fn step_idiom_kind(idiom: &ast::Idiom, ctx: &mut AnalysisContext<'_>) -> Option<Kind> {
@@ -665,25 +741,14 @@ fn step_idiom_kind(idiom: &ast::Idiom, ctx: &mut AnalysisContext<'_>) -> Option<
     current
 }
 
-/// The kind of `value.field`, stepping through closed objects and record
-/// links (via the schema).
+/// The kind of `value.field`: [`crate::kinds::project`] with the schema in
+/// hand, so record links resolve.
 pub(crate) fn field_of_kind(value: &Kind, field: &str, schema: &SchemaIndex) -> Option<Kind> {
-    match value {
-        Kind::Literal(KindLiteral::Object(fields)) => fields.get(field).cloned(),
-        Kind::Record(targets) => {
-            let [target] = targets.as_slice() else {
-                return None;
-            };
-            let table = schema.tables.get(&target.to_string())?;
-            crate::analyzer::data::select::kind_for_path(table, &[field.to_string()])
-        }
-        // Field access distributes over collections (`friends.name`).
-        Kind::Array(element, max_len) => {
-            let stepped = field_of_kind(element, field, schema)?;
-            Some(Kind::Array(Box::new(stepped), *max_len))
-        }
-        _ => None,
-    }
+    crate::kinds::project(
+        value,
+        &crate::schema::FieldStep::Field(field.to_string()),
+        Some(schema),
+    )
 }
 
 /// Method calls dispatch to the receiver kind's function family:
@@ -791,7 +856,7 @@ fn builtin_method_kind(
     arg_exprs: &[ast::Spanned<ast::Expr>],
     ctx: &mut AnalysisContext<'_>,
 ) -> Option<Kind> {
-    if !crate::completion::builtins::is_builtin(path) {
+    if !crate::analyzer::function::is_builtin(path) {
         return None;
     }
     let call = crate::analyzer::function::synthetic_method_call(path, arg_exprs);
@@ -1060,12 +1125,33 @@ fn call_fact(call: &ast::Call, span: SourceSpan, ctx: &mut AnalysisContext<'_>) 
     fact.with_kind(kind)
 }
 
-fn cast_fact(ty: &ast::Spanned<ast::TypeExpr>, span: SourceSpan) -> ExpressionFact {
+fn cast_fact(
+    ty: &ast::Spanned<ast::TypeExpr>,
+    inner: &ast::Spanned<ast::Expr>,
+    span: SourceSpan,
+    ctx: &mut AnalysisContext<'_>,
+) -> ExpressionFact {
     let fact = ExpressionFact::new(span, ExpressionValueClass::Unknown);
-    match cast_kind(&ty.node) {
-        Some(kind) => fact.with_kind(kind),
-        None => fact.with_partial(PartialReason::UnsupportedSyntax("TypeCast".into())),
-    }
+    let Some(target) = cast_kind(&ty.node) else {
+        return fact.with_partial(PartialReason::UnsupportedSyntax("TypeCast".into()));
+    };
+    // A bare `<array>` / `<set>` names no element kind, and the engine keeps
+    // the operand's elements as they are — so a collection operand's element
+    // kind survives the cast (`<set> $tags` over `array<string>` is
+    // `set<string>`, not `set<any>`).
+    let kind = match &target {
+        Kind::Array(element, _) | Kind::Set(element, _) if **element == Kind::Any => {
+            match infer_expression_fact(inner, ctx).kind {
+                Some(Kind::Array(element, _) | Kind::Set(element, _)) => match target {
+                    Kind::Set(_, _) => Kind::Set(element, None),
+                    _ => Kind::Array(element, None),
+                },
+                _ => target,
+            }
+        }
+        _ => target,
+    };
+    fact.with_kind(kind)
 }
 
 /// The kind a cast target names, shared with the checking side.
@@ -1073,24 +1159,12 @@ pub fn cast_target_kind(ty: &ast::TypeExpr) -> Option<Kind> {
     cast_kind(ty)
 }
 
+/// The kind a cast target names: every type a `DEFINE FIELD` can declare is
+/// a type a value can be cast to, so this is the schema's type reader. A
+/// name it does not know (`<future>`, `<regex>`) is `None`, which leaves the
+/// cast's kind unknown rather than guessed.
 fn cast_kind(ty: &ast::TypeExpr) -> Option<Kind> {
-    let ast::TypeExpr::Name(name) = ty else {
-        return None;
-    };
-    let kind = match name.node.to_ascii_lowercase().as_str() {
-        "int" => Kind::Int,
-        "float" => Kind::Float,
-        "decimal" => Kind::Decimal,
-        "number" => Kind::Number,
-        "string" => Kind::String,
-        "bool" => Kind::Bool,
-        "duration" => Kind::Duration,
-        "datetime" => Kind::Datetime,
-        "uuid" => Kind::Uuid,
-        "bytes" => Kind::Bytes,
-        _ => return None,
-    };
-    Some(kind)
+    crate::schema::kind_from_type_expr(ty, "").kind
 }
 
 /// Mirrors SurrealDB's `TryAdd`/`TrySub`/`TryMul` on `Value`: numeric
@@ -1145,21 +1219,58 @@ pub fn binary_result_kind(op: &ast::BinaryOp, lhs: &Kind, rhs: &Kind) -> Option<
             let (Kind::Array(b, _) | Kind::Set(b, _)) = rhs else {
                 return None;
             };
-            let element = Box::new(merged_element(a, b));
+            // The element of a concatenation is the join of the two elements.
+            let element = Box::new(crate::lattice::join(a, b));
             Some(match lhs {
                 Kind::Set(_, _) => Kind::Set(element, None),
                 _ => Kind::Array(element, None),
             })
         }
-        Op::Add | Op::Sub | Op::Mul | Op::Div if is_numeric(lhs) && is_numeric(rhs) => {
+        Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Rem | Op::Pow
+            if is_numeric(lhs) && is_numeric(rhs) =>
+        {
             Some(numeric_result(lhs, rhs))
         }
         // A comparison produces a bool no matter what it compares; mismatched
-        // operands violate an invariant, not the result type.
-        Op::Eq | Op::NotEq | Op::Lt | Op::LtEq | Op::Gt | Op::GtEq => Some(Kind::Bool),
+        // operands violate an invariant, not the result type. The same holds
+        // for every membership, containment, geometry, fuzzy-match, full-text
+        // and KNN operator.
+        Op::Eq
+        | Op::Exact
+        | Op::NotEq
+        | Op::Lt
+        | Op::LtEq
+        | Op::Gt
+        | Op::GtEq
+        | Op::Is
+        | Op::IsNot
+        | Op::In
+        | Op::NotIn
+        | Op::Contains
+        | Op::ContainsNot
+        | Op::ContainsAll
+        | Op::ContainsAny
+        | Op::ContainsNone
+        | Op::Inside
+        | Op::NotInside
+        | Op::AllInside
+        | Op::AnyInside
+        | Op::NoneInside
+        | Op::Outside
+        | Op::Intersects
+        | Op::Match
+        | Op::NotMatch
+        | Op::AllMatch
+        | Op::AnyMatch
+        | Op::AnyEq
+        | Op::AllEq
+        | Op::Matches(_)
+        | Op::Knn(_) => Some(Kind::Bool),
         Op::And | Op::Or if matches!(lhs, Kind::Bool) && matches!(rhs, Kind::Bool) => {
             Some(Kind::Bool)
         }
+        // `a ?: b` yields whichever side is truthy, so it is one of the two.
+        Op::TruthyCoalesce => Some(Kind::either(vec![raw_lhs.clone(), rhs.clone()])),
         Op::NullCoalesce if matches!(lhs, Kind::None | Kind::Null) => Some(rhs.clone()),
         // `x ?? NONE` is `x`: the default only surfaces when `x` is already
         // NONE, so the NONE variant survives — report the *unstripped* left.
@@ -1217,19 +1328,7 @@ fn numeric_result(lhs: &Kind, rhs: &Kind) -> Kind {
     }
 }
 
-/// The element kind of a concatenated collection: the shared kind, or the
-/// union when they differ.
-fn merged_element(a: &Kind, b: &Kind) -> Kind {
-    if a == b {
-        a.clone()
-    } else {
-        Kind::either(vec![a.clone(), b.clone()])
-    }
-}
-
-pub fn is_numeric(kind: &Kind) -> bool {
-    matches!(kind, Kind::Int | Kind::Float | Kind::Decimal | Kind::Number)
-}
+pub(crate) use crate::kinds::is_numeric;
 
 fn merge_dependencies(fact: &mut ExpressionFact, deps: crate::expression::ExpressionDependencies) {
     fact.dependencies.field_paths.extend(deps.field_paths);
@@ -1585,6 +1684,97 @@ mod tests {
     }
 
     #[test]
+    fn record_id_ranges_infer_an_array_of_records() {
+        let env = StatementEnv::default();
+        let parsed = parse("RETURN person:1..5;");
+        let fact = infer_first(&parsed, "RecordId", None, &env);
+        assert_eq!(
+            fact.kind,
+            Some(Kind::Array(
+                Box::new(Kind::Record(vec!["person".into()])),
+                None
+            ))
+        );
+    }
+
+    #[test]
+    fn constants_ranges_and_prefixed_literals_infer_their_kinds() {
+        let env = StatementEnv::default();
+        let cases = [
+            ("RETURN MaTh::Pi;", "Constant", Kind::Float),
+            ("RETURN time::EPOCH;", "Constant", Kind::Datetime),
+            ("RETURN 1..5;", "Range", Kind::Range),
+            ("RETURN b'abc';", "String", Kind::Bytes),
+            ("RETURN f'bucket:/a';", "String", Kind::File(Vec::new())),
+            ("RETURN 1.5f;", "Number", Kind::Float),
+            ("RETURN 9.7e-7dec;", "Number", Kind::Decimal),
+        ];
+        for (query, node, expected) in cases {
+            let parsed = parse(query);
+            let fact = infer_first(&parsed, node, None, &env);
+            assert_eq!(fact.kind, Some(expected), "`{query}`");
+            assert!(fact.partial.is_empty(), "`{query}`: {:?}", fact.partial);
+        }
+        // A path the engine has no constant for is honestly unknown.
+        let parsed = parse("RETURN math::nope;");
+        let fact = infer_first(&parsed, "Constant", None, &env);
+        assert_eq!(fact.kind, None);
+        assert!(!fact.partial.is_empty());
+    }
+
+    #[test]
+    fn every_comparison_family_operator_is_a_bool() {
+        let env = StatementEnv::default();
+        for op in [
+            "==",
+            "IS",
+            "IS NOT",
+            "IN",
+            "NOT IN",
+            "CONTAINS",
+            "CONTAINSALL",
+            "INSIDE",
+            "NONEINSIDE",
+            "OUTSIDE",
+            "INTERSECTS",
+            "~",
+            "!~",
+            "?~",
+            "?=",
+            "*=",
+            "@@",
+            "@1@",
+            "<|3|>",
+            "<|3, COSINE|>",
+        ] {
+            let query = format!("RETURN [1] {op} 1;");
+            let parsed = parse(&query);
+            let fact = infer_first(&parsed, "BinaryExpression", None, &env);
+            assert_eq!(fact.kind, Some(Kind::Bool), "`{query}`");
+        }
+    }
+
+    #[test]
+    fn remainder_power_and_truthy_coalescing_follow_their_operands() {
+        let env = StatementEnv::default();
+        let cases = [
+            ("RETURN 5 % 2;", Kind::Int),
+            ("RETURN 2 ** 3;", Kind::Int),
+            ("RETURN 2.5 ** 2;", Kind::Float),
+            ("RETURN 5.5 % 2;", Kind::Float),
+            (
+                "RETURN 'a' ?: 1;",
+                Kind::either(vec![Kind::String, Kind::Int]),
+            ),
+        ];
+        for (query, expected) in cases {
+            let parsed = parse(query);
+            let fact = infer_first(&parsed, "BinaryExpression", None, &env);
+            assert_eq!(fact.kind, Some(expected), "`{query}`");
+        }
+    }
+
+    #[test]
     fn record_id_literals_infer_their_record_kind() {
         let env = StatementEnv::default();
         let parsed = parse("RETURN person:one;");
@@ -1871,7 +2061,7 @@ mod tests {
         let mut checked = 0usize;
         crate::analyzer::test_support::with_ctx(|ctx| {
             for (family, receiver) in families {
-                for builtin in crate::completion::builtins::BUILTINS
+                for builtin in crate::analyzer::function::builtin_catalog()
                     .iter()
                     .filter(|builtin| builtin.family() == *family)
                 {

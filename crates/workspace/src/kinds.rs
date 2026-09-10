@@ -3,7 +3,9 @@
 
 use std::collections::BTreeMap;
 
-use surrealdb_types::{Kind, KindLiteral};
+use surrealdb_types::{GeometryKind, Kind, KindLiteral};
+
+use crate::schema::{FieldStep, SchemaIndex};
 
 /// Structural assignability between two closed object literals: every source
 /// property must name a property the target declares and carry an assignable
@@ -69,6 +71,20 @@ pub fn kind_is_assignable_to(actual: &Kind, expected: &Kind) -> bool {
         return variants
             .iter()
             .any(|variant| kind_is_assignable_to(actual, variant));
+    }
+    // Geometry. A geometry fits a geometry target that names no shape or
+    // names every one of the source's (`geometry<point>` into `geometry`, or
+    // into `geometry<point | polygon>`); a GeoJSON object literal (`{ type:
+    // 'Point', coordinates: […] }`) IS a geometry on the engine, so it fits
+    // under the same rule by the shape its `type` names.
+    match (actual, expected) {
+        (Kind::Geometry(src), Kind::Geometry(dst)) => {
+            return dst.is_empty() || src.iter().all(|shape| dst.contains(shape));
+        }
+        (Kind::Literal(KindLiteral::Object(src)), Kind::Geometry(dst)) => {
+            return geojson_shape(src).is_some_and(|shape| dst.is_empty() || dst.contains(&shape));
+        }
+        _ => {}
     }
     // Structural object assignability: an object literal fits an
     // object-typed target when every property the target *requires* is
@@ -148,6 +164,32 @@ pub fn kind_is_assignable_to(actual: &Kind, expected: &Kind) -> bool {
             Kind::Number
         ) | (Kind::Int, Kind::Float | Kind::Decimal)
     )
+}
+
+/// The geometry shape a GeoJSON object literal spells: a `type` that names one
+/// of the seven GeoJSON geometries beside the payload key that shape carries
+/// (`coordinates`, or `geometries` for a collection). Anything else is not
+/// provably a geometry.
+fn geojson_shape(object: &BTreeMap<String, Kind>) -> Option<GeometryKind> {
+    let Some(Kind::Literal(KindLiteral::String(name))) = object.get("type") else {
+        return None;
+    };
+    let shape = match name.as_str() {
+        "Point" => GeometryKind::Point,
+        "LineString" => GeometryKind::Line,
+        "Polygon" => GeometryKind::Polygon,
+        "MultiPoint" => GeometryKind::MultiPoint,
+        "MultiLineString" => GeometryKind::MultiLine,
+        "MultiPolygon" => GeometryKind::MultiPolygon,
+        "GeometryCollection" => GeometryKind::Collection,
+        _ => return None,
+    };
+    let payload = if shape == GeometryKind::Collection {
+        "geometries"
+    } else {
+        "coordinates"
+    };
+    object.contains_key(payload).then_some(shape)
 }
 
 /// Whether a source collection length fits a target's. The target length is
@@ -326,13 +368,7 @@ pub(crate) fn record_link_shape(
 ///   `SET parent = NONE` keeps type-checking.
 /// * A bare `object` opens into a closed literal object, which is exactly what
 ///   the nested-field prefix synthesis already produced.
-pub(crate) fn refine_subkind(
-    parent: &Kind,
-    steps: &[crate::schema::FieldStep],
-    child: &Kind,
-) -> Option<Kind> {
-    use crate::schema::FieldStep;
-
+pub(crate) fn refine_subkind(parent: &Kind, steps: &[FieldStep], child: &Kind) -> Option<Kind> {
     let Some((step, rest)) = steps.split_first() else {
         return Some(child.clone());
     };
@@ -409,46 +445,144 @@ pub(crate) fn refine_subkind(
     }
 }
 
-/// The kind at the sub-path `steps` under `parent`, or `None` when the parent's
-/// declared kind proves no such sub-path exists. The read-only counterpart of
-/// [`refine_subkind`]: it never invents a member, so `Some` means "the schema
-/// declares this".
-pub(crate) fn subkind_at(parent: &Kind, steps: &[crate::schema::FieldStep]) -> Option<Kind> {
-    use crate::schema::FieldStep;
+/// The kind at the sub-path `steps` under `parent`, read without a schema, or
+/// `None` when the parent's declared kind proves no such sub-path exists. The
+/// read-only counterpart of [`refine_subkind`], and [`project_path`] with no
+/// schema in hand: a record link cannot be entered, so `Some` means "this kind
+/// itself declares the member".
+pub(crate) fn subkind_at(parent: &Kind, steps: &[FieldStep]) -> Option<Kind> {
+    project_path(parent, steps, None)
+}
 
-    let Some((step, rest)) = steps.split_first() else {
-        return Some(parent.clone());
-    };
-    match parent {
+// ---------------------------------------------------------------------------
+// Projection (reading one step — a field or an element — out of a kind)
+// ---------------------------------------------------------------------------
+
+/// The kind one step reaches out of `kind` — a named field or a collection
+/// element — or `None` when `kind` proves no such member exists.
+///
+/// This is THE projection policy. Every "what is `value.field`" question in
+/// the crate — a schema sub-path, an idiom walk, a hover, a destructure, a
+/// projected-row oracle — asks it, so the answer cannot drift between sites.
+/// The rules, in the order they apply:
+///
+/// * **`any` projects to `any`.** An unknown value has an unknown member, not
+///   a provably absent one.
+/// * **A union projects arm by arm.** The `NONE`/`NULL` arms are set aside;
+///   every other arm is projected, arms with no such member are dropped, and
+///   the survivors are unioned in arm order (order is load-bearing for
+///   rendering — see `lattice::canonical_union`). No survivor → `None`. When a
+///   sentinel arm was set aside the result is `option<…>` of that union: a
+///   value that may be `NONE` has a member that may be `NONE`
+///   (`option<record<user>>.name` is `option<string>`). The sentinel comes
+///   back as `none`, the shape [`rewrap_kind`] gives [`KindWrapper::Optional`].
+/// * **A record link reads the schema.** Each target table contributes what
+///   [`crate::analyzer::data::select::kind_for_path`] says the field is
+///   (declared, refined, a nested-object prefix, or the implicit
+///   `id`/`in`/`out`); tables without the field are dropped and the rest are
+///   unioned. A target the schema does not know, an unconstrained `record<>`,
+///   or no schema at all (`schema: None`) leaves the member unprovable →
+///   `None`. A record has no `Element`.
+/// * **A collection distributes.** `Element` is the element kind itself; a
+///   `Field` step projects the ELEMENT and wraps the result back in the same
+///   collection with the same length (`array<record<user>>.name` is
+///   `array<string>`) — SurrealQL's implicit `[*]` on field access.
+/// * **A literal object is read by key**; it has no `Element`.
+/// * **Everything else** — a scalar, an open `object`, a geometry, a tuple
+///   literal, a `table<>` — proves no member: `None`. An open `object` is
+///   deliberately *not* `any` here: it says nothing about its keys, so this
+///   never invents one, which keeps "does this path exist on the table"
+///   checks honest.
+pub(crate) fn project(kind: &Kind, step: &FieldStep, schema: Option<&SchemaIndex>) -> Option<Kind> {
+    match kind {
+        Kind::Any => Some(Kind::Any),
         Kind::Either(variants) => {
-            let mut payload = variants
-                .iter()
-                .filter(|variant| !matches!(variant, Kind::None | Kind::Null));
-            let only = payload.next()?;
-            if payload.next().is_some() {
+            let mut optional = false;
+            let mut projected = Vec::with_capacity(variants.len());
+            for variant in variants {
+                if matches!(variant, Kind::None | Kind::Null) {
+                    optional = true;
+                    continue;
+                }
+                if let Some(member) = project(variant, step, schema) {
+                    projected.push(member);
+                }
+            }
+            if projected.is_empty() {
                 return None;
             }
-            let resolved = subkind_at(only, steps)?;
-            Some(if variants.len() > 1 {
-                Kind::either(vec![Kind::None, resolved])
+            let union = Kind::either(projected);
+            Some(if optional {
+                Kind::either(vec![Kind::None, union])
             } else {
-                resolved
+                union
             })
         }
-        Kind::Array(element, _) | Kind::Set(element, _) => {
-            let tail = if matches!(step, FieldStep::Element) {
-                rest
-            } else {
-                steps
+        Kind::Record(targets) => {
+            let FieldStep::Field(name) = step else {
+                return None;
             };
-            subkind_at(element, tail)
+            let schema = schema?;
+            if targets.is_empty() {
+                return None;
+            }
+            let mut projected = Vec::with_capacity(targets.len());
+            for target in targets {
+                let table = schema.tables.get(&target.to_string())?;
+                if let Some(member) =
+                    crate::analyzer::data::select::kind_for_path(table, std::slice::from_ref(name))
+                {
+                    projected.push(member);
+                }
+            }
+            (!projected.is_empty()).then(|| Kind::either(projected))
         }
+        Kind::Array(element, len) => match step {
+            FieldStep::Element => Some((**element).clone()),
+            FieldStep::Field(_) => {
+                Some(Kind::Array(Box::new(project(element, step, schema)?), *len))
+            }
+        },
+        Kind::Set(element, len) => match step {
+            FieldStep::Element => Some((**element).clone()),
+            FieldStep::Field(_) => Some(Kind::Set(Box::new(project(element, step, schema)?), *len)),
+        },
         Kind::Literal(KindLiteral::Object(fields)) => match step {
-            FieldStep::Field(name) => subkind_at(fields.get(name)?, rest),
+            FieldStep::Field(name) => fields.get(name).cloned(),
             FieldStep::Element => None,
         },
         _ => None,
     }
+}
+
+/// [`project`] applied step after step: the kind at the end of `steps`, or
+/// `None` as soon as one step proves no member. An empty path is `kind` itself.
+pub(crate) fn project_path(
+    kind: &Kind,
+    steps: &[FieldStep],
+    schema: Option<&SchemaIndex>,
+) -> Option<Kind> {
+    steps.iter().try_fold(kind.clone(), |current, step| {
+        project(&current, step, schema)
+    })
+}
+
+/// `project` for the common case of a chain of named fields.
+pub(crate) fn project_fields(
+    kind: &Kind,
+    fields: &[String],
+    schema: Option<&SchemaIndex>,
+) -> Option<Kind> {
+    fields.iter().try_fold(kind.clone(), |current, field| {
+        project(&current, &FieldStep::Field(field.clone()), schema)
+    })
+}
+
+/// Whether `kind` is one of the numeric kinds (`int`, `float`, `decimal`, or
+/// their supertype `number`). Shared by arithmetic inference, the numeric
+/// contracts, and the lattice's coercion-order rule.
+pub(crate) fn is_numeric(kind: &Kind) -> bool {
+    matches!(kind, Kind::Int | Kind::Float | Kind::Decimal | Kind::Number)
 }
 
 #[cfg(test)]
@@ -461,6 +595,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one table row per assignability contract branch"
+    )]
     fn assignability_pins_each_contract_branch() {
         let cases: &[(&str, Kind, Kind, bool)] = &[
             // Exact match and the wildcard target.
@@ -1191,11 +1329,231 @@ mod tests {
             Some(Kind::String)
         );
         // A `Field` step into a collection reads as the element step SurrealQL
-        // idiom flattening implies.
-        assert_eq!(subkind_at(&kind, &[named("sku")]), Some(Kind::String));
+        // idiom flattening implies — and distributes, so the answer is still a
+        // collection (`items.sku` on an `array<{ sku }>` is an `array<string>`).
+        assert_eq!(
+            subkind_at(&kind, &[named("sku")]),
+            Some(Kind::Array(Box::new(Kind::String), None))
+        );
         assert!(subkind_at(&kind, &[named("ghost")]).is_none());
         // An open object proves nothing about its members, so it never claims
         // one exists.
         assert!(subkind_at(&Kind::Object, &[named("anything")]).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // project: one rule per policy bullet
+    // -----------------------------------------------------------------------
+
+    fn field(name: &str) -> crate::schema::FieldStep {
+        crate::schema::FieldStep::Field(name.to_string())
+    }
+
+    fn schema_of(text: &str) -> crate::schema::SchemaIndex {
+        let parsed = surrealguard_syntax::parse::parse_source(
+            surrealguard_syntax::source::SourceId::new("schema:project"),
+            text,
+        )
+        .expect("schema parses");
+        crate::schema::extract_schema(&[parsed]).schema
+    }
+
+    #[test]
+    fn project_any_is_any() {
+        use crate::schema::FieldStep::Element;
+        assert_eq!(project(&Kind::Any, &field("x"), None), Some(Kind::Any));
+        assert_eq!(project(&Kind::Any, &Element, None), Some(Kind::Any));
+    }
+
+    #[test]
+    fn project_reads_a_literal_object_by_key_and_nothing_else() {
+        use crate::schema::FieldStep::Element;
+        let obj = object(&[("name", Kind::String)]);
+        assert_eq!(project(&obj, &field("name"), None), Some(Kind::String));
+        assert_eq!(project(&obj, &field("ghost"), None), None);
+        assert_eq!(project(&obj, &Element, None), None);
+        // An open object, a scalar, a table and a tuple prove no member.
+        assert_eq!(project(&Kind::Object, &field("name"), None), None);
+        assert_eq!(project(&Kind::String, &field("len"), None), None);
+        assert_eq!(
+            project(&Kind::Table(vec![Table::from("t")]), &field("id"), None),
+            None
+        );
+        assert_eq!(
+            project(
+                &Kind::Literal(KindLiteral::Array(vec![Kind::Int])),
+                &Element,
+                None
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn project_keeps_the_option_around_a_member() {
+        let obj = object(&[("name", Kind::String)]);
+        // `none | {…}` and `null | {…}` both come back as `none | member`.
+        assert_eq!(
+            project(&option_of(obj.clone()), &field("name"), None),
+            Some(option_of(Kind::String))
+        );
+        assert_eq!(
+            project(
+                &Kind::either(vec![Kind::Null, obj.clone()]),
+                &field("name"),
+                None
+            ),
+            Some(option_of(Kind::String))
+        );
+        // A member that is already optional does not double-wrap.
+        let nested = object(&[("nick", option_of(Kind::String))]);
+        assert_eq!(
+            project(&option_of(nested), &field("nick"), None),
+            Some(option_of(Kind::String))
+        );
+        // No payload arm has the member: nothing, not `option<nothing>`.
+        assert_eq!(project(&option_of(obj), &field("ghost"), None), None);
+        assert_eq!(
+            project(
+                &Kind::either(vec![Kind::None, Kind::Null]),
+                &field("x"),
+                None
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn project_distributes_over_a_union_and_drops_arms_without_the_member() {
+        let a = object(&[("x", Kind::Int), ("only_a", Kind::Bool)]);
+        let b = object(&[("x", Kind::String)]);
+        let union = Kind::either(vec![a, b]);
+        // Both arms have `x`: the union of their answers, in arm order.
+        assert_eq!(
+            project(&union, &field("x"), None),
+            Some(Kind::either(vec![Kind::Int, Kind::String]))
+        );
+        // One arm has it: that arm's answer alone.
+        assert_eq!(project(&union, &field("only_a"), None), Some(Kind::Bool));
+        // Neither: nothing.
+        assert_eq!(project(&union, &field("ghost"), None), None);
+        // Optional multi-arm union: option of the union.
+        assert_eq!(
+            project(&Kind::either(vec![Kind::None, union]), &field("x"), None),
+            Some(Kind::either(vec![Kind::None, Kind::Int, Kind::String]))
+        );
+    }
+
+    #[test]
+    fn project_distributes_over_collections_and_wraps_back() {
+        use crate::schema::FieldStep::Element;
+        let element = object(&[("sku", Kind::String)]);
+        let array = Kind::Array(Box::new(element.clone()), Some(3));
+        let set = Kind::Set(Box::new(element.clone()), None);
+        // `Element` is the element itself.
+        assert_eq!(project(&array, &Element, None), Some(element.clone()));
+        assert_eq!(project(&set, &Element, None), Some(element));
+        // A field step distributes and keeps the collection and its length.
+        assert_eq!(
+            project(&array, &field("sku"), None),
+            Some(Kind::Array(Box::new(Kind::String), Some(3)))
+        );
+        assert_eq!(
+            project(&set, &field("sku"), None),
+            Some(Kind::Set(Box::new(Kind::String), None))
+        );
+        assert_eq!(project(&array, &field("ghost"), None), None);
+        // `option<array<T>>[*]` is `option<T>`.
+        assert_eq!(
+            project(
+                &option_of(Kind::Array(Box::new(Kind::Int), None)),
+                &Element,
+                None
+            ),
+            Some(option_of(Kind::Int))
+        );
+    }
+
+    #[test]
+    fn project_reads_record_links_through_the_schema() {
+        let schema = schema_of(
+            "DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE FIELD name ON user TYPE string;\n\
+             DEFINE FIELD age ON user TYPE int;\n\
+             DEFINE TABLE bot SCHEMAFULL;\n\
+             DEFINE FIELD name ON bot TYPE option<string>;\n\
+             DEFINE FIELD model ON bot TYPE string;",
+        );
+        let user = Kind::Record(vec![Table::from("user")]);
+        let both = Kind::Record(vec![Table::from("user"), Table::from("bot")]);
+
+        // Single table: its field, including the implicit `id`.
+        assert_eq!(
+            project(&user, &field("name"), Some(&schema)),
+            Some(Kind::String)
+        );
+        assert_eq!(
+            project(&user, &field("id"), Some(&schema)),
+            Some(user.clone())
+        );
+        assert_eq!(project(&user, &field("ghost"), Some(&schema)), None);
+        // Several tables: the union over the tables that have the field.
+        assert_eq!(
+            project(&both, &field("name"), Some(&schema)),
+            Some(Kind::either(vec![Kind::String, option_of(Kind::String)]))
+        );
+        assert_eq!(
+            project(&both, &field("model"), Some(&schema)),
+            Some(Kind::String)
+        );
+        assert_eq!(project(&both, &field("ghost"), Some(&schema)), None);
+        // Without a schema, through an unknown table, or on `record<>`: unprovable.
+        assert_eq!(project(&user, &field("name"), None), None);
+        assert_eq!(
+            project(
+                &Kind::Record(vec![Table::from("nope")]),
+                &field("name"),
+                Some(&schema)
+            ),
+            None
+        );
+        assert_eq!(
+            project(&Kind::Record(vec![]), &field("id"), Some(&schema)),
+            None
+        );
+        assert_eq!(
+            project(&user, &crate::schema::FieldStep::Element, Some(&schema)),
+            None
+        );
+        // Wrappers compose with the link: `option<array<record<user>>>.name`.
+        let links = option_of(Kind::Array(Box::new(user), None));
+        assert_eq!(
+            project(&links, &field("name"), Some(&schema)),
+            Some(option_of(Kind::Array(Box::new(Kind::String), None)))
+        );
+    }
+
+    #[test]
+    fn project_path_walks_step_by_step_and_stops_at_the_first_missing_member() {
+        let schema = schema_of(
+            "DEFINE TABLE user SCHEMAFULL;\n\
+             DEFINE FIELD name ON user TYPE string;\n\
+             DEFINE TABLE post SCHEMAFULL;\n\
+             DEFINE FIELD author ON post TYPE option<record<user>>;",
+        );
+        let post = Kind::Record(vec![Table::from("post")]);
+        assert_eq!(project_path(&post, &[], Some(&schema)), Some(post.clone()));
+        assert_eq!(
+            project_fields(&post, &["author".into(), "name".into()], Some(&schema)),
+            Some(option_of(Kind::String))
+        );
+        assert_eq!(
+            project_fields(&post, &["author".into(), "ghost".into()], Some(&schema)),
+            None
+        );
+        assert_eq!(
+            project_fields(&post, &["ghost".into(), "name".into()], Some(&schema)),
+            None
+        );
     }
 }

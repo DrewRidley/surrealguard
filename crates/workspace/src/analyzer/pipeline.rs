@@ -5,7 +5,8 @@
 //! schema built from the statements before it. The walk also owns the
 //! cross-statement contracts that no single statement can see: schema
 //! effects, transaction pairing (4007), parameter constraints and their
-//! source-order rules (6004), and `fn::` termination (5009).
+//! source-order rules (6004), `fn::` termination (5009), and event
+//! self-triggering (5010).
 //!
 //! The schema index is shared across the whole run and accumulates in
 //! iteration order: a `DEFINE` in one source is visible to statements in
@@ -29,6 +30,7 @@ use crate::analysis::{
     StatementAnalysis,
 };
 use crate::analyzer::context::AnalysisContext;
+use crate::config::TargetVersion;
 use crate::schema::{SchemaIndex, TableDef};
 use crate::statement_env::StatementEnv;
 use surrealguard_diagnostics::Finding;
@@ -80,6 +82,20 @@ pub struct GlobalCatalog {
     pub(crate) implicit_tables: Vec<TableDef>,
     /// Whether each `fn::` body branches (guards 5009).
     pub(crate) fn_guarded: BTreeMap<String, bool>,
+    /// The SurrealDB release the workspace targets
+    /// (`analysis.surrealdb_version`), when configured. A workspace-wide fact
+    /// like the rest of the catalog: every source is checked against the same
+    /// engine, and the single-source re-analysis paths read it from here.
+    pub(crate) target_version: Option<TargetVersion>,
+}
+
+impl GlobalCatalog {
+    /// Records the configured target SurrealDB version; `None` (the default)
+    /// is "the latest" and gates no 8xxx check.
+    pub fn with_target_version(mut self, version: Option<TargetVersion>) -> Self {
+        self.target_version = version;
+        self
+    }
 }
 
 /// One source paired with its lowered statements.
@@ -204,7 +220,7 @@ fn build_global_catalog_from_lowered(sources: &[LoweredSource<'_>]) -> GlobalCat
                     if field
                         .kind
                         .as_ref()
-                        .map_or(true, crate::schema::kind_contains_any) => {}
+                        .is_none_or(crate::schema::kind_contains_any) => {}
                 _ => continue,
             }
             // No separate workspace catalog: `global_defined` already IS the
@@ -254,6 +270,7 @@ fn build_global_catalog_from_lowered(sources: &[LoweredSource<'_>]) -> GlobalCat
                     name_span: SourceSpan::new(parsed.source_id().clone(), range),
                     fields: BTreeMap::new(),
                     indexes: BTreeMap::new(),
+                    events: BTreeMap::new(),
                     relation: None,
                     schemafull: false,
                     drop_table: false,
@@ -279,6 +296,7 @@ fn build_global_catalog_from_lowered(sources: &[LoweredSource<'_>]) -> GlobalCat
     }
 
     GlobalCatalog {
+        target_version: None,
         global_defined,
         global_fn_returns,
         global_field_kinds,
@@ -420,8 +438,14 @@ fn analyze_source_against(
             // Order-independent existence checks (a `record<T>` target) ask the
             // whole-workspace catalog, not `working`, which by construction
             // holds only what precedes this statement.
-            .with_workspace_catalog(&global.global_defined);
+            .with_workspace_catalog(&global.global_defined)
+            .with_target_version(global.target_version);
             let kind = crate::analyzer::statement::analyze_lowered_statement(&mut ctx, lowered);
+            // Syntax the configured target lacks (8003) or removed (8002), and
+            // an OMIT with nothing to omit from (4012): both are shape checks
+            // over the whole statement tree, run once per top-level statement.
+            crate::analyzer::version::check_statement(&mut ctx, lowered);
+            crate::analyzer::omit::check_statement(&mut ctx, lowered);
             // A top-level guard that exits (`IF $x = NONE THEN THROW … END;`)
             // narrows `$x` for every statement after it, exactly as it does
             // inside a block. Without this the source's statement sequence was
@@ -572,15 +596,17 @@ pub(crate) fn analyze_one_source(
     }
 }
 
-/// The cross-source function-cycle findings (5009) implied by a catalog,
-/// spanned at each offending function's own definition. Computed purely from
-/// the catalog (the function call graph plus guardedness), so it can be derived
-/// once and reused across the symbol-incremental path — both to attribute a
-/// cycle change to the sources it touches and to inject the findings into each
-/// re-analyzed defining source.
+/// The cross-source cycle findings implied by a catalog — `fn::` recursion
+/// (5009) and event self-triggering (5010) — spanned at each offending
+/// definition. Computed purely from the catalog (the function call graph plus
+/// guardedness; the event write graph), so it can be derived once and reused
+/// across the symbol-incremental path — both to attribute a cycle change to the
+/// sources it touches and to inject the findings into each re-analyzed defining
+/// source.
 pub(crate) fn function_cycle_findings(global: &GlobalCatalog) -> Vec<Finding> {
     let mut diagnostics = Vec::new();
     check_function_cycles(&global.global_defined, &global.fn_guarded, &mut diagnostics);
+    check_event_cycles(&global.global_defined, &mut diagnostics);
     diagnostics
 }
 
@@ -704,12 +730,13 @@ pub(crate) fn build_run_schema<P: std::borrow::Borrow<ParsedSource>>(
 }
 
 pub(crate) fn analyze_sources(parsed_sources: &[ParsedSource]) -> PipelineOutput {
-    analyze_sources_with(parsed_sources, false)
+    analyze_sources_with(parsed_sources, false, None)
 }
 
 pub(crate) fn analyze_sources_with(
     parsed_sources: &[ParsedSource],
     require_suppression_reasons: bool,
+    target_version: Option<TargetVersion>,
 ) -> PipelineOutput {
     let mut output = PipelineOutput::default();
 
@@ -717,7 +744,7 @@ pub(crate) fn analyze_sources_with(
     // reusable global catalog. Single-source re-analysis consumes the same
     // `build_global_catalog` output, so the two paths can never diverge.
     let sources = lower_all(parsed_sources);
-    let global = build_global_catalog_from_lowered(&sources);
+    let global = build_global_catalog_from_lowered(&sources).with_target_version(target_version);
 
     for (index, (parsed, statements)) in sources.iter().enumerate() {
         // The catalog this source is analyzed against: every OTHER source's
@@ -754,6 +781,9 @@ pub(crate) fn analyze_sources_with(
     // recursion cycle never does (5009). Three-color DFS; each cycle reports
     // once, and only when no function in it can branch to a base case.
     check_function_cycles(&output.schema, &global.fn_guarded, &mut output.diagnostics);
+    // Events must not trigger themselves: an event whose body writes a table
+    // whose event writes back — or its own table — can fire again (5010).
+    check_event_cycles(&output.schema, &mut output.diagnostics);
 
     // Suppression runs last so directives can silence every finding kind,
     // including the cross-source passes above.
@@ -890,9 +920,9 @@ fn select_modifiers(source: &SourceId, stmt: &ast::SelectStmt) -> Vec<SelectModi
 
 /// Applies one lowered statement's *additive* `DEFINE` effect to `schema`,
 /// reusing schema.rs's extraction. Unlike
-/// [`crate::schema::apply_schema_statement_effects`], this skips `REMOVE`
-/// (order-sensitive, owned by the walk) and events (unmodeled) — it exists to
-/// pre-build the order-independent global namespace.
+/// [`crate::schema::apply_schema_statement_effects`], this skips `REMOVE` and
+/// `ALTER` (order-sensitive, owned by the walk) — it exists to pre-build the
+/// order-independent global namespace.
 fn apply_additive_define(
     stmt: &ast::Spanned<ast::Statement>,
     source: &SourceId,
@@ -916,10 +946,10 @@ fn apply_additive_define(
             );
         }
         ast::DefineStmt::Index(def) => {
-            let index = crate::schema::index_def_from_ast(def, source);
-            if let Some(table) = schema.tables.get_mut(&index.table) {
-                table.indexes.insert(index.name.clone(), index);
-            }
+            schema.insert_index(crate::schema::index_def_from_ast(def, source));
+        }
+        ast::DefineStmt::Event(def) => {
+            schema.insert_event(crate::schema::event_def_from_ast(def, source));
         }
         ast::DefineStmt::Param(def) => {
             schema.insert_param(crate::schema::param_def_from_ast(def, source));
@@ -932,7 +962,7 @@ fn apply_additive_define(
         ast::DefineStmt::Analyzer(def) => {
             schema.insert_analyzer(crate::schema::analyzer_def_from_ast(def, source));
         }
-        ast::DefineStmt::Event(_) | ast::DefineStmt::Other(_) => {}
+        ast::DefineStmt::Other(_) => {}
     }
 }
 
@@ -989,7 +1019,7 @@ fn fn_body_branches(stmt: &ast::Spanned<ast::Statement>) -> bool {
     let ast::Statement::Define(ast::DefineStmt::Function(def)) = &stmt.node else {
         return false;
     };
-    def.body.as_ref().is_some_and(|body| block_branches(body))
+    def.body.as_ref().is_some_and(block_branches)
 }
 
 /// Whether any statement in a block branches.
@@ -1101,6 +1131,136 @@ fn check_function_cycles(
                     ),
                 ));
             }
+        }
+    }
+}
+
+/// Events must not trigger themselves, directly or through other tables'
+/// events (5010).
+///
+/// Nodes are events; an edge runs from event `a` to event `b` when `a`'s body
+/// writes `b`'s table with a kind `b` fires on (its `WHEN` narrowed to
+/// `$event = 'CREATE'` is not re-fired by an `UPDATE`). A cycle in that graph
+/// is a write that can raise the event that performed it. Same three-color DFS
+/// as [`check_function_cycles`]: each cycle reports once, on every event in it.
+///
+/// This is a "can", not a "will": a `WHEN` on the written fields, or a body
+/// that only writes rows the condition then rejects, breaks the loop in ways
+/// the catalog does not see. The contract is that an event body does not write
+/// a table whose event fires on that write; the message says so.
+fn check_event_cycles(schema: &SchemaIndex, diagnostics: &mut Vec<Finding>) {
+    use crate::schema::EventDef;
+
+    /// The graph key of an event: its table and name, in that order.
+    type Node = (String, String);
+
+    fn node(event: &EventDef) -> Node {
+        (event.table.clone(), event.name.clone())
+    }
+
+    /// The events `event`'s body can fire, with the write that fires each.
+    fn successors<'a>(
+        event: &'a EventDef,
+        schema: &'a SchemaIndex,
+    ) -> impl Iterator<Item = (&'a EventDef, &'a crate::schema::EventWrite)> + 'a {
+        event.writes.iter().flat_map(move |write| {
+            schema
+                .tables
+                .get(&write.table)
+                .into_iter()
+                .flat_map(|table| table.events.values())
+                .filter(move |target| write.kinds.intersects(target.triggers))
+                .map(move |target| (target, write))
+        })
+    }
+
+    fn find_cycle(
+        event: &EventDef,
+        schema: &SchemaIndex,
+        gray: &mut Vec<Node>,
+        black: &mut BTreeSet<Node>,
+    ) -> Option<Vec<Node>> {
+        let key = node(event);
+        if black.contains(&key) {
+            return None;
+        }
+        if let Some(position) = gray.iter().position(|entry| *entry == key) {
+            return Some(gray[position..].to_vec());
+        }
+        gray.push(key.clone());
+        for (next, _) in successors(event, schema) {
+            if let Some(cycle) = find_cycle(next, schema, gray, black) {
+                return Some(cycle);
+            }
+        }
+        gray.pop();
+        black.insert(key);
+        None
+    }
+
+    let mut black = BTreeSet::new();
+    let mut on_reported_cycle: BTreeSet<Node> = BTreeSet::new();
+    for event in schema.events() {
+        let key = node(event);
+        if black.contains(&key) || on_reported_cycle.contains(&key) {
+            continue;
+        }
+        let mut gray = Vec::new();
+        let Some(cycle) = find_cycle(event, schema, &mut gray, &mut black) else {
+            continue;
+        };
+        on_reported_cycle.extend(cycle.iter().cloned());
+
+        let path = |from: usize| {
+            cycle
+                .iter()
+                .cycle()
+                .skip(from)
+                .take(cycle.len() + 1)
+                .map(|(table, name)| format!("{name} ON {table}"))
+                .collect::<Vec<_>>()
+                .join(" -> ")
+        };
+        for (position, (table, name)) in cycle.iter().enumerate() {
+            let Some(current) = schema.tables.get(table).and_then(|t| t.events.get(name)) else {
+                continue;
+            };
+            // The write that carries this event's step of the cycle: the one
+            // whose target is the next event in it.
+            let (next_table, next_name) = &cycle[(position + 1) % cycle.len()];
+            let Some((next, write)) = successors(current, schema)
+                .find(|(next, _)| next.table == *next_table && next.name == *next_name)
+            else {
+                continue;
+            };
+            let fired = write.kinds.intersect(next.triggers).names().join("/");
+            let message = if cycle.len() == 1 {
+                format!(
+                    "`{name}` can trigger itself: its body writes `{table}` ({fired}), which \
+                     fires `{name}` again"
+                )
+            } else {
+                format!(
+                    "`{name}` can trigger itself through other events: {}",
+                    path(position)
+                )
+            };
+            diagnostics.push(
+                surrealguard_diagnostics::catalog::finding(
+                    current.name_span.clone(),
+                    5010,
+                    message,
+                )
+                .with_help(
+                    "surrealguard cannot see whether a WHEN condition or the written fields \
+                         break the loop; narrow WHEN on `$event` (a CREATE-only event is not \
+                         re-fired by its own UPDATE) or write a table without events",
+                )
+                .with_related(
+                    write.span.clone(),
+                    format!("`{}` is written here ({fired})", write.table),
+                ),
+            );
         }
     }
 }

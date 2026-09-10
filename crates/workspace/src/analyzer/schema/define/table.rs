@@ -1,7 +1,7 @@
 //! `DEFINE TABLE` analysis.
 //!
-//! A table is defined once: redefining it without `OVERWRITE` is a
-//! duplicate definition (1022).
+//! A table is defined once: redefining it without `OVERWRITE` or `IF NOT
+//! EXISTS` is a duplicate definition (1022).
 
 use surrealdb_types::{Kind, Table};
 use surrealguard_syntax::ast;
@@ -9,27 +9,18 @@ use surrealguard_syntax::ast;
 use crate::analyzer::context::AnalysisContext;
 
 pub(crate) fn analyze_define_table(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineTable) -> Kind {
-    if !stmt.overwrite {
+    // `IF NOT EXISTS` makes a redefinition a deliberate no-op, exactly as
+    // `OVERWRITE` makes it a deliberate replacement.
+    if !stmt.overwrite && !stmt.if_not_exists {
         if let Some(existing) = ctx.schema().table(&stmt.name.node) {
-            let span =
-                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.name.span);
-            let mut finding = surrealguard_diagnostics::catalog::finding(
-                span,
-                1022,
-                format!(
-                    "`{}` is already defined; this DEFINE silently replaces the earlier one",
-                    stmt.name.node
-                ),
-            )
-            .with_help(format!(
-                "use `DEFINE TABLE OVERWRITE {}` to redefine it intentionally",
-                stmt.name.node
-            ));
-            finding = finding.with_related(
-                existing.name_span.clone(),
-                format!("`{}` is defined here", stmt.name.node),
+            let existing = existing.name_span.clone();
+            super::emit_duplicate_definition(
+                ctx,
+                stmt.name.span,
+                &format!("`{}`", stmt.name.node),
+                &format!("DEFINE TABLE OVERWRITE {}", stmt.name.node),
+                existing,
             );
-            ctx.emit(finding);
         }
     }
 

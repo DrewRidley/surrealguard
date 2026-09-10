@@ -32,13 +32,150 @@ pub struct SourceConfig {
 }
 
 /// Settings that steer inference and checking.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// The derived default is the whole default: not strict, and no target
+/// version — "the latest release", so no version-gated check fires until a
+/// workspace states which engine it deploys against.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AnalysisConfig {
     /// Run in strict mode, tightening otherwise-advisory checks.
     pub strict: bool,
-    /// Target SurrealDB version (e.g. `"2"`, `"2.1"`); selects
-    /// version-gated behavior.
+    /// Target SurrealDB version (`"2"`, `"2.2"`, `"3.0.2"`), or empty for
+    /// "the latest". Selects version-gated behavior: a call to a function
+    /// the target lacks is 8001, syntax it lacks is 8003, syntax it removed
+    /// is 8002. Parsed by [`AnalysisConfig::target_version`].
     pub surrealdb_version: String,
+}
+
+impl AnalysisConfig {
+    /// The configured target as a comparable version, or `None` when the
+    /// key is unset (or unparsable), which means "the latest release": no
+    /// version-gated finding fires.
+    pub fn target_version(&self) -> Option<TargetVersion> {
+        TargetVersion::parse(&self.surrealdb_version)
+    }
+}
+
+/// A SurrealDB release a fact is pinned to: the version a function or a
+/// piece of syntax was added in, or removed in. Always fully specified.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Version {
+    /// Major release line (`2` in `2.2.1`).
+    pub major: u16,
+    /// Minor release within the line.
+    pub minor: u16,
+    /// Patch release.
+    pub patch: u16,
+}
+
+impl Version {
+    /// A version literal, usable in `const` tables.
+    pub const fn new(major: u16, minor: u16, patch: u16) -> Self {
+        Self {
+            major,
+            minor,
+            patch,
+        }
+    }
+}
+
+impl std::fmt::Display for Version {
+    /// `3.0` for a `.0` patch, `3.0.2` otherwise — the way release notes
+    /// write them.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.patch == 0 {
+            write!(f, "{}.{}", self.major, self.minor)
+        } else {
+            write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+        }
+    }
+}
+
+/// The `analysis.surrealdb_version` a workspace targets, as written: a
+/// major alone (`"2"`), a major and minor (`"2.2"`), or all three.
+///
+/// An omitted component means "the latest release with this prefix", so a
+/// target of `2` is every 2.x: it *predates* everything added in 3.0 and
+/// nothing added in 2.3, and every 2.x removal applies to it. That is the
+/// reading with no false positives — a workspace that only says "2" is not
+/// told that `rand::duration` (2.3) is missing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TargetVersion {
+    /// Major release line.
+    pub major: u16,
+    /// Minor release, when the config names one.
+    pub minor: Option<u16>,
+    /// Patch release, when the config names one.
+    pub patch: Option<u16>,
+}
+
+impl TargetVersion {
+    /// Parses `"2"`, `"2.2"`, `"v3.0.2"`; `None` for an empty or malformed
+    /// value (malformed is treated as unset rather than rejected: the
+    /// analyzer stays silent instead of inventing a target).
+    pub fn parse(text: &str) -> Option<Self> {
+        let text = text.trim();
+        let text = text.strip_prefix('v').unwrap_or(text);
+        if text.is_empty() {
+            return None;
+        }
+        let mut parts = text.split('.');
+        let major = parts.next()?.parse().ok()?;
+        let minor = match parts.next() {
+            Some(part) => Some(part.parse().ok()?),
+            None => None,
+        };
+        let patch = match parts.next() {
+            Some(part) => Some(part.parse().ok()?),
+            None => None,
+        };
+        if parts.next().is_some() {
+            return None;
+        }
+        Some(Self {
+            major,
+            minor,
+            patch,
+        })
+    }
+
+    /// Whether this target is older than `version` — i.e. lacks something
+    /// `version` introduced. An omitted component is read as "latest", so
+    /// `2` does not predate `2.3`, but `2.2` does.
+    pub fn predates(&self, version: Version) -> bool {
+        if self.major != version.major {
+            return self.major < version.major;
+        }
+        let Some(minor) = self.minor else {
+            return false;
+        };
+        if minor != version.minor {
+            return minor < version.minor;
+        }
+        let Some(patch) = self.patch else {
+            return false;
+        };
+        patch < version.patch
+    }
+
+    /// Whether this target is `version` or newer — i.e. a removal made in
+    /// `version` applies to it.
+    pub fn includes(&self, version: Version) -> bool {
+        !self.predates(version)
+    }
+}
+
+impl std::fmt::Display for TargetVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.major)?;
+        if let Some(minor) = self.minor {
+            write!(f, ".{minor}")?;
+        }
+        if let Some(patch) = self.patch {
+            write!(f, ".{patch}")?;
+        }
+        Ok(())
+    }
 }
 
 /// How findings are surfaced: escalation policy and suppression rules.
@@ -129,15 +266,6 @@ impl Default for SourceConfig {
                 "node_modules/**".into(),
                 ".git/**".into(),
             ],
-        }
-    }
-}
-
-impl Default for AnalysisConfig {
-    fn default() -> Self {
-        Self {
-            strict: false,
-            surrealdb_version: "2".into(),
         }
     }
 }
@@ -469,6 +597,36 @@ W7002 = "deny"
         assert!(config.sources.ignore.contains(&"node_modules/**".into()));
         assert!(config.sources.ignore.contains(&".git/**".into()));
         assert!(!config.analysis.strict);
-        assert_eq!(config.analysis.surrealdb_version, "2");
+        assert_eq!(config.analysis.surrealdb_version, "");
+        assert_eq!(config.analysis.target_version(), None);
+    }
+
+    #[test]
+    fn target_version_reads_an_omitted_component_as_latest() {
+        let v = |major, minor, patch| Version::new(major, minor, patch);
+
+        let two = TargetVersion::parse("2").expect("parses");
+        assert!(two.predates(v(3, 0, 0)));
+        assert!(!two.predates(v(2, 3, 0)), "`2` is every 2.x");
+        assert!(two.includes(v(2, 0, 0)));
+        assert!(!two.includes(v(3, 0, 0)));
+
+        let two_two = TargetVersion::parse("2.2").expect("parses");
+        assert!(two_two.predates(v(2, 3, 0)));
+        assert!(!two_two.predates(v(2, 2, 0)));
+        assert!(!two_two.predates(v(2, 2, 8)), "`2.2` is every 2.2.x");
+        assert!(two_two.includes(v(2, 2, 0)));
+
+        let three = TargetVersion::parse("v3.0.1").expect("parses");
+        assert!(three.predates(v(3, 0, 2)));
+        assert!(!three.predates(v(3, 0, 0)));
+        assert_eq!(three.to_string(), "3.0.1");
+        assert_eq!(v(3, 0, 0).to_string(), "3.0");
+        assert_eq!(v(3, 0, 2).to_string(), "3.0.2");
+
+        assert_eq!(TargetVersion::parse(""), None);
+        assert_eq!(TargetVersion::parse("latest"), None);
+        assert_eq!(TargetVersion::parse("2.x"), None);
+        assert_eq!(TargetVersion::parse("1.2.3.4"), None);
     }
 }

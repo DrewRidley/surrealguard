@@ -118,7 +118,7 @@ pub(crate) fn analyze_expression_positions_for(
             }
             Some(ast::DataClause::Patch(expr)) => {
                 infer_expression_fact(expr, ctx);
-                check_patch_operations(ctx, expr);
+                check_patch_operations(ctx, expr, row_table);
             }
             Some(ast::DataClause::Single(expr)) => {
                 infer_expression_fact(expr, ctx);
@@ -378,7 +378,17 @@ pub fn check_return_before_on_create(
 
 /// PATCH operations must be well-formed JSON-Patch (2033): known ops and
 /// `/`-prefixed paths. Only constant payloads are checkable.
-fn check_patch_operations(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) {
+///
+/// An `add`/`replace` whose `path` names a field is a write to that field, so
+/// its `value` is held to the field's contracts exactly as a `CONTENT` key is
+/// (2001, 2038). The mapping is JSON Pointer's: `/a/b` is the field path
+/// `a.b`; a pointer that steps into an array position (`/tags/0`, `/tags/-`)
+/// names an element, not a field, and is left alone.
+fn check_patch_operations(
+    ctx: &mut AnalysisContext<'_>,
+    expr: &ast::Spanned<ast::Expr>,
+    table: Option<&TableDef>,
+) {
     const OPS: &[&str] = &["add", "remove", "replace", "move", "copy", "test", "change"];
     let ast::Expr::Array(operations) = &expr.node else {
         return;
@@ -387,7 +397,14 @@ fn check_patch_operations(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast
         let ast::Expr::Object(fields) = &operation.node else {
             continue;
         };
+        let mut op = None;
+        let mut path = None;
+        let mut written = None;
         for (key, value) in fields {
+            if key.node == "value" {
+                written = Some(value);
+                continue;
+            }
             let ast::Expr::Literal(ast::Literal::String(text)) = &value.node else {
                 continue;
             };
@@ -395,8 +412,16 @@ fn check_patch_operations(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast
                 "op" if !OPS.contains(&text.as_str()) => {
                     Some(format!("`{text}` is not a PATCH operation"))
                 }
+                "op" => {
+                    op = Some(text.as_str());
+                    None
+                }
                 "path" if !text.starts_with('/') => {
                     Some(format!("PATCH paths start with `/`; found `{text}`"))
+                }
+                "path" => {
+                    path = Some((text.as_str(), value.span));
+                    None
                 }
                 _ => None,
             };
@@ -408,7 +433,57 @@ fn check_patch_operations(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast
                 ));
             }
         }
+        let (Some(table), Some("add" | "replace"), Some((pointer, pointer_span)), Some(value)) =
+            (table, op, path, written)
+        else {
+            continue;
+        };
+        let Some(segments) = json_pointer_field_segments(pointer) else {
+            continue;
+        };
+        if segments == ["id"] {
+            continue;
+        }
+        let Some(field_kind) = crate::analyzer::data::select::kind_for_path(table, &segments)
+        else {
+            crate::analyzer::data::check_field_path(ctx, table, &segments, pointer_span, 1002);
+            continue;
+        };
+        if let ast::Expr::Param(param) = &value.node {
+            if ctx.env().let_fact(param).is_none() {
+                let span =
+                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), value.span);
+                ctx.constrain_param(param, span, field_kind.clone(), None);
+                continue;
+            }
+        }
+        check_field_write(
+            ctx,
+            Position::MutationContent,
+            table,
+            &segments,
+            &field_kind,
+            value,
+        );
     }
+}
+
+/// The field path a JSON Pointer names, or `None` when it does not name one:
+/// an empty pointer (the whole document), an empty step, or a step that is an
+/// array position (`0`, `-`) rather than a key. `~1` and `~0` unescape to `/`
+/// and `~` per RFC 6901.
+fn json_pointer_field_segments(pointer: &str) -> Option<Vec<String>> {
+    let body = pointer.strip_prefix('/')?;
+    if body.is_empty() {
+        return None;
+    }
+    body.split('/')
+        .map(|step| {
+            let is_key =
+                !step.is_empty() && step != "-" && !step.bytes().all(|byte| byte.is_ascii_digit());
+            is_key.then(|| step.replace("~1", "/").replace("~0", "~"))
+        })
+        .collect()
 }
 
 /// READONLY fields are written only at creation (2025); computed
@@ -549,8 +624,18 @@ fn check_assignment_value(
             ast::AssignOp::Sub => ast::BinaryOp::Sub,
             _ => return,
         };
-        if crate::analyzer::expression::infer::binary_result_kind(&op, &field_kind, &value_kind)
-            .is_none()
+        // On a collection field `+=` pushes one element and `-=` removes one
+        // (`tags += 'seen'`), beside the whole-collection concatenation and
+        // difference `binary_result_kind` already knows.
+        let element_write = match &field_kind {
+            Kind::Array(element, _) | Kind::Set(element, _) => {
+                crate::kinds::kind_is_assignable_to(&value_kind, element)
+            }
+            _ => false,
+        };
+        if !element_write
+            && crate::analyzer::expression::infer::binary_result_kind(&op, &field_kind, &value_kind)
+                .is_none()
         {
             let span = surrealguard_syntax::span::SourceSpan::new(
                 ctx.source().clone(),
@@ -633,7 +718,103 @@ fn check_assignment_value(
             &value_kind,
             &field_kind,
         );
+        return;
     }
+    check_constant_satisfies_assert(ctx, table, &segments.join("."), &assignment.value);
+}
+
+/// A constant written to a field must satisfy the field's `ASSERT` (2038).
+///
+/// The written expression is folded to a constant, bound as `$value`, and the
+/// field's predicate is folded under that binding; only a definite `false`
+/// reports, and anything the folder cannot prove (a param, a call, a
+/// predicate over `$this`) stays silent — the fold is
+/// [`crate::analyzer::facts::constant_violates_assert`], the same one 2037
+/// asks of a `DEFAULT`.
+///
+/// Asked only *after* the type contract has accepted the value. A `'x'`
+/// written into an `int` field violates one contract, not two, and the type
+/// contract (2001) owns that write; every caller returns on a 2001 before
+/// reaching this.
+pub(crate) fn check_constant_satisfies_assert(
+    ctx: &mut AnalysisContext<'_>,
+    table: &TableDef,
+    path: &str,
+    value: &ast::Spanned<ast::Expr>,
+) {
+    let Some(assert) = table
+        .fields
+        .get(path)
+        .and_then(|field| field.assert.as_ref())
+    else {
+        return;
+    };
+    let term = crate::analyzer::facts::eval(&value.node, Bindings::NONE);
+    let crate::analyzer::facts::Term::Const(constant) = &term else {
+        return;
+    };
+    if !assert.rejects(constant) {
+        return;
+    }
+    let rendered = crate::analyzer::contract::term_kind(&term).map_or_else(
+        || "this value".to_string(),
+        |kind| crate::render_kind(&kind),
+    );
+    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), value.span);
+    ctx.emit(
+        surrealguard_diagnostics::catalog::finding(
+            span,
+            2038,
+            format!("`{path}`'s ASSERT rejects `{rendered}`"),
+        )
+        .with_help(format!(
+            "this write fails at runtime; `{path}` only accepts values its ASSERT allows"
+        ))
+        .with_related(
+            assert.span().clone(),
+            format!("`{path}`'s ASSERT is defined here"),
+        ),
+    );
+}
+
+/// One field write — `f: v` in a payload object, a `(f) VALUES (v)` column,
+/// a PATCH `add`/`replace` — held to the field's contracts: the value must
+/// inhabit the declared kind at `segments` (2001), and a constant must
+/// satisfy the field's `ASSERT` (2038). The value is inferred here, so a
+/// caller must not have inferred it already.
+pub(crate) fn check_field_write(
+    ctx: &mut AnalysisContext<'_>,
+    position: Position,
+    table: &TableDef,
+    segments: &[String],
+    field_kind: &Kind,
+    value: &ast::Spanned<ast::Expr>,
+) {
+    // The same contract a `SET` obeys: a constant is compared as the literal
+    // it is, so `'bogus'` cannot hide behind the widened `string` it infers as.
+    let fact = infer_expression_fact(value, ctx);
+    let term = crate::analyzer::facts::eval(&value.node, Bindings::NONE);
+    let contract = Contract::new(position, field_kind.clone());
+    let path = segments.join(".");
+    if let Some(value_kind) = contract.violation(&term, &fact) {
+        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), value.span);
+        let mut finding = surrealguard_diagnostics::catalog::finding(
+            span,
+            contract.code(),
+            format!(
+                "`{path}` is declared `{}`, but this value is `{}`",
+                crate::render_kind(field_kind),
+                crate::render::render_offending(&value_kind, Some(field_kind))
+            ),
+        );
+        if let Some(def) = table.fields.get(&path) {
+            finding =
+                finding.with_related(def.name_span.clone(), format!("`{path}` is defined here"));
+        }
+        ctx.emit(finding);
+        return;
+    }
+    check_constant_satisfies_assert(ctx, table, &path, value);
 }
 
 /// The 2001 a failed write raises. One contract — the value must inhabit the
@@ -795,33 +976,12 @@ pub fn check_payload_object_keys(
                     continue;
                 }
             }
-            // The same contract a `SET` obeys. Written key-by-key, a payload
-            // object *is* a list of field writes; the only thing that made
-            // `CONTENT { e: 'green' }` silent against a `'red' | 'blue'` field
-            // where `SET e = 'green'` reported was that this site compared the
-            // widened kind.
-            let fact = infer_expression_fact(value, ctx);
-            let term = crate::analyzer::facts::eval(&value.node, Bindings::NONE);
-            let contract = Contract::new(position, field_kind.clone());
-            if let Some(value_kind) = contract.violation(&term, &fact) {
-                let span =
-                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), value.span);
-                let path = segments.join(".");
-                let mut finding = surrealguard_diagnostics::catalog::finding(
-                    span,
-                    contract.code(),
-                    format!(
-                        "`{path}` is declared `{}`, but this value is `{}`",
-                        crate::render_kind(&field_kind),
-                        crate::render::render_offending(&value_kind, Some(&field_kind))
-                    ),
-                );
-                if let Some(def) = table.fields.get(&path) {
-                    finding = finding
-                        .with_related(def.name_span.clone(), format!("`{path}` is defined here"));
-                }
-                ctx.emit(finding);
-            }
+            // Written key-by-key, a payload object *is* a list of field
+            // writes, so each key is held to the contracts a `SET` is; the
+            // only thing that once made `CONTENT { e: 'green' }` silent
+            // against a `'red' | 'blue'` field where `SET e = 'green'`
+            // reported was that this site compared the widened kind.
+            check_field_write(ctx, position, table, &segments, &field_kind, value);
         }
     }
     walk(ctx, position, table, expr, &[]);
@@ -991,6 +1151,37 @@ pub fn source_table_name(source: Option<&ast::Spanned<ast::Expr>>) -> Option<Str
     match source.map(|s| &s.node)? {
         ast::Expr::Table(name) => Some(name.node.clone()),
         ast::Expr::RecordId { table, .. } => Some(table.node.clone()),
+        _ => None,
+    }
+}
+
+/// The table a mutation target denotes, including targets that are not
+/// spelled as a table or record id: a `$param` bound to a `record<t>`, a
+/// subquery or traversal producing `record<t>` rows (`UPDATE (SELECT VALUE id
+/// FROM t …)`, `DELETE a:1->edge`). Those resolve through the target's
+/// inferred kind, and only when it names exactly one declared table — a
+/// multi-table link or an unknown kind stays unresolved, as before.
+pub fn target_table_name(
+    ctx: &mut AnalysisContext<'_>,
+    target: Option<&ast::Spanned<ast::Expr>>,
+) -> Option<String> {
+    if let Some(name) = source_table_name(target) {
+        return Some(name);
+    }
+    let target = target?;
+    let kind = infer_expression_fact(target, ctx).kind?;
+    let table = single_record_table(&kind)?;
+    ctx.schema().tables.contains_key(&table).then_some(table)
+}
+
+/// The one table a `record<t>` — or a collection of them — names.
+fn single_record_table(kind: &Kind) -> Option<String> {
+    match kind {
+        Kind::Record(tables) => match tables.as_slice() {
+            [table] => Some(table.to_string()),
+            _ => None,
+        },
+        Kind::Array(inner, _) | Kind::Set(inner, _) => single_record_table(inner),
         _ => None,
     }
 }

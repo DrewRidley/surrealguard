@@ -8,6 +8,7 @@ use surrealguard_diagnostics::{Finding, FindingCode, Severity};
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::SourceSpan;
 
+use crate::config::TargetVersion;
 use crate::expression::ExpressionFact;
 use crate::schema::{SchemaIndex, TableDef};
 use crate::statement_env::StatementEnv;
@@ -42,6 +43,10 @@ pub struct AnalysisContext<'a> {
     /// one expression directly beneath, so the constructs that consume it
     /// clear it before descending any further.
     cardinality_position: bool,
+    /// The SurrealDB release the workspace deploys against
+    /// (`analysis.surrealdb_version`), when configured. The 8xxx checks gate
+    /// on it; `None` is "the latest", which gates nothing.
+    target_version: Option<TargetVersion>,
 }
 
 impl<'a> AnalysisContext<'a> {
@@ -64,6 +69,7 @@ impl<'a> AnalysisContext<'a> {
             loop_depth: 0,
             scope_end: None,
             cardinality_position: false,
+            target_version: None,
         }
     }
 
@@ -89,7 +95,20 @@ impl<'a> AnalysisContext<'a> {
             loop_depth: 0,
             scope_end: None,
             cardinality_position: false,
+            target_version: None,
         }
+    }
+
+    /// Attaches the configured target SurrealDB version (see
+    /// [`target_version`](Self::target_version)).
+    pub(crate) fn with_target_version(mut self, version: Option<TargetVersion>) -> Self {
+        self.target_version = version;
+        self
+    }
+
+    /// The configured target SurrealDB version, or `None` for "the latest".
+    pub fn target_version(&self) -> Option<TargetVersion> {
+        self.target_version
     }
 
     /// Attaches the order-independent workspace catalog (see
@@ -495,6 +514,7 @@ impl<'a> AnalysisContext<'a> {
             loop_depth: self.loop_depth,
             scope_end: self.scope_end,
             cardinality_position: self.cardinality_position,
+            target_version: self.target_version,
         };
         let result = f(&mut child);
         self.loop_depth = child.loop_depth;

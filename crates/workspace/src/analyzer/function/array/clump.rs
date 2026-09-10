@@ -9,6 +9,21 @@ use surrealdb_types::Kind;
 use surrealguard_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::function::signature::{ParamKind, ReturnKind, Signature};
+
+/// The declared shape, for the catalog; the analyzer body below derives
+/// the return kind itself rather than checking calls against this.
+pub(crate) fn signature() -> Signature {
+    Signature {
+        min_args: 2,
+        max_args: Some(2),
+        arg_kinds: vec![ParamKind::Array, ParamKind::Numeric],
+        return_kind: ReturnKind::Fixed(Kind::Array(
+            Box::new(Kind::Array(Box::new(Kind::Any), None)),
+            None,
+        )),
+    }
+}
 
 pub(crate) fn analyze_array_clump(
     ctx: &mut AnalysisContext<'_>,

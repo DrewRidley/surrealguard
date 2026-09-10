@@ -16,7 +16,8 @@ pub(crate) fn analyze_update(ctx: &mut AnalysisContext<'_>, stmt: &ast::UpdateSt
 pub(crate) fn update_response_kind(stmt: &ast::UpdateStmt, ctx: &mut AnalysisContext<'_>) -> Kind {
     mutation::check_only_on_table(ctx, stmt.only, stmt.targets.first());
     mutation::check_whole_table_write(ctx, stmt.targets.first(), stmt.where_clause.as_ref());
-    let table_hint = mutation::source_table_name(stmt.targets.first());
+    let table_name = mutation::target_table_name(ctx, stmt.targets.first());
+    let table_hint = table_name.clone();
     mutation::analyze_expression_positions_for(
         ctx,
         stmt.data.as_ref(),
@@ -24,7 +25,7 @@ pub(crate) fn update_response_kind(stmt: &ast::UpdateStmt, ctx: &mut AnalysisCon
         table_hint.as_deref(),
         false,
     );
-    let Some(table_name) = mutation::source_table_name(stmt.targets.first()) else {
+    let Some(table_name) = table_name else {
         return Kind::Any;
     };
     let Some(table) = ctx.schema().tables.get(&table_name) else {

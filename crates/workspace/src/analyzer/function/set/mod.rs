@@ -1,9 +1,6 @@
-//! `set` function-family analysis dispatch.
+//! `set` function family: every built-in it dispatches, with its analyzer.
 
-use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-
-use crate::analyzer::context::AnalysisContext;
+use crate::analyzer::function::BuiltinEntry;
 
 pub mod add;
 pub mod all;
@@ -30,37 +27,150 @@ pub mod remove;
 pub mod slice;
 pub mod union;
 
-pub(crate) fn analyze_set_function(
-    ctx: &mut AnalysisContext<'_>,
-    call: &ast::Call,
-    path: &str,
-    args: &[Kind],
-) -> Kind {
-    match path {
-        "set::add" => add::analyze_set_add(ctx, call, args),
-        "set::all" => all::analyze_set_all(ctx, call, args),
-        "set::any" => any::analyze_set_any(ctx, call, args),
-        "set::at" => at::analyze_set_at(ctx, call, args),
-        "set::complement" => complement::analyze_set_complement(ctx, call, args),
-        "set::contains" => contains::analyze_set_contains(ctx, call, args),
-        "set::difference" => difference::analyze_set_difference(ctx, call, args),
-        "set::filter" => filter::analyze_set_filter(ctx, call, args),
-        "set::find" => find::analyze_set_find(ctx, call, args),
-        "set::first" => first::analyze_set_first(ctx, call, args),
-        "set::flatten" => flatten::analyze_set_flatten(ctx, call, args),
-        "set::fold" => fold::analyze_set_fold(ctx, call, args),
-        "set::intersect" => intersect::analyze_set_intersect(ctx, call, args),
-        "set::is_empty" => is_empty::analyze_set_is_empty(ctx, call, args),
-        "set::join" => join::analyze_set_join(ctx, call, args),
-        "set::last" => last::analyze_set_last(ctx, call, args),
-        "set::len" => len::analyze_set_len(ctx, call, args),
-        "set::map" => map::analyze_set_map(ctx, call, args),
-        "set::max" => max::analyze_set_max(ctx, call, args),
-        "set::min" => min::analyze_set_min(ctx, call, args),
-        "set::reduce" => reduce::analyze_set_reduce(ctx, call, args),
-        "set::remove" => remove::analyze_set_remove(ctx, call, args),
-        "set::slice" => slice::analyze_set_slice(ctx, call, args),
-        "set::union" => union::analyze_set_union(ctx, call, args),
-        _ => crate::analyzer::function::unknown_function(ctx, call),
-    }
-}
+/// Every `set::` built-in the analyzer resolves, in dispatch order.
+pub(crate) static CATALOG: &[BuiltinEntry] = &[
+    BuiltinEntry::new(
+        "set::add",
+        "Adds a value to the set.",
+        add::signature,
+        add::analyze_set_add,
+    ),
+    BuiltinEntry::new(
+        "set::all",
+        "Whether every element is truthy.",
+        all::signature,
+        all::analyze_set_all,
+    ),
+    BuiltinEntry::new(
+        "set::any",
+        "Whether any element is truthy.",
+        any::signature,
+        any::analyze_set_any,
+    ),
+    BuiltinEntry::new(
+        "set::at",
+        "The element at the given index.",
+        at::signature,
+        at::analyze_set_at,
+    ),
+    BuiltinEntry::new(
+        "set::complement",
+        "The elements of the first set that are not in the second.",
+        complement::signature,
+        complement::analyze_set_complement,
+    ),
+    BuiltinEntry::new(
+        "set::contains",
+        "Whether the set contains the value.",
+        contains::signature,
+        contains::analyze_set_contains,
+    ),
+    BuiltinEntry::new(
+        "set::difference",
+        "The elements present in exactly one of the two sets.",
+        difference::signature,
+        difference::analyze_set_difference,
+    ),
+    BuiltinEntry::new(
+        "set::filter",
+        "The elements for which the closure returns true.",
+        filter::signature,
+        filter::analyze_set_filter,
+    ),
+    BuiltinEntry::new(
+        "set::find",
+        "The first element that matches the value or predicate, or NONE.",
+        find::signature,
+        find::analyze_set_find,
+    ),
+    BuiltinEntry::new(
+        "set::first",
+        "The first element of the set, or NONE.",
+        first::signature,
+        first::analyze_set_first,
+    ),
+    BuiltinEntry::new(
+        "set::flatten",
+        "Flattens one level of nested collections.",
+        flatten::signature,
+        flatten::analyze_set_flatten,
+    ),
+    BuiltinEntry::new(
+        "set::fold",
+        "Reduces the set with a closure over an accumulator, starting from an initial value.",
+        fold::signature,
+        fold::analyze_set_fold,
+    ),
+    BuiltinEntry::new(
+        "set::intersect",
+        "The elements present in both sets.",
+        intersect::signature,
+        intersect::analyze_set_intersect,
+    ),
+    BuiltinEntry::new(
+        "set::is_empty",
+        "Whether the set has no elements.",
+        is_empty::signature,
+        is_empty::analyze_set_is_empty,
+    ),
+    BuiltinEntry::new(
+        "set::join",
+        "Joins the elements into a string with the given separator.",
+        join::signature,
+        join::analyze_set_join,
+    ),
+    BuiltinEntry::new(
+        "set::last",
+        "The last element of the set, or NONE.",
+        last::signature,
+        last::analyze_set_last,
+    ),
+    BuiltinEntry::new(
+        "set::len",
+        "The number of elements in the set.",
+        len::signature,
+        len::analyze_set_len,
+    ),
+    BuiltinEntry::new(
+        "set::map",
+        "Applies the closure to every element and returns the results.",
+        map::signature,
+        map::analyze_set_map,
+    ),
+    BuiltinEntry::new(
+        "set::max",
+        "The greatest element of the set.",
+        max::signature,
+        max::analyze_set_max,
+    ),
+    BuiltinEntry::new(
+        "set::min",
+        "The smallest element of the set.",
+        min::signature,
+        min::analyze_set_min,
+    ),
+    BuiltinEntry::new(
+        "set::reduce",
+        "Reduces the set with a closure over an accumulator seeded by the first element.",
+        reduce::signature,
+        reduce::analyze_set_reduce,
+    ),
+    BuiltinEntry::new(
+        "set::remove",
+        "The set without the given value.",
+        remove::signature,
+        remove::analyze_set_remove,
+    ),
+    BuiltinEntry::new(
+        "set::slice",
+        "A sub-set from a start index, of the given length.",
+        slice::signature,
+        slice::analyze_set_slice,
+    ),
+    BuiltinEntry::new(
+        "set::union",
+        "The unique elements of both sets.",
+        union::signature,
+        union::analyze_set_union,
+    ),
+];
