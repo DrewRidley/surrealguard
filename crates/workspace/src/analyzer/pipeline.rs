@@ -393,15 +393,7 @@ fn analyze_source_against(
     for table in &global.implicit_tables {
         working.insert_table(table.clone(), false);
     }
-    // Within-source fn:: hoist: a body may call functions defined later
-    // in the same file.
-    for stmt in statements {
-        if let Some(function) =
-            crate::schema::extract_function_def(stmt, parsed.source_id(), parsed.text())
-        {
-            working.insert_function(function);
-        }
-    }
+    hoist_functions(parsed, statements, &mut working, diagnostics);
 
     // Reuse the globally-computed function returns and untyped-field value
     // kinds (PRE-PASS 1b/1c).
@@ -1260,6 +1252,79 @@ fn check_event_cycles(schema: &SchemaIndex, diagnostics: &mut Vec<Finding>) {
                     write.span.clone(),
                     format!("`{}` is written here ({fired})", write.table),
                 ),
+            );
+        }
+    }
+}
+
+/// Hoists every `fn::` this source defines into `working` before the walk, so a
+/// body may call a function defined later in the same file — and reports the
+/// cross-source duplicates (1022) that the hoist would otherwise hide.
+///
+/// See the comment inside for why the report belongs here and not in the
+/// `DEFINE FUNCTION` analyzer.
+fn hoist_functions(
+    parsed: &ParsedSource,
+    statements: &[ast::Spanned<ast::Statement>],
+    working: &mut SchemaIndex,
+    diagnostics: &mut Vec<Finding>,
+) {
+    // Within-source fn:: hoist: a body may call functions defined later
+    // in the same file.
+    //
+    // The hoist is also the reason a `fn::` defined in TWO sources used to go
+    // unreported: `working` arrives holding every other source's `DEFINE`s, and
+    // inserting this source's copy over the foreign one means the walk's own
+    // 1022 check (`schema::define::function`) finds only this source's entry
+    // and concludes there is nothing to report. A `DEFINE TABLE` has no hoist,
+    // so its foreign twin survives and 1022 fires — from BOTH sources, since
+    // each one's `working` holds the other's. Displacement is recorded here so
+    // a duplicated `fn::` reports the same way, and the hoist keeps displacing:
+    // what a body's call resolves against is unchanged.
+    let mut displaced_functions = Vec::new();
+    for stmt in statements {
+        let Some(function) =
+            crate::schema::extract_function_def(stmt, parsed.source_id(), parsed.text())
+        else {
+            continue;
+        };
+        if let ast::Statement::Define(ast::DefineStmt::Function(def)) = &stmt.node {
+            // `OVERWRITE`/`IF NOT EXISTS` are deliberate redefinitions, exactly
+            // as they are for the within-source case.
+            if !def.overwrite && !def.if_not_exists {
+                if let Some(existing) = working
+                    .function(&def.name.node)
+                    .filter(|existing| existing.source != *parsed.source_id())
+                {
+                    displaced_functions.push((
+                        def.name.node.clone(),
+                        def.name.span,
+                        existing.name_span.clone(),
+                    ));
+                }
+            }
+        }
+        working.insert_function(function);
+    }
+    if !displaced_functions.is_empty() {
+        // Reported through the same helper the DEFINE analyzers use, so the
+        // message, the help and the "defined here" related span cannot drift
+        // from every other 1022.
+        let mut ctx = AnalysisContext::scoped(
+            working,
+            parsed.source_id().clone(),
+            parsed.text(),
+            diagnostics,
+            StatementEnv::default(),
+            None,
+        );
+        for (name, name_span, existing) in displaced_functions {
+            crate::analyzer::schema::define::emit_duplicate_definition(
+                &mut ctx,
+                name_span,
+                &format!("`{name}`"),
+                &format!("DEFINE FUNCTION OVERWRITE {name}(...)"),
+                existing,
             );
         }
     }

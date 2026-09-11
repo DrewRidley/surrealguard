@@ -28,11 +28,12 @@
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use surrealguard_diagnostics::Severity;
+use surrealguard_diagnostics::{Finding, FindingTag, Severity};
 use surrealguard_embed::EmbeddedQuery;
 use surrealguard_syntax::highlight;
 use surrealguard_syntax::parse::{parse_source, ParsedSource};
 use surrealguard_syntax::source::SourceId;
+use surrealguard_syntax::span::{ByteRange, SourceSpan};
 use surrealguard_workspace::analysis::{
     analyze_one_source, analyze_workspace, build_global_catalog, build_workspace_schema,
     AnalysisOutput, GlobalCatalog, Workspace,
@@ -59,6 +60,10 @@ pub struct Request {
 }
 
 /// One finding, at host-file byte offsets.
+///
+/// The attachments are additive fields, omitted from the JSON when empty: a
+/// consumer that only reads `code`/`severity`/`message`/`start`/`end` sees
+/// exactly what it saw before.
 #[derive(Serialize)]
 pub struct Diagnostic {
     /// Stable finding code, e.g. `"E1002"`.
@@ -66,6 +71,39 @@ pub struct Diagnostic {
     /// `"error"`, `"warning"`, or `"hint"`.
     pub severity: &'static str,
     /// Human-readable message.
+    pub message: String,
+    /// Byte offset of the span start in the host file.
+    pub start: u32,
+    /// Byte offset of the span end in the host file.
+    pub end: u32,
+    /// Actionable suggestions, in the order the analyzer attached them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub help: Vec<Help>,
+    /// Secondary locations explaining the finding — *only* the ones that land
+    /// in this host file. A related span pointing into the schema is dropped:
+    /// the schema reaches this module as one concatenated string with no file
+    /// map, so there is no location the caller could resolve it to.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub related: Vec<Related>,
+    /// Rendering hints: `"unnecessary"` (fade) and `"deprecated"` (strike).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<&'static str>,
+}
+
+/// An actionable suggestion attached to a finding.
+#[derive(Serialize)]
+pub struct Help {
+    /// The suggestion text.
+    pub message: String,
+    /// Replacement text for the finding's span, when the fix is mechanical.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replacement: Option<String>,
+}
+
+/// A secondary location that explains a finding, at host-file byte offsets.
+#[derive(Serialize)]
+pub struct Related {
+    /// What this location contributes to the finding.
     pub message: String,
     /// Byte offset of the span start in the host file.
     pub start: u32,
@@ -227,19 +265,12 @@ fn run(request: &Request) -> Response {
         hover: None,
     };
 
+    let host_source = SourceId::new("host");
     for entry in &analyzed {
         for finding in &entry.output.diagnostics {
-            let range = finding.span().range();
-            let host = entry
-                .query
-                .host_span(range.start() as usize..range.end() as usize);
-            response.diagnostics.push(Diagnostic {
-                code: finding.code().to_string(),
-                severity: severity_label(finding.severity()),
-                message: finding.message().to_string(),
-                start: host.start as u32,
-                end: host.end as u32,
-            });
+            response
+                .diagnostics
+                .push(to_host_diagnostic(finding, &analyzed, &host_source));
         }
         response
             .tokens
@@ -371,6 +402,74 @@ fn hover(schema: &str, analyzed: &[Analyzed], host_offset: u32) -> Option<Hover>
     })
 }
 
+/// Rebuilds a finding raised on an embedded query so every span it carries —
+/// the primary one and each related location — points into the host file, then
+/// flattens it for the caller.
+///
+/// The re-spanning is [`Finding::map_spans`], the same call the LSP and the
+/// CLI make. Hand-rolling it here is how this surface used to end up dropping
+/// `help`, `related` and `tags` that the other two showed.
+///
+/// A span belonging to *any* embedded query maps, not just this finding's own:
+/// one query's finding can point at another's text, and both are in this file.
+/// A span in the schema stays where it is and is then dropped, since the
+/// caller has no schema file to point at.
+fn to_host_diagnostic(
+    finding: &Finding,
+    analyzed: &[Analyzed],
+    host_source: &SourceId,
+) -> Diagnostic {
+    let mapped = finding.map_spans(|span| {
+        let Some(entry) = analyzed.iter().find(|entry| &entry.source == span.source()) else {
+            return span.clone();
+        };
+        let range = span.range();
+        let host = entry
+            .query
+            .host_span(range.start() as usize..range.end() as usize);
+        SourceSpan::new(
+            host_source.clone(),
+            ByteRange::new(host.start as u32, host.end as u32)
+                .expect("an embedded query's host span is ordered"),
+        )
+    });
+
+    let range = mapped.span().range();
+    Diagnostic {
+        code: mapped.code().to_string(),
+        severity: severity_label(mapped.severity()),
+        message: mapped.message().to_string(),
+        start: range.start(),
+        end: range.end(),
+        help: mapped
+            .help()
+            .iter()
+            .map(|help| Help {
+                message: help.message.clone(),
+                replacement: help.replacement.clone(),
+            })
+            .collect(),
+        related: mapped
+            .related()
+            .iter()
+            .filter(|related| related.span.source() == host_source)
+            .map(|related| Related {
+                message: related.message.clone(),
+                start: related.span.range().start(),
+                end: related.span.range().end(),
+            })
+            .collect(),
+        tags: mapped
+            .tags()
+            .iter()
+            .map(|tag| match tag {
+                FindingTag::Unnecessary => "unnecessary",
+                FindingTag::Deprecated => "deprecated",
+            })
+            .collect(),
+    }
+}
+
 fn severity_label(severity: Severity) -> &'static str {
     match severity {
         Severity::Error => "error",
@@ -449,6 +548,47 @@ mod tests {
         let end = unknown["end"].as_u64().expect("end") as usize;
         assert_eq!(&source[start..end], "nope");
         assert_eq!(unknown["severity"], "error");
+    }
+
+    #[test]
+    fn a_findings_help_reaches_the_host_payload() {
+        // `help` is the reason a finding is actionable, and this surface used
+        // to be the one that dropped it: it built its own `Diagnostic` from
+        // four fields of the `Finding` and threw the attachments away, so the
+        // TypeScript plugin showed a bare "is not a defined function" where
+        // the LSP and the CLI both said what to do about it.
+        let source = "const q = db.query(\"RETURN fn::missing()\");\n";
+        let value = run_json(&request("app.ts", source));
+        let diagnostics = value["diagnostics"].as_array().expect("array");
+        let unknown = diagnostics
+            .iter()
+            .find(|d| d["code"] == "E5001")
+            .unwrap_or_else(|| panic!("expected E5001, got {diagnostics:?}"));
+        let help = unknown["help"].as_array().expect("help present");
+        assert_eq!(
+            help[0]["message"],
+            "no `DEFINE FUNCTION fn::missing` exists in the workspace"
+        );
+    }
+
+    #[test]
+    fn a_related_location_inside_the_file_lands_on_its_host_bytes() {
+        // The definition and the bad call are both in this file, so the
+        // related location is one the editor can actually jump to — and it
+        // must be in host coordinates like every other offset we report.
+        let source = "const q = db.query(`DEFINE FUNCTION fn::double($x: int) \
+                      { RETURN $x * 2; }; RETURN fn::double(1, 2);`);\n";
+        let value = run_json(&request("app.ts", source));
+        let diagnostics = value["diagnostics"].as_array().expect("array");
+        let arity = diagnostics
+            .iter()
+            .find(|d| d["code"] == "E5002")
+            .unwrap_or_else(|| panic!("expected E5002, got {diagnostics:?}"));
+        let related = arity["related"].as_array().expect("related present");
+        let start = related[0]["start"].as_u64().expect("start") as usize;
+        let end = related[0]["end"].as_u64().expect("end") as usize;
+        assert_eq!(&source[start..end], "fn::double");
+        assert!(start > source.find('`').expect("template opens"));
     }
 
     #[test]

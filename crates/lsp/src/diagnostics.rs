@@ -2,8 +2,8 @@
 //!
 //! Handles span-to-range conversion and related information formatting.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex};
 
 use tower_lsp::lsp_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, DiagnosticTag, Location,
@@ -12,20 +12,67 @@ use tower_lsp::lsp_types::{
 
 use surrealguard_diagnostics::{Finding, FindingTag, PolicyConfig, Severity as WorkspaceSeverity};
 
-use crate::text::byte_range_to_lsp;
+use crate::text::LineIndex;
+
+/// What a batch of findings for one document converts against: the target
+/// document's line index, and the other documents a related span can point
+/// at.
+///
+/// A document's findings are converted one after another, and each one maps
+/// at least one span. Converting a span by scanning the text costs O(file),
+/// so a file's own diagnostics used to cost O(file x findings) — the quadratic
+/// this type exists to remove. The target's index is built once by the
+/// document that owns it; a related file's is built the first time a span
+/// actually points there and then reused for the rest of the batch.
+pub struct DiagnosticContext<'a> {
+    /// The line index of the document the findings belong to.
+    source: &'a LineIndex,
+    /// Every analyzed document keyed by its analysis source id, for resolving
+    /// a related span that points at another file.
+    texts: &'a BTreeMap<String, (Url, Arc<str>)>,
+    /// Line indexes for those other documents, built on demand. A `Mutex`
+    /// rather than a `RefCell` so the context stays `Sync` and can live
+    /// inside an async handler.
+    related: Mutex<HashMap<String, Arc<LineIndex>>>,
+}
+
+impl<'a> DiagnosticContext<'a> {
+    /// A context for converting `source`'s findings, resolving related spans
+    /// through `texts`.
+    pub fn new(source: &'a LineIndex, texts: &'a BTreeMap<String, (Url, Arc<str>)>) -> Self {
+        Self {
+            source,
+            texts,
+            related: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The URI and line index of the document `key` names, or `None` when it
+    /// is not one of the analyzed documents (a related span pointing at a file
+    /// the editor does not track has no location to offer).
+    fn related_source(&self, key: &str) -> Option<(Url, Arc<LineIndex>)> {
+        let (uri, text) = self.texts.get(key)?;
+        let mut related = self.related.lock().ok()?;
+        let index = related
+            .entry(key.to_string())
+            .or_insert_with(|| Arc::new(LineIndex::new(Arc::clone(text))));
+        Some((uri.clone(), Arc::clone(index)))
+    }
+}
 
 /// Convert a workspace-analysis finding to an LSP diagnostic, applying the
 /// workspace policy at this consumption edge. Returns `None` when policy
 /// suppresses the finding (an allowed lint).
 pub fn workspace_finding_to_lsp_diagnostic(
-    source: &str,
+    context: &DiagnosticContext<'_>,
     finding: &Finding,
     policy: &PolicyConfig,
-    texts: &BTreeMap<String, (Url, Arc<str>)>,
 ) -> Option<Diagnostic> {
     let resolved = policy.resolve_severity(finding.code(), finding.severity())?;
     let range = finding.span().range();
-    let range = byte_range_to_lsp(source, range.start() as usize, range.end() as usize);
+    let range = context
+        .source
+        .range(range.start() as usize, range.end() as usize);
 
     let code = surrealguard_diagnostics::render_code(finding.code(), resolved);
     let severity = match resolved {
@@ -45,12 +92,12 @@ pub fn workspace_finding_to_lsp_diagnostic(
         .related()
         .iter()
         .filter_map(|related| {
-            let (uri, text) = texts.get(&related.span.source().to_string())?;
+            let (uri, index) = context.related_source(&related.span.source().to_string())?;
             let range = related.span.range();
             Some(DiagnosticRelatedInformation {
                 location: Location {
-                    uri: uri.clone(),
-                    range: byte_range_to_lsp(text, range.start() as usize, range.end() as usize),
+                    uri,
+                    range: index.range(range.start() as usize, range.end() as usize),
                 },
                 message: related.message.clone(),
             })
@@ -133,9 +180,13 @@ mod tests {
         )
         .with_tag(FindingTag::Unnecessary);
 
-        let diagnostic =
-            workspace_finding_to_lsp_diagnostic(source, &finding, &PolicyConfig::default(), &texts)
-                .expect("passes default policy");
+        let index = LineIndex::for_str(source);
+        let diagnostic = workspace_finding_to_lsp_diagnostic(
+            &DiagnosticContext::new(&index, &texts),
+            &finding,
+            &PolicyConfig::default(),
+        )
+        .expect("passes default policy");
 
         assert_eq!(
             diagnostic.message,
@@ -165,11 +216,11 @@ mod tests {
         );
         assert!(finding.tags().is_empty(), "fixture has no intrinsic tag");
 
+        let index = LineIndex::for_str(source);
         let diagnostic = workspace_finding_to_lsp_diagnostic(
-            source,
+            &DiagnosticContext::new(&index, &BTreeMap::new()),
             &finding,
             &PolicyConfig::default(),
-            &BTreeMap::new(),
         )
         .expect("passes default policy");
 
@@ -189,11 +240,11 @@ mod tests {
             "unknown table `ghost`",
         );
 
+        let index = LineIndex::for_str(source);
         let diagnostic = workspace_finding_to_lsp_diagnostic(
-            source,
+            &DiagnosticContext::new(&index, &BTreeMap::new()),
             &finding,
             &PolicyConfig::default(),
-            &BTreeMap::new(),
         )
         .expect("passes default policy");
 
@@ -213,11 +264,11 @@ mod tests {
             "unexpected syntax",
         );
 
+        let index = LineIndex::for_str(source);
         let diagnostic = workspace_finding_to_lsp_diagnostic(
-            source,
+            &DiagnosticContext::new(&index, &BTreeMap::new()),
             &finding,
             &PolicyConfig::default(),
-            &BTreeMap::new(),
         )
         .expect("non-lint findings pass default policy");
 

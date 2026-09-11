@@ -259,6 +259,7 @@ fn literal_fact(literal: &ast::Literal, span: SourceSpan) -> ExpressionFact {
         // A file literal names a bucket; the kind lists the buckets a value
         // may belong to, and a literal may belong to any.
         ast::Literal::File(_) => Kind::File(Vec::new()),
+        ast::Literal::Point(_, _) => Kind::Geometry(vec![surrealdb_types::GeometryKind::Point]),
     };
     let mut fact = scalar_fact(span, ExpressionValueClass::Literal, kind);
     fact.value = const_literal_value(literal);
@@ -534,23 +535,65 @@ fn narrowed_kind(
 /// only the `Either` and gives up, which loses the type *and* (at the
 /// checking sites) manufactures a false 2030/5001.
 ///
-/// Non-collection arms are skipped rather than failing the whole lookup:
-/// indexing an `option<array<T>>` is a contract violation worth reporting
-/// (see [`is_indexable_kind`]), but the reported expression still has the
-/// element type of its collection arms, so inference must not collapse.
-/// `None` means no arm was a collection at all.
+/// This is [`crate::kinds::project`]'s [`FieldStep::Element`], and nothing
+/// more: reading an element out of a kind is a projection, so it obeys the one
+/// projection policy rather than a second copy of it. Two answers used to
+/// differ, and the engine settles both in `project`'s favour (3.2.3):
+///
+/// * **`option<array<int>>` indexes to `option<int>`, not `int`.** `NONE[0]`
+///   is `NONE` — `type::of(NONE[0])` is `'none'` — so the `NONE` arm of an
+///   optional collection contributes a `none` element rather than vanishing.
+///   Indexing one is still a contract violation worth reporting (see
+///   [`is_indexable_kind`]), but the kind it evaluates to includes the `NONE`.
+/// * **`any` indexes to `any`.** An unknown value has an unknown element, not
+///   a provably absent one.
+///
+/// A non-collection arm that is not a `NONE`/`NULL` sentinel is still skipped
+/// rather than failing the whole lookup, and `None` still means no arm was a
+/// collection at all.
 pub(crate) fn collection_element_kind(kind: &Kind) -> Option<Kind> {
-    match kind {
-        Kind::Array(element, _) | Kind::Set(element, _) => Some((**element).clone()),
-        Kind::Either(variants) => {
-            let elements: Vec<Kind> = variants
-                .iter()
-                .filter_map(collection_element_kind)
-                .collect();
-            (!elements.is_empty()).then(|| Kind::either(elements))
-        }
-        _ => None,
+    // `project` answers `any` for every step out of an `any`, which is true
+    // but is not what this function's callers mean by it. They read `None` as
+    // "nothing is known here" and fall back optimistically; an `Any` is a kind,
+    // and a kind unions. `(…)[0] ?? 0` off an unknown receiver is the case that
+    // shows the difference — `int` when the index is unknown, `any | int` when
+    // it is `any` — and turning that into an `any` site is precisely the
+    // degradation `any_ratchet`/`narrowing_floor` exist to refuse. So an
+    // unknown receiver stays unknown here.
+    if matches!(kind, Kind::Any) {
+        return None;
     }
+    crate::kinds::project(kind, &crate::schema::FieldStep::Element, None)
+}
+
+/// The kind one **iteration** of `FOR $x IN <kind>` binds, which is NOT
+/// [`collection_element_kind`] on an optional collection.
+///
+/// Indexing and iterating ask different questions of the same `NONE`, and 3.2.3
+/// answers them differently: `NONE[0]` evaluates to `NONE`, so an index carries
+/// the optionality through, while `FOR $i IN NONE` fails outright with "Cannot
+/// execute statement using value: NONE" — the body never runs, so no iteration
+/// ever binds `NONE`. The optionality is an obligation on the *loop* (reported
+/// by the `ForIterable` contract), not a variant of the element.
+///
+/// So the sentinel arms are subtracted before the element is read, and
+/// `option<array<string>>` iterates as `string`.
+pub(crate) fn iteration_element_kind(kind: &Kind) -> Option<Kind> {
+    let iterated = match kind {
+        Kind::Either(variants) => {
+            let kept: Vec<Kind> = variants
+                .iter()
+                .filter(|variant| !matches!(variant, Kind::None | Kind::Null))
+                .cloned()
+                .collect();
+            if kept.is_empty() {
+                return None;
+            }
+            Kind::either(kept)
+        }
+        other => other.clone(),
+    };
+    collection_element_kind(&iterated)
 }
 
 /// Whether index/filter applies to `kind`: a collection, an object,
@@ -1604,9 +1647,19 @@ mod tests {
         // `option<array<T>>` has a definitely-non-collection arm, so the
         // contract is violated — but the element kind still resolves, so
         // inference does not collapse to `any` on the reported expression.
+        // It resolves to `option<int>`, NOT `int`: 3.2.3 evaluates `NONE[0]`
+        // to `NONE` (`type::of(NONE[0])` is `'none'`), so the `NONE` arm
+        // carries through the index rather than vanishing.
         let optional = Kind::Either(vec![Kind::None, int1]);
         assert!(!is_indexable_kind(&optional));
-        assert_eq!(collection_element_kind(&optional), Some(Kind::Int));
+        assert_eq!(
+            collection_element_kind(&optional),
+            Some(Kind::either(vec![Kind::None, Kind::Int]))
+        );
+        // Iterating is the other question and has the other answer: 3.2.3
+        // refuses `FOR $i IN NONE` outright, so no iteration ever binds a
+        // `NONE` and the element is the bare `int`.
+        assert_eq!(iteration_element_kind(&optional), Some(Kind::Int));
 
         // No arm is a collection: nothing to index, nothing to read.
         let scalar = Kind::Either(vec![Kind::Int, Kind::String]);

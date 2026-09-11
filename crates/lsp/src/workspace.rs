@@ -33,7 +33,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tower_lsp::lsp_types::Url;
 
@@ -50,6 +50,8 @@ use surrealguard_workspace::{
     analyze_one_source, analyze_workspace, build_global_catalog, AnalysisOutput, GlobalCatalog,
     SchemaIndex, Workspace as AnalysisWorkspace,
 };
+
+use crate::text::LineIndex;
 
 /// Every analyzed document's `(uri, text)` keyed by its analysis source id
 /// (stringified). Diagnostics resolve related-information spans through it
@@ -74,6 +76,10 @@ pub struct Document {
     /// upsert (see [`is_schema_relevant`]). Only meaningful for `.surql`
     /// documents; host files never contribute.
     schema_relevant: bool,
+    /// The line index over `text`, built on the first conversion this version
+    /// of the document needs and reused by every later one. An edit replaces
+    /// the whole `Document`, so this can never outlive the text it indexes.
+    index: OnceLock<Arc<LineIndex>>,
 }
 
 impl Document {
@@ -89,7 +95,21 @@ impl Document {
             text: Arc::from(text),
             text_hash,
             schema_relevant,
+            index: OnceLock::new(),
         }
+    }
+
+    /// The document's line index, built once per text version.
+    ///
+    /// Every whole-document surface — semantic tokens, diagnostics, inlay
+    /// hints — converts one span per item it emits. Scanning the text per
+    /// span makes each of those quadratic in file size, so they all share
+    /// this one index instead.
+    pub fn line_index(&self) -> Arc<LineIndex> {
+        Arc::clone(
+            self.index
+                .get_or_init(|| Arc::new(LineIndex::new(Arc::clone(&self.text)))),
+        )
     }
 }
 
@@ -316,6 +336,12 @@ impl Workspace {
     /// A tracked document's current text.
     pub fn document_text(&self, uri: &Url) -> Option<Arc<str>> {
         self.documents.get(uri).map(|doc| Arc::clone(&doc.text))
+    }
+
+    /// A tracked document's line index, built once per text version and
+    /// shared by every conversion against it.
+    pub fn line_index(&self, uri: &Url) -> Option<Arc<LineIndex>> {
+        self.documents.get(uri).map(Document::line_index)
     }
 
     /// Every tracked document the server publishes diagnostics for — `.surql`
@@ -777,6 +803,7 @@ impl Workspace {
             return Some(DiagnosticAnalysisResult {
                 diagnostics: Vec::new(),
                 source: Arc::clone(&target.text),
+                index: target.line_index(),
                 texts: SourceTexts::default(),
             });
         }
@@ -787,12 +814,14 @@ impl Workspace {
             return Some(DiagnosticAnalysisResult {
                 diagnostics: host.diagnostics.clone(),
                 source: Arc::clone(&target.text),
+                index: target.line_index(),
                 texts: Arc::clone(&host.texts),
             });
         }
 
         // `.surql` target: reuse the shared whole-workspace analysis.
         let source = Arc::clone(&target.text);
+        let index = target.line_index();
         self.with_surql_cache(|cache| {
             let target_source = cache.source_for(uri)?;
             let diagnostics = cache
@@ -803,6 +832,7 @@ impl Workspace {
             Some(DiagnosticAnalysisResult {
                 diagnostics,
                 source,
+                index: Arc::clone(&index),
                 texts: cache.texts(),
             })
         })
@@ -1063,6 +1093,7 @@ impl Workspace {
         }
 
         let text = Arc::clone(&target.text);
+        let index = target.line_index();
         self.with_surql_cache(|cache| {
             let target_source = cache.source_for(uri)?.clone();
             let output = Arc::clone(cache.outputs.get(&target_source)?);
@@ -1079,6 +1110,7 @@ impl Workspace {
                 schema: Arc::clone(&cache.schema),
                 source: target_source,
                 text,
+                index: Arc::clone(&index),
                 sources: cache.texts(),
                 parsed,
             })
@@ -1099,6 +1131,7 @@ impl Workspace {
             return None;
         }
         let text = Arc::clone(&target.text);
+        let index = target.line_index();
         self.with_surql_cache(|cache| {
             let target_source = cache.source_for(uri)?;
             let output = Arc::clone(cache.outputs.get(target_source)?);
@@ -1111,6 +1144,7 @@ impl Workspace {
                 schema: Arc::clone(&cache.schema),
                 parsed,
                 text,
+                index: Arc::clone(&index),
             })
         })
     }
@@ -1346,6 +1380,10 @@ pub struct FeatureAnalysis {
     pub source: SourceId,
     /// The target document's full text, for offset/position conversion.
     pub text: Arc<str>,
+    /// The line index over `text`, shared with the document so a request that
+    /// converts many spans (inlay hints) pays for one index, not one scan per
+    /// hint.
+    pub index: Arc<LineIndex>,
     /// Every tracked `.surql` document keyed by its analysis source id
     /// (stringified), for resolving a definition span that points into another
     /// file back to its URI and text.
@@ -1386,6 +1424,8 @@ pub struct CompletionAnalysis {
     pub parsed: Arc<ParsedSource>,
     /// The target document's full text, for position/offset conversion.
     pub text: Arc<str>,
+    /// The line index over `text`, shared with the document.
+    pub index: Arc<LineIndex>,
 }
 
 /// Diagnostics-only result from the shared workspace analysis facade.
@@ -1394,6 +1434,10 @@ pub struct DiagnosticAnalysisResult {
     pub diagnostics: Vec<Finding>,
     /// The target document's full text, for rendering diagnostics.
     pub source: Arc<str>,
+    /// The line index over `source`, shared with the document: a file's
+    /// findings all convert against this one index rather than rescanning the
+    /// text per finding.
+    pub index: Arc<LineIndex>,
     /// Every analyzed document keyed by its analysis source id, for
     /// resolving related-information spans that point at other files.
     pub texts: SourceTexts,

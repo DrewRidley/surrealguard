@@ -500,6 +500,7 @@ fn index_kind_text(kind: crate::schema::IndexKind) -> &'static str {
         crate::schema::IndexKind::Unique => "unique",
         crate::schema::IndexKind::Search => "full-text",
         crate::schema::IndexKind::Vector => "vector",
+        crate::schema::IndexKind::Count => "count",
     }
 }
 

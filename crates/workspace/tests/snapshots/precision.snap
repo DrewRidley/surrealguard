@@ -1534,8 +1534,8 @@ table webhook_event  [schemafull]
   stmt     93:1 select           : array<{ subject: string }>
        modifier where      row_preserving=true
   stmt     96:1 let              : (no response)
-  stmt    101:1 return           : any
-  stmt    103:1 return           : any
+  stmt    101:1 return           : bool
+  stmt    103:1 return           : bool
   stmt    105:1 return           : bool
   stmt    107:1 select           : array<{ title: string }>
        modifier where      row_preserving=true
@@ -1679,7 +1679,7 @@ table webhook_event  [schemafull]
   stmt    161:1 return           : int
   stmt    163:1 return           : int
   stmt    165:1 return           : int
-  stmt    168:1 return           : any
+  stmt    168:1 return           : geometry<point>
   stmt    170:1 return           : { coordinates: array<float, 2>, type: 'Point' }
   stmt    172:1 return           : { coordinates: array<array<int, 2>, 3>, type: 'LineString' }
   stmt    174:1 return           : { coordinates: array<array<array<int, 2>, 5>, 1>, type: 'Polygon' }
@@ -1691,7 +1691,7 @@ table webhook_event  [schemafull]
   stmt    187:1 return           : regex
   stmt    189:1 let              : (no response)
   stmt    191:1 return           : bool
-  stmt    194:1 return           : { id: uuid, raw: bytes, span: range, tags: set<string>, wait: duration, when: datetime, where: any, who: record<account> }
+  stmt    194:1 return           : { id: uuid, raw: bytes, span: range, tags: set<string>, wait: duration, when: datetime, where: geometry<point>, who: record<account> }
   stmt    205:1 return           : array<float | decimal | int, 5>
   let      79:5 $count_text      : string
   let     189:5 $slug_shape      : regex

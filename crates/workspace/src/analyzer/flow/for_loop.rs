@@ -31,10 +31,15 @@ pub(crate) fn analyze_for_loop_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::F
     // `option<array<T>>` is `Either([None, Array(T)])` and a flat
     // `Array | Set` match sees only the `Either`, leaving the binding
     // untyped — so nothing in the body gets checked against it.
+    //
+    // `iteration_element_kind`, not `collection_element_kind`: the engine
+    // refuses to iterate a `NONE` at all rather than binding one, so the
+    // optionality of an `option<array<T>>` is this loop's obligation (the
+    // `ForIterable` contract below) and never a variant of `$x`.
     let element_kind = iterable
         .kind
         .as_ref()
-        .and_then(crate::analyzer::expression::infer::collection_element_kind);
+        .and_then(crate::analyzer::expression::infer::iteration_element_kind);
 
     // FOR's contract: the iterable is a collection (or a range, once those
     // are modeled). Definitely-scalar kinds are 2022.

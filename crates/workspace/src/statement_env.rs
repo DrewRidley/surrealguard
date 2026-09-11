@@ -3,6 +3,7 @@
 //! blocks and branches.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
@@ -10,26 +11,51 @@ use surrealguard_syntax::span::{ByteRange, SourceSpan};
 use crate::analysis::{LetBindingAnalysis, NarrowingAnalysis, ParamInference};
 use crate::expression::{ExpressionFact, ExpressionValueClass};
 
+/// A scope-inherited table, shared with the parent scope until written.
+///
+/// Every field a child scope inherits is behind one of these. Forking a child
+/// then costs a refcount bump per table instead of a deep clone of every
+/// binding in scope, and dropping the child at the merge costs a decrement
+/// instead of freeing that clone.
+///
+/// This is load-bearing for whole-document latency, not a micro-optimisation.
+/// A source's top-level environment accumulates one `lets` entry per `LET`, and
+/// analysing a statement forks a child scope several times; deep-cloning the
+/// table on each fork made analysing a document of N statements cost O(N²) —
+/// 2.4 s for a 3,200-statement file, against an editor budget of tens of
+/// milliseconds. Writes stay correct because every mutator goes through
+/// [`Shared::make_mut`], which clones only when the table is actually shared.
+type Shared<T> = Arc<T>;
+
+/// Mutable access to a shared table, cloning it first if any other scope still
+/// holds it. A parent that has already merged its children is the sole owner
+/// again, so its own writes never copy.
+fn make_mut<T: Clone>(shared: &mut Shared<T>) -> &mut T {
+    Arc::make_mut(shared)
+}
+
 /// The bindings in scope for a statement: `LET` facts, param defaults, and
 /// the accumulated param uses, threaded through statements in source order.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StatementEnv {
-    lets: BTreeMap<String, ExpressionFact>,
-    /// Names that were already bound when this scope began — a `LET` on
-    /// one of these shadows the outer binding.
-    inherited: BTreeSet<String>,
-    param_defaults: BTreeMap<String, ExpressionFact>,
+    lets: Shared<BTreeMap<String, ExpressionFact>>,
+    /// The bindings that were already in scope when this scope began — a `LET`
+    /// on one of these names shadows the outer binding. Holds the parent's
+    /// `lets` table itself (only the key set is ever read) so that forking
+    /// shares it rather than materialising a fresh set of every name in scope.
+    inherited: Shared<BTreeMap<String, ExpressionFact>>,
+    param_defaults: Shared<BTreeMap<String, ExpressionFact>>,
     params: BTreeMap<String, ParamInference>,
     /// `LET $t = type::table($x)` records `$t -> $x`, so a later
     /// `IF $t = 'table'` guard narrows `$x` the same as the direct
     /// `type::table($x) = 'table'` form.
-    table_discriminants: BTreeMap<String, String>,
+    table_discriminants: Shared<BTreeMap<String, String>>,
     /// Flow-narrowed field paths: a guard like `$file.folder != NONE`
     /// records `"file.folder" -> record<folder>`, so a downstream read of
     /// that exact idiom path resolves to the narrowed kind rather than the
     /// declared `option<record<folder>>`. Keyed on the `param.field.field`
     /// path; only the exact path narrows (never the base param or siblings).
-    narrowed_paths: BTreeMap<String, surrealdb_types::Kind>,
+    narrowed_paths: Shared<BTreeMap<String, surrealdb_types::Kind>>,
     /// Flow-narrowed **row** field paths — the same thing
     /// [`narrowed_paths`](Self::narrowed_paths) does for `$param.field`, for a
     /// bare field of the row in scope: `IF type::is_string(v)` records
@@ -41,7 +67,7 @@ pub struct StatementEnv {
     /// space, and a nested `SELECT` inside a guarded branch keeps this
     /// environment while swapping the row underneath it — so `v` narrowed on
     /// `mixed` must not answer for a `v` on some other table.
-    narrowed_row_paths: BTreeMap<(String, String), surrealdb_types::Kind>,
+    narrowed_row_paths: Shared<BTreeMap<(String, String), surrealdb_types::Kind>>,
     /// Bare params whose binding was tightened by an *active flow narrowing*
     /// in this scope (a prior guard's positive/negative effect), as opposed to
     /// their base declared/seeded binding. Dead-branch folding consults this so
@@ -49,7 +75,7 @@ pub struct StatementEnv {
     /// never on an idiomatic defensive check against a declared-non-optional
     /// param. Inherited by child scopes (a branch body sees the outer
     /// narrowing), like [`narrowed_paths`](Self::narrowed_paths).
-    narrowed_params: BTreeSet<String>,
+    narrowed_params: Shared<BTreeSet<String>>,
     /// Every `LET` binding (and `FOR` loop variable) analysis has seen in
     /// this scope and its already-merged children, in source order. Pure
     /// editor-feature output: recorded as bodies are walked and drained up to
@@ -68,16 +94,20 @@ impl StatementEnv {
     /// A child scope for a block or branch: it inherits the parent's `LET`
     /// bindings and param defaults but collects its own param uses, so a
     /// local `LET` shadows rather than leaks.
+    ///
+    /// Every inherited table is shared with the parent rather than copied, so
+    /// this is O(1) in the number of bindings in scope; a child that writes one
+    /// pays for its own copy of just that table, at that point.
     pub fn fork_child_scope(&self) -> Self {
         Self {
-            lets: self.lets.clone(),
-            inherited: self.lets.keys().cloned().collect(),
-            param_defaults: self.param_defaults.clone(),
+            lets: Shared::clone(&self.lets),
+            inherited: Shared::clone(&self.lets),
+            param_defaults: Shared::clone(&self.param_defaults),
             params: BTreeMap::new(),
-            table_discriminants: self.table_discriminants.clone(),
-            narrowed_paths: self.narrowed_paths.clone(),
-            narrowed_row_paths: self.narrowed_row_paths.clone(),
-            narrowed_params: self.narrowed_params.clone(),
+            table_discriminants: Shared::clone(&self.table_discriminants),
+            narrowed_paths: Shared::clone(&self.narrowed_paths),
+            narrowed_row_paths: Shared::clone(&self.narrowed_row_paths),
+            narrowed_params: Shared::clone(&self.narrowed_params),
             // Child records are collected fresh and drained back on merge, so
             // the parent's already-recorded bindings are not re-emitted.
             let_bindings: Vec::new(),
@@ -123,7 +153,7 @@ impl StatementEnv {
     /// Records that the idiom path `key` (a `param.field.field` string) is
     /// flow-narrowed to `kind` in this scope. Only the exact path narrows.
     pub fn set_narrowed_path(&mut self, key: String, kind: surrealdb_types::Kind) {
-        self.narrowed_paths.insert(key, kind);
+        make_mut(&mut self.narrowed_paths).insert(key, kind);
     }
 
     /// The flow-narrowed kind for the idiom path `key`, if a guard proved one.
@@ -139,7 +169,7 @@ impl StatementEnv {
         path: String,
         kind: surrealdb_types::Kind,
     ) {
-        self.narrowed_row_paths.insert((table, path), kind);
+        make_mut(&mut self.narrowed_row_paths).insert((table, path), kind);
     }
 
     /// The flow-narrowed kind for row-field path `path` on `table`.
@@ -151,7 +181,7 @@ impl StatementEnv {
     /// Records that the bare param `name`'s binding was tightened by an active
     /// flow narrowing in this scope (see [`narrowed_params`](Self::narrowed_params)).
     pub fn mark_param_narrowed(&mut self, name: String) {
-        self.narrowed_params.insert(name);
+        make_mut(&mut self.narrowed_params).insert(name);
     }
 
     /// Whether the bare param `name` was tightened by an active flow narrowing
@@ -166,10 +196,10 @@ impl StatementEnv {
     pub fn set_table_discriminant(&mut self, binding: String, param: Option<String>) {
         match param {
             Some(param) => {
-                self.table_discriminants.insert(binding, param);
+                make_mut(&mut self.table_discriminants).insert(binding, param);
             }
             None => {
-                self.table_discriminants.remove(&binding);
+                make_mut(&mut self.table_discriminants).remove(&binding);
             }
         }
     }
@@ -182,12 +212,12 @@ impl StatementEnv {
     /// Whether a `LET` of `name` here would shadow a binding from an
     /// enclosing scope.
     pub fn would_shadow(&self, name: &str) -> bool {
-        self.inherited.contains(name)
+        self.inherited.contains_key(name)
     }
 
     /// Binds `name` to `fact`, shadowing any existing binding.
     pub fn define_let(&mut self, name: String, fact: ExpressionFact) {
-        self.lets.insert(name, fact);
+        make_mut(&mut self.lets).insert(name, fact);
     }
 
     /// Seeds the engine-supplied session/access params (`$auth`, `$token`,
@@ -204,7 +234,7 @@ impl StatementEnv {
         for (name, kind) in crate::context_params::session_context_params() {
             let mut fact = ExpressionFact::new(span.clone(), ExpressionValueClass::Variable);
             fact.kind = Some(kind);
-            self.lets.insert(name, fact);
+            make_mut(&mut self.lets).insert(name, fact);
         }
     }
 
@@ -218,7 +248,7 @@ impl StatementEnv {
     /// (which would make `DEFAULT $auth` on a `record<T>` field a false 2001).
     pub fn unbind_session_params(&mut self) {
         for name in crate::context_params::session_context_params().keys() {
-            self.lets.remove(name);
+            make_mut(&mut self.lets).remove(name);
         }
     }
 
@@ -235,7 +265,7 @@ impl StatementEnv {
     /// Records the `DEFINE PARAM` default for `name`, whose kind seeds the
     /// inferred param and makes it optional at the call site.
     pub fn define_param_default(&mut self, name: String, fact: ExpressionFact) {
-        self.param_defaults.insert(name, fact);
+        make_mut(&mut self.param_defaults).insert(name, fact);
     }
 
     /// The declared default fact for param `name`, if any.
@@ -322,7 +352,7 @@ impl StatementEnv {
         kind: surrealdb_types::Kind,
         domain: Option<crate::analysis::ValueDomain>,
     ) -> Option<(surrealdb_types::Kind, surrealdb_types::Kind)> {
-        self.constrain_with(name, span, kind, domain, unify_kinds_strict)
+        self.constrain_with(name, span, kind, domain, unify_kinds)
     }
 
     /// Records a constraint derived from a *value comparison* (`in = $param`,
@@ -387,57 +417,49 @@ impl StatementEnv {
     }
 }
 
-/// The kind two constraint sites agree on, when they can: identical kinds,
-/// `any` deferring to the specific one, numeric widening picking the
-/// narrower, and a union matching on its FIRST member that reconciles.
+/// The kind two constraint sites agree on, when they can: the lattice meet of
+/// the two.
 ///
-/// This is deliberately **not** [`crate::lattice::meet`], although a
-/// constraint intersection is a meet and the two agree almost everywhere.
-/// They part on three inputs, and one of them is load-bearing:
+/// A constraint intersection *is* a meet — the set of values that satisfy both
+/// uses — so this is [`crate::lattice::meet`] with its three answers read as
+/// this function's two:
 ///
-/// * `string` against a literal union (`'red' | 'blue'`), and a collection
-///   against one with disjoint elements (`array<string>` vs `array<int>`):
-///   this says *clash*; the lattice reconciles them to `'red' | 'blue'` and
-///   to `array<any, 0>` (the empty array inhabits both). The lattice is right
-///   about satisfiability — `'red'` satisfies a `string` use and the field —
-///   but [`crate::analyzer::context::AnalysisContext`] only consults the
-///   `ParamDefault` contract (E2001 on `DEFINE PARAM $q VALUE 'green'` reaching
-///   a `'red' | 'blue'` field) when this function reports a clash, so routing
-///   it through `meet` silences that finding
-///   (`tests/contract_positions.rs`, `ParamDefault` × `'red' | 'blue'` and
-///   `array<int>`). Until the default check stops riding on the clash, the
-///   strict answer stays.
-/// * `float` against `decimal`, and `int` against `float`: clash here; the
-///   lattice's coercion order makes `int` the meet of `int`/`float` and
-///   declines to name `float`/`decimal`.
-/// * a union against a kind several of its members reconcile with
-///   (`int | float` against `number`): the FIRST member here (`int`); the meet
-///   keeps every one (`int | float`).
-fn unify_kinds_strict(
+/// * [`KindMeet::Exact`] is the reconciled kind, and it is `⊑` both sides, so
+///   later constraints tighten monotonically.
+/// * [`KindMeet::Empty`] is the only clash. Disjointness is *proven* there, so
+///   a 6001 saying no value can satisfy the query is exactly true.
+/// * [`KindMeet::Unrepresentable`] is a meet that exists but cannot be named
+///   (`float` against `decimal`, an object against a wider object). The
+///   constraint is real but unwriteable, so the accumulated kind stays as it
+///   was — never a clash.
+///
+/// This replaced a hand-written unifier that called three reconcilable pairs a
+/// clash: `string` against a literal union (`'red' | 'blue'`), `array<string>`
+/// against `array<int>` (the empty array inhabits both), and `int` against
+/// `float`. Those were load-bearing only because the `ParamDefault` contract
+/// used to be consulted *solely* when this function reported a clash; it is now
+/// checked at every constraint site
+/// ([`AnalysisContext::constrain_param`](crate::analyzer::context::AnalysisContext::constrain_param)),
+/// so the honest answer costs nothing.
+///
+/// [`KindMeet::Exact`]: crate::lattice::KindMeet::Exact
+/// [`KindMeet::Empty`]: crate::lattice::KindMeet::Empty
+/// [`KindMeet::Unrepresentable`]: crate::lattice::KindMeet::Unrepresentable
+fn unify_kinds(
     a: &surrealdb_types::Kind,
     b: &surrealdb_types::Kind,
 ) -> Option<surrealdb_types::Kind> {
-    use surrealdb_types::Kind;
-    if a == b {
-        return Some(a.clone());
-    }
-    match (a, b) {
-        (Kind::Any, other) | (other, Kind::Any) => Some(other.clone()),
-        (Kind::Number, narrow @ (Kind::Int | Kind::Float | Kind::Decimal))
-        | (narrow @ (Kind::Int | Kind::Float | Kind::Decimal), Kind::Number) => {
-            Some(narrow.clone())
-        }
-        (Kind::Either(variants), other) | (other, Kind::Either(variants)) => variants
-            .iter()
-            .find_map(|variant| unify_kinds_strict(variant, other)),
-        _ => None,
+    match crate::lattice::meet(a, b) {
+        crate::lattice::KindMeet::Exact(kind) => Some(kind),
+        crate::lattice::KindMeet::Unrepresentable => Some(a.clone()),
+        crate::lattice::KindMeet::Empty => None,
     }
 }
 
 /// The reconciliation for two constraints that both come from *value
 /// comparisons*. Comparisons never make a query unsatisfiable on their own —
 /// SurrealQL compares any two values, yielding a boolean rather than an error —
-/// so this is deliberately looser than [`unify_kinds_strict`]:
+/// so this is deliberately looser than [`unify_kinds`]:
 ///
 /// - `none` is compatible with everything (`$p = NONE` is an existence check,
 ///   never a demand that `$p` BE none), so it defers to the other kind.
@@ -445,7 +467,7 @@ fn unify_kinds_strict(
 ///   different edges' `in`/`out` fields (e.g. `record<account>` and
 ///   `record<team>`) is satisfiable — it just compares unequal to one of them.
 ///
-/// Everything else falls back to [`unify_kinds_strict`], so a genuine scalar clash
+/// Everything else falls back to [`unify_kinds`], so a genuine scalar clash
 /// (a param compared as an `int` in one place and a `string` in another) still
 /// reports a 6001.
 fn unify_comparable(
@@ -467,7 +489,7 @@ fn unify_comparable(
             }
             Some(Kind::Record(tables))
         }
-        _ => unify_kinds_strict(a, b),
+        _ => unify_kinds(a, b),
     }
 }
 

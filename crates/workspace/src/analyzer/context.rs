@@ -229,8 +229,21 @@ impl<'a> AnalysisContext<'a> {
     /// Records a finding, dropping exact duplicates: re-inference of the
     /// same expression (const-value resolution, closure re-inference at a
     /// call site) may re-detect the same violation at the same span.
+    ///
+    /// The scan is over every finding raised so far for this source, so the
+    /// comparison order matters at scale. `Finding`'s derived equality leads
+    /// with its `SourceSpan`, whose own leading field is the source id — a
+    /// string, compared in full for each of the thousands of findings a large
+    /// document raises. Testing the byte range first rejects almost every
+    /// candidate on two integers, and the full equality below still decides
+    /// the survivors, so what counts as a duplicate is unchanged.
     pub fn emit(&mut self, finding: Finding) {
-        if self.diagnostics.contains(&finding) {
+        let range = finding.span().range();
+        let code = finding.code();
+        let duplicate = self.diagnostics.iter().any(|existing| {
+            existing.span().range() == range && existing.code() == code && *existing == finding
+        });
+        if duplicate {
             return;
         }
         self.diagnostics.push(finding);
@@ -387,11 +400,38 @@ impl<'a> AnalysisContext<'a> {
             // Bound locally: not a host parameter.
             return;
         }
+        // The `ParamDefault` contract is checked HERE, at every constraint
+        // site, and not only when two sites clash with each other. A defined
+        // param that reaches exactly one position still has a value that
+        // position can reject — `DEFINE PARAM $q VALUE 'green'` against a
+        // `'red' | 'blue'` field is a single constraint, so there is nothing
+        // for it to clash *with*, and riding the check on the clash made the
+        // finding an artefact of how strict the unifier happened to be.
+        // Engine-verified on 3.2.3: that pair fails at runtime with
+        // "Expected `'red' | 'blue'` but found `'green'`", while `VALUE 'red'`
+        // is accepted both by the field and by a `string::len($r)` use.
+        self.check_param_default(name, &span, &kind);
         if let Some((existing, new)) =
             self.env
                 .constrain_param(name.to_string(), span.clone(), kind, domain)
         {
             self.report_param_conflict(name, span, &existing, &new);
+        }
+    }
+
+    /// Emits the `ParamDefault` violation `required` raises against `name`'s
+    /// declared default, if there is one and it is *provably* wrong.
+    ///
+    /// Idempotent through [`emit`](Self::emit)'s deduplication: the same param
+    /// reaching the same position twice produces the same finding.
+    fn check_param_default(
+        &mut self,
+        name: &str,
+        use_span: &SourceSpan,
+        required: &surrealdb_types::Kind,
+    ) {
+        if let Some(finding) = self.param_default_violation(name, use_span, required) {
+            self.emit(finding);
         }
     }
 
@@ -417,6 +457,12 @@ impl<'a> AnalysisContext<'a> {
     /// param has a value, and a value that cannot inhabit a position it reaches
     /// is [`Position::ParamDefault`]'s contract, checked by the same `decide`
     /// as every other position.
+    ///
+    /// The default check below is the *re-route*, not the check itself:
+    /// [`check_param_default`](Self::check_param_default) already ran at each
+    /// constraint site, so what this restates is only that a clash on a defined
+    /// param is reported as E2001 at the definition rather than as E6001 at a
+    /// use. The re-emitted finding is identical and drops in `emit`.
     fn report_param_conflict(
         &mut self,
         name: &str,

@@ -20,6 +20,8 @@
 //! to that block. A binding referenced from a deeper nested block is found via
 //! the textual scan of the enclosing later sibling.
 
+use std::collections::HashMap;
+
 use surrealguard_syntax::ast;
 use surrealguard_syntax::source::SourceId;
 use surrealguard_syntax::span::{ByteRange, SourceSpan};
@@ -37,18 +39,41 @@ pub(crate) fn check_unused_lets(
 
 /// Checks one statement sequence (a scope) for unused `LET`s, then recurses
 /// into every nested scope each statement introduces.
-fn check_sequence(
+///
+/// The scan is *per scope*, not per binding. Asking "does any later statement
+/// mention `$x`?" by re-reading every later statement's text made a scope of N
+/// statements cost O(N × text), so a document of unused `LET`s was quadratic in
+/// its own size — 3,200 of them spent well over half of whole-document analysis
+/// here. One pass over the scope's text instead records, for each `$name` token
+/// in it, the last statement that mentions that name; every binding's question
+/// is then a map lookup. Same answer, one pass.
+fn check_sequence<'t>(
     statements: &[ast::Spanned<ast::Statement>],
     source: &SourceId,
-    text: &str,
+    text: &'t str,
     diagnostics: &mut Vec<Finding>,
 ) {
+    let mut last_mention: HashMap<&'t str, usize> = HashMap::new();
+    for (index, statement) in statements.iter().enumerate() {
+        for_each_param_token(slice(text, statement.span), |name| {
+            last_mention.insert(name, index);
+        });
+    }
+
     for (index, statement) in statements.iter().enumerate() {
         if let ast::Statement::Let(let_stmt) = &statement.node {
             let name = let_stmt.name.node.as_str();
-            let used = statements[index + 1..]
-                .iter()
-                .any(|following| references_param(slice(text, following.span), name));
+            let used = if is_plain_identifier(name) {
+                last_mention.get(name).is_some_and(|last| *last > index)
+            } else {
+                // A name that is not a bare identifier is written quoted in the
+                // source, so no `$name` token scan can recover it. Such a name
+                // keeps the original rescan: exact, and never hot, because
+                // parameters are named with identifiers.
+                statements[index + 1..]
+                    .iter()
+                    .any(|following| references_param(slice(text, following.span), name))
+            };
             if !used {
                 let span = SourceSpan::new(source.clone(), let_stmt.name.span);
                 diagnostics.push(
@@ -121,6 +146,37 @@ fn is_identifier_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
+/// Calls `visit` with the name of every `$name` parameter token in `haystack`.
+///
+/// This is [`references_param`] turned inside out, and answers exactly the same
+/// question for every identifier name at once. `references_param(h, name)` holds
+/// for a bare-identifier `name` precisely when some `$` in `h` is followed by
+/// the maximal run of identifier bytes `name`: the run's bytes are all
+/// identifier bytes (so any shorter prefix fails the boundary test) and the byte
+/// past it is not one (so nothing longer matches either). Visiting each run is
+/// therefore visiting each name the rescan would have found — including a run
+/// cut short by the end of `haystack`, which the boundary test also admits.
+fn for_each_param_token<'t>(haystack: &'t str, mut visit: impl FnMut(&'t str)) {
+    let bytes = haystack.as_bytes();
+    for (dollar, _) in bytes.iter().enumerate().filter(|(_, b)| **b == b'$') {
+        let start = dollar + 1;
+        let mut end = start;
+        while end < bytes.len() && is_identifier_byte(bytes[end]) {
+            end += 1;
+        }
+        if end > start {
+            // Identifier bytes are ASCII, so both ends are char boundaries.
+            visit(&haystack[start..end]);
+        }
+    }
+}
+
+/// Whether `name` is a bare identifier — the form a `$name` token in the source
+/// can spell, and so the form the token scan can answer for.
+fn is_plain_identifier(name: &str) -> bool {
+    !name.is_empty() && name.bytes().all(is_identifier_byte)
+}
+
 fn slice(text: &str, range: ByteRange) -> &str {
     text.get(range.start() as usize..range.end() as usize)
         .unwrap_or("")
@@ -140,5 +196,63 @@ mod tests {
         // A longer name is not matched by a prefix search.
         assert!(references_param("RETURN $count;", "count"));
         assert!(!references_param("RETURN $counter;", "count"));
+    }
+
+    /// The token scan replaced a per-binding rescan, so what it finds must be
+    /// exactly what the rescan would have said — for every identifier name, on
+    /// every shape the rescan has an opinion about.
+    #[test]
+    fn token_scan_agrees_with_the_rescan_it_replaced() {
+        let haystacks = [
+            "RETURN $x;",
+            "RETURN $x_2 + $x;",
+            "RETURN $counter;",
+            "RETURN 5;",
+            "RETURN $$x;",
+            "RETURN a$x;",
+            "RETURN '$x' + \"$y\";",
+            // A name run cut short by the end of the slice still counts: the
+            // boundary test admits end-of-input.
+            "RETURN $ro",
+            "$",
+            "$ x",
+            "LET $café = 1; RETURN $café;",
+            "SELECT * FROM t WHERE a = $p AND b = $p2;",
+        ];
+        let names = [
+            "x", "x_2", "y", "count", "counter", "ro", "row", "p", "p2", "caf", "café",
+        ];
+        for haystack in haystacks {
+            let mut found: Vec<&str> = Vec::new();
+            for_each_param_token(haystack, |name| found.push(name));
+            for name in names {
+                // Only bare identifiers take the token-scan path; everything
+                // else is routed to the rescan, which is the answer by
+                // definition.
+                if !is_plain_identifier(name) {
+                    continue;
+                }
+                let scanned = found.contains(&name);
+                assert_eq!(
+                    scanned,
+                    references_param(haystack, name),
+                    "`${name}` in {haystack:?}: token scan said {scanned}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_non_identifier_name_is_not_claimed_by_the_token_scan() {
+        // A param name can hold bytes the token scan's run cannot reproduce:
+        // its boundary test is ASCII-only, so a run stops at the first byte of
+        // a multi-byte character and `café` would be recorded as `caf`. Such a
+        // name must not be answered from the scan — it takes the rescan.
+        assert!(!is_plain_identifier("my param"));
+        assert!(!is_plain_identifier("café"));
+        assert!(!is_plain_identifier(""));
+        assert!(is_plain_identifier("row0"));
+        // And the rescan is the one that gets it right.
+        assert!(references_param("RETURN $café;", "café"));
     }
 }

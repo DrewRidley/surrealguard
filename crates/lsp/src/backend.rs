@@ -19,6 +19,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
+use crate::text::LineIndex;
 use crate::workspace::Workspace;
 use crate::{code_action, completion, diagnostics, semantic};
 
@@ -234,17 +235,13 @@ impl Backend {
         // consumption edge; the findings themselves carry only their
         // intrinsic class.
         let policy = self.policy.read().await;
+        // One context for the whole document: every finding converts against
+        // the index the document already holds.
+        let context = diagnostics::DiagnosticContext::new(&result.index, &result.texts);
         let lsp_diagnostics: Vec<Diagnostic> = result
             .diagnostics
             .iter()
-            .filter_map(|d| {
-                diagnostics::workspace_finding_to_lsp_diagnostic(
-                    &result.source,
-                    d,
-                    &policy,
-                    &result.texts,
-                )
-            })
+            .filter_map(|d| diagnostics::workspace_finding_to_lsp_diagnostic(&context, d, &policy))
             .collect();
         drop(policy);
 
@@ -370,11 +367,11 @@ impl Backend {
     /// file. `None` for `.surql` documents and for a host position outside
     /// every embedded query, both of which the ordinary path handles.
     async fn host_hover(&self, uri: &Url, position: Position) -> Option<Hover> {
-        let (host_text, analysis) = {
+        let (index, analysis) = {
             let ws = self.workspace.read().await;
-            let host_text = ws.document_text(uri)?;
-            let offset = crate::text::position_to_offset(&host_text, position);
-            (host_text, ws.host_feature_analysis(uri, offset)?)
+            let index = ws.line_index(uri)?;
+            let offset = index.position_to_offset(position);
+            (index, ws.host_feature_analysis(uri, offset)?)
         };
 
         let info = hover_from_cache(
@@ -397,9 +394,7 @@ impl Backend {
                 kind: MarkupKind::Markdown,
                 value: info.markdown,
             }),
-            range: Some(crate::text::byte_range_to_lsp(
-                &host_text, host.start, host.end,
-            )),
+            range: Some(index.range(host.start, host.end)),
         })
     }
 
@@ -450,16 +445,12 @@ impl Backend {
             return Vec::new();
         };
         let policy = self.policy.read().await;
+        let context = diagnostics::DiagnosticContext::new(&result.index, &result.texts);
         result
             .diagnostics
             .iter()
             .filter_map(|finding| {
-                diagnostics::workspace_finding_to_lsp_diagnostic(
-                    &result.source,
-                    finding,
-                    &policy,
-                    &result.texts,
-                )
+                diagnostics::workspace_finding_to_lsp_diagnostic(&context, finding, &policy)
             })
             .filter(|diagnostic| ranges_overlap(diagnostic.range, range))
             .collect()
@@ -759,9 +750,9 @@ impl LanguageServer for Backend {
         if candidates.is_empty() {
             return Ok(None);
         }
-        let text = {
+        let index = {
             let ws = self.workspace.read().await;
-            ws.document_text(&uri)
+            ws.line_index(&uri)
         };
 
         let mut actions: Vec<CodeActionOrCommand> = Vec::new();
@@ -773,13 +764,18 @@ impl LanguageServer for Backend {
                 _ => code.clone(),
             };
 
-            if let Some(text) = &text {
-                let offset = crate::text::position_to_offset(text, diagnostic.range.start);
+            if let Some(index) = &index {
+                let offset = index.position_to_offset(diagnostic.range.start);
                 if self.inline_suppression_possible(&uri, offset).await {
                     actions.push(suppression_action(
                         format!("Suppress {shown} here"),
                         uri.clone(),
-                        code_action::inline_suppression_edit(text, offset, &code, require_reason),
+                        code_action::inline_suppression_edit(
+                            index.text(),
+                            offset,
+                            &code,
+                            require_reason,
+                        ),
                         diagnostic.clone(),
                     ));
                 }
@@ -827,10 +823,9 @@ impl LanguageServer for Backend {
             .chain(return_hints)
             .map(|hint| {
                 // The grey `: <kind>` sits right after the `$name` token.
-                let position = crate::text::offset_to_position(
-                    &analysis.text,
-                    hint.name_span.range().end() as usize,
-                );
+                let position = analysis
+                    .index
+                    .offset_to_position(hint.name_span.range().end() as usize);
                 InlayHint {
                     position,
                     label: InlayHintLabel::String(hint.label),
@@ -861,7 +856,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        let offset = crate::text::position_to_offset(&analysis.text, position) as u32;
+        let offset = analysis.index.position_to_offset(position) as u32;
         let Some(info) = hover_from_cache(
             &analysis.output,
             &analysis.schema,
@@ -874,11 +869,9 @@ impl LanguageServer for Backend {
         };
 
         let range = info.span.range();
-        let range = crate::text::byte_range_to_lsp(
-            &analysis.text,
-            range.start() as usize,
-            range.end() as usize,
-        );
+        let range = analysis
+            .index
+            .range(range.start() as usize, range.end() as usize);
 
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -906,8 +899,11 @@ impl LanguageServer for Backend {
         // A `.surql` document is tokenized whole, from the parse the analysis
         // cache already holds.
         if let Some((text, parsed)) = ws.parsed_surql(&uri) {
+            let index = ws
+                .line_index(&uri)
+                .unwrap_or_else(|| Arc::new(LineIndex::new(Arc::clone(&text))));
             let data = self.semantic_tokens_for(&uri, &text, || {
-                semantic::encode(&text, &semantic::tokens(&parsed))
+                semantic::encode(&index, &semantic::tokens(&parsed))
             });
             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                 result_id: None,
@@ -920,6 +916,9 @@ impl LanguageServer for Backend {
         let Some((text, queries)) = ws.host_queries(&uri) else {
             return Ok(None);
         };
+        let index = ws
+            .line_index(&uri)
+            .unwrap_or_else(|| Arc::new(LineIndex::new(Arc::clone(&text))));
         let data = self.semantic_tokens_for(&uri, &text, || {
             let mut tokens = Vec::new();
             for (index, query) in queries.iter().enumerate() {
@@ -929,7 +928,7 @@ impl LanguageServer for Backend {
                 };
                 tokens.extend(semantic::map_to_host(query, semantic::tokens(&parsed)));
             }
-            semantic::encode(&text, &tokens)
+            semantic::encode(&index, &tokens)
         });
 
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
@@ -957,7 +956,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        let offset = crate::text::position_to_offset(&analysis.text, position) as u32;
+        let offset = analysis.index.position_to_offset(position) as u32;
         let items: Vec<CompletionItem> = surrealguard_workspace::complete_at(
             &analysis.output,
             &analysis.schema,
@@ -1005,7 +1004,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        let offset = crate::text::position_to_offset(&analysis.text, position) as u32;
+        let offset = analysis.index.position_to_offset(position) as u32;
         let Some(target) = definition_from_cache(
             &analysis.output,
             &analysis.schema,
@@ -1024,8 +1023,8 @@ impl LanguageServer for Backend {
         };
 
         let range = target.span.range();
-        let range =
-            crate::text::byte_range_to_lsp(def_text, range.start() as usize, range.end() as usize);
+        let range = LineIndex::new(Arc::clone(def_text))
+            .range(range.start() as usize, range.end() as usize);
 
         Ok(Some(GotoDefinitionResponse::Scalar(Location {
             uri: def_uri.clone(),

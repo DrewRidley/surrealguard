@@ -17,6 +17,28 @@
 //! regenerated blind. Line and code are the contract: *this line is wrong, and
 //! this is what we call it*.
 //!
+//! ## Which findings are listed
+//!
+//! The rule is one line of code ([`is_listed`]) and it took two attempts to
+//! get right, so it is worth stating plainly:
+//!
+//! > A **lint** (`7xxx`) is listed only when the workspace's default
+//! > [`PolicyConfig`] would actually report it. Every other family is listed
+//! > unconditionally.
+//!
+//! Raw `source.diagnostics` applies no policy at all, which buried this file:
+//! 7014 alone (whole-table SELECT without WHERE/LIMIT) fired on 46 of 261
+//! lines, and it is Allow-by-default — nobody sees it, so a fixture "pinning"
+//! it pins nothing. Dropping it is the point of this filter.
+//!
+//! The obvious fix — run every finding through `PolicyConfig::default()` —
+//! was tried and rejected, because Allow-by-default is not a lint-only level:
+//! **6003** (unresolvable dynamic construct) is an Allow-by-default *hint*,
+//! and several fixtures exist specifically to pin where the analyzer gives up.
+//! Silencing those turns a deliberate assertion into an empty line. So the
+//! filter asks the policy only about the family the policy was written for,
+//! and every diagnostic that says something about the *analysis* survives it.
+//!
 //! Regenerate with:
 //!
 //! ```text
@@ -28,6 +50,7 @@ mod support;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+use surrealguard_diagnostics::{Finding, PolicyConfig};
 use surrealguard_workspace::{analyze_workspace, Workspace};
 
 use support::{diff_lines, snapshot_path, updating};
@@ -42,6 +65,12 @@ const HEADER: &str = "\
 # Every file under tests/corpus/invalid/ is wrong on purpose. This file records
 # `file:line  CODE` for each finding — never the message, which is rendering's
 # business and will move.
+#
+# Listing rule: a 7xxx LINT appears only when the workspace default PolicyConfig
+# would report it, so the Allow-by-default lints (7001/7008/7009/7014/7015/7016)
+# are not listed — nobody sees them, so a fixture cannot pin them. Every other
+# family is listed whatever its level, which is what keeps the Allow-by-default
+# 6003 hints (where the analyzer gives up) pinned here on purpose.
 #
 # Its ratchet runs opposite to the oracle's: a finding that DISAPPEARS is a
 # check that stopped firing, and that is a regression until someone argues
@@ -88,7 +117,7 @@ fn every_invalid_fixture_reports_something() {
             analysis
                 .sources
                 .get(id)
-                .is_none_or(|source| source.diagnostics.is_empty())
+                .is_none_or(|source| !source.diagnostics.iter().any(is_listed))
         })
         .map(|(_, relative)| relative)
         .collect();
@@ -157,6 +186,7 @@ fn render() -> String {
         let mut rows: Vec<String> = source
             .diagnostics
             .iter()
+            .filter(|finding| is_listed(finding))
             .map(|finding| {
                 let line = index.map_or(0, |index| {
                     index.line_column(finding.span().range().start()).line + 1
@@ -170,4 +200,21 @@ fn render() -> String {
         }
     }
     out
+}
+
+/// Whether `finding` belongs in the golden — the rule stated in the module
+/// docs, in one place so the listing and the "this fixture pins nothing" guard
+/// can never disagree.
+///
+/// A `7xxx` lint is listed only when the workspace's default policy reports it.
+/// Everything else is listed whatever its level: Allow-by-default reaches
+/// outside the lint family (6003), and a fixture that pins where the analyzer
+/// gives up is pinning an analysis fact, not a style preference.
+fn is_listed(finding: &Finding) -> bool {
+    if finding.code().prefix() != 'L' {
+        return true;
+    }
+    PolicyConfig::default()
+        .resolve_severity(finding.code(), finding.severity())
+        .is_some()
 }

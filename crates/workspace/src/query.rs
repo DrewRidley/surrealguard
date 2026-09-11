@@ -1682,10 +1682,14 @@ mod tests {
             Some(Kind::Either(vec![Kind::Int, Kind::String]))
         );
 
-        // `option<array<T>>` still unwraps to the bare element (the `NONE` arm
-        // contributes no element kind).
+        // `option<array<T>>` subscripts to `option<T>`: 3.2.3 evaluates
+        // `NONE[0]` to `NONE` rather than failing, so the `NONE` arm carries
+        // through the index instead of contributing nothing.
         let optional = Kind::Either(vec![Kind::None, Kind::Array(Box::new(Kind::Int), None)]);
-        assert_eq!(collection_element_kind(&optional), Some(Kind::Int));
+        assert_eq!(
+            collection_element_kind(&optional),
+            Some(Kind::Either(vec![Kind::None, Kind::Int]))
+        );
 
         // A set arm participates in the union just like an array arm.
         let array_or_set = Kind::Either(vec![

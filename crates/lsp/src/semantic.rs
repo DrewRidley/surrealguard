@@ -15,6 +15,8 @@ use std::ops::Range;
 
 use tower_lsp::lsp_types::{SemanticToken, SemanticTokenType};
 
+use crate::text::LineIndex;
+
 pub use surrealguard_syntax::highlight::{tokens, Token};
 
 /// The legend, in index order — a token's `token_type` is
@@ -54,19 +56,19 @@ pub fn map_to_host(query: &surrealguard_embed::EmbeddedQuery, tokens: Vec<Token>
         .collect()
 }
 
-/// Delta-encodes tokens against `text`. Tokens must be sorted and
-/// non-overlapping; ones that span a line are split, since the protocol has no
-/// way to express a multi-line token.
+/// Delta-encodes tokens against the document `lines` indexes. Tokens must be
+/// sorted and non-overlapping; ones that span a line are split, since the
+/// protocol has no way to express a multi-line token.
 ///
-/// The single pass over `text` is deliberate: an `offset_to_position` per
-/// token would be quadratic in file size, and this runs after every edit.
-pub fn encode(text: &str, tokens: &[Token]) -> Vec<SemanticToken> {
-    let mut lines = LineIndex::new(text);
+/// Taking the index rather than the text is deliberate: an `offset_to_position`
+/// per token would rescan the document per token and go quadratic in file
+/// size, and this runs after every edit.
+pub fn encode(lines: &LineIndex, tokens: &[Token]) -> Vec<SemanticToken> {
     let mut encoded = Vec::with_capacity(tokens.len());
     let (mut last_line, mut last_start) = (0u32, 0u32);
 
     for token in tokens {
-        for (line, start, length) in lines.split(text, token.range.clone()) {
+        for (line, start, length) in split(lines, token.range.clone()) {
             if length == 0 {
                 continue;
             }
@@ -89,66 +91,29 @@ pub fn encode(text: &str, tokens: &[Token]) -> Vec<SemanticToken> {
     encoded
 }
 
-/// A forward-only cursor over a text's lines, so encoding a whole document's
-/// tokens costs one pass over it rather than one per token.
-struct LineIndex {
-    /// Byte offset of each line's first byte.
-    starts: Vec<usize>,
-}
-
-impl LineIndex {
-    fn new(text: &str) -> Self {
-        let mut starts = vec![0usize];
-        starts.extend(
-            text.match_indices('\n')
-                .map(|(offset, newline)| offset + newline.len()),
-        );
-        Self { starts }
-    }
-
-    /// The line containing `offset`.
-    fn line_of(&self, offset: usize) -> usize {
-        self.starts.partition_point(|start| *start <= offset) - 1
-    }
-
-    /// Splits a byte range into per-line `(line, utf16 start column, utf16
-    /// length)` pieces. A range that stays on one line yields one piece.
-    fn split(
-        &mut self,
-        text: &str,
-        range: Range<usize>,
-    ) -> impl Iterator<Item = (u32, u32, u32)> + use<> {
-        let first = self.line_of(range.start);
-        let last = self.line_of(range.end.max(range.start));
-        let mut pieces = Vec::with_capacity(last - first + 1);
-        for line in first..=last {
-            let line_start = self.starts[line];
-            let line_end = self
-                .starts
-                .get(line + 1)
-                .map_or(text.len(), |next| *next)
-                .min(text.len());
-            let start = range.start.max(line_start);
-            let end = range.end.min(line_end);
-            if end <= start {
-                continue;
-            }
-            let column = utf16_len(&text[line_start..start]);
-            let length = utf16_len(&text[start..end.min(text.len())]);
-            pieces.push((line as u32, column, length));
+/// Splits a byte range into per-line `(line, utf16 start column, utf16
+/// length)` pieces. A range that stays on one line yields one piece.
+///
+/// A trailing newline never belongs to a token, so a piece that would end on
+/// one stops short of it.
+fn split(lines: &LineIndex, range: Range<usize>) -> impl Iterator<Item = (u32, u32, u32)> + use<> {
+    let text = lines.text();
+    let first = lines.line_of(range.start.min(text.len()));
+    let last = lines.line_of(range.end.max(range.start).min(text.len()));
+    let mut pieces = Vec::with_capacity(last - first + 1);
+    for line in first..=last {
+        let start = range.start.max(lines.line_start(line));
+        let mut end = range.end.min(lines.line_end(line));
+        if text[..end.min(text.len())].ends_with('\n') {
+            end -= 1;
         }
-        pieces.into_iter()
+        if end <= start {
+            continue;
+        }
+        let column = lines.column(start);
+        pieces.push((line as u32, column, lines.column(end) - column));
     }
-}
-
-/// A string's length in UTF-16 code units — the protocol's default unit for
-/// both the column and the token length. A trailing newline never belongs to
-/// a token, so it is not counted.
-fn utf16_len(text: &str) -> u32 {
-    text.trim_end_matches('\n')
-        .chars()
-        .map(|ch| ch.len_utf16() as u32)
-        .sum()
+    pieces.into_iter()
 }
 
 #[cfg(test)]
@@ -160,6 +125,11 @@ mod tests {
 
     fn parse(text: &str) -> ParsedSource {
         parse_source(SourceId::new("t.surql"), text).expect("parses")
+    }
+
+    /// Tokenizes and encodes `text`, the pair every test here wants.
+    fn encoded(text: &str) -> Vec<SemanticToken> {
+        encode(&LineIndex::for_str(text), &tokens(&parse(text)))
     }
 
     #[test]
@@ -192,7 +162,7 @@ mod tests {
     #[test]
     fn encoding_is_relative_to_the_previous_token() {
         let text = "SELECT name\nFROM person;";
-        let encoded = encode(text, &tokens(&parse(text)));
+        let encoded = encoded(text);
         // SELECT at 0:0, name at 0:7 (delta 7), FROM on the next line at
         // column 0, person 5 further along.
         assert_eq!(
@@ -210,7 +180,7 @@ mod tests {
         // back as one piece per line or the editor paints from the wrong
         // column to the end of the file.
         let text = "RETURN 'one\ntwo';";
-        let encoded = encode(text, &tokens(&parse(text)));
+        let encoded = encoded(text);
         let string_pieces: Vec<_> = encoded
             .iter()
             .filter(|token| token.token_type == TokenKind::String.index())
@@ -229,7 +199,7 @@ mod tests {
         // and two units. A byte-counting encoder puts every later token on
         // this line in the wrong place.
         let text = "RETURN 'é😀';";
-        let encoded = encode(text, &tokens(&parse(text)));
+        let encoded = encoded(text);
         let string = encoded
             .iter()
             .find(|token| token.token_type == TokenKind::String.index())

@@ -268,7 +268,8 @@ impl IndexDef {
     }
 }
 
-/// What backs the index: full-text search, a vector structure, or plain.
+/// What backs the index: full-text search, a vector structure, a count, or
+/// plain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IndexKind {
     /// A plain (non-unique) index.
@@ -277,8 +278,12 @@ pub enum IndexKind {
     Unique,
     /// A full-text `SEARCH` index.
     Search,
-    /// An `MTREE`/`HNSW` vector index.
+    /// An `MTREE`/`HNSW`/`DISKANN` vector index.
     Vector,
+    /// A `COUNT [WHERE ...]` index (SurrealDB 3). It carries no fields —
+    /// the engine rejects `FIELDS ... COUNT` — so it never overlaps another
+    /// index's coverage.
+    Count,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1145,6 +1150,7 @@ pub(crate) fn index_def_from_ast(def: &ast::DefineIndex, source: &SourceId) -> I
             ast::IndexKind::Unique => IndexKind::Unique,
             ast::IndexKind::Search => IndexKind::Search,
             ast::IndexKind::Vector => IndexKind::Vector,
+            ast::IndexKind::Count => IndexKind::Count,
         },
         name_span: span(source, def.name.span),
         table_span: span(source, def.table.span),

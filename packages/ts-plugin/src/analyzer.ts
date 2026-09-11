@@ -30,6 +30,24 @@ export interface HostRequest {
   hover?: number;
 }
 
+/** An actionable suggestion attached to a finding. */
+export interface HostHelp {
+  message: string;
+  /** Replacement text for the finding's span, when the fix is mechanical. */
+  replacement?: string;
+}
+
+/**
+ * A secondary location explaining a finding, at host-file UTF-8 byte offsets.
+ * Only locations inside this file are reported; one pointing into the schema
+ * has no file the plugin could open.
+ */
+export interface HostRelated {
+  message: string;
+  start: number;
+  end: number;
+}
+
 /** One finding, at host-file **UTF-8 byte** offsets. */
 export interface HostDiagnostic {
   code: string;
@@ -37,6 +55,12 @@ export interface HostDiagnostic {
   message: string;
   start: number;
   end: number;
+  /** Suggestions, omitted when the finding carries none. */
+  help?: HostHelp[];
+  /** Secondary locations, omitted when the finding carries none. */
+  related?: HostRelated[];
+  /** Rendering hints: `"unnecessary"` (fade), `"deprecated"` (strike). */
+  tags?: ("unnecessary" | "deprecated")[];
 }
 
 /** One highlighting token, at host-file UTF-8 byte offsets. */

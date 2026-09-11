@@ -61,24 +61,13 @@ impl KindOracle for RootedKind<'_> {
         if place.root != self.root {
             return None;
         }
-        kind_at_path(self.kind, &place.field_path()?)
+        // The crate's one projection policy, with no schema in hand: a record
+        // link stays unenterable here (`project` needs the index to say what a
+        // link's field is), but `option<{…}>`, a multi-arm union and a
+        // collection all step, which the literal-objects-only walk this
+        // replaced could not do.
+        crate::kinds::project_fields(self.kind, &place.field_path()?, None)
     }
-}
-
-/// The kind at `path` inside `kind`, walking object literals.
-///
-/// Stops at anything that is not a literal object: a path that reads through
-/// an `option<{…}>` or a record link names a location this layer cannot step
-/// without the schema, and answering `None` there is the same
-/// prove-or-stay-silent rule the rest of the module keeps.
-pub(crate) fn kind_at_path(kind: &Kind, path: &[String]) -> Option<Kind> {
-    let Some((first, rest)) = path.split_first() else {
-        return Some(kind.clone());
-    };
-    let Kind::Literal(KindLiteral::Object(fields)) = kind else {
-        return None;
-    };
-    kind_at_path(fields.get(first)?, rest)
 }
 
 /// `kind` with every refinement `facts` proves about a place rooted at `root`

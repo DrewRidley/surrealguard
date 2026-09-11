@@ -6,6 +6,12 @@
 # `file:line  CODE` for each finding — never the message, which is rendering's
 # business and will move.
 #
+# Listing rule: a 7xxx LINT appears only when the workspace default PolicyConfig
+# would report it, so the Allow-by-default lints (7001/7008/7009/7014/7015/7016)
+# are not listed — nobody sees them, so a fixture cannot pin them. Every other
+# family is listed whatever its level, which is what keeps the Allow-by-default
+# 6003 hints (where the analyzer gives up) pinned here on purpose.
+#
 # Its ratchet runs opposite to the oracle's: a finding that DISAPPEARS is a
 # check that stopped firing, and that is a regression until someone argues
 # otherwise.
@@ -20,20 +26,14 @@
 
 == invalid/20_param_default.surql ==
      9  E2001
-    13  L7016
     15  E5002
 
 == invalid/30_destructure_keys.surql ==
     12  E1002
-    12  L7014
     15  E1002
-    15  L7014
     19  E1002
-    19  L7014
     24  E1002
-    24  L7014
     28  E1002
-    28  L7014
 
 == invalid/31_schema_refs.surql ==
      5  E1001
@@ -62,9 +62,7 @@
     23  E2015
     27  E2017
     30  E2018
-    30  L7016
     31  E2018
-    31  L7016
     34  E2020
     37  E2021
     40  E2022
@@ -107,26 +105,18 @@
     22  E4011
     25  E4012
     28  E4013
-    28  L7014
     31  E4017
-    31  L7001
     34  E4018
-    34  L7009
     37  E4019
     40  E4020
     43  E4021
     47  E4022
-    47  L7008
-    47  L7015
     50  E4023
     53  E4024
     53  L7004
     56  E4025
-    56  L7014
-    56  L7015
     59  E4026
     62  E4029
-    62  L7014
     65  E4028
 
 == invalid/35_functions.surql ==
@@ -139,17 +129,13 @@
     13  E5005
     16  E5009
     19  E5010
-    19  L7009
 
 == invalid/36_params.surql ==
      5  E6001
      8  E6002
-     8  L7001
     11  E6004
-    11  L7001
     14  E6005
     17  E6007
-    17  L7001
 
 == invalid/37_lints.surql ==
      5  L7004
@@ -162,77 +148,48 @@
 
 == invalid/40_graph_selection.surql ==
     13  E1002
-    13  L7014
     14  E2004
-    14  L7014
     19  E2004
-    19  L7014
     23  E3002
     23  E6003
-    23  L7014
     27  E1002
-    27  L7014
     32  E6003
-    32  L7014
     33  E6003
-    33  L7014
     38  E2018
-    38  L7014
     39  E2018
-    39  L7014
     45  E1002
-    45  L7014
     46  E1002
-    46  L7014
     50  E1002
-    50  L7014
     51  E1002
-    51  L7014
     55  E1002
-    55  L7014
     59  E1002
     59  E6003
-    59  L7014
     60  E1002
     60  E6003
-    60  L7014
     61  E1002
-    61  L7014
     64  E1002
     64  E6003
-    64  L7014
     68  E5001
     68  E6003
-    68  L7014
     71  E1002
     74  E1002
     74  E6003
-    74  L7014
     78  E1002
     79  E1002
     79  E3004
 
 == invalid/50_union_receivers.surql ==
     12  E1002
-    12  L7014
     16  E1002
-    16  L7014
     20  E1002
-    20  L7014
     25  E5001
-    25  L7014
     30  E5001
-    30  L7014
     34  E5001
-    34  L7014
 
 == invalid/60_row_field_guards.surql ==
     10  E5001
-    10  L7014
     15  E5001
-    15  L7014
     19  E2004
-    19  L7014
     23  E5001
 
 == invalid/70_condition_field_paths.surql ==
@@ -244,32 +201,17 @@
     32  E1002
     34  E1002
     39  E1002
-    39  L7014
 
 == invalid/71_clause_field_paths.surql ==
     15  E1002
-    15  L7014
-    15  L7015
     21  E1002
-    21  L7014
-    21  L7015
     23  E1002
-    23  L7014
-    23  L7015
     28  E1002
     28  E4029
-    28  L7014
     31  E1002
-    31  L7014
     36  E1002
-    36  L7014
-    36  L7015
     41  E1002
-    41  L7014
-    41  L7015
     46  E1002
-    46  L7014
-    46  L7015
 
 == invalid/72_event_when_fields.surql ==
     11  E1002
