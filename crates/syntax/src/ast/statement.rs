@@ -373,7 +373,7 @@ pub struct DefineIndex {
 }
 
 /// What backs a `DEFINE INDEX`: full-text search, a vector structure, a
-/// uniqueness constraint, or a plain lookup.
+/// uniqueness constraint, a count, or a plain lookup.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IndexKind {
     /// A plain lookup index.
@@ -382,8 +382,11 @@ pub enum IndexKind {
     Unique,
     /// `SEARCH ANALYZER ...` — full-text.
     Search,
-    /// `MTREE`/`HNSW` — vector.
+    /// `MTREE`/`HNSW`/`DISKANN` — vector.
     Vector,
+    /// `COUNT [WHERE ...]` — a maintained row count (SurrealDB 3). It
+    /// indexes no field: the engine rejects `FIELDS ... COUNT`.
+    Count,
 }
 
 /// `DEFINE EVENT` — a trigger with its condition and body.
@@ -619,8 +622,13 @@ pub struct InfoStmt {
 pub struct ShowStmt {
     /// The table whose change feed is read.
     pub table: Option<Spanned<String>>,
-    /// `SINCE <versionstamp|datetime>` — the raw expression.
+    /// `SINCE <versionstamp|datetime>` — the raw expression. `None` when the
+    /// clause is absent, which the engine refuses; [`ShowStmt::span`] is
+    /// where that is reported.
     pub since: Option<Spanned<Expr>>,
+    /// The whole `SHOW CHANGES ...` statement, so a clause that is missing
+    /// rather than wrong still has somewhere to point.
+    pub span: ByteRange,
 }
 
 /// `REBUILD INDEX ... ON ...`.

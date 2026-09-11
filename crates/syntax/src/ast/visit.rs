@@ -978,7 +978,11 @@ pub fn walk_info<V: Visitor>(visitor: &mut V, info: &InfoStmt) {
 
 /// Visits the table a SHOW CHANGES names (a reference) and its `SINCE`.
 pub fn walk_show<V: Visitor>(visitor: &mut V, show: &ShowStmt) {
-    let ShowStmt { table, since } = show;
+    let ShowStmt {
+        table,
+        since,
+        span: _,
+    } = show;
     if let Some(table) = table {
         visitor.visit_table_ref(table);
     }
@@ -1185,7 +1189,8 @@ pub fn walk_literal<V: Visitor>(_visitor: &mut V, literal: &Literal) {
         | Literal::Uuid(_)
         | Literal::Regex(_)
         | Literal::Bytes(_)
-        | Literal::File(_) => {}
+        | Literal::File(_)
+        | Literal::Point(_, _) => {}
     }
 }
 

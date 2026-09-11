@@ -139,6 +139,10 @@ pub enum Literal {
     Bytes(String),
     /// A file literal's inner text (`f'bucket:/path'`).
     File(String),
+    /// A point literal — `(1.5, 2.5)`. The engine types this as
+    /// `geometry<point>` (`RETURN type::of((1.5, 2.5))` on 3.2.3), so the
+    /// longitude/latitude pair is kept as written.
+    Point(f64, f64),
 }
 
 /// A dotted / graph path: `profile.email`, `->likes->post.{title, id}`,

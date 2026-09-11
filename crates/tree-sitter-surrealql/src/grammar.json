@@ -460,13 +460,8 @@
           "type": "CHOICE",
           "members": [
             {
-              "type": "ALIAS",
-              "content": {
-                "type": "SYMBOL",
-                "name": "_uuidString"
-              },
-              "named": true,
-              "value": "String"
+              "type": "SYMBOL",
+              "name": "String"
             },
             {
               "type": "SYMBOL",
@@ -600,29 +595,37 @@
           ]
         },
         {
-          "type": "SEQ",
+          "type": "CHOICE",
           "members": [
             {
-              "type": "ALIAS",
-              "content": {
-                "type": "SYMBOL",
-                "name": "_kw_since"
-              },
-              "named": true,
-              "value": "Keyword"
-            },
-            {
-              "type": "CHOICE",
+              "type": "SEQ",
               "members": [
                 {
-                  "type": "SYMBOL",
-                  "name": "String"
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_kw_since"
+                  },
+                  "named": true,
+                  "value": "Keyword"
                 },
                 {
-                  "type": "SYMBOL",
-                  "name": "Number"
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "SYMBOL",
+                      "name": "String"
+                    },
+                    {
+                      "type": "SYMBOL",
+                      "name": "Number"
+                    }
+                  ]
                 }
               ]
+            },
+            {
+              "type": "BLANK"
             }
           ]
         },
@@ -6477,8 +6480,22 @@
       "type": "SEQ",
       "members": [
         {
-          "type": "SYMBOL",
-          "name": "Idiom"
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "Idiom"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_countIdiom"
+              },
+              "named": true,
+              "value": "Idiom"
+            }
+          ]
         },
         {
           "type": "CHOICE",
@@ -7250,6 +7267,15 @@
           "content": {
             "type": "SYMBOL",
             "name": "_kw_dist"
+          },
+          "named": true,
+          "value": "Keyword"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_kw_distance"
           },
           "named": true,
           "value": "Keyword"
@@ -9515,11 +9541,15 @@
         },
         {
           "type": "SYMBOL",
+          "name": "CountClause"
+        },
+        {
+          "type": "SYMBOL",
           "name": "SearchAnalyzerClause"
         },
         {
           "type": "SYMBOL",
-          "name": "FulltextClause"
+          "name": "FullTextClause"
         },
         {
           "type": "SYMBOL",
@@ -9531,7 +9561,7 @@
         },
         {
           "type": "SYMBOL",
-          "name": "DiskannClause"
+          "name": "DiskAnnClause"
         }
       ]
     },
@@ -9544,7 +9574,33 @@
       "named": true,
       "value": "Keyword"
     },
-    "FulltextClause": {
+    "CountClause": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_kw_count"
+          },
+          "named": true,
+          "value": "Keyword"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "WhereClause"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "FullTextClause": {
       "type": "SEQ",
       "members": [
         {
@@ -9940,13 +9996,27 @@
       "type": "SEQ",
       "members": [
         {
-          "type": "ALIAS",
-          "content": {
-            "type": "SYMBOL",
-            "name": "_kw_dist"
-          },
-          "named": true,
-          "value": "Keyword"
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_kw_dist"
+              },
+              "named": true,
+              "value": "Keyword"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_kw_distance"
+              },
+              "named": true,
+              "value": "Keyword"
+            }
+          ]
         },
         {
           "type": "SYMBOL",
@@ -10024,13 +10094,27 @@
       "type": "SEQ",
       "members": [
         {
-          "type": "ALIAS",
-          "content": {
-            "type": "SYMBOL",
-            "name": "_kw_dist"
-          },
-          "named": true,
-          "value": "Keyword"
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_kw_dist"
+              },
+              "named": true,
+              "value": "Keyword"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_kw_distance"
+              },
+              "named": true,
+              "value": "Keyword"
+            }
+          ]
         },
         {
           "type": "CHOICE",
@@ -10061,7 +10145,7 @@
         }
       ]
     },
-    "DiskannClause": {
+    "DiskAnnClause": {
       "type": "SEQ",
       "members": [
         {
@@ -10084,7 +10168,7 @@
             "members": [
               {
                 "type": "SYMBOL",
-                "name": "HnswDistClause"
+                "name": "DiskAnnDistClause"
               },
               {
                 "type": "SYMBOL",
@@ -10108,6 +10192,61 @@
               }
             ]
           }
+        }
+      ]
+    },
+    "DiskAnnDistClause": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_kw_dist"
+              },
+              "named": true,
+              "value": "Keyword"
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_kw_distance"
+              },
+              "named": true,
+              "value": "Keyword"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "Distance"
+            },
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_kw_minkowski"
+                  },
+                  "named": true,
+                  "value": "Distance"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "Number"
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -11785,6 +11924,14 @@
         {
           "type": "SYMBOL",
           "name": "_kw_key"
+        },
+        {
+          "type": "PREC",
+          "value": 1,
+          "content": {
+            "type": "SYMBOL",
+            "name": "_kw_count"
+          }
         }
       ]
     },
@@ -12701,67 +12848,92 @@
         {
           "type": "REPEAT",
           "content": {
-            "type": "CHOICE",
-            "members": [
-              {
-                "type": "SEQ",
-                "members": [
-                  {
-                    "type": "STRING",
-                    "value": "."
-                  },
-                  {
-                    "type": "CHOICE",
-                    "members": [
-                      {
-                        "type": "SYMBOL",
-                        "name": "Ident"
-                      },
-                      {
-                        "type": "ALIAS",
-                        "content": {
-                          "type": "STRING",
-                          "value": "*"
-                        },
-                        "named": true,
-                        "value": "Any"
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "type": "SEQ",
-                "members": [
-                  {
-                    "type": "STRING",
-                    "value": "["
-                  },
-                  {
-                    "type": "ALIAS",
-                    "content": {
-                      "type": "STRING",
-                      "value": "*"
-                    },
-                    "named": true,
-                    "value": "Any"
-                  },
-                  {
-                    "type": "STRING",
-                    "value": "]"
-                  }
-                ]
-              },
-              {
-                "type": "ALIAS",
-                "content": {
-                  "type": "STRING",
-                  "value": "..."
+            "type": "SYMBOL",
+            "name": "_idiomTail"
+          }
+        }
+      ]
+    },
+    "_idiomTail": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "."
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "Ident"
                 },
-                "named": true,
-                "value": "Flatten"
-              }
-            ]
+                {
+                  "type": "ALIAS",
+                  "content": {
+                    "type": "STRING",
+                    "value": "*"
+                  },
+                  "named": true,
+                  "value": "Any"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "["
+            },
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "STRING",
+                "value": "*"
+              },
+              "named": true,
+              "value": "Any"
+            },
+            {
+              "type": "STRING",
+              "value": "]"
+            }
+          ]
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "STRING",
+            "value": "..."
+          },
+          "named": true,
+          "value": "Flatten"
+        }
+      ]
+    },
+    "_countIdiom": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_kw_count"
+          },
+          "named": true,
+          "value": "Ident"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_idiomTail"
           }
         }
       ]
@@ -16564,17 +16736,12 @@
       "value": "[dD][iI][mM][eE][nN][sS][iI][oO][nN]"
     },
     "_kw_dist": {
-      "type": "CHOICE",
-      "members": [
-        {
-          "type": "PATTERN",
-          "value": "[dD][iI][sS][tT]"
-        },
-        {
-          "type": "PATTERN",
-          "value": "[dD][iI][sS][tT][aA][nN][cC][eE]"
-        }
-      ]
+      "type": "PATTERN",
+      "value": "[dD][iI][sS][tT]"
+    },
+    "_kw_distance": {
+      "type": "PATTERN",
+      "value": "[dD][iI][sS][tT][aA][nN][cC][eE]"
     },
     "_kw_doc_ids_cache": {
       "type": "PATTERN",
@@ -17659,6 +17826,10 @@
         {
           "type": "SYMBOL",
           "name": "_kw_dist"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_kw_distance"
         },
         {
           "type": "SYMBOL",

@@ -2151,6 +2151,25 @@
     }
   },
   {
+    "type": "CountClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "WhereClause",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "CreateStatement",
     "named": true,
     "fields": {},
@@ -3092,7 +3111,7 @@
     }
   },
   {
-    "type": "DiskannClause",
+    "type": "DiskAnnClause",
     "named": true,
     "fields": {},
     "children": {
@@ -3100,7 +3119,7 @@
       "required": true,
       "types": [
         {
-          "type": "HnswDistClause",
+          "type": "DiskAnnDistClause",
           "named": true
         },
         {
@@ -3129,6 +3148,29 @@
         },
         {
           "type": "Keyword",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "DiskAnnDistClause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "Distance",
+          "named": true
+        },
+        {
+          "type": "Keyword",
+          "named": true
+        },
+        {
+          "type": "Number",
           "named": true
         }
       ]
@@ -3985,7 +4027,7 @@
     }
   },
   {
-    "type": "FulltextClause",
+    "type": "FullTextClause",
     "named": true,
     "fields": {},
     "children": {
@@ -4595,11 +4637,15 @@
       "required": true,
       "types": [
         {
-          "type": "DiskannClause",
+          "type": "CountClause",
           "named": true
         },
         {
-          "type": "FulltextClause",
+          "type": "DiskAnnClause",
+          "named": true
+        },
+        {
+          "type": "FullTextClause",
           "named": true
         },
         {

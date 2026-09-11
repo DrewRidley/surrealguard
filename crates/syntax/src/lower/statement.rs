@@ -1174,6 +1174,7 @@ fn lower_show(node: Node<'_>, text: &str) -> ShowStmt {
     ShowStmt {
         table: table_after_keyword(node, text, "table"),
         since,
+        span: node_range(node),
     }
 }
 
@@ -1409,15 +1410,16 @@ fn lower_define_index(node: Node<'_>, text: &str) -> DefineIndex {
 }
 
 /// The backing structure named inside an `IndexClause`: `SEARCH ANALYZER`
-/// and its 3.0 spelling `FULLTEXT ANALYZER` are full-text, `MTREE`/`HNSW`
-/// are vector, `UNIQUE` is a constraint, and a clause with none of these is
-/// a plain index.
+/// and its 3.0 spelling `FULLTEXT ANALYZER` are full-text,
+/// `MTREE`/`HNSW`/`DISKANN` are vector, `UNIQUE` is a constraint, `COUNT` is
+/// a maintained row count, and a clause with none of these is a plain index.
 fn index_kind_from_clause(clause: Node<'_>) -> IndexKind {
     for child in named_children(clause) {
         match child.kind() {
-            "SearchAnalyzerClause" | "FulltextClause" => return IndexKind::Search,
-            "MtreeClause" | "HnswClause" | "DiskannClause" => return IndexKind::Vector,
+            "SearchAnalyzerClause" | "FullTextClause" => return IndexKind::Search,
+            "MtreeClause" | "HnswClause" | "DiskAnnClause" => return IndexKind::Vector,
             "UniqueClause" => return IndexKind::Unique,
+            "CountClause" => return IndexKind::Count,
             _ => {}
         }
     }
@@ -1803,6 +1805,44 @@ mod tests {
         assert!(stmt.timeout.is_some());
         assert!(stmt.parallel.is_some());
         assert!(stmt.explain.is_some());
+    }
+
+    /// `count` is a field name, and `ORDER BY count` orders by that field —
+    /// 3.2.3 accepts it. The keyword is a function name only when it is
+    /// called, so the order key must lower to the idiom, never to a call.
+    #[test]
+    fn lowers_order_by_count_as_a_field_not_a_call() {
+        let parsed = parse("SELECT * FROM t ORDER BY count DESC, count.total, name;");
+        let stmt = lower_select_stmt(&parsed);
+        let order = stmt.order.expect("order clause");
+        assert_eq!(order.keys.len(), 3);
+        assert!(order.keys[0].descending);
+        assert!(!order.keys[1].descending);
+
+        let field_path = |expr: &Expr| match expr {
+            Expr::Idiom(idiom) => idiom
+                .parts
+                .iter()
+                .map(|part| match &part.node {
+                    crate::ast::IdiomPart::Field(name) => name.clone(),
+                    other => panic!("expected a field segment, got {other:?}"),
+                })
+                .collect::<Vec<_>>(),
+            other => panic!("order key should be an idiom, got {other:?}"),
+        };
+        assert_eq!(field_path(&order.keys[0].expr.node), ["count"]);
+        assert_eq!(field_path(&order.keys[1].expr.node), ["count", "total"]);
+        assert_eq!(field_path(&order.keys[2].expr.node), ["name"]);
+    }
+
+    /// The engine really does reserve `rand` in order position — it answers
+    /// `ORDER BY rand` with "Unexpected token `;`, expected (" and takes only
+    /// the `ORDER BY RAND()` call. So this one stays a parse error, and the
+    /// statement lowers to `Partial` rather than inventing a field.
+    #[test]
+    fn order_by_bare_rand_stays_a_parse_error() {
+        let parsed = parse("SELECT * FROM t ORDER BY rand DESC;");
+        assert!(parsed.tree().root_node().has_error());
     }
 
     #[test]
@@ -2415,6 +2455,20 @@ mod tests {
             (
                 "DEFINE INDEX i ON person FIELDS vec HNSW DIMENSION 4;",
                 IndexKind::Vector,
+            ),
+            (
+                "DEFINE INDEX i ON person FIELDS vec DISKANN DIMENSION 4 DISTANCE COSINE;",
+                IndexKind::Vector,
+            ),
+            // `COUNT` takes no fields, and its `WHERE` is optional.
+            ("DEFINE INDEX i ON person COUNT;", IndexKind::Count),
+            (
+                "DEFINE INDEX i ON person COUNT WHERE status = 'active' CONCURRENTLY;",
+                IndexKind::Count,
+            ),
+            (
+                "DEFINE INDEX i ON person COUNT COMMENT 'rows' CONCURRENTLY;",
+                IndexKind::Count,
             ),
         ];
         for (query, expected) in cases {

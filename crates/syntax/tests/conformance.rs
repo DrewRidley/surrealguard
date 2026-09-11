@@ -1,139 +1,153 @@
-//! The grammar-conformance ratchet.
+//! The grammar-conformance gate.
 //!
-//! `examples/conformance_corpus.json` is known-valid SurrealQL extracted from
-//! SurrealDB's own test suites. A parse error is fatal to the whole source
-//! (the analyzer sees a `Partial` statement and says nothing), so every entry
-//! the grammar rejects is a place the analyzer is silently wrong on valid
-//! input. This test holds the set of entries that still fail against a
-//! committed baseline, and it fails in BOTH directions:
+//! Two corpora, both extracted from SurrealDB's own test suites, both held at
+//! 100%:
 //!
-//! * an entry that parsed and now does not is a grammar regression;
-//! * an entry that failed and now parses is progress the baseline must
-//!   record — regenerate, so the win is banked and cannot be lost later.
+//! * `examples/conformance_corpus.json` — the **valid** set. Known-good
+//!   SurrealQL that the grammar must parse cleanly. A parse error is fatal to
+//!   the whole source (the analyzer sees a `Partial` statement and says
+//!   nothing), so an entry the grammar rejects is a place the analyzer is
+//!   silently wrong on valid input.
+//! * `examples/conformance_rejected.json` — the **rejected** set, as
+//!   `[query, reason]` pairs. Text that came out of the same test suites but
+//!   is not SurrealQL: deliberate fragments from SurrealDB's parser
+//!   error-handling tests (`}`, `SELECT * FROM`), and regex assertions on
+//!   `INFO` output (`PASSHASH .*`). The grammar must refuse every one.
 //!
-//! Regenerate with:
+//! So the gate fails in both directions:
+//!
+//! * a valid entry that stops parsing is a grammar regression — fix the
+//!   grammar, never the corpus;
+//! * a rejected entry that starts parsing is over-acceptance — the grammar
+//!   grew looser than the language, and a construct the engine refuses would
+//!   now reach the analyzer as if it were real.
+//!
+//! There is no baseline file and no `UPDATE_SNAPSHOTS` path: at 100% in both
+//! directions the invariant is absolute, so there is nothing to re-record.
+//! An entry that cannot be made to hold belongs in the other corpus with a
+//! reason, and that move is a deliberate edit, not a regeneration.
+//!
+//! The human-readable report is:
 //!
 //! ```text
-//! UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-syntax --test conformance
+//! cargo run -p surrealguard-syntax --example conformance
 //! ```
 
 mod support;
 
-use std::collections::BTreeSet;
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
 
-use support::{corpus_path, failures, load_corpus, preview};
+use support::{
+    corpus_path, failures, first_broken_range, load_corpus, load_rejected, preview, rejected_path,
+};
 
-const BASELINE: &str = "conformance_expected_failures.txt";
-
-const HEADER: &str = "\
-# Grammar-conformance baseline — the corpus entries that do NOT parse cleanly.
-#
-# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-syntax --test conformance
-#
-# Format:  <corpus index>  # <first 60 characters of the query>
-#
-# Every line is either a grammar gap still to close or a junk extraction (a
-# bare `}`, a trailing `\\`, a `.*` placeholder) that is not SurrealQL at all.
-# The set may only shrink: an entry listed here that starts parsing must be
-# removed (regenerate), and an entry not listed here must keep parsing.
-";
-
-fn baseline_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join(BASELINE)
-}
-
-fn updating() -> bool {
-    std::env::var_os("UPDATE_SNAPSHOTS").is_some()
-}
-
-fn parse_baseline(text: &str) -> BTreeSet<usize> {
-    text.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(|line| {
-            let index = line.split_whitespace().next().unwrap_or_default();
-            index
-                .parse::<usize>()
-                .unwrap_or_else(|_| panic!("malformed baseline line: `{line}`"))
-        })
-        .collect()
-}
-
-fn render_baseline(corpus: &[String], failing: &BTreeSet<usize>) -> String {
-    let mut out = String::from(HEADER);
-    let _ = writeln!(out);
-    for index in failing {
-        let _ = writeln!(out, "{index:>4}  # {}", preview(&corpus[*index], 60));
-    }
-    out
-}
+use surrealguard_syntax::parse::parse_source;
+use surrealguard_syntax::source::SourceId;
 
 #[test]
-fn the_corpus_parses_exactly_as_the_baseline_says() {
+fn every_valid_corpus_entry_parses_cleanly() {
     let corpus = load_corpus(&corpus_path());
-    let failing: BTreeSet<usize> = failures(&corpus)
-        .into_iter()
-        .map(|failure| failure.index)
-        .collect();
-    let path = baseline_path();
-
-    if updating() {
-        std::fs::write(&path, render_baseline(&corpus, &failing)).expect("write baseline");
-        return;
-    }
-
-    let expected = std::fs::read_to_string(&path).unwrap_or_else(|_| {
-        panic!(
-            "missing baseline {}\n\
-             create it with: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-syntax --test conformance",
-            path.display()
-        )
-    });
-    let expected = parse_baseline(&expected);
+    let failures = failures(&corpus);
 
     let mut report = String::new();
-    for index in failing.difference(&expected) {
-        let _ = writeln!(
-            report,
-            "  REGRESSION  #{index}  parsed before, fails now: {}",
-            preview(&corpus[*index], 80)
-        );
+    for failure in &failures {
+        let query = &corpus[failure.index];
+        match &failure.range {
+            None => {
+                let _ = writeln!(
+                    report,
+                    "  #{}  parser returned no tree: {}",
+                    failure.index,
+                    preview(query, 80)
+                );
+            }
+            Some(range) => {
+                let _ = writeln!(
+                    report,
+                    "  #{}  ERROR at {range:?} `{}`\n       in: {}",
+                    failure.index,
+                    preview(&query[range.clone()], 60),
+                    preview(query, 80)
+                );
+            }
+        }
     }
-    for index in expected.difference(&failing) {
-        let _ = writeln!(
-            report,
-            "  FIXED       #{index}  listed as failing, parses now: {}",
-            preview(&corpus[*index], 80)
-        );
-    }
+
     assert!(
         report.is_empty(),
-        "grammar conformance moved ({} of {} entries fail; baseline lists {}):\n{report}\n\
-         A REGRESSION is a grammar change that broke valid SurrealQL — fix the grammar.\n\
-         A FIXED entry is progress the baseline must record:\n\
-         UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-syntax --test conformance",
-        failing.len(),
+        "{} of {} valid corpus entries do not parse:\n{report}\n\
+         These are known-valid SurrealQL from SurrealDB's own tests. Fix the\n\
+         grammar (crates/tree-sitter-surrealql/grammar.js, then regenerate);\n\
+         do not edit the corpus to make this pass. If an entry turns out not\n\
+         to be SurrealQL at all, move it to examples/conformance_rejected.json\n\
+         with a reason.",
+        failures.len(),
         corpus.len(),
-        expected.len(),
     );
 }
 
-/// The baseline is a ratchet on real gaps only if the corpus keeps failing
-/// for the reason it says: a listed entry that no longer exists (the corpus
-/// shrank) would pass vacuously.
 #[test]
-fn every_baseline_entry_names_a_corpus_entry() {
-    let corpus = load_corpus(&corpus_path());
-    let expected = std::fs::read_to_string(baseline_path()).unwrap_or_default();
-    for index in parse_baseline(&expected) {
+fn every_rejected_corpus_entry_is_refused() {
+    let rejected = load_rejected(&rejected_path());
+
+    let mut report = String::new();
+    for (index, (query, reason)) in rejected.iter().enumerate() {
+        let source = SourceId::new(format!("rejected:{index}"));
+        let parsed = match parse_source(source, query.as_str()) {
+            Ok(parsed) => parsed,
+            // No tree at all is a refusal, which is what we want.
+            Err(_) => continue,
+        };
+        if first_broken_range(parsed.tree().root_node()).is_none() {
+            let _ = writeln!(
+                report,
+                "  #{index}  parses now, but must not: {}\n       reason: {reason}",
+                preview(query, 80)
+            );
+        }
+    }
+
+    assert!(
+        report.is_empty(),
+        "the grammar accepts {} entr{} it must refuse:\n{report}\n\
+         This is over-acceptance: the grammar grew looser than the language,\n\
+         so text SurrealDB itself refuses would reach the analyzer as if it\n\
+         were a real query. Tighten the grammar. Only move an entry to\n\
+         examples/conformance_corpus.json if it is genuinely valid SurrealQL\n\
+         — verify on a live engine first.",
+        report.lines().count() / 2,
+        if report.lines().count() / 2 == 1 {
+            "y"
+        } else {
+            "ies"
+        },
+    );
+}
+
+/// A rejected entry earns its place by saying why it is not SurrealQL. An
+/// empty reason turns the set into an unexplained denylist, which is exactly
+/// the shape the diagnostics design forbids.
+#[test]
+fn every_rejected_corpus_entry_carries_a_reason() {
+    for (index, (query, reason)) in load_rejected(&rejected_path()).iter().enumerate() {
         assert!(
-            index < corpus.len(),
-            "baseline lists #{index}, but the corpus has {} entries",
-            corpus.len()
+            !reason.trim().is_empty(),
+            "rejected entry #{index} ({}) has no reason",
+            preview(query, 60)
+        );
+    }
+}
+
+/// The two corpora are disjoint: the same text cannot be required to parse
+/// and required to fail.
+#[test]
+fn the_two_corpora_do_not_overlap() {
+    let corpus = load_corpus(&corpus_path());
+    for (query, _) in load_rejected(&rejected_path()) {
+        assert!(
+            !corpus.contains(&query),
+            "`{}` is in both the valid and the rejected corpus",
+            preview(&query, 60)
         );
     }
 }

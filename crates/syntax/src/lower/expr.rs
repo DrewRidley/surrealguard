@@ -100,6 +100,11 @@ impl Lowerer<'_> {
                     Expr::Literal(Literal::None)
                 }
             }
+            // `(1.5, 2.5)` — a point literal. 3.2.3 types every such pair
+            // `geometry<point>`, ints and exponents included (it rejects a
+            // `decimal` coordinate outright), so the coordinates are read as
+            // `f64` whichever way they are spelled.
+            "Point" => self.point_literal(node),
             "Duration" => Expr::Literal(Literal::Duration(self.node_text(node).to_string())),
             "Regex" => Expr::Literal(Literal::Regex(
                 self.node_text(node).trim_matches('/').to_string(),
@@ -191,6 +196,31 @@ impl Lowerer<'_> {
             },
         };
         Expr::Literal(literal)
+    }
+
+    /// `(x, y)` — a point literal's two coordinates. A `Point` node always
+    /// holds exactly two `Number` children; anything else is recovery debris
+    /// and stays `Partial`.
+    fn point_literal(&self, node: Node<'_>) -> Expr {
+        let children = named_children(node);
+        let [x, y] = children.as_slice() else {
+            return Expr::Partial(partial(node));
+        };
+        match (self.point_coord(*x), self.point_coord(*y)) {
+            (Some(x), Some(y)) => Expr::Literal(Literal::Point(x, y)),
+            _ => Expr::Partial(partial(node)),
+        }
+    }
+
+    /// One coordinate of a point, as `f64`. The kind suffix (`1.5f`, `1dec`)
+    /// and `_` separators are part of the token and go before parsing.
+    fn point_coord(&self, node: Node<'_>) -> Option<f64> {
+        let text: String = self
+            .node_text(node)
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '_')
+            .collect();
+        text.trim_end_matches(char::is_alphabetic).parse().ok()
     }
 
     /// `a..b` / `..=b` / `a>..` — either bound may be missing; the `RangeOp`

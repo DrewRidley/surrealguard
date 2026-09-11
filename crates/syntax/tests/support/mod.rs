@@ -1,8 +1,9 @@
-//! Shared plumbing for the grammar-conformance harness: loads the corpus of
-//! known-valid SurrealQL and says which entries fail to parse cleanly. Used by
-//! the `conformance` integration test (the ratchet) and the `conformance`
-//! example (the human-readable report), so the two can never disagree about
-//! what "fails" means.
+//! Shared plumbing for the grammar-conformance harness: loads the two
+//! committed corpora — the valid set, which must parse cleanly, and the
+//! rejected set, which must not parse at all — and says which entries fail to
+//! parse. Used by the `conformance` integration test (the gate) and the
+//! `conformance` example (the human-readable report), so the two can never
+//! disagree about what "fails" means.
 
 #![allow(dead_code)]
 
@@ -14,10 +15,45 @@ use std::path::{Path, PathBuf};
 use surrealguard_syntax::parse::parse_source;
 use surrealguard_syntax::source::SourceId;
 
-/// The committed corpus: a JSON array of query strings extracted from
-/// SurrealDB's own test suites.
+/// The committed valid corpus: a JSON array of query strings extracted from
+/// SurrealDB's own test suites. Every entry must parse cleanly.
 pub fn corpus_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/conformance_corpus.json")
+}
+
+/// The committed rejected corpus: a JSON array of `[query, reason]` pairs —
+/// text that was extracted from SurrealDB's tests but is not SurrealQL (a
+/// deliberate parser-error fragment, a regex assertion). Every entry must
+/// fail to parse; one that starts parsing is over-acceptance.
+pub fn rejected_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/conformance_rejected.json")
+}
+
+/// Every rejected entry as `(query, reason)`, in file order.
+///
+/// The file is a JSON array of two-element arrays, so the flat string reader
+/// yields query and reason alternately; an odd count means a malformed pair
+/// and is a hard error rather than a silently dropped entry.
+pub fn load_rejected(path: &Path) -> Vec<(String, String)> {
+    let raw = std::fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("read rejected corpus {}: {error}", path.display()));
+    let flat = parse_json_strings(&raw);
+    assert!(
+        !flat.is_empty(),
+        "rejected corpus is empty at {} — the harness would vacuously pass",
+        path.display()
+    );
+    assert!(
+        flat.len().is_multiple_of(2),
+        "rejected corpus {} holds {} strings — it must be `[query, reason]` pairs",
+        path.display(),
+        flat.len()
+    );
+    flat.as_chunks::<2>()
+        .0
+        .iter()
+        .map(|[query, reason]| (query.clone(), reason.clone()))
+        .collect()
 }
 
 /// Every corpus entry, in file order — the index is the entry's identity.

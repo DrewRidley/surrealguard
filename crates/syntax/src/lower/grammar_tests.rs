@@ -825,8 +825,12 @@ fn parameterized_cast_targets_lower_as_type_expressions() {
 
     let (ty, value) = cast("RETURN <geometry<point>> (1.0, 2.0);");
     assert!(matches!(&ty, TypeExpr::Parameterized { name, .. } if name.node == "geometry"));
-    // The point literal itself has no lowering yet: an explicit `Partial`.
-    assert!(matches!(value, Expr::Partial(ref p) if p.cst_kind == "Point"));
+    // The point literal lowers to its coordinates; 3.2.3 types `(1.0, 2.0)`
+    // as `geometry<point>`.
+    assert!(matches!(
+        value,
+        Expr::Literal(crate::ast::Literal::Point(x, y)) if x == 1.0 && y == 2.0
+    ));
 
     let (ty, _) = cast("RETURN <array<string>> [1, 2];");
     assert!(

@@ -142,6 +142,7 @@ const KEYWORDS = [
 	'desc',
 	'dimension',
 	'dist',
+	'distance',
 	'doc_ids_cache',
 	'doc_ids_order',
 	'doc_lengths_cache',
@@ -487,11 +488,13 @@ export default grammar({
 
 		// The live query is named by a UUID literal or a param holding one;
 		// 3.2.3 rejects every other literal, `KILL "…"` included.
+		// 3.2.3 takes only a `u'…'` uuid literal or a parameter here — a
+		// plain strand is "Unexpected token `a strand`, expected a UUID or a
+		// parameter", even when it is uuid-shaped. Any string parses anyway,
+		// so the analyzer can say that precisely (E2020) instead of the
+		// whole statement collapsing into a generic syntax error.
 		KillStatement: ($) =>
-			seq(
-				alias($._kw_kill, $.Keyword),
-				choice(alias($._uuidString, $.String), $.VariableName),
-			),
+			seq(alias($._kw_kill, $.Keyword), choice($.String, $.VariableName)),
 
 		// USE
 		UseStatement: ($) =>
@@ -513,12 +516,18 @@ export default grammar({
 					seq(alias($._kw_table, $.Keyword), $.Ident),
 					$._dbKeyword,
 				),
-				// SINCE is not optional — `SHOW CHANGES FOR TABLE t` on its own
-				// is a parse error in 3.2.3.
-				seq(
-					alias($._kw_since, $.Keyword),
-					// SINCE accepts a datetime string or a versionstamp number.
-					choice($.String, $.Number),
+				// 3.2.3 requires SINCE: `SHOW CHANGES FOR TABLE t` on its own
+				// is "Unexpected token `;`, expected SINCE". It is optional
+				// here so the statement still parses and the analyzer can
+				// name the missing clause (E2021) rather than the whole
+				// statement collapsing into a generic syntax error.
+				optional(
+					seq(
+						alias($._kw_since, $.Keyword),
+						// SINCE accepts a datetime string or a versionstamp
+						// number.
+						choice($.String, $.Number),
+					),
 				),
 				optional(seq(alias($._kw_limit, $.Keyword), $.Number)),
 			),
@@ -1466,9 +1475,15 @@ export default grammar({
 				optional(alias($._kw_by, $.Keyword)),
 				choice(csep($.Order), $.FunctionCall),
 			),
+		// `count` is a field name here as much as anywhere else — 3.2.3
+		// accepts `ORDER BY count DESC` — but the clause's own
+		// `ORDER BY RAND()` alternative makes `count` a live token in this
+		// state, so `Idiom` alone cannot reach it. `rand` is NOT admitted:
+		// the engine really does reserve it here, answering `ORDER BY rand`
+		// with "Unexpected token `;`, expected (".
 		Order: ($) =>
 			seq(
-				$.Idiom,
+				choice($.Idiom, alias($._countIdiom, $.Idiom)),
 				optional(alias($._kw_collate, $.Keyword)),
 				optional(alias($._kw_numeric, $.Keyword)),
 				optional(
@@ -1708,18 +1723,31 @@ export default grammar({
 				csep($.Idiom),
 			),
 
+		// The index kinds. SurrealDB 3 reads `UNIQUE`, `COUNT`, `FULLTEXT`,
+		// `HNSW` and `DISKANN`; `SEARCH ANALYZER` and `MTREE` are the pre-3.0
+		// spellings, kept so 2.x schemas still parse (3.2.3 rejects `MTREE`
+		// outright). Node names match upstream `surrealql-tree-sitter` so a
+		// consumer dispatching on node kinds sees the same shapes there.
 		IndexClause: ($) =>
 			choice(
 				$.UniqueClause,
+				$.CountClause,
 				$.SearchAnalyzerClause,
-				$.FulltextClause,
+				$.FullTextClause,
 				$.MtreeClause,
 				$.HnswClause,
-				$.DiskannClause,
+				$.DiskAnnClause,
 			),
 		UniqueClause: ($) => alias($._kw_unique, $.Keyword),
 
-		FulltextClause: ($) =>
+		// `COUNT [WHERE <condition>]`. The condition is optional: a bare
+		// `COUNT` is an unconditional count index. A count index takes no
+		// fields — the engine rejects `FIELDS a COUNT` — but that is a
+		// statement-level contract, not a grammar one.
+		CountClause: ($) =>
+			seq(alias($._kw_count, $.Keyword), optional($.WhereClause)),
+
+		FullTextClause: ($) =>
 			seq(
 				alias($._kw_fulltext, $.Keyword),
 				repeat(
@@ -1791,7 +1819,16 @@ export default grammar({
 			),
 		MtreeCacheClause: ($) =>
 			seq(alias($._kw_mtree_cache, $.Keyword), $.Number),
-		MtreeDistClause: ($) => seq(alias($._kw_dist, $.Keyword), $.Distance),
+		// `MTREE` is pre-3.0 (3.2.3 rejects the keyword outright); both
+		// spellings stay accepted here so a 2.x schema still parses.
+		MtreeDistClause: ($) =>
+			seq(
+				choice(
+					alias($._kw_dist, $.Keyword),
+					alias($._kw_distance, $.Keyword),
+				),
+				$.Distance,
+			),
 
 		HnswClause: ($) =>
 			seq(
@@ -1812,9 +1849,14 @@ export default grammar({
 					),
 				),
 			),
+		// The engine lexes `DIST` and `DISTANCE` as the same keyword on the
+		// vector indexes (but not on the pre-3.0 `MTREE`).
 		HnswDistClause: ($) =>
 			seq(
-				alias($._kw_dist, $.Keyword),
+				choice(
+					alias($._kw_dist, $.Keyword),
+					alias($._kw_distance, $.Keyword),
+				),
 				choice(
 					$.Distance,
 					seq(alias($._kw_minkowski, $.Distance), $.Number),
@@ -1823,19 +1865,30 @@ export default grammar({
 
 		// DISKANN, the v3 replacement for MTREE. Its DEGREE/L_BUILD/ALPHA are
 		// its own; DIMENSION is the one required part.
-		DiskannClause: ($) =>
+		DiskAnnClause: ($) =>
 			seq(
 				alias($._kw_diskann, $.Keyword),
 				$.IndexDimensionClause,
 				repeat(
 					choice(
-						$.HnswDistClause,
+						$.DiskAnnDistClause,
 						$.IndexTypeClause,
 						$.IndexDegreeClause,
 						$.IndexLBuildClause,
 						$.IndexAlphaClause,
 						$.IndexHashedVectorClause,
 					),
+				),
+			),
+		DiskAnnDistClause: ($) =>
+			seq(
+				choice(
+					alias($._kw_dist, $.Keyword),
+					alias($._kw_distance, $.Keyword),
+				),
+				choice(
+					$.Distance,
+					seq(alias($._kw_minkowski, $.Distance), $.Number),
 				),
 			),
 		IndexDegreeClause: ($) =>
@@ -2135,6 +2188,15 @@ export default grammar({
 				$._kw_limit,
 				$._kw_group,
 				$._kw_key,
+				// `count` is a function name only when it is called.
+				// `SELECT field1, count() FROM t GROUP field1` names its
+				// aggregate column `count`, and reading it back —
+				// `SELECT VALUE [field1, count] FROM (…)` — is what
+				// SurrealDB's own tests do. The precedence settles `count <`:
+				// it is the field compared (`count < 5`), never the start of
+				// a versioned call — versions apply to `fn::` functions, and
+				// `count` is a built-in.
+				prec(1, $._kw_count),
 			),
 
 		_computedValue: ($) =>
@@ -2325,18 +2387,20 @@ export default grammar({
 			),
 
 		// Idiom
-		Idiom: ($) =>
-			seq(
-				$.Ident,
-				repeat(
-					choice(
-						seq('.', choice($.Ident, alias('*', $.Any))),
-						seq('[', alias('*', $.Any), ']'),
-						// `...` flattens the array the path has reached.
-						alias('...', $.Flatten),
-					),
-				),
+		Idiom: ($) => seq($.Ident, repeat($._idiomTail)),
+		_idiomTail: ($) =>
+			choice(
+				seq('.', choice($.Ident, alias('*', $.Any))),
+				seq('[', alias('*', $.Any), ']'),
+				// `...` flattens the array the path has reached.
+				alias('...', $.Flatten),
 			),
+		// An idiom rooted at `count`, for the positions where the bare
+		// keyword cannot lex as an `Ident` because a call is also on offer.
+		// Aliased to `Idiom`, so the CST shape — and every consumer — is the
+		// same as any other idiom's.
+		_countIdiom: ($) =>
+			seq(alias($._kw_count, $.Ident), repeat($._idiomTail)),
 
 		// Binary expression
 		//
@@ -3111,7 +3175,8 @@ export default grammar({
 		_kw_desc: ($) => kw('desc'),
 		_kw_dimension: ($) => kw('dimension'),
 		// v2 spelled it DIST, v3 spells it DISTANCE; both still parse.
-		_kw_dist: ($) => choice(kw('dist'), kw('distance')),
+		_kw_dist: ($) => kw('dist'),
+		_kw_distance: ($) => kw('distance'),
 		_kw_doc_ids_cache: ($) => kw('doc_ids_cache'),
 		_kw_doc_ids_order: ($) => kw('doc_ids_order'),
 		_kw_doc_lengths_cache: ($) => kw('doc_lengths_cache'),

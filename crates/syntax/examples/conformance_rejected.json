@@ -1,0 +1,34 @@
+[
+ [
+  "DEFINE USER user ON ROOT PASSHASH .* ROLES VIEWER",
+  "regex output assertion from surrealdb/core/tests/info.rs (`.*` matches the password hash), not a query; the real input query it asserts on is in the valid set"
+ ],
+ [
+  "DEFINE USER user ON NAMESPACE PASSHASH .* ROLES VIEWER",
+  "regex output assertion from surrealdb/core/tests/info.rs (`.*` matches the password hash), not a query; the real input query it asserts on is in the valid set"
+ ],
+ [
+  "DEFINE USER user ON DATABASE PASSHASH .* ROLES VIEWER",
+  "regex output assertion from surrealdb/core/tests/info.rs (`.*` matches the password hash), not a query; the real input query it asserts on is in the valid set"
+ ],
+ [
+  "}",
+  "unbalanced `}` from SurrealDB's parser error-handling tests — meant not to parse"
+ ],
+ [
+  "a:[",
+  "unterminated `a:[` from SurrealDB's parser error-handling tests — meant not to parse"
+ ],
+ [
+  "]",
+  "unbalanced `]` from SurrealDB's parser error-handling tests — meant not to parse"
+ ],
+ [
+  "SELECT * FROM",
+  "`SELECT * FROM` with no target, from SurrealDB's parser error-handling tests — meant not to parse"
+ ],
+ [
+  "SELECT * FROM t ORDER BY rand DESC;",
+  "3.2.3 reserves `rand` in order position, answering `ORDER BY rand` with \"Unexpected token `;`, expected (\" — only the `ORDER BY RAND()` call form is accepted, so a bare `rand` here must stay refused"
+ ]
+]
