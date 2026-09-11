@@ -215,12 +215,22 @@ Folded by the contract audit (2026-07-09): 5003, 5004, 5006 → 5002; 5007,
 | 6004 | param used before its LET in source order | `RETURN $x; LET $x = 1;` | W | ✅ env is source-ordered |
 | 6005 | context param used outside its context | `$before` outside an event, `$parent` outside a subquery | E | 🔶 context-param model below |
 | 6007 | assignment to a protected parameter | `LET $auth = {...}` | E | ✅ protected-name list ($auth, $session, $token, $this, ...) |
+| 6008 | a param a function body reads is one that something binds | `DEFINE FUNCTION fn::f($parm: any) { RETURN $param; }` — engine 3.2.3 defines it and `fn::f(1)` returns NONE, so the typo is a live logic bug that runs; a did-you-mean offers the declared spelling | W | ✅ declared params + body LET/FOR/closure + DEFINE PARAM (either order) + engine params + enclosing LET |
 
 Deleted (2026-09-08): 6006 (host-declared type contradicts query constraint) —
 no emission path exists or is half-built anywhere in `crates/`; the check
 belongs to a host adapter comparing its declared binding against the exported
 parameter constraints, and the adapter that lands it registers the code it
 needs then. A row nothing can emit is a promise the catalog cannot keep.
+
+Retired number (2026-09-11): **6006** stays retired and is not recycled. The
+function-body parameter contract added this day took **6008**, the next free
+number, rather than filling the 6006 gap. 6006 never had an emission site, but
+it was published with its old meaning on the 0.5.3 diagnostics page, so a
+reader can have seen it — and a number that means one thing in a published
+catalog and another in the next is exactly the ambiguity the
+never-reused rule exists to prevent. The gap between 6005 and 6007 is
+deliberate; leave it.
 
 ## 7xxx — Lints
 

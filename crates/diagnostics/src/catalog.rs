@@ -114,6 +114,7 @@ const ENTRIES: &[(u16, &str, Severity, LintLevel)] = &[
     (6004, "param used before its LET in source order", Severity::Warning, Warn),
     (6005, "context param used outside its context", Severity::Error, Deny),
     (6007, "assignment to a protected parameter", Severity::Error, Deny),
+    (6008, "a param a function body reads is one that something binds", Severity::Warning, Warn),
     (7001, "unused LET binding", Severity::Warning, Allow),
     (7002, "LET shadowing", Severity::Hint, Allow),
     (7003, "mixed-kind array literal", Severity::Hint, Allow),

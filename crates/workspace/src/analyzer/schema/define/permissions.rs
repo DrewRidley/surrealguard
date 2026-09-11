@@ -65,6 +65,39 @@ pub(crate) fn analyze_permission_predicates(
                 // F4 — a predicate whose kind is provably never boolean can
                 // never gate access as written. Guarded to provably-non-bool
                 // scalars (`Any`/`None`/`Null` are skipped) to stay low-FP.
+                //
+                // A union that merely *includes* `bool` (`bool | string`, what
+                // an unannotated `fn::` returning `true` on one branch and
+                // `"5"` on the other infers) stays silent, and that is the
+                // contract — not a gap. `Contract::condition` is
+                // `Strictness::Possible` over `bool | none | null`, so only a
+                // provably *disjoint* kind is a violation; the same one rule
+                // serves WHERE, IF and ASSERT, so this is not a permissions
+                // special case.
+                //
+                // Engine-verified on 3.2.3: a condition position takes the
+                // value's *truthiness*, it does not require a bool and does
+                // not fail or deny on one. Selecting as a record user through
+                // `PERMISSIONS FOR SELECT WHERE <expr>`:
+                //
+                //   true  ALLOW | "5"   ALLOW | "yes" ALLOW | "false" ALLOW
+                //   1     ALLOW | [1]   ALLOW
+                //   ""    DENY  | 0     DENY  | NONE  DENY  | NULL    DENY
+                //   []    DENY
+                //
+                // `SELECT ... WHERE "yes"` returns every row and `WHERE ""`
+                // none; `IF "yes"` takes the then-branch and `IF ""` the else;
+                // `ASSERT "yes"` passes and `ASSERT ""` fails with "must
+                // conform to". No position errors on a non-boolean. So a
+                // `bool | string` predicate satisfies the contract, and
+                // warning on it would be severity derived from engine
+                // tolerance rather than from a contract violation.
+                //
+                // (The demo this note came from — a permission calling a
+                // function that returns `"5"` on its fallback branch — is a
+                // real bug, but the bug is the *typo in the body* that makes
+                // that branch always taken. That is 6006's contract, and it
+                // fires there, at the cause.)
                 if let Some(kind) = fact.kind {
                     if crate::analyzer::contract::Contract::condition(
                         crate::analyzer::contract::Position::PermissionPredicate,
