@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, redesign-v3-foundation]
+    branches: [main, master, redesign-v3-foundation]
   pull_request:
 
 env:
