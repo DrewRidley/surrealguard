@@ -1,5 +1,5 @@
 
-import { getQueryClient } from "@surrealguard/query";
+import { getQueryClient } from "@surrealdb/analyzer-query";
 import { db } from "./db";
 
 /** The two seeded logins. Both have the password `demo` — see `scripts/seed.surql`. */
@@ -59,7 +59,7 @@ export const session = {
   /**
    * Back to root.
    *
-   * Note this is NOT `db.invalidate()` — SurrealGuard's `invalidate` means
+   * Note this is NOT `db.invalidate()` — SurrealQL Analyzer's `invalidate` means
    * "these queries are stale", while the SDK's `Surreal.invalidate()` drops the
    * session's authentication. Dropping it here would leave the socket
    * anonymous, and this server refuses anonymous queries, so the demo would go

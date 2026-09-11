@@ -1,14 +1,14 @@
-# surrealguard-rs
+# surrealql-analyzer-rs
 
 **Compile-time-checked, typed SurrealQL for Rust.** The `query!` macro runs the
-[SurrealGuard](https://github.com/DrewRidley/surrealguard) analyzer against your
+[SurrealQL Analyzer](https://github.com/surrealdb/analyzer) analyzer against your
 schema *during compilation* — a wrong table, unknown field, bad arity, or kind
 mismatch is a `cargo check` error, the result type is generated from the
 inferred response, and the query's parameters are checked against the kinds
 their uses imply. No build script, no language server, no runtime schema fetch.
 
 ```rust
-use surrealguard_rs::query;
+use surrealql_analyzer_rs::query;
 
 let adults = query!("SELECT name, age FROM user WHERE age >= $min", min = 18)
     .fetch_all(&db)
@@ -24,7 +24,7 @@ ever writing a type, the same way sqlx's `query!` returns an anonymous record.
 
 ```rust
 let bad = query!("SELECT name, ssn FROM user");
-//  error: SurrealGuard rejected this query:
+//  error: SurrealQL Analyzer rejected this query:
 //    [E1002] `user` has no field `ssn`
 ```
 
@@ -102,7 +102,7 @@ let (users, posts) = query!("LET $n = 1; SELECT name FROM user; SELECT title FRO
 
 The macros resolve your schema at compile time from, in order:
 
-1. the `SURREALGUARD_SCHEMA` environment variable (a `.surql` file or a
+1. the `SURREALQL_ANALYZER_SCHEMA` environment variable (a `.surql` file or a
    directory), relative to `CARGO_MANIFEST_DIR` unless absolute;
 2. otherwise a convention path under the crate root: `schema/`, `migrations/`,
    then `schema.surql`.
@@ -147,7 +147,7 @@ accepts only `Value::None`). A decode failure names the field.
 
 ## Errors
 
-`surrealguard_rs::Error` carries the text of the query that failed, which
+`surrealql_analyzer_rs::Error` carries the text of the query that failed, which
 neither the SDK's error nor `sqlx::Error` does:
 
 ```text
@@ -176,7 +176,7 @@ execution tests are `#[ignore]`d because they need a server:
 
 ```sh
 surreal start --user root --pass root --bind 127.0.0.1:8111 memory &
-cargo test -p surrealguard-rs -- --ignored
+cargo test -p surrealql-analyzer-rs -- --ignored
 ```
 
 ## Known limitation

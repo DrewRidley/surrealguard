@@ -31,7 +31,7 @@
 
 /**
  * The shared legend index a token carries, matching
- * `surrealguard_syntax::highlight::TokenKind::index`. Renumbering this
+ * `surrealql_analyzer_syntax::highlight::TokenKind::index`. Renumbering this
  * miscolours every token at once, so it is pinned by a test on both sides.
  */
 export enum TokenKind {
@@ -138,7 +138,7 @@ export function toTwentyTwenty(kind: TokenKind): number | undefined {
 }
 
 /**
- * A SurrealGuard finding code (`E1002`) as a TypeScript diagnostic code.
+ * A SurrealQL Analyzer finding code (`E1002`) as a TypeScript diagnostic code.
  *
  * TypeScript's own codes live below 100 000 — the highest it has ever shipped
  * is five digits — so the millions are free, and one million plus the finding's
@@ -152,8 +152,8 @@ export function toDiagnosticCode(code: string): number {
   return DIAGNOSTIC_CODE_BASE + (digits ? Number(digits[0]) : 0);
 }
 
-/** Where SurrealGuard's diagnostic codes start. */
+/** Where SurrealQL Analyzer's diagnostic codes start. */
 export const DIAGNOSTIC_CODE_BASE = 1_000_000;
 
 /** The `source` every diagnostic the plugin adds carries. */
-export const DIAGNOSTIC_SOURCE = "surrealguard";
+export const DIAGNOSTIC_SOURCE = "surrealql-analyzer";

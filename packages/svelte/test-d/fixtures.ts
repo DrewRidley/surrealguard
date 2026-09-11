@@ -7,9 +7,9 @@
  * registry is one global interface, and two files declaring the same key would
  * collide.
  */
-import { defineLive, defineQuery, type RecordId } from "@surrealguard/client";
+import { defineLive, defineQuery, type RecordId } from "@surrealdb/analyzer-client";
 
-declare module "@surrealguard/client" {
+declare module "@surrealdb/analyzer-client" {
   interface SurqlRegistry {
     "SELECT id, name, age FROM member": {
       result: [Array<{ id: RecordId<"member">; name: string; age: number }>];

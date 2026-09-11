@@ -6,7 +6,7 @@
  * "The same code" is meant literally in two places:
  *
  * - the queries are the ones the PREPROCESSOR emits for
- *   `src/routes/+page.svelte`. This runs `@surrealguard/svelte/preprocess` over
+ *   `src/routes/+page.svelte`. This runs `@surrealdb/analyzer-svelte/preprocess` over
  *   that file, pulls the `__sg_query(...)` / `__sg_live(...)` calls out of the
  *   result, and runs those. If the attribute changes, this follows it; there is
  *   no second copy of the query text anywhere.
@@ -20,9 +20,9 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createClient, defineQuery, RecordId } from "@surrealguard/client";
-import { sgText, sgTextLive } from "@surrealguard/svelte/inline";
-import { getQueryClient } from "@surrealguard/query";
+import { createClient, defineQuery, RecordId } from "@surrealdb/analyzer-client";
+import { sgText, sgTextLive } from "@surrealdb/analyzer-svelte/inline";
+import { getQueryClient } from "@surrealdb/analyzer-query";
 import { DATABASE, NAMESPACE, ROOT_PASS, ROOT_USER, seed, URL_RPC } from "./db.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");

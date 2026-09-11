@@ -59,7 +59,7 @@ the CLI for exit codes, the LSP for editor severities, host adapters for
 build failures. Errors are never demotable; lints are fully configurable.
 (Ruled 2026-07-07; implemented at the CLI and LSP edges.)
 
-In-source suppression is different: a `-- surrealguard: allow(E1001)
+In-source suppression is different: a `-- surrealql-analyzer: allow(E1001)
 reason="why"` comment is source-authored intent, so it applies at
 analysis time, rustc-style — the directive covers the next line (or its
 own line when trailing a statement) and a suppressed finding never
@@ -247,14 +247,14 @@ deliberate; leave it.
 | 7009 | whole-table UPDATE/DELETE without WHERE | `DELETE person;` | W | ✅ (deliberate ones silence per-code) |
 | 7011 | assignment to `id` in SET | `SET id = ...` | W | ✅ |
 | 7012 | blocking or side-effecting call in a computed context | `http::get(...)` / `sleep()` in any field clause; `rand::*` / `sequence::next*` in a `VALUE` or `COMPUTED`, and `time::now()` in a `COMPUTED` — clauses that re-run, so the field never holds one value. `DEFAULT time::now()` / `DEFAULT rand::uuid()` and `VALUE time::now()` are the created-at, id and updated-at idioms and stay silent | W | ✅ emitting |
-| 7013 | a suppression directive names a catalog code (with a reason when required) | `-- surrealguard: allow(ghost)`; missing reason under `require_suppression_reasons` | W | ✅ |
+| 7013 | a suppression directive names a catalog code (with a reason when required) | `-- surrealql-analyzer: allow(ghost)`; missing reason under `require_suppression_reasons` | W | ✅ |
 | 7014 | whole-table SELECT with no WHERE and no LIMIT | `SELECT * FROM person;` | I | ✅ opt-in (allow by default) |
 | 7015 | any bare `SELECT *` (over-fetch / schema-drift brittleness) | `SELECT * FROM person WHERE id = person:tobie;` | I | ✅ opt-in (allow by default) |
 | 7016 | LIMIT/START without ORDER BY (the page is not deterministic) | `SELECT * FROM person LIMIT 10 START 20;` — record order is storage order, so two pages can overlap or skip rows. Table targets only; silent for `ONLY … LIMIT 1` (a cardinality proof, not a page) and `GROUP ALL` (one row) | I | ✅ opt-in (allow by default) |
 
 ## 8xxx — Version compatibility
 
-`analysis.surrealdb_version` in `surrealguard.toml` names the release a
+`analysis.surrealdb_version` in `surrealql-analyzer.toml` names the release a
 workspace deploys against (`"2"`, `"2.2"`, `"3.0.2"`); every check here gates
 on it and an unset key is "the latest", which gates nothing. An omitted
 component reads as the newest release with that prefix (`"2"` is every 2.x),
@@ -280,7 +280,7 @@ configured, the same fact is 8001 — one table, one code per situation.
 **History (2026-08-08 retired, 2026-09-10 reinstated).** On 2026-08-08 the
 family was retired: 8001 and 8003 had been cataloged for a year with no
 emission site, gated on a key (`[analysis] surrealdb_version`, then written
-into every `surrealguard init` file with a default of `"2"`) that no analyzer
+into every `surrealql-analyzer init` file with a default of `"2"`) that no analyzer
 read, and the reporter on issue #7 cited that key as evidence the tool
 targeted SurrealDB 2 — a catalog row and a config default that together
 misinformed. Retiring them was right for the tool that existed then.
@@ -288,7 +288,7 @@ misinformed. Retiring them was right for the tool that existed then.
 The reinstatement is a different tool, not a reversal of that judgement: the
 version registry above now exists, every row of it is sourced, all three codes
 emit and are held to fire/near-miss pairs (`tests/version_contracts.rs`,
-`tests/contract_guards.rs`), and the key is *optional* — `surrealguard init`
+`tests/contract_guards.rs`), and the key is *optional* — `surrealql-analyzer init`
 does not write it, the README does not show it as a default, and an unset key
 means "the latest release", the same claim the retirement made. A key that
 gates real checks and defaults to silence cannot be read as a statement about

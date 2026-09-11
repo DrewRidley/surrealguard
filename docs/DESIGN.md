@@ -1,4 +1,4 @@
-# SurrealGuard Design
+# SurrealQL Analyzer Design
 
 ## Status
 
@@ -6,17 +6,17 @@ This document is the source of truth for the ground-up rewrite. The maintained w
 
 Current maintained direction:
 
-- `surrealguard-syntax`: tree-sitter SurrealQL parsing, source IDs, spans, parse diagnostics.
-- `surrealguard-diagnostics`: stable finding codes, severities, lint policy, suppression parsing.
-- `surrealguard-workspace`: source registry, workspace config, schema facts, SELECT semantics, analysis orchestration.
-- `surrealguard`: CLI surface.
-- `surrealguard-lsp`: LSP diagnostics surface.
+- `surrealql-analyzer-syntax`: tree-sitter SurrealQL parsing, source IDs, spans, parse diagnostics.
+- `surrealql-analyzer-diagnostics`: stable finding codes, severities, lint policy, suppression parsing.
+- `surrealql-analyzer-workspace`: source registry, workspace config, schema facts, SELECT semantics, analysis orchestration.
+- `surrealql-analyzer`: CLI surface.
+- `surrealql-analyzer-lsp`: LSP diagnostics surface.
 
-Legacy note: `crates/types` / `surrealguard-types` was removed during the v3 cleanup. The maintained design must not reintroduce a custom SurrealDB scalar/type hierarchy.
+Legacy note: `crates/types` / `surrealql-analyzer-types` was removed during the v3 cleanup. The maintained design must not reintroduce a custom SurrealDB scalar/type hierarchy.
 
 ## Product shape
 
-SurrealGuard is a cross-language static analysis engine for SurrealQL.
+SurrealQL Analyzer is a cross-language static analysis engine for SurrealQL.
 
 It analyzes SurrealQL in:
 
@@ -26,7 +26,7 @@ It analyzes SurrealQL in:
 
 It exposes the same analysis model through:
 
-1. CLI/CI via `surrealguard check`
+1. CLI/CI via `surrealql-analyzer check`
 2. LSP diagnostics and editor intelligence
 3. MCP tools for agents (planned; not yet implemented)
 4. host-language adapters, starting with one embedded-query spike
@@ -44,7 +44,7 @@ The core product is the analysis engine, not generated files or watch-mode codeg
 
 ## Parser strategy
 
-SurrealGuard uses the maintained tree-sitter SurrealQL grammar as its parser foundation.
+SurrealQL Analyzer uses the maintained tree-sitter SurrealQL grammar as its parser foundation.
 
 Tree-sitter provides:
 
@@ -54,7 +54,7 @@ Tree-sitter provides:
 - language injection support for embedded queries
 - a shared parser model across standalone files, LSP, and host-language adapters
 
-SurrealDB's parser is not the semantic input for this analyzer. SurrealGuard owns its source registry and span model, but query syntax is read from tree-sitter CST nodes. When semantic facts need SurrealDB value or kind concepts, use upstream SurrealDB public value/kind crates such as `surrealdb-types` instead of creating analyzer-local copies.
+SurrealDB's parser is not the semantic input for this analyzer. SurrealQL Analyzer owns its source registry and span model, but query syntax is read from tree-sitter CST nodes. When semantic facts need SurrealDB value or kind concepts, use upstream SurrealDB public value/kind crates such as `surrealdb-types` instead of creating analyzer-local copies.
 
 ## Source and span model
 
@@ -91,15 +91,15 @@ A finding contains:
 Suppression syntax is explicit:
 
 ```surql
--- surrealguard: allow(L0001) reason
--- surrealguard: allow(unused-param) reason
+-- surrealql-analyzer: allow(L0001) reason
+-- surrealql-analyzer: allow(unused-param) reason
 ```
 
 Blanket suppressions are rejected.
 
 ## Semantic kind and response-shape model
 
-SurrealGuard must not maintain a duplicate SurrealDB scalar/type hierarchy.
+SurrealQL Analyzer must not maintain a duplicate SurrealDB scalar/type hierarchy.
 
 Rules:
 
@@ -120,24 +120,24 @@ Pipeline:
 
 1. discover configured sources
 2. register sources with stable IDs
-3. parse each source through `surrealguard-syntax`
+3. parse each source through `surrealql-analyzer-syntax`
 4. collect syntax findings
 5. build schema index from `DEFINE` statements
 6. analyze statements and expressions against schema and type environment
 7. apply policy and suppressions
 8. return structured `AnalysisOutput`
 
-The current implementation is the analyzer tree under `crates/workspace/src/analyzer/`: `analyzer::pipeline` walks each source in statement order, lowering every top-level statement to the typed AST and dispatching it to the analyzer that owns it, against the schema built from the statements before it (with `fn::` signatures hoisted). Each analyzer both infers its response `Kind` and enforces its contracts at the same site, per the diagnostic catalog (`docs/plans/2026-07-07-diagnostic-catalog.md`). Cross-statement contracts (transaction pairing, read-before-LET, `fn::` termination) live in the pipeline; parameter uses and typed constraints accumulate in the statement environment and are exported per source for host adapters. Schema extraction consumes the typed AST like everything else; tree-sitter appears only in `surrealguard-syntax` (and the embed crate's host grammars). Extraction mutates the schema index; the DDL contracts emit from the DEFINE/REMOVE/REBUILD/ALTER analyzers.
+The current implementation is the analyzer tree under `crates/workspace/src/analyzer/`: `analyzer::pipeline` walks each source in statement order, lowering every top-level statement to the typed AST and dispatching it to the analyzer that owns it, against the schema built from the statements before it (with `fn::` signatures hoisted). Each analyzer both infers its response `Kind` and enforces its contracts at the same site, per the diagnostic catalog (`docs/plans/2026-07-07-diagnostic-catalog.md`). Cross-statement contracts (transaction pairing, read-before-LET, `fn::` termination) live in the pipeline; parameter uses and typed constraints accumulate in the statement environment and are exported per source for host adapters. Schema extraction consumes the typed AST like everything else; tree-sitter appears only in `surrealql-analyzer-syntax` (and the embed crate's host grammars). Extraction mutates the schema index; the DDL contracts emit from the DEFINE/REMOVE/REBUILD/ALTER analyzers.
 
 Each parsed statement should eventually infer a response schema: the statement span and kind, input parameter requirements, result shape/type, and any partial-analysis limitations. Diagnostics should be emitted from that shared semantic model so CLI, LSP, MCP, and host adapters all explain the same facts rather than reimplementing rules per surface.
 
 ## CLI contract
 
-`surrealguard check` is the CLI/CI entry point.
+`surrealql-analyzer check` is the CLI/CI entry point.
 
 It must:
 
-- load `surrealguard.toml` from the current directory or a parent
+- load `surrealql-analyzer.toml` from the current directory or a parent
 - discover configured `.surql` and `.surrealql` files
 - run workspace analysis
 - print rustc-style human diagnostics by default (header, source excerpt with caret, `help:` suggestions, related locations); a clean run still prints surviving warnings, then the summary
@@ -167,10 +167,10 @@ Future LSP features should only be added when the shared analysis output exposes
 
 There are two, and they answer from the same analysis.
 
-`surrealguard-lsp` is the general one: it speaks LSP over stdio and serves
+`surrealql-analyzer-lsp` is the general one: it speaks LSP over stdio and serves
 `.surql` files and every host language the extractor knows.
 
-`@surrealguard/ts-plugin` is the TypeScript-specific one: a language service
+`@surrealdb/analyzer-ts-plugin` is the TypeScript-specific one: a language service
 plugin that proxies `getSemanticDiagnostics`,
 `getEncodedSemanticClassifications` and `getQuickInfoAtPosition`. It exists
 because a second language server *competes* with TypeScript for the byte ranges
@@ -180,7 +180,7 @@ TypeScript's answers, so there is nothing to merge.
 
 Two rules keep them from drifting:
 
-- **The classification is shared code.** `surrealguard_syntax::highlight` says
+- **The classification is shared code.** `surrealql_analyzer_syntax::highlight` says
   what a byte is; the LSP encodes that as semantic tokens and the plugin
   encodes it as TypeScript classifications. Neither owns the vocabulary.
 - **The analysis is shared code.** The plugin runs the `wasm32-wasip1` build of
@@ -190,7 +190,7 @@ Two rules keep them from drifting:
   (UTF-16 offsets, diagnostic codes) live there.
 
 The plugin does not load in `tsc`, by TypeScript's design. That is the right
-split rather than a limitation: CI runs `surrealguard check`, which sees the
+split rather than a limitation: CI runs `surrealql-analyzer check`, which sees the
 whole workspace at once.
 
 ## Embedded-source model
@@ -215,7 +215,7 @@ The semantic engine analyzes embedded sources through the same parser and worksp
 
 ## Next implementation slice
 
-The typed AST layer is implemented (`docs/plans/2026-07-03-typed-ast-lowering.md`, including its completion-status table): all statement kinds lower to `surrealguard_syntax::ast` and type inference runs entirely on it, producing upstream `surrealdb_types::Kind` response types. The diagnostics phase is implemented: the catalog's contracts emit from the analyzers that own their statements, and the pre-AST engine (`semantic.rs`, `select_ir.rs`, node-based expression inference) is deleted — `analyzer::pipeline` is the only walk. Next: host adapters over the parameter-constraint export, and the grammar-conformance worklist. Historical plans: `docs/plans/2026-06-12-full-surql-semantics.md`, `2026-06-06-select-semantics.md`, `2026-06-11-surql-statement-coverage.md`, `2026-06-15-surql-adapter-readiness-punchlist.md`, `2026-07-04-diagnostics-architecture.md`, `analyzer-module-rewrite.md` (all superseded in part).
+The typed AST layer is implemented (`docs/plans/2026-07-03-typed-ast-lowering.md`, including its completion-status table): all statement kinds lower to `surrealql_analyzer_syntax::ast` and type inference runs entirely on it, producing upstream `surrealdb_types::Kind` response types. The diagnostics phase is implemented: the catalog's contracts emit from the analyzers that own their statements, and the pre-AST engine (`semantic.rs`, `select_ir.rs`, node-based expression inference) is deleted — `analyzer::pipeline` is the only walk. Next: host adapters over the parameter-constraint export, and the grammar-conformance worklist. Historical plans: `docs/plans/2026-06-12-full-surql-semantics.md`, `2026-06-06-select-semantics.md`, `2026-06-11-surql-statement-coverage.md`, `2026-06-15-surql-adapter-readiness-punchlist.md`, `2026-07-04-diagnostics-architecture.md`, `analyzer-module-rewrite.md` (all superseded in part).
 
 Immediate focus:
 
@@ -229,7 +229,7 @@ The core readiness gate below has passed; host adapters may start.
 
 Acceptance gates:
 
-- no maintained code depends on `surrealguard-types` or `surrealguard_types`
+- no maintained code depends on `surrealql-analyzer-types` or `surrealql_analyzer_types`
 - every parseable statement kind has stable analysis facts
 - expression facts cover literals, paths, variables, objects, arrays, functions, subqueries, blocks, and dynamic/partial cases
 - function calls have signature-based arity/argument/return analysis where statically known

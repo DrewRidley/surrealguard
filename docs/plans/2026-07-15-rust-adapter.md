@@ -1,4 +1,4 @@
-# SurrealGuard Rust Adapter — Design
+# SurrealQL Analyzer Rust Adapter — Design
 
 Status: Phases 1–3 and 4a built and green (2026-07-17); 4b (live execution) pending a
 dependency decision. Companion to the TypeScript runtime design
@@ -7,24 +7,24 @@ dependency decision. Companion to the TypeScript runtime design
 ## Why Rust is the best-fit host
 
 Rust has real compile-time macros, so it collapses the *entire* TypeScript toolchain —
-`surrealguard generate`, the `.d.ts` registry, and even the separate LSP-for-inline-errors
-— into a single proc-macro. `surrealguard-workspace` is already a plain callable library
+`surrealql-analyzer generate`, the `.d.ts` registry, and even the separate LSP-for-inline-errors
+— into a single proc-macro. `surrealql-analyzer-workspace` is already a plain callable library
 (`analyze_query`, `analyze_source`), so a `surql!` macro can run the real analyzer during
 `cargo check` and turn findings into `compile_error!`s. **The compiler is the checker.**
 
 The mental anchor is sqlx's `query!` — compile-time-checked queries generating an
-anonymous result struct — but SurrealGuard checks *statically* against the analyzer + your
+anonymous result struct — but SurrealQL Analyzer checks *statically* against the analyzer + your
 `.surql` schema, with **no live database connection at build time** (strictly better than
 sqlx). Types stay structural/per-query and macro-generated (un-nameable, like sqlx's
 records) — never hand-named models.
 
 ## Layering
 
-- **`surrealguard-macros`** (`crates/macros`) — the `surql!` proc-macro. General-purpose,
+- **`surrealql-analyzer-macros`** (`crates/macros`) — the `surql!` proc-macro. General-purpose,
   framework-agnostic. Compile-time check → spanned errors; result-struct generation.
-- **`surrealguard-rs`** (planned) — client glue: `db.query(surql!(…))` typed execution
+- **`surrealql-analyzer-rs`** (planned) — client glue: `db.query(surql!(…))` typed execution
   over the official `surrealdb` crate. Framework-agnostic.
-- **`surrealguard-dioxus`** (planned) — reactive integration as its own crate (not a
+- **`surrealql-analyzer-dioxus`** (planned) — reactive integration as its own crate (not a
   feature of core), so the core stays UI-agnostic: one-shot → `use_resource`; live →
   `Signal<Vec<Row>>` fed by the SDK notification stream, reconciled by `id`, dropped on
   unmount. Bevy is the same story via a system draining the stream into components.
@@ -65,12 +65,12 @@ records) — never hand-named models.
      cannot be written in a signature, so this is the one case that needs names. There, use
      the Surrealix scheme (semantic names from field lineage) so sub-structs are reusable
      "without scope creep". **ADAPTATION:** Surrealix read `field.meta.original_path` off a
-     custom `TypeAST`; SurrealGuard uses upstream `Kind` (no lineage) and must NOT
+     custom `TypeAST`; SurrealQL Analyzer uses upstream `Kind` (no lineage) and must NOT
      reintroduce a type hierarchy — reconstruct paths from the query's **projection idioms +
      FROM table** in the lowered AST (`SELECT address.city FROM user` spells
      `user`→`address`→`city`).
 3. **Schema awareness. [BUILT — `crates/macros/src/schema.rs`; verified.]** Resolves the
-   project schema at compile time (`schema::load`): the `SURREALGUARD_SCHEMA` env var (file
+   project schema at compile time (`schema::load`): the `SURREALQL_ANALYZER_SCHEMA` env var (file
    or directory, relative to `CARGO_MANIFEST_DIR` unless absolute), else convention paths
    `schema/`, `migrations/`, then `schema.surql`. A directory contributes every
    `.surql`/`.surrealql` file **sorted by path**, so zero-padded migrations apply in order;
@@ -82,15 +82,15 @@ records) — never hand-named models.
    `SELECT name, age FROM user` correctly (in-order load); `SELECT name, ssn FROM user` →
    compile error `[E1002] unknown field ssn on table user`; without the env var the same
    query correctly fails `[E1001] unknown table user`.
-4. **Runtime crate `surrealguard-rs` + execution.**
+4. **Runtime crate `surrealql-analyzer-rs` + execution.**
 
    - **4a — runtime crate + typed results. [BUILT — `crates/rs`; tests green.]** New crate
      re-exports the macros and holds the types the generated code refers to (so a user crate
-     needs only `surrealguard-rs`): a `_rt` module re-exporting `serde`/`serde_json`/`chrono`/
+     needs only `surrealql-analyzer-rs`): a `_rt` module re-exporting `serde`/`serde_json`/`chrono`/
      `uuid`; `Query<T>` (carries the validated text + the inferred `T`); `RecordLink<T>`
-     scaffolding. `query!("…")` now expands to `::surrealguard_rs::Query::<T>::new(text)` with
+     scaffolding. `query!("…")` now expands to `::surrealql_analyzer_rs::Query::<T>::new(text)` with
      `T` the nameless result struct, `#[derive(serde::Deserialize)]` via the re-exported serde
-     (`#[serde(crate = "::surrealguard_rs::_rt::serde")]`). Real Kind→Rust mappings:
+     (`#[serde(crate = "::surrealql_analyzer_rs::_rt::serde")]`). Real Kind→Rust mappings:
      `Datetime`→`chrono::DateTime<Utc>`, `Uuid`→`uuid::Uuid`, open/`any`/geometry/range→
      `serde_json::Value`, else as before. Verified via `Query::<T>::from_json`: object/nested/
      array queries deserialize real JSON into the nameless typed struct with correct values
@@ -99,7 +99,7 @@ records) — never hand-named models.
 
    - **4b — live execution. [DEFERRED by decision; recipe proven via kv-mem spike.]** Drew's
      call: keep the `surrealdb` client OUT of the shipped crate for now (WASM/Bevy dep weight)
-     — `surrealguard-rs` stays the type+checking layer. But a throwaway `kv-mem` spike proved
+     — `surrealql-analyzer-rs` stays the type+checking layer. But a throwaway `kv-mem` spike proved
      the full chain works: `query!("SELECT name, age FROM user")` → checked against
      `schema.surql` at compile time → executed on an embedded `Surreal<Mem>` → deserialized
      into the nameless struct → `[("ada", 42), ("lin", 30)]`.
@@ -121,7 +121,7 @@ records) — never hand-named models.
      nameless result structs decode directly, no `SurrealValue` derive needed. The nameless
      `T` threads through `Query<T>` into `from_value::<T>`. `Value` path is `surrealdb::types::Value`
      (`surrealdb` re-exports `surrealdb_types as types`).
-5. **`surrealguard-dioxus`.** Reactive signals + live-as-`Signal` with subscribe/KILL tied
+5. **`surrealql-analyzer-dioxus`.** Reactive signals + live-as-`Signal` with subscribe/KILL tied
    to component lifecycle.
 
 ## Known limitations
@@ -129,11 +129,11 @@ records) — never hand-named models.
 - **Spans**: on stable Rust the error span covers the whole string literal (the message
   carries each finding's code + text). Precise sub-literal spans need the unstable
   `proc_macro_span` API — a nightly-gated enhancement, not required for correctness.
-- **Build cost**: the macro pulls `surrealguard-workspace` (and thus tree-sitter) in as a
+- **Build cost**: the macro pulls `surrealql-analyzer-workspace` (and thus tree-sitter) in as a
   build dependency and runs analysis per invocation. Analysis is fast (one query); this is
   the same shape as sqlx-macros and is acceptable.
 
 ## Rollout note
 
-`crates/macros` depends on `surrealguard-workspace` by `{ path, version }` like the other
+`crates/macros` depends on `surrealql-analyzer-workspace` by `{ path, version }` like the other
 crates, so it inherits the same crates.io gate (the grammar must be published first).

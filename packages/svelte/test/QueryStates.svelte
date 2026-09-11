@@ -6,7 +6,7 @@
   observable here instead of merely documented.
 -->
 <script lang="ts">
-  import type { Preloaded, SurrealGuardError } from "@surrealguard/client";
+  import type { Preloaded, SurrealQLAnalyzerError } from "@surrealdb/analyzer-client";
   import { Query } from "../src/index.js";
   import { allUsers } from "./queries.js";
 
@@ -18,7 +18,7 @@
   }: { preloaded?: Preloaded<Row[]>; handleError?: boolean } = $props();
 </script>
 
-{#snippet failure(cause: SurrealGuardError, retry: () => Promise<void>)}
+{#snippet failure(cause: SurrealQLAnalyzerError, retry: () => Promise<void>)}
   <p data-testid="error">{cause.message}</p>
   <button data-testid="retry" onclick={retry}>retry</button>
 {/snippet}

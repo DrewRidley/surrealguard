@@ -11,16 +11,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { flushSync } from "svelte";
 import { render, screen } from "@testing-library/svelte";
-import { preload, type SurrealGuardClient } from "@surrealguard/client";
+import { preload, type SurrealQLAnalyzerClient } from "@surrealdb/analyzer-client";
 import { RecordId, type LiveMessage } from "surrealdb";
 import Pair from "./Pair.svelte";
 import QueryStates from "./QueryStates.svelte";
 import Roster from "./Roster.svelte";
 import { liveUsers } from "./queries.js";
 
-const CLIENT_KEY = Symbol.for("@surrealguard/svelte:client");
+const CLIENT_KEY = Symbol.for("@surrealdb/analyzer-svelte:client");
 const isLive = (sql: string) => /^\s*live\b/i.test(sql);
-const context = (client: SurrealGuardClient) => new Map([[CLIENT_KEY, client]]);
+const context = (client: SurrealQLAnalyzerClient) => new Map([[CLIENT_KEY, client]]);
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 interface Row {
@@ -69,7 +69,7 @@ function makeClient(rows: Row[] = []) {
     surreal: { query, liveOf },
     onInvalidate: () => () => {},
     runLiveOnce: async () => rows,
-  } as unknown as SurrealGuardClient;
+  } as unknown as SurrealQLAnalyzerClient;
 
   /** The live id opened for a given `$name`, or undefined if none was. */
   const idFor = (name: string) =>
@@ -114,7 +114,7 @@ describe("<Query>", () => {
       }),
       surreal: {},
       onInvalidate: () => () => {},
-    } as unknown as SurrealGuardClient;
+    } as unknown as SurrealQLAnalyzerClient;
 
     render(QueryStates, { context: context(client) });
     await flush();
@@ -142,7 +142,7 @@ describe("<Query>", () => {
       }),
       surreal: {},
       onInvalidate: () => () => {},
-    } as unknown as SurrealGuardClient;
+    } as unknown as SurrealQLAnalyzerClient;
 
     render(QueryStates, { props: { handleError: false }, context: context(client) });
     await flush();

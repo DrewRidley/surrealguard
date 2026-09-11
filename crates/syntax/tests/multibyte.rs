@@ -10,12 +10,12 @@
 
 mod support;
 
-use surrealguard_syntax::ast::{Expr, IdiomPart, Literal, Spanned, Statement};
-use surrealguard_syntax::highlight;
-use surrealguard_syntax::lower::lower_statements;
-use surrealguard_syntax::parse::parse_source;
-use surrealguard_syntax::source::SourceId;
-use surrealguard_syntax::span::ByteRange;
+use surrealql_analyzer_syntax::ast::{Expr, IdiomPart, Literal, Spanned, Statement};
+use surrealql_analyzer_syntax::highlight;
+use surrealql_analyzer_syntax::lower::lower_statements;
+use surrealql_analyzer_syntax::parse::parse_source;
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_syntax::span::ByteRange;
 
 use support::ast_walk::{check_span, collect};
 
@@ -46,7 +46,7 @@ fn slice(text: &str, span: ByteRange) -> &str {
     &text[span.start() as usize..span.end() as usize]
 }
 
-fn select(statements: &[Spanned<Statement>]) -> &surrealguard_syntax::ast::SelectStmt {
+fn select(statements: &[Spanned<Statement>]) -> &surrealql_analyzer_syntax::ast::SelectStmt {
     match &statements[0].node {
         Statement::Select(select) => select,
         other => panic!("expected SELECT, got {other:?}"),
@@ -124,7 +124,7 @@ fn cjk_identifiers_and_strings_keep_their_spans() {
     assert_eq!(slice(text, table.span), "`商品`");
     assert_eq!(slice(text, *id), "⟨東京⟩");
 
-    let Some(surrealguard_syntax::ast::DataClause::Content(content)) = &create.data else {
+    let Some(surrealql_analyzer_syntax::ast::DataClause::Content(content)) = &create.data else {
         panic!("expected CONTENT, got {:?}", create.data);
     };
     let Expr::Object(fields) = &content.node else {
@@ -146,7 +146,8 @@ fn idiom_parts_after_multibyte_text_are_individually_spanned() {
     let statements = lowered(text);
     let select = select(&statements);
 
-    let surrealguard_syntax::ast::Projection::Expr { expr, .. } = &select.projections[0] else {
+    let surrealql_analyzer_syntax::ast::Projection::Expr { expr, .. } = &select.projections[0]
+    else {
         panic!("expected expr projection, got {:?}", select.projections[0]);
     };
     let Expr::Idiom(idiom) = &expr.node else {
@@ -161,7 +162,8 @@ fn idiom_parts_after_multibyte_text_are_individually_spanned() {
     assert_eq!(texts, ["->likes", "->post", "`título`"]);
     assert!(matches!(&idiom.parts[2].node, IdiomPart::Field(name) if name == "`título`"));
 
-    let surrealguard_syntax::ast::Projection::Expr { expr, .. } = &select.projections[1] else {
+    let surrealql_analyzer_syntax::ast::Projection::Expr { expr, .. } = &select.projections[1]
+    else {
         panic!("expected expr projection, got {:?}", select.projections[1]);
     };
     let Expr::Idiom(idiom) = &expr.node else {

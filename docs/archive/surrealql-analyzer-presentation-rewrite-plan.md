@@ -1,4 +1,4 @@
-# SurrealGuard deck rewrite plan
+# SurrealQL Analyzer deck rewrite plan
 
 ## Diagnosis
 
@@ -20,7 +20,7 @@ The weaker material is:
 
 ## Proposed new thesis
 
-SurrealDB gives you a powerful database language, but app tooling treats that language like an opaque string. SurrealGuard makes SurrealQL visible to the tools developers already rely on: CI, editors, type systems, and review workflows.
+SurrealDB gives you a powerful database language, but app tooling treats that language like an opaque string. SurrealQL Analyzer makes SurrealQL visible to the tools developers already rely on: CI, editors, type systems, and review workflows.
 
 Short version:
 
@@ -29,7 +29,7 @@ Make SurrealQL visible before runtime.
 ## Proposed rewrite structure
 
 1. Title
-   - SurrealGuard
+   - SurrealQL Analyzer
    - Make SurrealQL visible before runtime.
 
 2. The actual user problem
@@ -55,7 +55,7 @@ Make SurrealQL visible before runtime.
    - result shape drift
    - hidden database code drift
 
-6. What SurrealGuard is
+6. What SurrealQL Analyzer is
    - A static analyzer for SurrealQL inside real projects.
    - It reads schema, migrations, database code, and app queries.
    - It reports breakage before deploy.
@@ -64,7 +64,7 @@ Make SurrealQL visible before runtime.
    - Schema contract + query contract -> analyzer -> diagnostics, params, result shapes, spans.
 
 8. What a user gets first
-   - `surrealguard check`
+   - `surrealql-analyzer check`
    - local / pre-commit / CI failure with source spans.
 
 9. Diagnostics in code
@@ -102,13 +102,13 @@ Make SurrealQL visible before runtime.
 
 15. Close
    - SurrealDB keeps the language.
-   - SurrealGuard gives the language to the rest of the toolchain.
+   - SurrealQL Analyzer gives the language to the rest of the toolchain.
 
 ## Rewrite principle
 
 The new deck should be user-payoff first, implementation second.
 
-A random SurrealDB user should understand the talk even if they know nothing about SurrealGuard internals. Architecture only earns a slide after the failure and the user-visible output are obvious.
+A random SurrealDB user should understand the talk even if they know nothing about SurrealQL Analyzer internals. Architecture only earns a slide after the failure and the user-visible output are obvious.
 
 ## Concrete changes from current v2
 

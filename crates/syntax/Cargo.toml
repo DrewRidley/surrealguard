@@ -1,5 +1,5 @@
 [package]
-name = "surrealguard-syntax"
+name = "surrealql-analyzer-syntax"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -9,7 +9,7 @@ homepage.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
-description = "Tree-sitter syntax facade and source span primitives for SurrealGuard"
+description = "Tree-sitter syntax facade and source span primitives for SurrealQL Analyzer"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

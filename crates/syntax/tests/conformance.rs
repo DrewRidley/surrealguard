@@ -30,7 +30,7 @@
 //! The human-readable report is:
 //!
 //! ```text
-//! cargo run -p surrealguard-syntax --example conformance
+//! cargo run -p surrealql-analyzer-syntax --example conformance
 //! ```
 
 mod support;
@@ -41,8 +41,8 @@ use support::{
     corpus_path, failures, first_broken_range, load_corpus, load_rejected, preview, rejected_path,
 };
 
-use surrealguard_syntax::parse::parse_source;
-use surrealguard_syntax::source::SourceId;
+use surrealql_analyzer_syntax::parse::parse_source;
+use surrealql_analyzer_syntax::source::SourceId;
 
 #[test]
 fn every_valid_corpus_entry_parses_cleanly() {

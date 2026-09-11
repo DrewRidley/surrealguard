@@ -1,7 +1,7 @@
-# surrealguard-diagnostics
+# surrealql-analyzer-diagnostics
 
 Findings, severities, codes, and lint policy for
-[SurrealGuard](https://github.com/DrewRidley/surrealguard).
+[SurrealQL Analyzer](https://github.com/surrealdb/analyzer).
 
 A `Finding` carries only its intrinsic severity class; consumers (CLI, LSP, host
 adapters) resolve the *effective* severity through a `PolicyConfig` at their

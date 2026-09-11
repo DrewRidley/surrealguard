@@ -1,4 +1,4 @@
-//! The watch loop behind `surrealguard watch`, `check --watch` and
+//! The watch loop behind `surrealql-analyzer watch`, `check --watch` and
 //! `generate --watch`.
 //!
 //! Generated types go stale silently: you edit a `.surql` file or a host file
@@ -20,7 +20,7 @@
 //! * every host file ([`crate::is_host_source`]: `.ts`/`.tsx`/`.js`/`.jsx`/
 //!   `.svelte`/`.vue`/`.astro`) — the files
 //!   [`crate::discover_host_sources`] scans for embedded queries,
-//! * `surrealguard.toml` itself, because a config change alters which files
+//! * `surrealql-analyzer.toml` itself, because a config change alters which files
 //!   matter and how findings are graded.
 //!
 //! Everything the config's `[sources] ignore` covers is dropped — twice over:
@@ -54,7 +54,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
-use surrealguard_workspace::config::WorkspaceConfig;
+use surrealql_analyzer_workspace::config::WorkspaceConfig;
 
 use crate::style::{Outcome, Styles};
 
@@ -116,7 +116,7 @@ pub(crate) type ChangeSet = BTreeSet<PathBuf>;
 /// Why a path matters to the analysis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Watched {
-    /// `surrealguard.toml` — changes which files are inputs at all.
+    /// `surrealql-analyzer.toml` — changes which files are inputs at all.
     Config,
     /// A `.surql` / `.surrealql` source.
     Surql,
@@ -152,7 +152,7 @@ pub(crate) fn classify(
     {
         return None;
     }
-    if relative == Path::new("surrealguard.toml") {
+    if relative == Path::new("surrealql-analyzer.toml") {
         return Some(Watched::Config);
     }
     if crate::is_surrealql_source(path) {
@@ -261,7 +261,7 @@ pub(crate) struct RunOutcome {
     /// Clean, warned, or failed — what the status band shows.
     pub(crate) outcome: Outcome,
     /// One line: `12 sources · no diagnostics · wrote
-    /// surrealguard.generated.ts (3 queries)`.
+    /// surrealql-analyzer.generated.ts (3 queries)`.
     pub(crate) summary: String,
     /// Rendered diagnostic blocks (or an error message) printed beneath.
     pub(crate) detail: String,
@@ -312,7 +312,7 @@ fn report(
 
     println!(
         "{} {}",
-        styles.message("surrealguard watch"),
+        styles.message("surrealql-analyzer watch"),
         styles.dim(&root.display().to_string())
     );
     println!(
@@ -340,7 +340,7 @@ fn report(
     println!();
     println!(
         "{}",
-        styles.dim("watching .surql, host files and surrealguard.toml — Ctrl-C to stop")
+        styles.dim("watching .surql, host files and surrealql-analyzer.toml — Ctrl-C to stop")
     );
     let _ = std::io::stdout().flush();
 }
@@ -378,7 +378,7 @@ fn sync_watches(
 /// of the input set so a run cannot trigger itself.
 ///
 /// The config is re-read on every burst: it decides the ignore patterns and
-/// therefore the watch set, so editing `surrealguard.toml` re-targets the
+/// therefore the watch set, so editing `surrealql-analyzer.toml` re-targets the
 /// watcher on the next tick. A config that stops parsing keeps the previous
 /// patterns — `run` is what reports the parse error, and it keeps reporting it
 /// until the file is fixed.
@@ -394,7 +394,7 @@ pub(crate) fn watch_loop(
     let mut debouncer = new_debouncer(DEBOUNCE, None, forward_to(tx))?;
 
     // The root itself is watched non-recursively: it carries
-    // `surrealguard.toml` and any top-level source, and it is where a new
+    // `surrealql-analyzer.toml` and any top-level source, and it is where a new
     // top-level directory shows up.
     debouncer.watch(root, RecursiveMode::NonRecursive)?;
     let mut watched = BTreeSet::new();
@@ -477,7 +477,7 @@ fn forward_to(tx: Sender<ChangeSet>) -> impl FnMut(DebounceEventResult) + Send +
 }
 
 /// The workspace config, falling back to the defaults when it is missing or
-/// currently unparseable. A half-typed `surrealguard.toml` must not stop the
+/// currently unparseable. A half-typed `surrealql-analyzer.toml` must not stop the
 /// watcher — `run` is what reports the parse error, on every run, until it is
 /// fixed.
 fn workspace_config(root: &Path) -> WorkspaceConfig {
@@ -493,8 +493,8 @@ fn input_paths(root: &Path, config: &WorkspaceConfig) -> BTreeSet<PathBuf> {
         .chain(crate::discover_host_sources(root, config))
         .collect();
     // Neither discovery function returns the config — it is an input all the
-    // same, and without it every `surrealguard.toml` edit would read "created".
-    let config_path = root.join("surrealguard.toml");
+    // same, and without it every `surrealql-analyzer.toml` edit would read "created".
+    let config_path = root.join("surrealql-analyzer.toml");
     if config_path.exists() {
         paths.insert(config_path);
     }
@@ -525,7 +525,7 @@ mod tests {
             ("/w/src/probe.ts", Watched::Host),
             ("/w/src/App.svelte", Watched::Host),
             ("/w/src/page.astro", Watched::Host),
-            ("/w/surrealguard.toml", Watched::Config),
+            ("/w/surrealql-analyzer.toml", Watched::Config),
         ] {
             assert_eq!(
                 classify(root, Path::new(path), &ignore, None),
@@ -597,7 +597,7 @@ mod tests {
         // `generate` writes this file. If a write to it counted as a change the
         // watcher would re-trigger itself forever.
         let root = Path::new("/w");
-        let out = PathBuf::from("/w/surrealguard.generated.ts");
+        let out = PathBuf::from("/w/surrealql-analyzer.generated.ts");
         assert_eq!(classify(root, &out, &ignore(), Some(&out)), None);
         // It is a plain host file to any other command.
         assert_eq!(
@@ -660,7 +660,7 @@ mod tests {
         for name in ["schema", "src", "target", "node_modules", ".git"] {
             std::fs::create_dir_all(root.join(name)).expect("create dir");
         }
-        std::fs::write(root.join("surrealguard.toml"), "").expect("write config");
+        std::fs::write(root.join("surrealql-analyzer.toml"), "").expect("write config");
 
         let dirs = watch_dirs(&root, &ignore());
         let names: Vec<String> = dirs
@@ -812,7 +812,7 @@ mod tests {
         std::fs::create_dir_all(root.join("schema")).expect("dir");
         std::fs::create_dir_all(root.join("src")).expect("dir");
         std::fs::create_dir_all(root.join("node_modules/dep")).expect("dir");
-        std::fs::write(root.join("surrealguard.toml"), "").expect("config");
+        std::fs::write(root.join("surrealql-analyzer.toml"), "").expect("config");
         std::fs::write(root.join("schema/t.surql"), "DEFINE TABLE t;").expect("schema");
         std::fs::write(root.join("src/app.ts"), "// host").expect("host");
         std::fs::write(root.join("README.md"), "# docs").expect("doc");

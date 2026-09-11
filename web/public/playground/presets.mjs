@@ -58,7 +58,7 @@ export const PRESETS = [
     schema: SCHEMA,
     query: "UPDATE user SET age = 'old' WHERE name = 'Ada';",
     expect: ["E2001"],
-    note: "The server rejects this at write time, per row. SurrealGuard says so first.",
+    note: "The server rejects this at write time, per row. SurrealQL Analyzer says so first.",
   },
   {
     label: "Missing field",
@@ -102,7 +102,7 @@ export const PRESETS = [
 RELATE user:ada->follows->user:grace SET since = time::now();
 SELECT ->wrote->post.title AS posts FROM user WHERE age > 18;`,
     expect: [],
-    note: "Three statements, three response types — what `surrealguard generate` emits.",
+    note: "Three statements, three response types — what `surrealql-analyzer generate` emits.",
   },
   {
     label: "Syntax error",

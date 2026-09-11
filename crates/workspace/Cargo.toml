@@ -1,5 +1,5 @@
 [package]
-name = "surrealguard-workspace"
+name = "surrealql-analyzer-workspace"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -9,12 +9,12 @@ homepage.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
-description = "SurrealGuard workspace, config, and source registry layer"
+description = "SurrealQL Analyzer workspace, config, and source registry layer"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-surrealguard-diagnostics = { path = "../diagnostics", version = "0.5.3" }
-surrealguard-syntax = { path = "../syntax", version = "0.5.3" }
+surrealql-analyzer-diagnostics = { path = "../diagnostics", version = "0.5.3" }
+surrealql-analyzer-syntax = { path = "../syntax", version = "0.5.3" }
 surrealdb-types.workspace = true
 toml = "0.8"
 

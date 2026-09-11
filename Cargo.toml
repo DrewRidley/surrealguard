@@ -19,8 +19,8 @@ version = "0.5.3"
 edition = "2021"
 authors = ["Drew Ridley"]
 readme = "README.md"
-repository = "https://github.com/DrewRidley/surrealguard"
-homepage = "https://github.com/DrewRidley/surrealguard"
+repository = "https://github.com/surrealdb/analyzer"
+homepage = "https://github.com/surrealdb/analyzer"
 description = "Static analysis for SurrealQL embedded across host languages"
 license = "MIT OR Apache-2.0"
 keywords = ["surrealql", "surrealdb", "static-analysis", "type-inference", "lsp"]
@@ -42,9 +42,9 @@ unnested_or_patterns = "warn"
 [workspace.dependencies]
 tree-sitter = "0.26"
 # The SurrealQL grammar is vendored in-repo at `crates/tree-sitter-surrealql`
-# (package `surrealguard-tree-sitter-surrealql`, published under that name
+# (package `surrealql-analyzer-tree-sitter-surrealql`, published under that name
 # because `tree-sitter-surrealql` is taken on crates.io). The `package` rename
 # keeps `tree-sitter-surrealql.workspace = true` importable as
 # `tree_sitter_surrealql`. The `version` lets dependent crates publish.
-tree-sitter-surrealql = { path = "crates/tree-sitter-surrealql", version = "0.5.3", package = "surrealguard-tree-sitter-surrealql" }
+tree-sitter-surrealql = { path = "crates/tree-sitter-surrealql", version = "0.5.3", package = "surrealql-analyzer-tree-sitter-surrealql" }
 surrealdb-types = "3.1.3"

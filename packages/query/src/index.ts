@@ -19,7 +19,7 @@
  * SvelteKit's `load` and a React Server Component's props boundary. `db.run`
  * gives you the SDK's real values; this layer gives you their JSON projection.
  *
- * The framework packages (`@surrealguard/next`, `@surrealguard/svelte`) are thin
+ * The framework packages (`@surrealdb/analyzer-next`, `@surrealdb/analyzer-svelte`) are thin
  * bindings over the {@link Observable} returned here.
  */
 
@@ -27,7 +27,7 @@ import { jsonify } from "surrealdb";
 import type { LiveSubscription } from "surrealdb";
 import {
   reconcile,
-  SurrealGuardError,
+  SurrealQLAnalyzerError,
   type AnyQuery,
   type Bound,
   type Json,
@@ -37,8 +37,8 @@ import {
   type Rows,
   type SurqlLive,
   type SurqlQuery,
-  type SurrealGuardClient,
-} from "@surrealguard/client";
+  type SurrealQLAnalyzerClient,
+} from "@surrealdb/analyzer-client";
 
 export type QueryStatus = "pending" | "success" | "error";
 
@@ -50,7 +50,7 @@ export type QueryStatus = "pending" | "success" | "error";
 export type QueryState<T> =
   | { status: "pending"; data: T | undefined; error: undefined }
   | { status: "success"; data: T; error: undefined }
-  | { status: "error"; data: T | undefined; error: SurrealGuardError };
+  | { status: "error"; data: T | undefined; error: SurrealQLAnalyzerError };
 
 /** A read-only reactive value with subscribe/get. */
 export interface Observable<T> {
@@ -104,12 +104,12 @@ const DEFAULT_GC_TIME = 5 * 60_000;
 const DEFAULT_MAX_ENTRIES = 500;
 
 export class QueryClient {
-  readonly #client: SurrealGuardClient;
+  readonly #client: SurrealQLAnalyzerClient;
   readonly #cache = new Map<string, Entry>();
   readonly #gcTime: number;
   readonly #maxEntries: number;
 
-  constructor(client: SurrealGuardClient, options: QueryClientOptions = {}) {
+  constructor(client: SurrealQLAnalyzerClient, options: QueryClientOptions = {}) {
     this.#client = client;
     this.#gcTime = options.gcTime ?? DEFAULT_GC_TIME;
     this.#maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
@@ -377,7 +377,7 @@ export class QueryClient {
     // attempt reports (usually the same failure, described worse).
     if (entry.state.status === "error") return;
     try {
-      const { openLive } = await import("@surrealguard/client");
+      const { openLive } = await import("@surrealdb/analyzer-client");
       const subscription = await openLive(
         this.#client.surreal,
         entry.liveText,
@@ -448,7 +448,7 @@ export class QueryClient {
     this.#set(entry, {
       status: "error",
       data: entry.state.data,
-      error: SurrealGuardError.from(cause, { query: text, params: entry.params }),
+      error: SurrealQLAnalyzerError.from(cause, { query: text, params: entry.params }),
     });
   }
 
@@ -515,7 +515,7 @@ function splitMutateArgs(
  */
 const queryClients = new WeakMap<object, QueryClient>();
 
-export function getQueryClient(client: SurrealGuardClient): QueryClient {
+export function getQueryClient(client: SurrealQLAnalyzerClient): QueryClient {
   let queryClient = queryClients.get(client);
   if (!queryClient) {
     queryClient = new QueryClient(client);
@@ -525,4 +525,4 @@ export function getQueryClient(client: SurrealGuardClient): QueryClient {
 }
 
 export type { AnyQuery, Json, QueryKey, Rows, SurqlLive, SurqlQuery };
-export { SurrealGuardError };
+export { SurrealQLAnalyzerError };

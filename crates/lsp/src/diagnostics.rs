@@ -1,4 +1,4 @@
-//! Convert surrealguard diagnostics to LSP diagnostics.
+//! Convert surrealql-analyzer diagnostics to LSP diagnostics.
 //!
 //! Handles span-to-range conversion and related information formatting.
 
@@ -10,7 +10,9 @@ use tower_lsp::lsp_types::{
     NumberOrString, Url,
 };
 
-use surrealguard_diagnostics::{Finding, FindingTag, PolicyConfig, Severity as WorkspaceSeverity};
+use surrealql_analyzer_diagnostics::{
+    Finding, FindingTag, PolicyConfig, Severity as WorkspaceSeverity,
+};
 
 use crate::text::LineIndex;
 
@@ -74,7 +76,7 @@ pub fn workspace_finding_to_lsp_diagnostic(
         .source
         .range(range.start() as usize, range.end() as usize);
 
-    let code = surrealguard_diagnostics::render_code(finding.code(), resolved);
+    let code = surrealql_analyzer_diagnostics::render_code(finding.code(), resolved);
     let severity = match resolved {
         WorkspaceSeverity::Error => DiagnosticSeverity::ERROR,
         WorkspaceSeverity::Warning => DiagnosticSeverity::WARNING,
@@ -126,7 +128,7 @@ pub fn workspace_finding_to_lsp_diagnostic(
         range,
         severity: Some(severity),
         code: Some(NumberOrString::String(code)),
-        source: Some("surrealguard".to_string()),
+        source: Some("surrealql-analyzer".to_string()),
         message,
         related_information: (!related_information.is_empty()).then_some(related_information),
         tags: (!tags.is_empty()).then_some(tags),
@@ -147,9 +149,9 @@ fn marks_code_unnecessary(number: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_diagnostics::{Finding, FindingCode, Severity};
-    use surrealguard_syntax::source::SourceId;
-    use surrealguard_syntax::span::{ByteRange, SourceSpan};
+    use surrealql_analyzer_diagnostics::{Finding, FindingCode, Severity};
+    use surrealql_analyzer_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
     #[test]
     fn help_related_and_tags_reach_the_lsp_diagnostic() {
@@ -277,7 +279,7 @@ mod tests {
             Some(NumberOrString::String("S0001".into()))
         );
         assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::ERROR));
-        assert_eq!(diagnostic.source, Some("surrealguard".into()));
+        assert_eq!(diagnostic.source, Some("surrealql-analyzer".into()));
         assert_eq!(diagnostic.message, "unexpected syntax");
         assert_eq!(diagnostic.range.start.line, 0);
         assert_eq!(diagnostic.range.start.character, 14);

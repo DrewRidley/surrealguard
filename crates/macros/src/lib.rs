@@ -1,22 +1,22 @@
 //! Compile-time checked SurrealQL for Rust.
 //!
-//! Three macros, all running the SurrealGuard analyzer at compile time so an
+//! Three macros, all running the SurrealQL Analyzer engine at compile time so an
 //! invalid query fails `cargo check` — the compiler is the checker, with no
 //! external codegen step or language server required.
 //!
 //! - [`surql`] checks a query and expands to its text as a `&'static str`.
-//! - [`query`] checks a query and expands to a `surrealguard_rs::Query<T>`,
+//! - [`query`] checks a query and expands to a `surrealql_analyzer_rs::Query<T>`,
 //!   where `T` is the inferred result rendered as block-local structs. The
 //!   result type has no user-facing name — you get nested field access without
 //!   ever writing a type.
 //! - [`query_file`] is [`query`] with the SurrealQL read from a file at compile
 //!   time.
 //!
-//! [`query`] and [`query_file`] therefore require the `surrealguard-rs` runtime
+//! [`query`] and [`query_file`] therefore require the `surrealql-analyzer-rs` runtime
 //! crate in scope (which re-exports all three).
 //!
 //! ```ignore
-//! use surrealguard_rs::query;
+//! use surrealql_analyzer_rs::query;
 //! let q = query!("SELECT name, age FROM user WHERE age > $min", min = 18);
 //! ```
 //!
@@ -26,7 +26,7 @@
 //! spanned at the string literal, carrying each finding's code and message:
 //!
 //! ```text
-//! error: SurrealGuard rejected this query:
+//! error: SurrealQL Analyzer rejected this query:
 //!   [E1002] unknown field `ssn` on table `user`
 //! ```
 //!
@@ -47,8 +47,8 @@ use std::path::PathBuf;
 
 use proc_macro::TokenStream;
 use quote::quote;
-use surrealguard_diagnostics::Severity;
-use surrealguard_workspace::{analyze_workspace, AnalysisOutput, Workspace};
+use surrealql_analyzer_diagnostics::Severity;
+use surrealql_analyzer_workspace::{analyze_workspace, AnalysisOutput, Workspace};
 use syn::{parse_macro_input, LitStr};
 
 use params::MacroInput;
@@ -79,7 +79,7 @@ pub fn surql(input: TokenStream) -> TokenStream {
 }
 
 /// Checks a `SurrealQL` string literal at compile time and expands to a
-/// `surrealguard_rs::Query<T>` whose `T` is the inferred, nameless result type.
+/// `surrealql_analyzer_rs::Query<T>` whose `T` is the inferred, nameless result type.
 #[proc_macro]
 pub fn query(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as MacroInput);
@@ -142,10 +142,10 @@ fn expand(text: &str, input: &MacroInput, extra_tracking: Vec<PathBuf>) -> Token
     quote! {{
         #tracking
         #(#defs)*
-        ::surrealguard_rs::Query::<#ty>::new(
+        ::surrealql_analyzer_rs::Query::<#ty>::new(
             #text,
             #statements,
-            |mut __values: ::std::vec::Vec<::surrealguard_rs::_rt::Value>| #body,
+            |mut __values: ::std::vec::Vec<::surrealql_analyzer_rs::_rt::Value>| #body,
         ) #(#binds)*
     }}
     .into()
@@ -184,7 +184,7 @@ fn response(
         [(index, kind)] => {
             let ty = generate::rust_type(kind, scope);
             let body = quote! {
-                { ::surrealguard_rs::_rt::decode_at::<#ty>(&mut __values, #index) }
+                { ::surrealql_analyzer_rs::_rt::decode_at::<#ty>(&mut __values, #index) }
             };
             (ty, body, statements.max(1))
         }
@@ -194,7 +194,7 @@ fn response(
                 .map(|(_, kind)| generate::rust_type(kind, scope))
                 .collect();
             let decodes = many.iter().zip(&types).map(|((index, _), ty)| {
-                quote!(::surrealguard_rs::_rt::decode_at::<#ty>(&mut __values, #index)?)
+                quote!(::surrealql_analyzer_rs::_rt::decode_at::<#ty>(&mut __values, #index)?)
             });
             let body = quote! {
                 { ::core::result::Result::Ok((#(#decodes,)*)) }
@@ -231,7 +231,10 @@ fn check(query: &str, span: proc_macro2::Span) -> Result<Checked, TokenStream> {
         // On stable Rust the span covers the whole literal; the message carries
         // each finding's code and text. (Precise sub-literal spans need the
         // unstable `proc_macro_span` API.)
-        let message = format!("SurrealGuard rejected this query:\n{}", errors.join("\n"));
+        let message = format!(
+            "SurrealQL Analyzer rejected this query:\n{}",
+            errors.join("\n")
+        );
         return Err(syn::Error::new(span, message).to_compile_error().into());
     }
 

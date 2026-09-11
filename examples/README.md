@@ -1,10 +1,10 @@
-# SurrealGuard examples
+# SurrealQL Analyzer examples
 
 Real, type-checked demos of the round-trip:
 
-**schema (`.surql`) → `surrealguard generate` → typed queries.**
+**schema (`.surql`) → `surrealql-analyzer generate` → typed queries.**
 
-`surrealguard generate` scans your host files (`.ts`, `.tsx`, `.svelte`, …) for
+`surrealql-analyzer generate` scans your host files (`.ts`, `.tsx`, `.svelte`, …) for
 query text — `db.query("…")`, `defineQuery("…")`, `defineLive("…")` — analyzes
 each against your `schema/*.surql`, and writes a module augmentation that keys
 every query by its exact text with its `{ result; params }` types. You import
@@ -37,7 +37,7 @@ it adds no type safety. It adds a *value*, written in one file:
 
 ```ts
 // src/queries.ts
-import { defineQuery, defineLive } from "./surrealguard.generated";
+import { defineQuery, defineLive } from "./surrealql-analyzer.generated";
 
 export const allPeople  = defineQuery("SELECT id, name, age, team FROM person");
 export const peopleOf   = defineQuery("SELECT id, name FROM person WHERE team = $team");
@@ -59,29 +59,29 @@ there is one command and one location:
 
 | Example | `--out` | Imported as |
 | --- | --- | --- |
-| `basic/` | `src/surrealguard.generated.ts` | `./surrealguard.generated` |
-| `sveltekit/` | `src/lib/surrealguard.generated.ts` | `$lib/surrealguard.generated` |
+| `basic/` | `src/surrealql-analyzer.generated.ts` | `./surrealql-analyzer.generated` |
+| `sveltekit/` | `src/lib/surrealql-analyzer.generated.ts` | `$lib/surrealql-analyzer.generated` |
 
 ## Run the round-trip
 
-From the repo root (the workspace links `@surrealguard/*`):
+From the repo root (the workspace links `@surrealdb/analyzer-*`):
 
 ```sh
 pnpm install
 
 # 1. Build the CLI.
-CARGO_TARGET_DIR=/tmp/sg cargo build --release -p surrealguard
+CARGO_TARGET_DIR=/tmp/sg cargo build --release -p surrealql-analyzer
 
 # 2. Generate the typed registry from the schema + the project's queries.
 cd examples/basic
-/tmp/sg/release/surrealguard generate --out src/surrealguard.generated.ts
+/tmp/sg/release/surrealql-analyzer generate --out src/surrealql-analyzer.generated.ts
 
 # 3. Type-check — the generated types make everything typed.
 cd ../..
-pnpm --filter @surrealguard-example/basic run typecheck
+pnpm --filter @surrealql-analyzer-example/basic run typecheck
 ```
 
-(For `examples/sveltekit` the flag is `--out src/lib/surrealguard.generated.ts`.)
+(For `examples/sveltekit` the flag is `--out src/lib/surrealql-analyzer.generated.ts`.)
 
 Both examples' committed generated files are byte-identical to
 what step 2 produces, so you can verify the round-trip by running it and
@@ -112,7 +112,7 @@ nothing — and the compiler was happy. Both examples now construct the paramete
 properly:
 
 ```ts
-import { RecordId } from "./surrealguard.generated";
+import { RecordId } from "./surrealql-analyzer.generated";
 await db.run(peopleOf, { team: new RecordId("team", "red") });
 ```
 
@@ -120,7 +120,7 @@ await db.run(peopleOf, { team: new RecordId("team", "red") });
 
 A query text the registry does not contain is a hard error carrying its own
 remedy (`SurqlError<"this query is not in the generated registry - run
-\`surrealguard generate\`">`) rather than a silent degrade to `unknown[]`.
+\`surrealql-analyzer generate\`">`) rather than a silent degrade to `unknown[]`.
 
 That guarantee cannot be demonstrated *in* a generated example, and the reason
 is structural: `generate` extracts every `defineQuery` / `defineLive` literal in

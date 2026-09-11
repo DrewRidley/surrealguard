@@ -1,4 +1,4 @@
-//! WebAssembly bindings for the SurrealGuard analyzer.
+//! WebAssembly bindings for the SurrealQL Analyzer engine.
 //!
 //! The crate compiles to `wasm32-wasip1` and exposes a tiny C ABI so a
 //! browser (or a Node/WASI harness) can call
@@ -43,9 +43,9 @@ pub mod host;
 use std::alloc::{alloc as global_alloc, dealloc as global_dealloc, Layout};
 
 use serde::Serialize;
-use surrealguard_diagnostics::Severity;
-use surrealguard_workspace::analysis::{analyze_query, Workspace};
-use surrealguard_workspace::{render, KindContext};
+use surrealql_analyzer_diagnostics::Severity;
+use surrealql_analyzer_workspace::analysis::{analyze_query, Workspace};
+use surrealql_analyzer_workspace::{render, KindContext};
 
 /// One diagnostic in the shape the playground consumes.
 #[derive(Serialize)]

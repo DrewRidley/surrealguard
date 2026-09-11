@@ -11,14 +11,14 @@
 //! * `TERM=dumb`,
 //! * the destination stream is not a TTY — a pipe, a file, a CI log.
 //!
-//! The last one is what makes `surrealguard check > report.txt` produce clean
+//! The last one is what makes `surrealql-analyzer check > report.txt` produce clean
 //! text: the bytes written are the same modulo the escape sequences, so a
 //! diff of the two is empty once the escapes are stripped.
 //!
 //! `--json` never reaches this module. It is a machine contract — one document,
 //! one exit code, no decoration — so its writer paints nothing at all.
 
-use surrealguard_diagnostics::Severity;
+use surrealql_analyzer_diagnostics::Severity;
 
 /// ANSI SGR parameters, spelled once.
 mod sgr {
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn a_pipe_never_gets_escapes() {
-        // The contract behind `surrealguard check > report.txt`: a
+        // The contract behind `surrealql-analyzer check > report.txt`: a
         // non-terminal destination is plain text, whatever the flags say.
         let styles = Styles::for_stream(false, false);
         assert!(!styles.is_colored());

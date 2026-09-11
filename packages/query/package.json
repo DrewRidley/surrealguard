@@ -1,13 +1,13 @@
 {
-  "name": "@surrealguard/query",
+  "name": "@surrealdb/analyzer-query",
   "version": "0.5.3",
-  "description": "Framework-agnostic reactive core for SurrealGuard: cache, dedup, live reconciliation, SSR hydration.",
+  "description": "Framework-agnostic reactive core for SurrealQL Analyzer: cache, dedup, live reconciliation, SSR hydration.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
   "author": "Drew Ridley",
   "repository": {
     "type": "git",
-    "url": "https://github.com/DrewRidley/surrealguard",
+    "url": "https://github.com/surrealdb/analyzer",
     "directory": "packages/query"
   },
   "keywords": [
@@ -34,7 +34,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@surrealguard/client": "0.5.3"
+    "@surrealdb/analyzer-client": "0.5.3"
   },
   "peerDependencies": {
     "surrealdb": "^2.0.8"

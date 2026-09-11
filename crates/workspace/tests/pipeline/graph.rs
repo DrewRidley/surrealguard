@@ -1,8 +1,8 @@
 //! Graph traversal and `RELATE`: edge/target table existence, relation
 //! endpoint contracts, edge-filter typing, and non-relation steps.
 
-use surrealguard_diagnostics::FindingCode;
-use surrealguard_workspace::{analyze_workspace, Workspace};
+use surrealql_analyzer_diagnostics::FindingCode;
+use surrealql_analyzer_workspace::{analyze_workspace, Workspace};
 
 use crate::support::assert_no_syntax_findings;
 

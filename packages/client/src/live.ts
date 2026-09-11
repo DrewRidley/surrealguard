@@ -1,5 +1,5 @@
 /**
- * Live-subscription plumbing, shared by `db.watch` and `@surrealguard/query`.
+ * Live-subscription plumbing, shared by `db.watch` and `@surrealdb/analyzer-query`.
  *
  * A `LIVE SELECT` resolves to a live-query id; subscribing to that id's change
  * stream yields notifications which must be reconciled into an array by record

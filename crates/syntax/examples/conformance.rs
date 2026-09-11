@@ -2,8 +2,8 @@
 //! SurrealDB's own test suites through the tree-sitter grammar and reports
 //! what does not hold.
 //!
-//!     cargo run -p surrealguard-syntax --example conformance
-//!     cargo run -p surrealguard-syntax --example conformance -- corpus.json
+//!     cargo run -p surrealql-analyzer-syntax --example conformance
+//!     cargo run -p surrealql-analyzer-syntax --example conformance -- corpus.json
 //!
 //! With no argument it reads the committed corpora and checks both
 //! directions: every entry of the valid set (a JSON array of query strings)
@@ -23,8 +23,8 @@ mod support;
 use std::fmt::Write as _;
 use std::path::Path;
 
-use surrealguard_syntax::parse::parse_source;
-use surrealguard_syntax::source::SourceId;
+use surrealql_analyzer_syntax::parse::parse_source;
+use surrealql_analyzer_syntax::source::SourceId;
 
 fn main() {
     let arg = std::env::args().nth(1);

@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 
 use super::*;
 use crate::analysis::{analyze_workspace, Workspace};
-use surrealguard_syntax::parse::parse_source;
+use surrealql_analyzer_syntax::parse::parse_source;
 
 /// A small but realistic schema: a schemafull table with scalar, optional,
 /// link, and array-of-link fields; a second table to link to; a relation edge;

@@ -3,7 +3,7 @@
 //! Returns one of its arguments, so the result type is their union.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{ParamKind, ReturnKind, Signature};
@@ -34,8 +34,8 @@ pub(crate) fn analyze_rand_enum(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_diagnostics::Finding;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use crate::schema::SchemaIndex;
 
@@ -47,7 +47,7 @@ mod tests {
         let call = ast::Call {
             path: ast::Spanned::new(
                 "rand::enum".into(),
-                surrealguard_syntax::span::ByteRange::new(0, 1).unwrap(),
+                surrealql_analyzer_syntax::span::ByteRange::new(0, 1).unwrap(),
             ),
             written: "rand::enum".into(),
             args: Vec::new(),

@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use surrealdb_types::Kind;
-use surrealguard_syntax::span::SourceSpan;
+use surrealql_analyzer_syntax::span::SourceSpan;
 
 /// Why a piece of analysis is partial. Carried on transient facts and
 /// emitted alongside spans at the inference site — never stored inside
@@ -110,8 +110,8 @@ impl ExpressionFact {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_syntax::source::SourceId;
-    use surrealguard_syntax::span::ByteRange;
+    use surrealql_analyzer_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::span::ByteRange;
 
     fn span() -> SourceSpan {
         SourceSpan::new(

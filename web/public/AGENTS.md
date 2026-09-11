@@ -1,19 +1,19 @@
 # AGENTS.md
 
-Guidance for AI coding agents working with **SurrealGuard** — a static analyzer
+Guidance for AI coding agents working with **SurrealQL Analyzer** — a static analyzer
 and type-inference engine for SurrealQL. This file follows the
 [agents.md](https://agents.md) convention. A machine-readable summary also lives
 at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
 [`/llms-full.txt`](https://surrealguard.dev/llms-full.txt).
 
-## Using SurrealGuard in a user's project
+## Using SurrealQL Analyzer in a user's project
 
-1. **Set it up:** run the CLI with `npx surrealguard` (published on npm — no
+1. **Set it up:** run the CLI with `npx surrealql-analyzer` (published on npm — no
    toolchain needed; or install from source with
-   `cargo install --git https://github.com/DrewRidley/surrealguard surrealguard`).
-   Run `npx surrealguard init`, then edit `surrealguard.toml` so `[sources]
+   `cargo install --git https://github.com/surrealdb/analyzer surrealql-analyzer`).
+   Run `npx surrealql-analyzer init`, then edit `surrealql-analyzer.toml` so `[sources]
    schema` and `queries` globs point at the project's `.surql` files.
-2. **Check on every change:** `surrealguard check --json`. The JSON is
+2. **Check on every change:** `surrealql-analyzer check --json`. The JSON is
    `{ summary, diagnostics[] }`; each diagnostic has `code`, `severity`
    (`error`/`warning`/`hint`), `source`, `range { start, end }` (byte offsets),
    `message`, and `help`. The process exit code is non-zero when errors remain
@@ -23,12 +23,12 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
    lints. The `range` is a byte offset into `source`
    — apply edits there.
 4. **Type the queries:**
-   - Rust: wrap queries in the `query!` macro (depend on `surrealguard-rs` by git
-     in `Cargo.toml` — `surrealguard-rs = { git =
-     "https://github.com/DrewRidley/surrealguard" }` — until the crates.io
+   - Rust: wrap queries in the `query!` macro (depend on `surrealql-analyzer-rs` by git
+     in `Cargo.toml` — `surrealql-analyzer-rs = { git =
+     "https://github.com/surrealdb/analyzer" }` — until the crates.io
      release). They are checked at compile time; a violation fails `cargo check`.
-   - TypeScript: run `surrealguard generate --out src/surrealguard.generated.ts`,
-     import `SurrealGuardClient` from that file (it extends the `surrealdb` SDK),
+   - TypeScript: run `surrealql-analyzer generate --out src/surrealql-analyzer.generated.ts`,
+     import `SurrealQLAnalyzerClient` from that file (it extends the `surrealdb` SDK),
      and pass string literals to `db.query("…")` — destructure the first result,
      `const [rows] = await db.query("…")`.
 
@@ -54,6 +54,6 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
 - `crates/diagnostics` — finding codes, severities, policy
 - `crates/macros` + `crates/rs` — the `query!` / `surql!` macros and runtime
 - `crates/codegen` + `crates/embed` — TypeScript generation + host-file extraction
-- `crates/cli` + `crates/lsp` — the `surrealguard` and `surrealguard-lsp` binaries
-- `packages/` — `@surrealguard/{client,query,next,svelte}`
+- `crates/cli` + `crates/lsp` — the `surrealql-analyzer` and `surrealql-analyzer-lsp` binaries
+- `packages/` — `@surrealdb/analyzer-{client,query,next,svelte}`
 - `docs/DESIGN.md` — architecture; `docs/plans/` — design records

@@ -1,4 +1,4 @@
-//! Finding types and policy for SurrealGuard diagnostics.
+//! Finding types and policy for SurrealQL Analyzer diagnostics.
 //!
 //! A [`Finding`] carries its intrinsic severity class only; consumers
 //! (CLI, LSP, host adapters) resolve the effective severity through

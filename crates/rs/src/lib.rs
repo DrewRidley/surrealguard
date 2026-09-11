@@ -1,6 +1,6 @@
 //! Compile-time-checked, typed SurrealQL for Rust.
 //!
-//! `surrealguard-rs` runs the [SurrealGuard](https://github.com/DrewRidley/surrealguard)
+//! `surrealql-analyzer-rs` runs the [SurrealQL Analyzer](https://github.com/surrealdb/analyzer)
 //! analyzer against your schema *during compilation*. A wrong table, unknown
 //! field, bad function arity, or kind mismatch becomes a `cargo check` error,
 //! the result type is generated from the inferred response, and the query's
@@ -8,7 +8,7 @@
 //! script, no language server, no runtime schema fetch.
 //!
 //! ```rust,ignore
-//! use surrealguard_rs::query;
+//! use surrealql_analyzer_rs::query;
 //!
 //! let adults = query!("SELECT name, age FROM user WHERE age >= $min", min = 18)
 //!     .fetch_all(&db)
@@ -22,9 +22,9 @@
 //! # The macros
 //!
 //! This crate re-exports the proc-macros from
-//! [`surrealguard-macros`](https://crates.io/crates/surrealguard-macros) and
+//! [`surrealql-analyzer-macros`](https://crates.io/crates/surrealql-analyzer-macros) and
 //! provides the runtime types their output refers to, so depending on
-//! `surrealguard-rs` alone is enough.
+//! `surrealql-analyzer-rs` alone is enough.
 //!
 //! - [`query!`] checks a query **and** returns a typed [`Query<T>`](Query),
 //!   where `T` is the inferred result rendered as a *nameless* struct. You get
@@ -103,7 +103,7 @@
 //!
 //! The macros resolve your schema at compile time from, in order:
 //!
-//! 1. the `SURREALGUARD_SCHEMA` environment variable — a `.surql` file or a
+//! 1. the `SURREALQL_ANALYZER_SCHEMA` environment variable — a `.surql` file or a
 //!    directory, relative to `CARGO_MANIFEST_DIR` unless absolute;
 //! 2. otherwise a convention path under the crate root, tried in turn:
 //!    `schema/`, then `migrations/`, then `schema.surql`.
@@ -159,7 +159,7 @@ use std::marker::PhantomData;
 
 pub use surrealdb_types;
 use surrealdb_types::{SurrealValue, Value};
-pub use surrealguard_macros::{query, query_file, surql};
+pub use surrealql_analyzer_macros::{query, query_file, surql};
 
 #[doc(hidden)]
 pub mod _rt;

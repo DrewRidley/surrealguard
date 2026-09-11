@@ -1,9 +1,9 @@
 {
-  "name": "surrealguard-monorepo",
+  "name": "surrealql-analyzer-monorepo",
   "private": true,
   "version": "0.0.0",
   "packageManager": "pnpm@10.29.3",
-  "description": "TypeScript packages for SurrealGuard: typed client and framework adapters",
+  "description": "TypeScript packages for SurrealQL Analyzer: typed client and framework adapters",
   "scripts": {
     "build": "pnpm -r --if-present run build",
     "docs:diagnostics": "node scripts/gen-diagnostics-page.mjs",

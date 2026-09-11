@@ -13,12 +13,12 @@ import {
   RecordId,
   type Json,
   type Preloaded,
-} from "@surrealguard/client";
-import { createClient } from "@surrealguard/client";
+} from "@surrealdb/analyzer-client";
+import { createClient } from "@surrealdb/analyzer-client";
 import { preload } from "../src/server.js";
 import { useLive } from "../src/index.js";
 
-declare module "@surrealguard/client" {
+declare module "@surrealdb/analyzer-client" {
   interface SurqlRegistry {
     "SELECT id, name, joined FROM person": {
       result: [Array<{ id: RecordId<"person">; name: string; joined: Date }>];

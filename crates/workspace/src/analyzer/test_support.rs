@@ -4,10 +4,10 @@
 /// leaf-analyzer tests.
 pub fn with_ctx<T>(f: impl FnOnce(&mut crate::analyzer::context::AnalysisContext<'_>) -> T) -> T {
     let schema = crate::schema::SchemaIndex::default();
-    let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+    let mut diagnostics: Vec<surrealql_analyzer_diagnostics::Finding> = Vec::new();
     let mut ctx = crate::analyzer::context::AnalysisContext::new(
         &schema,
-        surrealguard_syntax::source::SourceId::new("test"),
+        surrealql_analyzer_syntax::source::SourceId::new("test"),
         "",
         &mut diagnostics,
     );
@@ -15,11 +15,11 @@ pub fn with_ctx<T>(f: impl FnOnce(&mut crate::analyzer::context::AnalysisContext
 }
 
 /// A synthetic call for analyzers that only read the argument kinds.
-pub fn synthetic_call(path: &str) -> surrealguard_syntax::ast::Call {
-    surrealguard_syntax::ast::Call {
-        path: surrealguard_syntax::ast::Spanned::new(
+pub fn synthetic_call(path: &str) -> surrealql_analyzer_syntax::ast::Call {
+    surrealql_analyzer_syntax::ast::Call {
+        path: surrealql_analyzer_syntax::ast::Spanned::new(
             path.to_string(),
-            surrealguard_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered"),
+            surrealql_analyzer_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered"),
         ),
         written: path.to_string(),
         args: Vec::new(),

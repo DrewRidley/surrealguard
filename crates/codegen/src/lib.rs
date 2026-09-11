@@ -35,7 +35,7 @@
 //! spellings are a decision rather than an artifact.
 
 use surrealdb_types::{Kind, KindLiteral};
-use surrealguard_workspace::analysis::{ParamInference, ValueDomain};
+use surrealql_analyzer_workspace::analysis::{ParamInference, ValueDomain};
 
 mod registry;
 
@@ -50,7 +50,7 @@ pub use registry::{render_registry, response_tuple, QueryEntry};
 /// the enum has exactly two variants.
 ///
 /// Deliberately *not* mirrored from `KindContext`
-/// (`surrealguard_workspace::render`), the SurrealQL-side audience enum:
+/// (`surrealql_analyzer_workspace::render`), the SurrealQL-side audience enum:
 ///
 /// - no `Declared`, because TypeScript has no author-written spelling to
 ///   mirror. On the SurrealQL side `option<string>` is text the reader can go

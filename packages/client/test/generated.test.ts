@@ -1,7 +1,7 @@
-// The codegen golden, consumed end to end. `test-d/gen/surrealguard.generated.ts`
-// is real `surrealguard generate` output over the fixture workspace in
+// The codegen golden, consumed end to end. `test-d/gen/surrealql-analyzer.generated.ts`
+// is real `surrealql-analyzer generate` output over the fixture workspace in
 // `crates/codegen/tests/fixtures/typecheck` (pinned byte-for-byte by
-// `cargo test -p surrealguard-codegen --test golden`). This file is compiled by
+// `cargo test -p surrealql-analyzer-codegen --test golden`). This file is compiled by
 // `tsc` as part of `pnpm typecheck` — so the `expectTypeOf` lines below are
 // checked, not merely executed — and run by vitest for the runtime half.
 import { describe, expect, expectTypeOf, it } from "vitest";
@@ -13,7 +13,7 @@ import {
   Duration,
   RecordId,
   Uuid,
-} from "../test-d/gen/surrealguard.generated.js";
+} from "../test-d/gen/surrealql-analyzer.generated.js";
 import type { ParamsOf, QueryResultOf, ResultOf, SurqlRegistry } from "../src/index.js";
 
 describe("the generated golden", () => {

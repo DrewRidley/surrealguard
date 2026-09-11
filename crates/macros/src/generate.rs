@@ -50,7 +50,7 @@ impl Scope {
 }
 
 /// Renders `kind` as a Rust type, pushing any needed struct definitions into
-/// `scope`. Types resolve through the `surrealguard-rs` runtime crate, so a
+/// `scope`. Types resolve through the `surrealql-analyzer-rs` runtime crate, so a
 /// crate using the macro only needs that one dependency in scope.
 pub fn rust_type(kind: &Kind, scope: &mut Scope) -> TokenStream {
     match kind {
@@ -58,19 +58,19 @@ pub fn rust_type(kind: &Kind, scope: &mut Scope) -> TokenStream {
         Kind::Int => quote!(i64),
         Kind::Float => quote!(f64),
         // `Number::Decimal` is its own variant; `f64` would reject it.
-        Kind::Decimal => quote!(::surrealguard_rs::_rt::Decimal),
+        Kind::Decimal => quote!(::surrealql_analyzer_rs::_rt::Decimal),
         // An unrefined `number` can arrive as any of Int/Float/Decimal, so only
         // the enum itself accepts every value the kind admits.
-        Kind::Number => quote!(::surrealguard_rs::_rt::Number),
+        Kind::Number => quote!(::surrealql_analyzer_rs::_rt::Number),
         Kind::String => quote!(String),
-        Kind::Regex => quote!(::surrealguard_rs::_rt::Regex),
-        Kind::Uuid => quote!(::surrealguard_rs::_rt::Uuid),
-        Kind::Datetime => quote!(::surrealguard_rs::_rt::Datetime),
+        Kind::Regex => quote!(::surrealql_analyzer_rs::_rt::Regex),
+        Kind::Uuid => quote!(::surrealql_analyzer_rs::_rt::Uuid),
+        Kind::Datetime => quote!(::surrealql_analyzer_rs::_rt::Datetime),
         // `Value::Duration`, not a string: the server sends a duration value.
-        Kind::Duration => quote!(::surrealguard_rs::_rt::Duration),
+        Kind::Duration => quote!(::surrealql_analyzer_rs::_rt::Duration),
         // `Value::Bytes`, not an array of numbers.
-        Kind::Bytes => quote!(::surrealguard_rs::_rt::Bytes),
-        Kind::Geometry(_) => quote!(::surrealguard_rs::_rt::Geometry),
+        Kind::Bytes => quote!(::surrealql_analyzer_rs::_rt::Bytes),
+        Kind::Geometry(_) => quote!(::surrealql_analyzer_rs::_rt::Geometry),
         // `()` decodes `Value::None` only. `Value::Null` is a distinct variant,
         // so `null` has to stay dynamic to decode at all.
         Kind::None => quote!(()),
@@ -82,10 +82,10 @@ pub fn rust_type(kind: &Kind, scope: &mut Scope) -> TokenStream {
         Kind::Literal(literal) => literal_type(literal, scope),
         // A record link decodes as a `RecordId`, never a string — the SDK sends
         // `Value::RecordId` and `String::from_value` rejects it outright.
-        Kind::Record(_) => quote!(::surrealguard_rs::_rt::RecordId),
+        Kind::Record(_) => quote!(::surrealql_analyzer_rs::_rt::RecordId),
         // `null`, open objects, ranges, files, functions, and `any` have no
         // narrower Rust type that accepts every value they admit.
-        _ => quote!(::surrealguard_rs::_rt::Value),
+        _ => quote!(::surrealql_analyzer_rs::_rt::Value),
     }
 }
 
@@ -94,9 +94,9 @@ fn literal_type(literal: &KindLiteral, scope: &mut Scope) -> TokenStream {
         KindLiteral::String(_) => quote!(String),
         KindLiteral::Integer(_) => quote!(i64),
         KindLiteral::Float(_) => quote!(f64),
-        KindLiteral::Decimal(_) => quote!(::surrealguard_rs::_rt::Decimal),
+        KindLiteral::Decimal(_) => quote!(::surrealql_analyzer_rs::_rt::Decimal),
         KindLiteral::Bool(_) => quote!(bool),
-        KindLiteral::Duration(_) => quote!(::surrealguard_rs::_rt::Duration),
+        KindLiteral::Duration(_) => quote!(::surrealql_analyzer_rs::_rt::Duration),
         KindLiteral::Array(kinds) => {
             let items: Vec<TokenStream> = kinds.iter().map(|k| rust_type(k, scope)).collect();
             quote!((#(#items,)*))
@@ -124,9 +124,9 @@ fn object_struct(
 
     let ident = scope.fresh();
     let field_defs = rendered.iter().map(|(_, name, ty)| quote!(pub #name: #ty));
-    let decodes = rendered
-        .iter()
-        .map(|(key, name, _)| quote!(#name: ::surrealguard_rs::_rt::field(&mut __object, #key)?));
+    let decodes = rendered.iter().map(
+        |(key, name, _)| quote!(#name: ::surrealql_analyzer_rs::_rt::field(&mut __object, #key)?),
+    );
     let encodes = rendered
         .iter()
         .map(|(key, name, _)| quote!(__object.insert(#key, self.#name);));
@@ -135,21 +135,21 @@ fn object_struct(
         #[derive(Debug, Clone, PartialEq)]
         struct #ident { #(#field_defs,)* }
 
-        impl ::surrealguard_rs::_rt::SurrealValue for #ident {
-            fn kind_of() -> ::surrealguard_rs::_rt::Kind {
-                ::surrealguard_rs::_rt::Kind::Object
+        impl ::surrealql_analyzer_rs::_rt::SurrealValue for #ident {
+            fn kind_of() -> ::surrealql_analyzer_rs::_rt::Kind {
+                ::surrealql_analyzer_rs::_rt::Kind::Object
             }
 
-            fn into_value(self) -> ::surrealguard_rs::_rt::Value {
-                let mut __object = ::surrealguard_rs::_rt::Object::new();
+            fn into_value(self) -> ::surrealql_analyzer_rs::_rt::Value {
+                let mut __object = ::surrealql_analyzer_rs::_rt::Object::new();
                 #(#encodes)*
-                ::surrealguard_rs::_rt::Value::Object(__object)
+                ::surrealql_analyzer_rs::_rt::Value::Object(__object)
             }
 
             fn from_value(
-                __value: ::surrealguard_rs::_rt::Value,
-            ) -> ::core::result::Result<Self, ::surrealguard_rs::_rt::Error> {
-                let mut __object = ::surrealguard_rs::_rt::expect_object(__value)?;
+                __value: ::surrealql_analyzer_rs::_rt::Value,
+            ) -> ::core::result::Result<Self, ::surrealql_analyzer_rs::_rt::Error> {
+                let mut __object = ::surrealql_analyzer_rs::_rt::expect_object(__value)?;
                 ::core::result::Result::Ok(Self { #(#decodes,)* })
             }
         }
@@ -169,7 +169,7 @@ fn either_type(variants: &[Kind], scope: &mut Scope) -> TokenStream {
         let inner = rust_type(&kind, scope);
         quote!(Option<#inner>)
     } else {
-        quote!(::surrealguard_rs::_rt::Value)
+        quote!(::surrealql_analyzer_rs::_rt::Value)
     }
 }
 

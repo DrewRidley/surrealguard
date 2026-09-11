@@ -1,4 +1,4 @@
-# SurrealGuard pre-publish findings & fix plan (2026-07-24)
+# SurrealQL Analyzer pre-publish findings & fix plan (2026-07-24)
 
 Consolidates: the 4-surface e2e usability swarm (Next.js, SvelteKit, generic
 JS/TS, Rust proc-macro), the live `$auth`/E6001 analyzer bug, the new
@@ -24,8 +24,8 @@ and `crates/cli/src/main.rs` (NOT the forbidden files):
 
 1. **`db.query("...")` is not a recognized codegen/LSP sink (critical).**
    `is_surql_tag` (`crates/embed/src/typescript.rs:~53`) only matches a call
-   or tag literally named `surql`, and `@surrealguard/client` exports no
-   `surql` helper at all. So `surrealguard generate` produces an **empty
+   or tag literally named `surql`, and `@surrealdb/analyzer-client` exports no
+   `surql` helper at all. So `surrealql-analyzer generate` produces an **empty
    registry** and every documented `db.query(...)` result resolves to
    `unknown[]` (TS18046). This is the TS-runtime plan's own unimplemented TODO
    (`docs/plans/2026-07-15-typescript-runtime.md:256-259`) — but the READMEs
@@ -34,25 +34,25 @@ and `crates/cli/src/main.rs` (NOT the forbidden files):
    actual API. (Registry keys match by literal string text, so once a literal
    is recognized the param/result typing already works.)
 
-2. **`surrealguard generate` swallows analyzer diagnostics (high).** A bad
+2. **`surrealql-analyzer generate` swallows analyzer diagnostics (high).** A bad
    field in an embedded query is emitted as `field: unknown` with exit 0 — no
    warning. `run_generate` reuses `analyze_workspace` output but never surfaces
    `output.diagnostics`. **Fix:** print diagnostics and exit non-zero on error.
 
-3. **`surrealguard check` never scans embedded TS/JS queries (high).**
+3. **`surrealql-analyzer check` never scans embedded TS/JS queries (high).**
    `run_check` (`crates/cli/src/main.rs:~167`) only walks `.surql` sources; the
    host-file scan lives only in `run_generate` (`~291-325`). So a CI gate on
    `check` cannot catch a typo'd inline query — only the LSP does. **Fix:**
    reuse the host-file scan in `run_check`.
 
 Secondary:
-4. `examples/surrealguard.toml` uses a stale schema (`[schema].path`,
+4. `examples/surrealql-analyzer.toml` uses a stale schema (`[schema].path`,
    `[output]`, …) the CLI silently ignores; real keys are
    `[sources]/[analysis]/[diagnostics]/[lints]` (`EXAMPLE_CONFIG` in
    `crates/cli/src/main.rs`). Align the example file; the existing test only
    checks the inline `EXAMPLE_CONFIG`, so the drift went undetected.
 5. Default `generate --out` is the workspace root (`crates/cli/src/main.rs:~344`),
-   breaking the READMEs' `import … from "./surrealguard.generated"`; default to
+   breaking the READMEs' `import … from "./surrealql-analyzer.generated"`; default to
    a `src/`-relative path when `src/` exists, or document the `--out` flag.
 6. `.surql` query files under `queries/**` never feed codegen (only host-file
    embeds do). Document, or support them.
@@ -69,7 +69,7 @@ Secondary:
    example, which trips Svelte 5's `state_referenced_locally` warning (captures
    only the initial snapshot — a real reactivity footgun).
 10. **`liveQuery` is completely untyped (flagship feature).**
-   `@surrealguard/svelte`'s `liveQuery(client, sql: string, options)` takes a
+   `@surrealdb/analyzer-svelte`'s `liveQuery(client, sql: string, options)` takes a
    plain `string` unlinked to `SurqlRegistry`; `Row` defaults to
    `Record<string, unknown>`. So any field access / any params type-check
    silently. Two halves: (a) wire `liveQuery` to consume `SurqlRegistry` like
@@ -77,7 +77,7 @@ Secondary:
    param inference so codegen emits a real result type instead of
    `result: string` — that half is analyzer work (`live_select.rs`), assigned
    to **Workstream C** (see C5). A depends on C for the emitted type.
-11. Document `generate --out src/lib/surrealguard.generated.ts` + `$lib` alias
+11. Document `generate --out src/lib/surrealql-analyzer.generated.ts` + `$lib` alias
    for SvelteKit (root-relative default forces fragile `../../` imports).
 
 ---
@@ -101,7 +101,7 @@ Gaps:
    only works for table-free queries. Either suppress `E1001` when the
    workspace has zero schema sources, or fix the docs
    (`crates/rs/README.md:34-36`, `docs/plans/2026-07-15-rust-adapter.md:82`).
-3. **`SURREALGUARD_SCHEMA` env switch → stale cached build.** File-content
+3. **`SURREALQL_ANALYZER_SCHEMA` env switch → stale cached build.** File-content
    edits rebuild correctly (`include_bytes!`), but repointing the env var
    doesn't invalidate Cargo's fingerprint (inherent to proc-macros). Document
    the `cargo clean` caveat near schema resolution.
@@ -179,7 +179,7 @@ and an impossible cast still reports 2008.
 `analyze_live_select` (`crates/workspace/src/analyzer/data/live_select.rs`)
 doesn't compute the projection row type or param usage — a
 `LIVE SELECT name, age FROM user WHERE team = $team` codegens as
-`result: string` with no params. This is why `@surrealguard/svelte`'s
+`result: string` with no params. This is why `@surrealdb/analyzer-svelte`'s
 `liveQuery` can't be typed (Workstream A #10 depends on this). Extend the
 LiveSelect AST + lowering to retain projection/WHERE (the diagnostics audit's
 4009 note confirms lowering currently discards all clauses), then infer the row
@@ -208,7 +208,7 @@ own `CARGO_TARGET_DIR`, none touching `query.rs`/`backend.rs`:
 
 | Agent | Owns (edits) | Depends on |
 |---|---|---|
-| A — TS/CLI | `crates/embed`, `crates/cli`, `packages/**`, `examples/surrealguard.toml`, TS docs | — |
+| A — TS/CLI | `crates/embed`, `crates/cli`, `packages/**`, `examples/surrealql-analyzer.toml`, TS docs | — |
 | B — Rust adapter | `crates/macros`, `crates/rs`, `docs/plans/2026-07-15-rust-adapter.md` | — |
 | C — Analyzer | `crates/workspace/src/analyzer/**`, `crates/diagnostics/src/catalog.rs`, `docs/plans/2026-07-07-diagnostic-catalog.md`, workspace tests | the committed default-lint-level base |
 

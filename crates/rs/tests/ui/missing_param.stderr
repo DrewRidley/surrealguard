@@ -1,5 +1,5 @@
 error: this query needs 1 parameter: `min = …`
- --> tests/ui/missing_param.rs:3:37
+ --> tests/ui/missing_param.rs:3:43
   |
-3 |     let _ = surrealguard_rs::query!("SELECT name FROM user WHERE age > $min;");
-  |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3 |     let _ = surrealql_analyzer_rs::query!("SELECT name FROM user WHERE age > $min;");
+  |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

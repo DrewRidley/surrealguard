@@ -12,7 +12,7 @@
 //! reached when control continues past the `IF`.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::contract::{Contract, Position};
@@ -63,11 +63,11 @@ pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::If
             crate::analyzer::expression::expr_fact(ctx, &branch.condition)
         });
         if condition_fact.value.is_some() {
-            let span = surrealguard_syntax::span::SourceSpan::new(
+            let span = surrealql_analyzer_syntax::span::SourceSpan::new(
                 ctx.source().clone(),
                 branch.condition.span,
             );
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
+            ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 7004,
                 "this IF condition is constant, so one branch is never taken".to_string(),
@@ -78,12 +78,12 @@ pub(crate) fn analyze_if_else_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::If
             .decide(&condition_kind)
             .is_violation()
         {
-            let span = surrealguard_syntax::span::SourceSpan::new(
+            let span = surrealql_analyzer_syntax::span::SourceSpan::new(
                 ctx.source().clone(),
                 branch.condition.span,
             );
             ctx.emit(
-                surrealguard_diagnostics::catalog::finding(
+                surrealql_analyzer_diagnostics::catalog::finding(
                     span,
                     2005,
                     format!(
@@ -190,27 +190,27 @@ fn grey_dead_branch(ctx: &mut AnalysisContext<'_>, body: &ast::Block, message: &
     let Some(range) = block_span(body) else {
         return;
     };
-    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), range);
+    let span = surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), range);
     ctx.emit(
-        surrealguard_diagnostics::catalog::finding(span, 4024, message.to_string())
-            .with_tag(surrealguard_diagnostics::FindingTag::Unnecessary),
+        surrealql_analyzer_diagnostics::catalog::finding(span, 4024, message.to_string())
+            .with_tag(surrealql_analyzer_diagnostics::FindingTag::Unnecessary),
     );
 }
 
 /// The byte range spanning a block's statements (first start .. last end), or
 /// `None` for an empty block.
-fn block_span(block: &ast::Block) -> Option<surrealguard_syntax::span::ByteRange> {
+fn block_span(block: &ast::Block) -> Option<surrealql_analyzer_syntax::span::ByteRange> {
     let first = block.statements.first()?;
     let last = block.statements.last()?;
-    surrealguard_syntax::span::ByteRange::new(first.span.start(), last.span.end()).ok()
+    surrealql_analyzer_syntax::span::ByteRange::new(first.span.start(), last.span.end()).ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_diagnostics::Finding;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use crate::schema::SchemaIndex;
 
@@ -224,7 +224,7 @@ mod tests {
         )
         .expect("query parses");
         let ast::Statement::IfElse(stmt) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
                 .expect("no IfElseStatement node in tree")
                 .node
         else {
@@ -250,7 +250,7 @@ mod tests {
     fn if_else_kind(source: &str) -> Kind {
         let parsed = parse_source(SourceId::new("flow:test"), source).expect("query parses");
         let ast::Statement::IfElse(stmt) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
                 .expect("no IfElseStatement node in tree")
                 .node
         else {
@@ -291,7 +291,7 @@ mod tests {
     fn if_else_findings(source: &str) -> Vec<Finding> {
         let parsed = parse_source(SourceId::new("flow:test"), source).expect("query parses");
         let ast::Statement::IfElse(stmt) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
                 .expect("no IfElseStatement node in tree")
                 .node
         else {
@@ -345,7 +345,7 @@ mod tests {
         assert_eq!(dead.len(), 1, "exactly one dead-branch finding");
         assert_eq!(
             dead[0].tags(),
-            &[surrealguard_diagnostics::FindingTag::Unnecessary]
+            &[surrealql_analyzer_diagnostics::FindingTag::Unnecessary]
         );
     }
 
@@ -506,7 +506,7 @@ mod tests {
         )
         .expect("query parses");
         let ast::Statement::Let(stmt) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "LetStatement")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "LetStatement")
                 .expect("no LetStatement node in tree")
                 .node
         else {
@@ -521,9 +521,9 @@ mod tests {
             &mut diagnostics,
         );
         let option_int = Kind::Either(vec![Kind::None, Kind::Int]);
-        let span = surrealguard_syntax::span::SourceSpan::new(
+        let span = surrealql_analyzer_syntax::span::SourceSpan::new(
             ctx.source().clone(),
-            surrealguard_syntax::span::ByteRange::new(0, 1).unwrap(),
+            surrealql_analyzer_syntax::span::ByteRange::new(0, 1).unwrap(),
         );
         ctx.define_local(
             "x".into(),
@@ -610,7 +610,7 @@ mod tests {
         use crate::expression::{ExpressionFact, ExpressionValueClass};
         let parsed = parse_source(SourceId::new("flow:test"), source).expect("query parses");
         let ast::Statement::IfElse(stmt) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
                 .expect("no IfElseStatement node in tree")
                 .node
         else {
@@ -624,9 +624,9 @@ mod tests {
             parsed.text(),
             &mut diagnostics,
         );
-        let span = surrealguard_syntax::span::SourceSpan::new(
+        let span = surrealql_analyzer_syntax::span::SourceSpan::new(
             ctx.source().clone(),
-            surrealguard_syntax::span::ByteRange::new(0, 1).unwrap(),
+            surrealql_analyzer_syntax::span::ByteRange::new(0, 1).unwrap(),
         );
         let fact = ExpressionFact::new(span, ExpressionValueClass::Variable).with_kind(kind);
         if narrowed {
@@ -666,7 +666,7 @@ mod tests {
                 .find(|f| f.code().number() == 4024)
                 .unwrap()
                 .tags(),
-            &[surrealguard_diagnostics::FindingTag::Unnecessary]
+            &[surrealql_analyzer_diagnostics::FindingTag::Unnecessary]
         );
         // Only the ELSE runs → the IF's value is the ELSE's `int`.
         assert_eq!(kind, Kind::Int);

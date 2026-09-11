@@ -1,7 +1,7 @@
 # `any` / `unknown` ratchet baseline — every corpus site that yields an
 # imprecise type, with how many `any` leaves it contains.
 #
-# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test any_ratchet
+# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test any_ratchet
 #
 # Format:  <count>  <site id>  [# expected: <reason>]
 #

@@ -8,11 +8,11 @@
 //! from. Exhaustive `match`es (no wildcards) keep it in step with the AST:
 //! a new variant fails to compile here until it is walked.
 
-use surrealguard_syntax::ast::{
+use surrealql_analyzer_syntax::ast::{
     Block, DataClause, DefineStmt, Expr, GraphStep, Idiom, IdiomPart, InsertData, InsertStmt,
     PartialNode, Projection, RemoveTarget, ReturnMode, SelectStmt, Spanned, Statement, TypeExpr,
 };
-use surrealguard_syntax::span::ByteRange;
+use surrealql_analyzer_syntax::span::ByteRange;
 
 /// Everything the walk found: each span with a label saying what carried it,
 /// and each `PartialNode`.

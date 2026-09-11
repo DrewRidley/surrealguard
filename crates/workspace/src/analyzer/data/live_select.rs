@@ -11,7 +11,7 @@
 //! (4009/4027, [`super::live_contract`]).
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 

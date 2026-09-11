@@ -125,7 +125,7 @@ Recommend **(b)**:
 
 ### D2. Home: `crates/syntax`
 
-`surrealguard-syntax` already owns text → CST (`parse.rs`, `source.rs`,
+`surrealql-analyzer-syntax` already owns text → CST (`parse.rs`, `source.rs`,
 `span.rs`). Lowering is a syntax concern; it moves the crate's contract from
 "you get a CST" to "you get an AST". Layout:
 
@@ -142,7 +142,7 @@ crates/syntax/src/
     ...             // one module per statement family, mirroring ast/
 ```
 
-`surrealguard-workspace` then depends on `ast::*` instead of `tree_sitter::Node`.
+`surrealql-analyzer-workspace` then depends on `ast::*` instead of `tree_sitter::Node`.
 The `tree-sitter` dependency disappears from the workspace crate entirely when
 migration completes — a good doneness check.
 

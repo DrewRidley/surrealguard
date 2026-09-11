@@ -22,8 +22,8 @@
 //! reachable exit is the failure mode.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-use surrealguard_syntax::span::ByteRange;
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::span::ByteRange;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::statement::analyze_lowered_statement;
@@ -104,15 +104,17 @@ fn block_flow(ctx: &mut AnalysisContext<'_>, block: &ast::Block) -> Flow {
         if terminated {
             // Everything after a diverging statement never runs (4006) — one
             // finding at the first dead statement.
-            let span =
-                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), statement.span);
+            let span = surrealql_analyzer_syntax::span::SourceSpan::new(
+                ctx.source().clone(),
+                statement.span,
+            );
             ctx.emit(
-                surrealguard_diagnostics::catalog::finding(
+                surrealql_analyzer_diagnostics::catalog::finding(
                     span,
                     4006,
                     "this statement is unreachable — the block already returned".to_string(),
                 )
-                .with_tag(surrealguard_diagnostics::FindingTag::Unnecessary),
+                .with_tag(surrealql_analyzer_diagnostics::FindingTag::Unnecessary),
             );
             break;
         }
@@ -315,9 +317,9 @@ pub(crate) fn block_diverges(block: &ast::Block) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_diagnostics::Finding;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use crate::schema::SchemaIndex;
 
@@ -326,7 +328,7 @@ mod tests {
     fn block_exit_kind(source: &str, bind: impl FnOnce(&mut AnalysisContext<'_>)) -> Kind {
         let parsed = parse_source(SourceId::new("flow:test"), source).expect("query parses");
         let ast::Statement::Block(block) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "Block")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "Block")
                 .expect("no Block node in tree")
                 .node
         else {
@@ -347,9 +349,9 @@ mod tests {
     /// Binds `$name` to `kind` as a local in `ctx`.
     fn bind_param(ctx: &mut AnalysisContext<'_>, name: &str, kind: Kind) {
         use crate::expression::{ExpressionFact, ExpressionValueClass};
-        let span = surrealguard_syntax::span::SourceSpan::new(
+        let span = surrealql_analyzer_syntax::span::SourceSpan::new(
             ctx.source().clone(),
-            surrealguard_syntax::span::ByteRange::new(0, 1).unwrap(),
+            surrealql_analyzer_syntax::span::ByteRange::new(0, 1).unwrap(),
         );
         let fact = ExpressionFact::new(span, ExpressionValueClass::Variable).with_kind(kind);
         ctx.define_local(name.to_string(), fact);
@@ -444,7 +446,7 @@ mod tests {
         )
         .expect("query parses");
         let ast::Statement::Block(block) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "Block")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "Block")
                 .expect("no Block node in tree")
                 .node
         else {

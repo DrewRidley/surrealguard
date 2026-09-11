@@ -4,7 +4,7 @@
 //
 // This file is never executed.
 
-import { createClient, defineQuery, RecordId } from "./surrealguard.generated";
+import { createClient, defineQuery, RecordId } from "./surrealql-analyzer.generated";
 import { allPeople, liveTeam, peopleOf } from "./queries";
 
 const db = createClient({ url: "ws://localhost:8000/rpc" });
@@ -50,10 +50,10 @@ export async function guarantees() {
   // A query text the registry does not contain is a hard error carrying its own
   // remedy, not a silent degrade to `unknown[]`:
   //   Argument of type 'SurqlError<"this query is not in the generated
-  //   registry - run `surrealguard generate`">' is not assignable to …
+  //   registry - run `surrealql-analyzer generate`">' is not assignable to …
   //
   // That guarantee CANNOT be demonstrated here, and the reason is worth stating.
-  // `surrealguard generate` extracts every `defineQuery` / `defineLive` literal
+  // `surrealql-analyzer generate` extracts every `defineQuery` / `defineLive` literal
   // in this project, so any query written in this file is, by construction, in
   // the generated file. A registry miss is therefore only ever a *stale*
   // registry — and an example that regenerates cleanly is exactly one that

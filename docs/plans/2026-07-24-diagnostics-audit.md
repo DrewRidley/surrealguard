@@ -1,6 +1,6 @@
-# SurrealGuard diagnostics audit (2026-07-24)
+# SurrealQL Analyzer diagnostics audit (2026-07-24)
 
-# SurrealGuard Lint Catalog — Tech Lead Synthesis
+# SurrealQL Analyzer Lint Catalog — Tech Lead Synthesis
 
 Markers: **[R]** = registered/reserved but no emit site today · **[NEW]** = proposed lint, not yet in catalog · **†** = default-level change vs. today's policy.
 
@@ -100,7 +100,7 @@ Markers: **[R]** = registered/reserved but no emit site today · **[NEW]** = pro
 | Code | Description | Default |
 |------|-------------|---------|
 | 4016 **[R]** | Empty block in value position (style) | allow |
-| 6003 **†** | SurrealGuard cannot analyze a type yet (tool-coverage note) | allow *(was hint/on)* |
+| 6003 **†** | SurrealQL Analyzer cannot analyze a type yet (tool-coverage note) | allow *(was hint/on)* |
 | 7002 **†** | Variable shadowing | allow *(was warn)* |
 | 7003 **†** | Heterogeneous array literal | allow *(was warn)* |
 | 7008 | Schemaless table in a typed workspace | allow |
@@ -118,7 +118,7 @@ These eight are the **only** codes off by default. Everything else is deny or wa
 - **7003** — heterogeneous arrays (`array<int|string>` is real) **†**
 - **7008** — schemaless-in-typed-workspace (product-owner mandate) 
 - **7009** — whole-table UPDATE/DELETE (bulk migrations)
-- **6003** — SurrealGuard's own analyzer-coverage gap; noise for most users, useful only to those auditing tool coverage **†**
+- **6003** — SurrealQL Analyzer's own analyzer-coverage gap; noise for most users, useful only to those auditing tool coverage **†**
 - **4016 [R]** — empty value-position block, pure style (if ever revived)
 - **7014 [NEW]** — whole-table SELECT without WHERE/LIMIT (read-side analogue of 7009; small tables & admin queries legitimately hit it). FP risk: medium.
 - **7015 [NEW]** — any `SELECT *` (pure precision/perf opinion; `SELECT *` is extremely common and often fine). FP risk: high. **Keep strictly separate from 7007**, which stays warn and only fires on the redundant `SELECT *, field` overlap.
@@ -667,7 +667,7 @@ Ranked by value ÷ cost. Cheap, low-FP, high-certainty first.
   },
   {
     "family": "5xxx-functions + 6xxx-params",
-    "summary": "Audited all 12 codes in the functions/params family against their real emit sites and SurrealDB semantics. Emitting today: 5001 (unknown fn), 5002 (arity+arg-kind, builtin & fn:: & closure), 5005 (type::field const path), 5009 (fn:: non-termination), 6001 (conflicting param constraints), 6003 (analyzer-limitation hint), 6004 (use-before-LET), 6005 (context param outside context), 6007 (protected-param assignment). Registered but NOT implemented: 5010 (event self-trigger, marked \ud83d\udd28), 6002 (param shadows DEFINE PARAM w/ different kind, \ud83d\udd36), 6006 (host type contradicts constraint, \ud83d\udd28 adapter). Default levels: this family is almost entirely contract violations (deny) or advisories (warn) \u2014 no perf/style opt-in rules belong here, EXCEPT 6003 which reports SurrealGuard's own limitation and reads as noise, so I recommend it move to allow (opt-in). Message quality is mostly good and consequence-first, but three real defects: (1) builtin 5001 lacks the did-you-mean help that the fn:: path already has; (2) the two builtin 5002 sites in signature.rs have no help/fix line while the fn:: 5002 site does \u2014 inconsistent; (3) 5005's non-string branch renders the value with Rust Debug (`{other:?}`) leaking internal enum variants like `Number(Int(42))`. Completeness gaps worth adding: type::thing/type::table const table-name validation, math::fixed invalid places constant, plus finishing 5010/6002/6006.",
+    "summary": "Audited all 12 codes in the functions/params family against their real emit sites and SurrealDB semantics. Emitting today: 5001 (unknown fn), 5002 (arity+arg-kind, builtin & fn:: & closure), 5005 (type::field const path), 5009 (fn:: non-termination), 6001 (conflicting param constraints), 6003 (analyzer-limitation hint), 6004 (use-before-LET), 6005 (context param outside context), 6007 (protected-param assignment). Registered but NOT implemented: 5010 (event self-trigger, marked \ud83d\udd28), 6002 (param shadows DEFINE PARAM w/ different kind, \ud83d\udd36), 6006 (host type contradicts constraint, \ud83d\udd28 adapter). Default levels: this family is almost entirely contract violations (deny) or advisories (warn) \u2014 no perf/style opt-in rules belong here, EXCEPT 6003 which reports SurrealQL Analyzer's own limitation and reads as noise, so I recommend it move to allow (opt-in). Message quality is mostly good and consequence-first, but three real defects: (1) builtin 5001 lacks the did-you-mean help that the fn:: path already has; (2) the two builtin 5002 sites in signature.rs have no help/fix line while the fn:: 5002 site does \u2014 inconsistent; (3) 5005's non-string branch renders the value with Rust Debug (`{other:?}`) leaking internal enum variants like `Number(Int(42))`. Completeness gaps worth adding: type::thing/type::table const table-name validation, math::fixed invalid places constant, plus finishing 5010/6002/6006.",
     "codes": [
       {
         "code": "5001",
@@ -721,7 +721,7 @@ Ranked by value ÷ cost. Cheap, low-FP, high-certainty first.
       {
         "code": "6003",
         "recommended_default_level": "allow",
-        "level_rationale": "This reports SurrealGuard's OWN inability to analyze a type ('surrealguard can't analyze ... yet'), not a user contract violation. It is not actionable by most users and reads as tool noise. Move from Hint(on) to allow (opt-in) so only users who want to audit analyzer coverage see it. This is the one code in the family that fits the product-owner 'opt-in' bucket.",
+        "level_rationale": "This reports SurrealQL Analyzer's OWN inability to analyze a type ('surrealql-analyzer can't analyze ... yet'), not a user contract violation. It is not actionable by most users and reads as tool noise. Move from Hint(on) to allow (opt-in) so only users who want to audit analyzer coverage see it. This is the one code in the family that fits the product-owner 'opt-in' bucket.",
         "current_message_ok": true,
         "message_rewrite": "Message + help (`unsupported type syntax: ...`) are honest and fine as-is; the change is the default level, not the text."
       },

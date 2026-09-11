@@ -8,10 +8,10 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/svelte";
-import type { SurrealGuardClient } from "@surrealguard/client";
+import type { SurrealQLAnalyzerClient } from "@surrealdb/analyzer-client";
 import Params from "./Params.svelte";
 
-const CLIENT_KEY = Symbol.for("@surrealguard/svelte:client");
+const CLIENT_KEY = Symbol.for("@surrealdb/analyzer-svelte:client");
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("<Query> and changing params", () => {
@@ -25,7 +25,7 @@ describe("<Query> and changing params", () => {
       query,
       surreal: { query },
       onInvalidate: () => () => {},
-    } as unknown as SurrealGuardClient;
+    } as unknown as SurrealQLAnalyzerClient;
 
     const { rerender } = render(Params, {
       props: { team: "red" },

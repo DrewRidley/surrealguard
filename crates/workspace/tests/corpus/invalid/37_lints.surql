@@ -20,5 +20,5 @@ UPDATE article:hello SET id = article:world;
 DEFINE FIELD fetched ON ticket VALUE http::get('https://example.com');
 
 -- 7013: a suppression directive naming no catalog code.
--- surrealguard: allow(ghost)
+-- surrealql-analyzer: allow(ghost)
 SELECT title FROM article WHERE id = article:hello;

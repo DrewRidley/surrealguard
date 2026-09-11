@@ -1,13 +1,13 @@
 {
-  "name": "@surrealguard/svelte",
+  "name": "@surrealdb/analyzer-svelte",
   "version": "0.5.3",
-  "description": "Svelte 5 / SvelteKit bindings for SurrealGuard: typed live queries as runes, SSR hydration.",
+  "description": "Svelte 5 / SvelteKit bindings for SurrealQL Analyzer: typed live queries as runes, SSR hydration.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
   "author": "Drew Ridley",
   "repository": {
     "type": "git",
-    "url": "https://github.com/DrewRidley/surrealguard",
+    "url": "https://github.com/surrealdb/analyzer",
     "directory": "packages/svelte"
   },
   "keywords": [
@@ -51,8 +51,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@surrealguard/client": "0.5.3",
-    "@surrealguard/query": "0.5.3",
+    "@surrealdb/analyzer-client": "0.5.3",
+    "@surrealdb/analyzer-query": "0.5.3",
     "magic-string": "^0.30.0"
   },
   "peerDependencies": {

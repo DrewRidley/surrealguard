@@ -5,8 +5,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use surrealguard_syntax::source::SourceId;
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analysis::{LetBindingAnalysis, NarrowingAnalysis, ParamInference};
 use crate::expression::{ExpressionFact, ExpressionValueClass};
@@ -498,8 +498,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use surrealdb_types::Kind;
-    use surrealguard_syntax::source::SourceId;
-    use surrealguard_syntax::span::{ByteRange, SourceSpan};
+    use surrealql_analyzer_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
     use super::StatementEnv;
     use crate::expression::{ExpressionFact, ExpressionValueClass};

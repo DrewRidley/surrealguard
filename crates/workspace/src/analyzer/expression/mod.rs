@@ -10,7 +10,7 @@ pub(crate) mod check;
 pub(crate) mod infer;
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::expression::ExpressionFact;
@@ -43,14 +43,15 @@ pub fn analyze_expr(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr
 fn check_value_block(
     ctx: &mut AnalysisContext<'_>,
     block: &ast::Block,
-    span: surrealguard_syntax::span::ByteRange,
+    span: surrealql_analyzer_syntax::span::ByteRange,
 ) {
     let _ = span;
     match block.statements.last() {
         None => {}
         Some(last) if matches!(last.node, ast::Statement::Let(_)) => {
-            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), last.span);
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
+            let span =
+                surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), last.span);
+            ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 4017,
                 "block ends with LET, so its value is NONE — return the value instead".to_string(),
@@ -62,7 +63,7 @@ fn check_value_block(
 
 /// [`analyze_expr`], but returning the full fact.
 pub fn expr_fact(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) -> ExpressionFact {
-    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
+    let span = surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
 
     // Blocks thread an environment through their statements — that is the
     // dispatcher's job, so route through it rather than pure inference.
@@ -78,7 +79,7 @@ pub fn expr_fact(ctx: &mut AnalysisContext<'_>, expr: &ast::Spanned<ast::Expr>) 
     check::check_value_expression(ctx, expr);
     for param in &fact.dependencies.params {
         if is_context_only_param(param) {
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
+            ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                 fact.span.clone(),
                 6005,
                 format!("`${param}` only exists inside the construct that binds it"),
@@ -103,15 +104,15 @@ pub(crate) fn is_context_only_param(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_diagnostics::Finding;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use crate::schema::{extract_schema, SchemaIndex};
 
     fn analyze(schema: &SchemaIndex, query: &str, node_kind: &str) -> Kind {
         let parsed = parse_source(SourceId::new("expr:test"), query).expect("query parses");
-        let lowered = surrealguard_syntax::lower::lower_first_expr(&parsed, node_kind)
+        let lowered = surrealql_analyzer_syntax::lower::lower_first_expr(&parsed, node_kind)
             .unwrap_or_else(|| panic!("no {node_kind} in {query:?}"));
         let mut diagnostics: Vec<Finding> = Vec::new();
         let mut ctx = AnalysisContext::new(
@@ -185,7 +186,7 @@ mod tests {
 
         let parsed = parse_source(SourceId::new("expr:test"), "RETURN string::len(name);")
             .expect("query parses");
-        let lowered = surrealguard_syntax::lower::lower_first_expr(&parsed, "FunctionCall")
+        let lowered = surrealql_analyzer_syntax::lower::lower_first_expr(&parsed, "FunctionCall")
             .expect("function call node");
         let mut diagnostics: Vec<Finding> = Vec::new();
         let mut ctx = AnalysisContext::new(
@@ -220,8 +221,8 @@ mod tests {
         let schema = SchemaIndex::default();
         let parsed = parse_source(SourceId::new("expr:test"), "RETURN { LET $x = 1; $x + 1 };")
             .expect("query parses");
-        let lowered =
-            surrealguard_syntax::lower::lower_first_expr(&parsed, "Block").expect("block node");
+        let lowered = surrealql_analyzer_syntax::lower::lower_first_expr(&parsed, "Block")
+            .expect("block node");
         let mut diagnostics: Vec<Finding> = Vec::new();
         let mut ctx = AnalysisContext::new(
             &schema,
@@ -240,8 +241,9 @@ mod tests {
         let schema = SchemaIndex::default();
         let parsed =
             parse_source(SourceId::new("expr:test"), "RETURN $missing + 1;").expect("query parses");
-        let lowered = surrealguard_syntax::lower::lower_first_expr(&parsed, "BinaryExpression")
-            .expect("binary expression node");
+        let lowered =
+            surrealql_analyzer_syntax::lower::lower_first_expr(&parsed, "BinaryExpression")
+                .expect("binary expression node");
         let mut diagnostics: Vec<Finding> = Vec::new();
         let mut ctx = AnalysisContext::new(
             &schema,

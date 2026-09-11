@@ -1,15 +1,15 @@
 <div align="center">
 
-# 🛡️ SurrealGuard
+# 🛡️ SurrealQL Analyzer
 
 ### Static analysis and type inference for SurrealQL
 
 Catch unknown fields, kind mismatches, and bad graph traversals *before* a query
 reaches SurrealDB — and get fully typed results in **TypeScript** and **Rust**.
 
-[![crates.io](https://img.shields.io/crates/v/surrealguard?label=surrealguard&color=e07b39&logo=rust&logoColor=white)](https://crates.io/crates/surrealguard)
-[![npm](https://img.shields.io/npm/v/@surrealguard/client?label=%40surrealguard%2Fclient&color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/@surrealguard/client)
-[![CI](https://github.com/DrewRidley/surrealguard/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/DrewRidley/surrealguard/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/surrealql-analyzer?label=surrealql-analyzer&color=e07b39&logo=rust&logoColor=white)](https://crates.io/crates/surrealql-analyzer)
+[![npm](https://img.shields.io/npm/v/@surrealdb/analyzer-client?label=%40surrealdb%2Fanalyzer-client&color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/@surrealdb/analyzer-client)
+[![CI](https://github.com/surrealdb/analyzer/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/surrealdb/analyzer/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-3b82f6)](#license)
 
 [**Docs**](https://surrealguard.dev/docs/) · [**Live playground**](https://surrealguard.dev/#playground) · [**DESIGN.md**](docs/DESIGN.md)
@@ -20,39 +20,39 @@ reaches SurrealDB — and get fully typed results in **TypeScript** and **Rust**
 
 ## What it is
 
-SurrealGuard parses your `.surql` schema and queries into a typed, span-carrying
+SurrealQL Analyzer parses your `.surql` schema and queries into a typed, span-carrying
 AST, infers the response type of every statement, and reports violations of each
 construct's contract. One engine, four front ends:
 
 | | |
 | --- | --- |
-| **CLI** — `surrealguard` | `check` your workspace in CI, `generate` TypeScript types, `watch` both while you develop |
-| **Language server** — `surrealguard-lsp` | Diagnostics, hover, inlay hints, go-to-definition, and type-aware completion, in `.surql` files *and* in SurrealQL embedded in TypeScript / Svelte / Vue / Astro |
-| **TypeScript** — `@surrealguard/{client,query,next,svelte}` | `db.query("SELECT …")` typed from the query text; live queries as framework-native reactive state |
-| **Rust** — `surrealguard-rs` | `query!("SELECT …")` checked and typed at compile time |
+| **CLI** — `surrealql-analyzer` | `check` your workspace in CI, `generate` TypeScript types, `watch` both while you develop |
+| **Language server** — `surrealql-analyzer-lsp` | Diagnostics, hover, inlay hints, go-to-definition, and type-aware completion, in `.surql` files *and* in SurrealQL embedded in TypeScript / Svelte / Vue / Astro |
+| **TypeScript** — `@surrealdb/analyzer-{client,query,next,svelte}` | `db.query("SELECT …")` typed from the query text; live queries as framework-native reactive state |
+| **Rust** — `surrealql-analyzer-rs` | `query!("SELECT …")` checked and typed at compile time |
 
 ## Why
 
 SurrealDB is permissive at runtime: cross-kind comparisons order by kind instead
 of failing, coercions succeed silently, and a misspelled field just returns
-`NONE`. That is exactly where bugs hide. SurrealGuard is **contract-first** —
+`NONE`. That is exactly where bugs hide. SurrealQL Analyzer is **contract-first** —
 every construct has a contract (what the author must mean for the statement to
 make sense), and the analyzer reports violations of that contract even when the
 engine would happily execute the query.
 
 SurrealDB's own parser discards spans before producing its AST, so it cannot
-power an analyzer or editor tooling. SurrealGuard parses with tree-sitter into a
+power an analyzer or editor tooling. SurrealQL Analyzer parses with tree-sitter into a
 typed, span-carrying AST and runs all analysis on that.
 
 ## Quickstart (TypeScript)
 
 ```sh
-npm i @surrealguard/client surrealdb
-npm i -D surrealguard typescript
-npx surrealguard init          # writes a commented surrealguard.toml
+npm i @surrealdb/analyzer-client surrealdb
+npm i -D surrealql-analyzer typescript
+npx surrealql-analyzer init          # writes a commented surrealql-analyzer.toml
 ```
 
-Point `surrealguard.toml`'s `schema` glob at your `.surql` files, and write a
+Point `surrealql-analyzer.toml`'s `schema` glob at your `.surql` files, and write a
 schema:
 
 ```surql
@@ -72,7 +72,7 @@ the string in:
 
 ```ts
 // src/main.ts
-import { createClient, RecordId } from "./surrealguard.generated";
+import { createClient, RecordId } from "./surrealql-analyzer.generated";
 
 const db = createClient({
   url: "ws://localhost:8000/rpc",
@@ -90,11 +90,11 @@ for (const person of people) {
 ```
 
 ```sh
-npx surrealguard generate --out src/surrealguard.generated.ts
+npx surrealql-analyzer generate --out src/surrealql-analyzer.generated.ts
 ```
 
 ```
-generated src/surrealguard.generated.ts (1 query, 8ms)
+generated src/surrealql-analyzer.generated.ts (1 query, 8ms)
 ```
 
 While you are developing, run it as a loop instead — `watch` checks the whole
@@ -102,7 +102,7 @@ workspace on every save and regenerates when the check passes, so the types
 never go stale behind you:
 
 ```sh
-npx surrealguard watch --out src/surrealguard.generated.ts
+npx surrealql-analyzer watch --out src/surrealql-analyzer.generated.ts
 ```
 
 `generate` scanned `src/main.ts`, analyzed the query against the schema, and
@@ -110,7 +110,7 @@ wrote a module that re-exports the client together with a registry keyed by the
 query's exact text:
 
 ```ts
-declare module "@surrealguard/client" {
+declare module "@surrealdb/analyzer-client" {
   interface SurqlRegistry {
     "SELECT name, age FROM person WHERE team = $team": {
       result: [Array<{ age: number; name: string }>];
@@ -133,25 +133,25 @@ reachable at `db.surreal`.
 Three things are worth stating because each one produces `any` **with no error
 on your own code**:
 
-- `@surrealguard/client` must actually be installed. The generated file says
-  `declare module "@surrealguard/client"`; if that specifier does not resolve,
+- `@surrealdb/analyzer-client` must actually be installed. The generated file says
+  `declare module "@surrealdb/analyzer-client"`; if that specifier does not resolve,
   TypeScript reports `TS2664` *inside the generated file* and silently drops the
   whole registry.
 - `--out` must match how you import it. Bare `generate` writes to the workspace
-  root, which is usually not where `./surrealguard.generated`,
-  `$lib/surrealguard.generated` or `@/surrealguard.generated` points. Pin it in
+  root, which is usually not where `./surrealql-analyzer.generated`,
+  `$lib/surrealql-analyzer.generated` or `@/surrealql-analyzer.generated` points. Pin it in
   `package.json` once.
 - A `.svelte` `<script>` needs `lang="ts"`. Without it Svelte does not typecheck
   the block at all.
 
-See [`@surrealguard/client`](packages/client) for the full contract — including
+See [`@surrealdb/analyzer-client`](packages/client) for the full contract — including
 [when everything is `any`](packages/client/README.md#when-everything-is-any) —
 and [`examples/`](examples) for a vanilla-TS and a SvelteKit project you can run.
 
 ## Check in CI
 
 ```sh
-npx surrealguard check
+npx surrealql-analyzer check
 ```
 
 `check` analyzes both your `.surql` files and the SurrealQL embedded in host
@@ -191,7 +191,7 @@ a broken build can never overwrite good types.
 query once and subscribe to it. Vanilla TypeScript needs no extra package:
 
 ```ts
-import { defineLive } from "./surrealguard.generated";
+import { defineLive } from "./surrealql-analyzer.generated";
 
 const livePeople = defineLive("SELECT id, name, age FROM person");
 const stop = db.watch(livePeople, (rows) => render(rows));
@@ -199,13 +199,13 @@ const stop = db.watch(livePeople, (rows) => render(rows));
 ```
 
 The framework adapters turn the same reference into framework-native reactive
-state, on a shared core (`@surrealguard/query`) that owns the cache,
+state, on a shared core (`@surrealdb/analyzer-query`) that owns the cache,
 reference-counts subscriptions, and reconciles `LIVE SELECT` notifications by
 record id.
 
 ```svelte
 <script lang="ts">
-  import { createLive } from "@surrealguard/svelte";
+  import { createLive } from "@surrealdb/analyzer-svelte";
   import { livePeople } from "$lib/queries";
 
   // runes-reactive — read it directly, no store `$` prefix
@@ -215,7 +215,7 @@ record id.
 {#each people.data as person (person.id)}<li>{person.name}</li>{/each}
 ```
 
-`@surrealguard/next` offers the same as a hook: `const people =
+`@surrealdb/analyzer-next` offers the same as a hook: `const people =
 useLive(livePeople)`. Both packages seed from the server with `preload(db,
 livePeople)`, whose payload carries its own cache key — so the component
 subscribes to exactly the query the server ran without naming it twice, the
@@ -224,7 +224,7 @@ first paint has no loading gap, and it upgrades to live in place.
 ## The compiler is the checker (Rust)
 
 ```rust
-use surrealguard_rs::query;
+use surrealql_analyzer_rs::query;
 
 // Checked against your schema at compile time. A wrong table, unknown field,
 // bad arity, or kind mismatch is a `cargo check` error — no external step.
@@ -235,18 +235,18 @@ let users = query!("SELECT name, age FROM user");
 `query!` runs the real analyzer during compilation and turns findings into
 spanned `compile_error!`s, then generates the result type from the inferred
 response kind — no codegen step, no language server, no runtime schema fetch.
-It resolves the schema from `SURREALGUARD_SCHEMA`, or from a `schema/` or
+It resolves the schema from `SURREALQL_ANALYZER_SCHEMA`, or from a `schema/` or
 `migrations/` directory under the crate root (applied in filename order).
 `surql!` is the lighter form: check a query, expand to its text.
 
 ## Editors
 
-`surrealguard-lsp` serves the analyzer over stdio for `.surql` files and for
+`surrealql-analyzer-lsp` serves the analyzer over stdio for `.surql` files and for
 SurrealQL embedded in host files, so squiggles land on the exact token inside an
 inline query. It provides diagnostics, **type-aware completion** (fields, tables,
 `$params`, `fn::` and builtin paths, graph steps that only offer traversable
 edges), **inlay type hints** on `LET` bindings, **hover** on tables, `LET`
-variables and context params, and go-to-definition. It reads `surrealguard.toml`,
+variables and context params, and go-to-definition. It reads `surrealql-analyzer.toml`,
 so your `[lints]` levels apply live in the editor.
 
 Zed users can install the
@@ -254,11 +254,11 @@ Zed users can install the
 any other LSP-capable editor can point at the binary directly.
 
 For TypeScript and JavaScript files there is a second, lighter option:
-[`@surrealguard/ts-plugin`](packages/ts-plugin), a TypeScript **language service
+[`@surrealdb/analyzer-ts-plugin`](packages/ts-plugin), a TypeScript **language service
 plugin**. One entry in `tsconfig.json` —
 
 ```jsonc
-{ "compilerOptions": { "plugins": [{ "name": "@surrealguard/ts-plugin" }] } }
+{ "compilerOptions": { "plugins": [{ "name": "@surrealdb/analyzer-ts-plugin" }] } }
 ```
 
 — and the findings inside your `db.query("…")` strings come back as
@@ -268,7 +268,7 @@ query's tokens. That matters beyond convenience: the standalone LSP is a
 resolves that competition differently on every keystroke, so an inline query
 flickers between highlighted and plain string. A plugin has nothing to race —
 its answers *are* TypeScript's. It does not load in `tsc` (that is TypeScript's
-design), which is the right split: CI keeps running `surrealguard check`, which
+design), which is the right split: CI keeps running `surrealql-analyzer check`, which
 sees the whole workspace instead of one file at a time. `.svelte` and `.vue`
 still need the LSP; the tools that own those files build their TypeScript
 service directly and never read `compilerOptions.plugins`.
@@ -302,8 +302,8 @@ service directly and never read `compilerOptions.plugins`.
 
 ## Configuration
 
-`surrealguard.toml` is discovered by walking up from the working directory; the
-directory holding it is the workspace root. `surrealguard init` writes a fully
+`surrealql-analyzer.toml` is discovered by walking up from the working directory; the
+directory holding it is the workspace root. `surrealql-analyzer init` writes a fully
 commented starter.
 
 ```toml
@@ -333,28 +333,28 @@ glob of their own.
 **TypeScript / CLI:**
 
 ```sh
-npm i @surrealguard/client surrealdb    # + @surrealguard/{query,next,svelte}
-npm i -D surrealguard                   # the CLI, as a project dev dependency
+npm i @surrealdb/analyzer-client surrealdb    # + @surrealdb/analyzer-{query,next,svelte}
+npm i -D surrealql-analyzer                   # the CLI, as a project dev dependency
 ```
 
-The `surrealguard` npm package is a launcher that downloads the prebuilt binary
-matching its version. `npx surrealguard --help` works without installing.
+The `surrealql-analyzer` npm package is a launcher that downloads the prebuilt binary
+matching its version. `npx surrealql-analyzer --help` works without installing.
 
 **Rust:**
 
 ```sh
-cargo add surrealguard-rs        # the query! / surql! macros
-cargo binstall surrealguard      # the CLI, prebuilt; `cargo install surrealguard` builds it
-cargo install surrealguard-lsp   # the language server
+cargo add surrealql-analyzer-rs        # the query! / surql! macros
+cargo binstall surrealql-analyzer      # the CLI, prebuilt; `cargo install surrealql-analyzer` builds it
+cargo install surrealql-analyzer-lsp   # the language server
 ```
 
 Prebuilt archives for both binaries, every supported target, are attached to each
-[GitHub Release](https://github.com/DrewRidley/surrealguard/releases).
+[GitHub Release](https://github.com/surrealdb/analyzer/releases).
 
 ## Project layout
 
 ```
-surrealguard/
+surrealql-analyzer/
 ├── crates/
 │   ├── syntax/                # tree-sitter parsing, typed span-carrying AST, lowering
 │   ├── tree-sitter-surrealql/ # the vendored SurrealQL grammar
@@ -363,11 +363,11 @@ surrealguard/
 │   ├── codegen/               # Kind → TypeScript generation
 │   ├── embed/                 # embedded-SurrealQL extraction from host files
 │   ├── macros/                # the surql! / query! proc-macros
-│   ├── rs/                    # surrealguard-rs runtime (typed results)
-│   ├── cli/                   # the `surrealguard` binary
-│   ├── lsp/                   # the `surrealguard-lsp` binary
+│   ├── rs/                    # surrealql-analyzer-rs runtime (typed results)
+│   ├── cli/                   # the `surrealql-analyzer` binary
+│   ├── lsp/                   # the `surrealql-analyzer-lsp` binary
 │   └── wasm/                  # the browser-playground analyzer build
-├── packages/          # @surrealguard/{client,query,next,svelte} (pnpm workspace)
+├── packages/          # @surrealdb/analyzer-{client,query,next,svelte} (pnpm workspace)
 ├── examples/          # runnable vanilla-TS and SvelteKit projects
 └── docs/              # DESIGN.md + design plans (incl. the diagnostic catalog)
 ```
@@ -375,7 +375,7 @@ surrealguard/
 The grammar is vendored in-repo at `crates/tree-sitter-surrealql`, copied
 verbatim from the official
 [`surrealdb/surrealql-tree-sitter`](https://github.com/surrealdb/surrealql-tree-sitter)
-(SurrealGuard's precedence fix and feature additions were merged there upstream).
+(SurrealQL Analyzer's precedence fix and feature additions were merged there upstream).
 
 ## Contributing
 

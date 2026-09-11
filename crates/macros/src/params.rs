@@ -26,7 +26,7 @@ use std::collections::BTreeSet;
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use surrealguard_workspace::AnalysisOutput;
+use surrealql_analyzer_workspace::AnalysisOutput;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{Expr, Ident, LitStr, Token};
@@ -156,7 +156,7 @@ pub fn bind_calls(input: &MacroInput, output: &AnalysisOutput) -> syn::Result<Ve
                     let ty = rust_type(kind, &mut scope);
                     if scope.defs.is_empty() {
                         quote! {
-                            .bind(#name, ::surrealguard_rs::_rt::checked::<#ty, _>(#value))
+                            .bind(#name, ::surrealql_analyzer_rs::_rt::checked::<#ty, _>(#value))
                         }
                     } else {
                         quote! { .bind(#name, #value) }

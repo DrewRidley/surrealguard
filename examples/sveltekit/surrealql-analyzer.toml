@@ -1,4 +1,4 @@
-# SurrealGuard workspace config for the SvelteKit example.
+# SurrealQL Analyzer workspace config for the SvelteKit example.
 
 [sources]
 schema = ["schema/**/*.surql"]

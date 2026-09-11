@@ -13,7 +13,7 @@
 // pins what `tsc` then makes of them.
 //
 // Pure type checks — `main` is never called, so no connection opens.
-import { createClient, defineQuery } from "./surrealguard.generated.js";
+import { createClient, defineQuery } from "./surrealql-analyzer.generated.js";
 import type { Equal, Expect } from "../assert.js";
 
 // The two spellings, stated on their own so the claim does not depend on the

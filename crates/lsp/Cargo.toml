@@ -1,5 +1,5 @@
 [package]
-name = "surrealguard-lsp"
+name = "surrealql-analyzer-lsp"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -9,26 +9,26 @@ homepage.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
-description = "Language Server Protocol implementation for SurrealQL powered by SurrealGuard"
+description = "Language Server Protocol implementation for SurrealQL powered by SurrealQL Analyzer"
 
 [[bin]]
-name = "surrealguard-lsp"
+name = "surrealql-analyzer-lsp"
 path = "src/main.rs"
 
 [dependencies]
-surrealguard-diagnostics = { path = "../diagnostics", version = "0.5.3" }
-surrealguard-embed = { path = "../embed", version = "0.5.3" }
-surrealguard-syntax = { path = "../syntax", version = "0.5.3" }
-surrealguard-workspace = { path = "../workspace", version = "0.5.3" }
+surrealql-analyzer-diagnostics = { path = "../diagnostics", version = "0.5.3" }
+surrealql-analyzer-embed = { path = "../embed", version = "0.5.3" }
+surrealql-analyzer-syntax = { path = "../syntax", version = "0.5.3" }
+surrealql-analyzer-workspace = { path = "../workspace", version = "0.5.3" }
 tower-lsp = "0.20"
 # Dynamic capability registration carries its options as a raw JSON value.
 serde_json = "1"
 tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync", "time"] }
 # Semantic tokens read the grammar's node kinds straight off the parse tree
-# `surrealguard-syntax` already produced.
+# `surrealql-analyzer-syntax` already produced.
 tree-sitter.workspace = true
 walkdir = "2"
-# `[sources]` globs from surrealguard.toml decide what a workspace scan
+# `[sources]` globs from surrealql-analyzer.toml decide what a workspace scan
 # loads, matched the same way the CLI matches them.
 glob = "0.3"
 

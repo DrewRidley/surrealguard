@@ -1,6 +1,6 @@
 import adapter from "@sveltejs/adapter-static";
 import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
-import { surrealguard } from "@surrealguard/svelte/preprocess";
+import { surrealqlAnalyzer } from "@surrealdb/analyzer-svelte/preprocess";
 
 /**
  * The demo runs entirely in the browser — see `src/routes/+layout.ts`, which
@@ -11,7 +11,7 @@ import { surrealguard } from "@surrealguard/svelte/preprocess";
  * @type {import("@sveltejs/kit").Config}
  */
 export default {
-  preprocess: [surrealguard(), vitePreprocess()],
+  preprocess: [surrealqlAnalyzer(), vitePreprocess()],
   kit: {
     adapter: adapter({ fallback: "index.html" }),
   },

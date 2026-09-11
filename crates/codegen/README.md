@@ -1,7 +1,7 @@
-# surrealguard-codegen
+# surrealql-analyzer-codegen
 
 TypeScript type generation from
-[SurrealGuard](https://github.com/DrewRidley/surrealguard) analysis results.
+[SurrealQL Analyzer](https://github.com/surrealdb/analyzer) analysis results.
 
 Two layers: `ts_type` renders one `surrealdb_types::Kind` as a TypeScript type,
 and `render_registry` emits the generated module — a literal-keyed registry

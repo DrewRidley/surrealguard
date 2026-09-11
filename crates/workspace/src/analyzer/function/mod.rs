@@ -10,8 +10,8 @@
 //! drift: both read the same rows.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-use surrealguard_syntax::span::SourceSpan;
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::span::SourceSpan;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::contract::{Contract, Position};
@@ -235,8 +235,12 @@ pub(crate) fn analyze_builtin_function(
                 if let Some(mismatch) = crate::analyzer::version::check_function(target, written) {
                     let span = SourceSpan::new(ctx.source().clone(), call.path.span);
                     ctx.emit(
-                        surrealguard_diagnostics::catalog::finding(span, 8001, mismatch.message)
-                            .with_help(mismatch.help),
+                        surrealql_analyzer_diagnostics::catalog::finding(
+                            span,
+                            8001,
+                            mismatch.message,
+                        )
+                        .with_help(mismatch.help),
                     );
                     match mismatch.dispatch_as {
                         Some(current) => path = current,
@@ -259,7 +263,7 @@ pub(crate) fn analyze_builtin_function(
                 }
             }
         }
-        // No target: SurrealGuard analyzes for the latest release, which
+        // No target: SurrealQL Analyzer analyzes for the latest release, which
         // refuses to *parse* a retired spelling, so the call is an unknown
         // name (5001) carrying the rename — or the removal — as its help.
         None => {
@@ -299,7 +303,7 @@ pub(crate) fn analyze_builtin_function(
             None => {
                 if !is_synthetic(call) {
                     let span = SourceSpan::new(ctx.source().clone(), call.path.span);
-                    let mut finding = surrealguard_diagnostics::catalog::finding(
+                    let mut finding = surrealql_analyzer_diagnostics::catalog::finding(
                         span,
                         5001,
                         format!("`{path}` is not a defined function"),
@@ -354,7 +358,7 @@ fn retired_function(
 ) -> Kind {
     if !is_synthetic(call) {
         let span = SourceSpan::new(ctx.source().clone(), call.path.span);
-        let finding = surrealguard_diagnostics::catalog::finding(
+        let finding = surrealql_analyzer_diagnostics::catalog::finding(
             span,
             5001,
             format!("`{written}` was removed from SurrealQL; it is not a known function"),
@@ -375,7 +379,7 @@ fn retired_function(
 pub(crate) fn unknown_function(ctx: &mut AnalysisContext<'_>, call: &ast::Call) -> Kind {
     if !is_synthetic(call) {
         let span = SourceSpan::new(ctx.source().clone(), call.path.span);
-        let mut finding = surrealguard_diagnostics::catalog::finding(
+        let mut finding = surrealql_analyzer_diagnostics::catalog::finding(
             span,
             5001,
             format!("`{}` is not a known function", call.path.node),
@@ -427,7 +431,8 @@ pub(crate) fn json_value_kind() -> Kind {
 /// carried no arguments at all. The path span stays empty, so the call is still
 /// [`is_synthetic`] and the signature table stays inference-only on it.
 pub(crate) fn synthetic_method_call(path: &str, args: &[ast::Spanned<ast::Expr>]) -> ast::Call {
-    let empty = surrealguard_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered");
+    let empty =
+        surrealql_analyzer_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered");
     let receiver = ast::Spanned::new(
         ast::Expr::Partial(ast::PartialNode {
             span: empty,
@@ -448,7 +453,7 @@ pub(crate) fn synthetic_call(path: &str) -> ast::Call {
     ast::Call {
         path: ast::Spanned::new(
             path.to_string(),
-            surrealguard_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered"),
+            surrealql_analyzer_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered"),
         ),
         // Nothing wrote a synthetic call, so its written spelling is its
         // canonical one — and never a retired form, which is what keeps a
@@ -483,9 +488,10 @@ fn check_custom_call(
         return;
     }
     if args.len() != function.args.len() {
-        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), call.path.span);
+        let span =
+            surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), call.path.span);
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 5002,
                 format!(
@@ -514,7 +520,7 @@ fn check_custom_call(
         if let Some(arg_expr) = call.args.get(index) {
             if let ast::Expr::Param(param) = &arg_expr.node {
                 if *kind == Kind::Any {
-                    let span = surrealguard_syntax::span::SourceSpan::new(
+                    let span = surrealql_analyzer_syntax::span::SourceSpan::new(
                         ctx.source().clone(),
                         arg_expr.span,
                     );
@@ -541,9 +547,10 @@ fn check_custom_call(
         let Some(arg_expr) = call.args.get(index) else {
             continue;
         };
-        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), arg_expr.span);
+        let span =
+            surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), arg_expr.span);
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 contract.code(),
                 format!(
@@ -584,8 +591,8 @@ pub(crate) fn check_closure_arity(
     let Some((name, _)) = closure.params.get(provided) else {
         return;
     };
-    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), name.span);
-    ctx.emit(surrealguard_diagnostics::catalog::finding(
+    let span = surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), name.span);
+    ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
         span,
         5002,
         format!(
@@ -613,10 +620,10 @@ pub(crate) fn closure_arg(call: &ast::Call, index: usize) -> Option<&ast::Closur
 
 #[cfg(test)]
 mod tests {
-    use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::ast;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_diagnostics::Finding;
+    use surrealql_analyzer_syntax::ast;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use super::{analyze_builtin_function, builtin_catalog, synthetic_call};
     use surrealdb_types::Kind;
@@ -669,7 +676,7 @@ mod tests {
         // tests.
         let parsed = parse_source(SourceId::new(format!("query:{expected}")), query)
             .expect("query should parse");
-        let lowered = surrealguard_syntax::lower::lower_first_expr(&parsed, "FunctionCall")
+        let lowered = surrealql_analyzer_syntax::lower::lower_first_expr(&parsed, "FunctionCall")
             .unwrap_or_else(|| panic!("no function call node found for {query}"));
         let ast::Expr::Call(call) = &lowered.node else {
             panic!("expected call lowering for {query}, got {:?}", lowered.node);
@@ -711,7 +718,7 @@ mod tests {
         let mut diagnostics: Vec<Finding> = Vec::new();
         let mut ctx = AnalysisContext::new(
             &schema,
-            surrealguard_syntax::source::SourceId::new("sweep"),
+            surrealql_analyzer_syntax::source::SourceId::new("sweep"),
             "",
             &mut diagnostics,
         );
@@ -760,7 +767,7 @@ mod tests {
             let source = entry.name;
             let mut ctx = AnalysisContext::new(
                 &schema,
-                surrealguard_syntax::source::SourceId::new("dispatch"),
+                surrealql_analyzer_syntax::source::SourceId::new("dispatch"),
                 source,
                 &mut diagnostics,
             );
@@ -769,7 +776,7 @@ mod tests {
             let call = ast::Call {
                 path: ast::Spanned::new(
                     entry.name.to_string(),
-                    surrealguard_syntax::span::ByteRange::new(0, source.len() as u32)
+                    surrealql_analyzer_syntax::span::ByteRange::new(0, source.len() as u32)
                         .expect("ordered"),
                 ),
                 written: entry.name.to_string(),

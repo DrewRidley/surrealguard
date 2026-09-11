@@ -12,7 +12,7 @@
  * generated registry does not know is a type error **on the attribute**, where
  * the mistake is, rather than a silent `unknown` downstream. Reformatting a
  * query changes its text and therefore its key, so this is the check that
- * catches an edit nobody thinks of as one — `surrealguard generate` picks the
+ * catches an edit nobody thinks of as one — `surrealql-analyzer generate` picks the
  * new text up on its next run, and until it does, the build stops.
  */
 
@@ -25,7 +25,7 @@ import type {
   SurqlLive,
   SurqlQuery,
   SurqlRegistry,
-} from "@surrealguard/client";
+} from "@surrealdb/analyzer-client";
 
 /**
  * A one-shot query value. `Bound` — not `any` — is the parameter type on

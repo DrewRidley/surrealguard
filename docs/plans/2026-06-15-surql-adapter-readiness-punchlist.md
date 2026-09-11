@@ -8,7 +8,7 @@
 
 **Architecture:** Build a source-ordered statement-sequence semantic pass around a reusable environment. Schema/catalog extraction stays global. Expression, statement, param, diagnostic, and response-shape facts should run against the environment snapshot at each source position. Unknown/dynamic constructs must be explicit partial facts, not silent gaps.
 
-**Tech Stack:** Rust workspace, `tree-sitter-surrealql`, `surrealdb_types::Kind`, `surrealguard-syntax`, `surrealguard-workspace`, `surrealguard-diagnostics`, local SurrealDB 3.0.x smoke tests, `cargo test --workspace -- --nocapture`.
+**Tech Stack:** Rust workspace, `tree-sitter-surrealql`, `surrealdb_types::Kind`, `surrealql-analyzer-syntax`, `surrealql-analyzer-workspace`, `surrealql-analyzer-diagnostics`, local SurrealDB 3.0.x smoke tests, `cargo test --workspace -- --nocapture`.
 
 ---
 
@@ -504,7 +504,7 @@ Expose enough JSON for host adapters:
 
 Acceptance:
 
-- `surrealguard check --json` output is stable and fixture-tested.
+- `surrealql-analyzer check --json` output is stable and fixture-tested.
 
 ### 9.2 Static-analysis bypass and limit docs
 
@@ -546,7 +546,7 @@ cargo fmt --check
 git diff --check
 cargo test --workspace -- --nocapture
 cargo check --workspace
-surrealguard check --json fixtures/adapter-readiness/*.surql
+surrealql-analyzer check --json fixtures/adapter-readiness/*.surql
 ```
 
 Only after this passes should we start the host adapter spike.
@@ -616,6 +616,6 @@ Keep working through these in strict TDD slices. Do not start Rust, TypeScript, 
 27. Stabilize JSON for statement facts, expression facts where useful, response shapes, params, diagnostics, and partial reasons.
 28. Document bypasses and limits: host concatenation, dynamic names, runtime auth, data-dependent cardinality, SurrealDB version drift, partial semantics.
 29. Add adapter-readiness fixtures: all_statements, expressions, selects, mutations, graphs, blocks, schema_objects, dynamic_partials.
-30. Final gate: `cargo fmt`, `cargo fmt --check`, `git diff --check`, `cargo test --workspace -- --nocapture`, `cargo check --workspace`, and `surrealguard check --json fixtures/adapter-readiness/*.surql`.
+30. Final gate: `cargo fmt`, `cargo fmt --check`, `git diff --check`, `cargo test --workspace -- --nocapture`, `cargo check --workspace`, and `surrealql-analyzer check --json fixtures/adapter-readiness/*.surql`.
 
 Only after this passes should we start the host adapter spike.

@@ -4,7 +4,7 @@
 //! or `NONE` when the session is not authenticated as a record.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{apply, ReturnKind, Signature};

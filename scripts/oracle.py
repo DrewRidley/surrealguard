@@ -35,7 +35,7 @@ CORPUS = Path("/Users/drewridley/Documents/Projects/workshop/database")
 # The release build, unless a caller points elsewhere: an agent or a bisect run
 # builds into its own CARGO_TARGET_DIR precisely so it does not disturb the
 # binary the editor is using.
-BIN = Path(os.environ.get("SG_ORACLE_BIN") or REPO / "target" / "release" / "surrealguard")
+BIN = Path(os.environ.get("SG_ORACLE_BIN") or REPO / "target" / "release" / "surrealql-analyzer")
 
 HEADER = """\
 # Oracle baseline — every finding the real-world corpus produces, with a verdict.

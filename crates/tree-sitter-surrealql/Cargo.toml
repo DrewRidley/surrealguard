@@ -3,23 +3,23 @@
 # The grammar sources (grammar.js, src/parser.c, src/scanner.c, src/*.json, and
 # the src/tree_sitter/*.h headers) were vendored from the merged official
 # grammar `surrealdb/surrealql-tree-sitter` (commit f40a0ede750081b8d49feb40516c28cc49f1cce4)
-# and are maintained here: grammar.js carries SurrealGuard's conformance fixes
+# and are maintained here: grammar.js carries SurrealQL Analyzer's conformance fixes
 # (see docs/grammar-conformance.md), and the generated files are regenerated
 # from it with `npx --yes tree-sitter-cli@0.25.10 generate --abi 14`.
-# SurrealGuard's thin Rust binding shim (bindings/rust/*) is layered on top.
+# SurrealQL Analyzer's thin Rust binding shim (bindings/rust/*) is layered on top.
 #
-# The crate is published under the non-squatting name `surrealguard-tree-sitter-surrealql`
+# The crate is published under the non-squatting name `surrealql-analyzer-tree-sitter-surrealql`
 # because the crates.io name `tree-sitter-surrealql` is taken by an unrelated archived
 # crate. `[lib] name` keeps it importable as `tree_sitter_surrealql`, unchanged.
 [package]
-name = "surrealguard-tree-sitter-surrealql"
+name = "surrealql-analyzer-tree-sitter-surrealql"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 license = "MIT"
-description = "Vendored SurrealQL tree-sitter grammar (from surrealdb/surrealql-tree-sitter) with Rust bindings, used by SurrealGuard"
+description = "Vendored SurrealQL tree-sitter grammar (from surrealdb/surrealql-tree-sitter) with Rust bindings, used by SurrealQL Analyzer"
 build = "bindings/rust/build.rs"
 include = [
     "grammar.js",

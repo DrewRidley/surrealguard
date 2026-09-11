@@ -1,13 +1,13 @@
-//! In-source suppression: a `surrealguard: allow(E1001) reason` comment
+//! In-source suppression: a `surrealql-analyzer: allow(E1001) reason` comment
 //! suppresses matching findings on the next line — or on its own line
 //! when it trails code. Applied at analysis time, rustc-style: a
 //! suppressed finding never leaves the pipeline. Directives that fail
 //! their own contract (unknown code, name instead of code, missing
 //! reason when the workspace requires one) are 7013.
 
-use surrealguard_diagnostics::{parse_suppression_directive, Finding, SuppressionTarget};
-use surrealguard_syntax::source::SourceId;
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_diagnostics::{parse_suppression_directive, Finding, SuppressionTarget};
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
 pub fn apply_suppressions(
     source: &SourceId,
@@ -37,7 +37,7 @@ pub fn apply_suppressions(
         let comment = line[comment_start..]
             .trim_start_matches(['-', '/', '#'])
             .trim();
-        if !comment.starts_with("surrealguard:") {
+        if !comment.starts_with("surrealql-analyzer:") {
             continue;
         }
 
@@ -51,14 +51,14 @@ pub fn apply_suppressions(
             .expect("comment offsets are ordered"),
         );
         let directive_finding = |message: String| {
-            surrealguard_diagnostics::catalog::finding(span.clone(), 7013, message)
+            surrealql_analyzer_diagnostics::catalog::finding(span.clone(), 7013, message)
         };
 
         let suppression = match parse_suppression_directive(comment, span.clone()) {
             Ok(suppression) => suppression,
             Err(error) => {
                 directive_findings.push(directive_finding(format!(
-                    "this suppression directive does not parse ({error:?}); write `surrealguard: allow(E1001) reason=\"why\"`",
+                    "this suppression directive does not parse ({error:?}); write `surrealql-analyzer: allow(E1001) reason=\"why\"`",
                 )));
                 continue;
             }
@@ -76,7 +76,7 @@ pub fn apply_suppressions(
         let known = code
             .get(1..)
             .and_then(|digits| digits.parse::<u16>().ok())
-            .is_some_and(|number| surrealguard_diagnostics::catalog::entry(number).is_some());
+            .is_some_and(|number| surrealql_analyzer_diagnostics::catalog::entry(number).is_some());
         if !known {
             directive_findings.push(directive_finding(
                 format!("`{code}` is not a catalog code",),
@@ -85,7 +85,7 @@ pub fn apply_suppressions(
         }
         if require_reasons && suppression.reason().is_none() {
             directive_findings.push(directive_finding(format!(
-                "this workspace requires a reason: `surrealguard: allow({code}) reason=\"why\"`",
+                "this workspace requires a reason: `surrealql-analyzer: allow({code}) reason=\"why\"`",
             )));
             continue;
         }

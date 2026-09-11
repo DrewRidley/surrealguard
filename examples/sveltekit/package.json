@@ -1,24 +1,24 @@
 {
-  "name": "@surrealguard-example/sveltekit",
+  "name": "@surrealql-analyzer-example/sveltekit",
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Runnable SvelteKit / Svelte 5 SurrealGuard demo: reactive parameters, live queries, nesting, record-level access control.",
+  "description": "Runnable SvelteKit / Svelte 5 SurrealQL Analyzer demo: reactive parameters, live queries, nesting, record-level access control.",
   "scripts": {
     "db": "node scripts/db.mjs",
     "db:seed": "node scripts/db.mjs --seed-only",
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
-    "generate": "surrealguard generate --out src/lib/surrealguard.generated.ts",
-    "generate:watch": "surrealguard generate --out src/lib/surrealguard.generated.ts --watch",
+    "generate": "surrealql-analyzer generate --out src/lib/surrealql-analyzer.generated.ts",
+    "generate:watch": "surrealql-analyzer generate --out src/lib/surrealql-analyzer.generated.ts --watch",
     "typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "verify": "node scripts/verify.mjs"
   },
   "dependencies": {
-    "@surrealguard/client": "workspace:*",
-    "@surrealguard/query": "workspace:*",
-    "@surrealguard/svelte": "workspace:*",
+    "@surrealdb/analyzer-client": "workspace:*",
+    "@surrealdb/analyzer-query": "workspace:*",
+    "@surrealdb/analyzer-svelte": "workspace:*",
     "surrealdb": "2.0.8"
   },
   "devDependencies": {

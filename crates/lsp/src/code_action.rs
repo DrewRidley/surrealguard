@@ -4,14 +4,14 @@
 //! Everything here is pure — a string in, a [`TextEdit`] out — so the two
 //! things that can go wrong are testable without a server: producing a
 //! directive that does not actually suppress, and mangling a hand-written
-//! `surrealguard.toml`.
+//! `surrealql-analyzer.toml`.
 //!
 //! # The code an editor shows is not the code a directive matches
 //!
-//! A published diagnostic carries [`surrealguard_diagnostics::render_code`]'s
+//! A published diagnostic carries [`surrealql_analyzer_diagnostics::render_code`]'s
 //! spelling, whose letter is the *resolved severity* — `W7015`, or `I7015`
 //! once a lint resolves to a hint. In-source suppression matches on
-//! [`surrealguard_diagnostics::FindingCode`]'s `Display`, whose letter is the
+//! [`surrealql_analyzer_diagnostics::FindingCode`]'s `Display`, whose letter is the
 //! *category* — `L7015` for every lint, `E1001` for every schema error.
 //!
 //! Copying what the editor showed is therefore wrong in two different ways:
@@ -20,12 +20,12 @@
 //! W7013. [`suppressible_code`] is the only spelling that works, and it is
 //! what every edit in this module writes.
 
-use surrealguard_diagnostics::{catalog, FindingCode};
+use surrealql_analyzer_diagnostics::{catalog, FindingCode};
 use tower_lsp::lsp_types::{Range, TextEdit};
 
 /// What a required `reason=` is seeded with. It is deliberately a `TODO:` so
 /// it reads as unfinished in the buffer, greps like every other placeholder in
-/// the tree, and — because `surrealguard check` only requires that *a* reason
+/// the tree, and — because `surrealql-analyzer check` only requires that *a* reason
 /// is present — never silently ships as if it were an explanation.
 const REASON_PLACEHOLDER: &str = "TODO: explain why this is allowed";
 
@@ -36,7 +36,7 @@ const REASON_PLACEHOLDER: &str = "TODO: explain why this is allowed";
 /// (`S0001`) has no catalog entry, and in-source suppression does not run at
 /// all on a source that failed to parse. Refusing here is what keeps a
 /// `[lints]` action from writing a key that makes the whole config fail to
-/// parse — `surrealguard.toml` rejects an unknown code outright.
+/// parse — `surrealql-analyzer.toml` rejects an unknown code outright.
 pub fn suppressible_code(rendered: &str) -> Option<String> {
     let digits = rendered
         .strip_prefix(|c: char| c.is_ascii_alphabetic())
@@ -52,9 +52,9 @@ pub fn suppressible_code(rendered: &str) -> Option<String> {
 /// The directive comment text (no newline, no indentation).
 pub fn directive(code: &str, with_reason: bool) -> String {
     if with_reason {
-        format!("-- surrealguard: allow({code}) reason=\"{REASON_PLACEHOLDER}\"")
+        format!("-- surrealql-analyzer: allow({code}) reason=\"{REASON_PLACEHOLDER}\"")
     } else {
-        format!("-- surrealguard: allow({code})")
+        format!("-- surrealql-analyzer: allow({code})")
     }
 }
 
@@ -62,7 +62,7 @@ pub fn directive(code: &str, with_reason: bool) -> String {
 /// holding `offset`, indented to match it.
 ///
 /// The own-line form (rather than a trailing comment) is what
-/// `surrealguard-workspace`'s suppression scanner covers with "the next
+/// `surrealql-analyzer-workspace`'s suppression scanner covers with "the next
 /// line", and it is the only form that stays legible when the statement it
 /// covers is long.
 pub fn inline_suppression_edit(
@@ -85,7 +85,7 @@ pub fn inline_suppression_edit(
     }
 }
 
-/// The edit that makes `code` allowed in a `surrealguard.toml`, or `None`
+/// The edit that makes `code` allowed in a `surrealql-analyzer.toml`, or `None`
 /// when it already is.
 ///
 /// Three shapes, in the order they are checked:
@@ -230,7 +230,7 @@ fn value_offset(line: &str) -> Option<usize> {
 
 /// The catalog number a `[lints]` key names, or `None` for a family wildcard,
 /// a named lint, or anything else that is not code-shaped. Mirrors
-/// `surrealguard_workspace::config`'s own key parsing, which strips the
+/// `surrealql_analyzer_workspace::config`'s own key parsing, which strips the
 /// display-only leading letter.
 fn entry_code_number(key: &str) -> Option<u16> {
     let key = key.trim().trim_matches('"').trim_matches('\'');
@@ -260,7 +260,7 @@ fn entry_code_number(key: &str) -> Option<u16> {
 /// file is far worse than an action that is not offered.
 pub fn host_inline_site(
     host_text: &str,
-    queries: &[surrealguard_embed::EmbeddedQuery],
+    queries: &[surrealql_analyzer_embed::EmbeddedQuery],
     offset: usize,
 ) -> bool {
     let Some(query) = queries
@@ -318,10 +318,13 @@ mod tests {
 
     #[test]
     fn the_directive_a_reasonless_workspace_gets_parses_and_names_the_code() {
-        assert_eq!(directive("E1001", false), "-- surrealguard: allow(E1001)");
+        assert_eq!(
+            directive("E1001", false),
+            "-- surrealql-analyzer: allow(E1001)"
+        );
         assert_eq!(
             directive("E1001", true),
-            "-- surrealguard: allow(E1001) reason=\"TODO: explain why this is allowed\""
+            "-- surrealql-analyzer: allow(E1001) reason=\"TODO: explain why this is allowed\""
         );
     }
 
@@ -334,7 +337,7 @@ mod tests {
         assert_eq!(edit.range.end, Position::new(1, 0));
         assert_eq!(
             apply_edits(text, &[edit]),
-            "BEGIN;\n    -- surrealguard: allow(E1001)\n    SELECT * FROM ghost;\nCOMMIT;\n"
+            "BEGIN;\n    -- surrealql-analyzer: allow(E1001)\n    SELECT * FROM ghost;\nCOMMIT;\n"
         );
     }
 
@@ -345,18 +348,18 @@ mod tests {
         let edit = inline_suppression_edit(text, offset, "E1001", true);
         assert_eq!(
             apply_edits(text, &[edit]),
-            "-- surrealguard: allow(E1001) reason=\"TODO: explain why this is allowed\"\n\
+            "-- surrealql-analyzer: allow(E1001) reason=\"TODO: explain why this is allowed\"\n\
              SELECT * FROM ghost;\n"
         );
     }
 
     #[test]
     fn a_config_without_a_lints_table_gains_one_at_the_end() {
-        let toml = "# SurrealGuard workspace config.\n\n[analysis]\nstrict = false\n";
+        let toml = "# SurrealQL Analyzer workspace config.\n\n[analysis]\nstrict = false\n";
         let edit = lints_allow_edit(toml, "E1001").expect("not yet allowed");
         assert_eq!(
             apply_edits(toml, &[edit]),
-            "# SurrealGuard workspace config.\n\n[analysis]\nstrict = false\n\n\
+            "# SurrealQL Analyzer workspace config.\n\n[analysis]\nstrict = false\n\n\
              [lints]\nE1001 = \"allow\"\n"
         );
     }
@@ -374,7 +377,7 @@ mod tests {
     #[test]
     fn an_existing_lints_table_keeps_every_comment_and_gains_one_line() {
         let toml = "\
-# SurrealGuard workspace config for the SvelteKit example.
+# SurrealQL Analyzer workspace config for the SvelteKit example.
 
 [sources]
 # .svelte-kit holds generated route types; never scan it.
@@ -393,7 +396,7 @@ strict = false
         assert_eq!(
             apply_edits(toml, &[edit]),
             "\
-# SurrealGuard workspace config for the SvelteKit example.
+# SurrealQL Analyzer workspace config for the SvelteKit example.
 
 [sources]
 # .svelte-kit holds generated route types; never scan it.
@@ -467,26 +470,26 @@ strict = false
     fn only_a_multi_line_backtick_template_takes_an_inline_directive() {
         // Single-line double-quoted call: nowhere safe to put a comment line.
         let host = "const rows = await db.query(\"SELECT * FROM ghost\");\n";
-        let queries = surrealguard_embed::extract("q.ts", host);
+        let queries = surrealql_analyzer_embed::extract("q.ts", host);
         let offset = host.find("ghost").expect("fixture");
         assert!(!host_inline_site(host, &queries, offset));
 
         // Svelte markup attribute, likewise.
         let host = "<Query q=\"SELECT * FROM ghost\" />\n";
-        let queries = surrealguard_embed::extract("Page.svelte", host);
+        let queries = surrealql_analyzer_embed::extract("Page.svelte", host);
         let offset = host.find("ghost").expect("fixture");
         assert!(!host_inline_site(host, &queries, offset));
 
         // Multi-line template: the insertion point is inside the backticks.
         let host = "const rows = await db.query(`\n  SELECT * FROM ghost;\n`);\n";
-        let queries = surrealguard_embed::extract("q.ts", host);
+        let queries = surrealql_analyzer_embed::extract("q.ts", host);
         let offset = host.find("ghost").expect("fixture");
         assert!(host_inline_site(host, &queries, offset));
 
         // A one-line backtick template is still unsafe: column 0 of that line
         // is TypeScript, not query text.
         let host = "const rows = await db.query(`SELECT * FROM ghost`);\n";
-        let queries = surrealguard_embed::extract("q.ts", host);
+        let queries = surrealql_analyzer_embed::extract("q.ts", host);
         let offset = host.find("ghost").expect("fixture");
         assert!(!host_inline_site(host, &queries, offset));
     }

@@ -1,5 +1,5 @@
 [package]
-name = "surrealguard-codegen"
+name = "surrealql-analyzer-codegen"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -9,21 +9,21 @@ homepage.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
-description = "TypeScript type generation from SurrealGuard analysis results"
+description = "TypeScript type generation from SurrealQL Analyzer analysis results"
 
 [dependencies]
 surrealdb-types.workspace = true
-surrealguard-workspace = { path = "../workspace", version = "0.5.3" }
+surrealql-analyzer-workspace = { path = "../workspace", version = "0.5.3" }
 
 [dev-dependencies]
 # `tests/golden.rs` runs the CLI's generation path over a fixture workspace:
 # host-file extraction is the embed crate (also used to assert the
 # host-parameter prefix restated here still matches its definition), and the
-# schema/query partition follows the same globs `surrealguard.toml` declares.
+# schema/query partition follows the same globs `surrealql-analyzer.toml` declares.
 glob = "0.3"
-surrealguard-diagnostics = { path = "../diagnostics", version = "0.5.3" }
-surrealguard-embed = { path = "../embed", version = "0.5.3" }
-surrealguard-syntax = { path = "../syntax", version = "0.5.3" }
+surrealql-analyzer-diagnostics = { path = "../diagnostics", version = "0.5.3" }
+surrealql-analyzer-embed = { path = "../embed", version = "0.5.3" }
+surrealql-analyzer-syntax = { path = "../syntax", version = "0.5.3" }
 
 [lints]
 workspace = true

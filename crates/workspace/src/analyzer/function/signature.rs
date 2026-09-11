@@ -20,8 +20,8 @@
 //! table-driven.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-use surrealguard_syntax::span::SourceSpan;
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::span::SourceSpan;
 
 use crate::analyzer::context::AnalysisContext;
 
@@ -161,7 +161,7 @@ fn check_arity(
         (min, None) => format!("at least {min} {}", plural("argument", min)),
     };
     let span = SourceSpan::new(ctx.source().clone(), call.path.span);
-    ctx.emit(surrealguard_diagnostics::catalog::finding(
+    ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
         span,
         5002,
         format!(
@@ -227,7 +227,7 @@ fn check_argument_kinds(
             continue;
         };
         let span = SourceSpan::new(ctx.source().clone(), arg_expr.span);
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
+        ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
             span,
             5002,
             format!(

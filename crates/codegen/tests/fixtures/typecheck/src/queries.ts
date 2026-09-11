@@ -3,7 +3,7 @@
 // text; a template's `${...}` becomes a `__hostN` substitution.
 //
 // This file is fixture input for the Rust golden test, never compiled itself.
-import { createClient, defineLive, defineQuery, type RecordId } from "./surrealguard.generated";
+import { createClient, defineLive, defineQuery, type RecordId } from "./surrealql-analyzer.generated";
 
 const db = createClient({ url: "ws://localhost:8000/rpc" });
 

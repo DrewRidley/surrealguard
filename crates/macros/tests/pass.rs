@@ -1,6 +1,6 @@
 //! Valid queries pass compile-time checking and expand to their text.
 
-use surrealguard_macros::surql;
+use surrealql_analyzer_macros::surql;
 
 #[test]
 fn valid_queries_compile_and_expand_to_text() {

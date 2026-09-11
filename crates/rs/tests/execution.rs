@@ -5,10 +5,10 @@
 //!
 //! ```text
 //! surreal start --user root --pass root --bind 127.0.0.1:8111 memory &
-//! cargo test -p surrealguard-rs -- --ignored
+//! cargo test -p surrealql-analyzer-rs -- --ignored
 //! ```
 //!
-//! Point them elsewhere with `SURREALGUARD_TEST_WS` (default
+//! Point them elsewhere with `SURREALQL_ANALYZER_TEST_WS` (default
 //! `127.0.0.1:8111`). Each test uses its own namespace and database, so they
 //! neither collide nor need cleaning up between runs.
 //!
@@ -19,18 +19,18 @@
 use surrealdb::engine::remote::ws::{Client, Ws};
 use surrealdb::opt::auth::Root;
 use surrealdb::Surreal;
-use surrealguard_rs::surrealdb_types::{Datetime, Decimal, Duration, RecordId};
-use surrealguard_rs::{query, query_file, ErrorKind};
+use surrealql_analyzer_rs::surrealdb_types::{Datetime, Decimal, Duration, RecordId};
+use surrealql_analyzer_rs::{query, query_file, ErrorKind};
 
 const SCHEMA: &str = include_str!("../schema.surql");
 
 /// Connects, isolates into `namespace`, and applies this crate's schema.
 async fn connect(namespace: &str) -> Surreal<Client> {
     let address =
-        std::env::var("SURREALGUARD_TEST_WS").unwrap_or_else(|_| "127.0.0.1:8111".to_owned());
+        std::env::var("SURREALQL_ANALYZER_TEST_WS").unwrap_or_else(|_| "127.0.0.1:8111".to_owned());
     let db = Surreal::new::<Ws>(address.as_str())
         .await
-        .expect("a SurrealDB server on SURREALGUARD_TEST_WS — see this file's docs");
+        .expect("a SurrealDB server on SURREALQL_ANALYZER_TEST_WS — see this file's docs");
     db.signin(Root {
         username: "root".to_owned(),
         password: "root".to_owned(),

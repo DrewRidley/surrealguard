@@ -1,37 +1,37 @@
 "use client";
 
 /**
- * Client context. Wrap the app (or a subtree) in {@link SurrealGuardProvider}
+ * Client context. Wrap the app (or a subtree) in {@link SurrealQLAnalyzerProvider}
  * once; every hook below it resolves that client, so components never thread
  * `db` through props.
  *
  * ```tsx
  * // app/providers.tsx
  * "use client";
- * import { SurrealGuardProvider } from "@surrealguard/next";
+ * import { SurrealQLAnalyzerProvider } from "@surrealdb/analyzer-next";
  * import { db } from "@/lib/db";
  *
  * export function Providers({ children }: { children: React.ReactNode }) {
- *   return <SurrealGuardProvider client={db}>{children}</SurrealGuardProvider>;
+ *   return <SurrealQLAnalyzerProvider client={db}>{children}</SurrealQLAnalyzerProvider>;
  * }
  * ```
  *
  * Note this is the **browser** client. A Server Component must use a
- * per-request client instead — see `@surrealguard/next/server`.
+ * per-request client instead — see `@surrealdb/analyzer-next/server`.
  */
 
 import { createContext, useContext, type ReactNode } from "react";
-import type { SurrealGuardClient } from "@surrealguard/client";
+import type { SurrealQLAnalyzerClient } from "@surrealdb/analyzer-client";
 
-const ClientContext = createContext<SurrealGuardClient | null>(null);
+const ClientContext = createContext<SurrealQLAnalyzerClient | null>(null);
 
-export interface SurrealGuardProviderProps {
-  client: SurrealGuardClient;
+export interface SurrealQLAnalyzerProviderProps {
+  client: SurrealQLAnalyzerClient;
   children: ReactNode;
 }
 
 /** Provide the typed client to descendant components. */
-export function SurrealGuardProvider({ client, children }: SurrealGuardProviderProps) {
+export function SurrealQLAnalyzerProvider({ client, children }: SurrealQLAnalyzerProviderProps) {
   return <ClientContext.Provider value={client}>{children}</ClientContext.Provider>;
 }
 
@@ -40,13 +40,13 @@ export function SurrealGuardProvider({ client, children }: SurrealGuardProviderP
  * connections). Throws with a clear message if neither is present — failing
  * fast beats a confusing "cannot read property of undefined".
  */
-export function useClient(override?: SurrealGuardClient): SurrealGuardClient {
+export function useClient(override?: SurrealQLAnalyzerClient): SurrealQLAnalyzerClient {
   const ctx = useContext(ClientContext);
   const client = override ?? ctx;
   if (!client) {
     throw new Error(
-      "[@surrealguard/next] No client in context. Wrap your app in " +
-        "<SurrealGuardProvider client={db}>, or pass { client } to the hook.",
+      "[@surrealdb/analyzer-next] No client in context. Wrap your app in " +
+        "<SurrealQLAnalyzerProvider client={db}>, or pass { client } to the hook.",
     );
   }
   return client;

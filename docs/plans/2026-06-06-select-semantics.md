@@ -4,17 +4,17 @@
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
-**Goal:** Build comprehensive SELECT semantic analysis for SurrealQL using tree-sitter CST nodes as the syntax authority and SurrealDB's own Rust types for value/kind facts. Do not invent a parallel `surrealguard-types` type system.
+**Goal:** Build comprehensive SELECT semantic analysis for SurrealQL using tree-sitter CST nodes as the syntax authority and SurrealDB's own Rust types for value/kind facts. Do not invent a parallel `surrealql-analyzer-types` type system.
 
 **Architecture:** The analyzer lowers each tree-sitter `SelectStatement` into an internal semantic IR that keeps node kind, byte span, and source text for every SELECT component. The IR is not a replacement AST and not a custom type system; it is a small analysis index over the tree-sitter CST. Result-shape inference produces `ResponseShape` facts for diagnostics/adapters, with leaf scalar kinds represented by `surrealdb_types::Kind` and runtime-value interoperability represented by `surrealdb_types::Value`, `RecordId`, `Object`, `Array`, `Table`, etc. Host adapters then map this response shape into Rust macro output, TypeScript transformer output, LSP hovers, CLI JSON, or MCP facts.
 
-**Tech Stack:** Rust, `tree-sitter`, local `tree-sitter-surrealql`, `surrealguard-syntax`, `surrealdb-types = "3.1.3"`, `surrealguard-diagnostics`, and `surrealguard-workspace`.
+**Tech Stack:** Rust, `tree-sitter`, local `tree-sitter-surrealql`, `surrealql-analyzer-syntax`, `surrealdb-types = "3.1.3"`, `surrealql-analyzer-diagnostics`, and `surrealql-analyzer-workspace`.
 
 ---
 
 ## Hard rules from design review
 
-1. No `surrealguard-types` crate in the maintained design.
+1. No `surrealql-analyzer-types` crate in the maintained design.
 2. No custom SurrealQL parser or custom AST for syntax; tree-sitter nodes are the syntax source of truth.
 3. No parallel enum for SurrealDB scalar/data kinds; use `surrealdb_types::Kind` for schema field kinds and expression kind facts.
 4. No fake precision. Dynamic or unsupported SELECT forms must emit explicit partial-analysis facts and diagnostics instead of claiming a precise response shape.
@@ -345,7 +345,7 @@ Every diagnostic must include the smallest useful tree-sitter node span.
 
 ### Phase 0: remove the custom type-system direction
 
-Objective: completed. The maintained design now uses tree-sitter + upstream SurrealDB public types instead of `surrealguard-types`.
+Objective: completed. The maintained design now uses tree-sitter + upstream SurrealDB public types instead of `surrealql-analyzer-types`.
 
 Tasks:
 
@@ -354,20 +354,20 @@ Tasks:
 3. Use `surrealdb_types::Kind`, `Table`, `RecordId`, `Object`, `Array`, `Value` where applicable.
 4. `StatementAnalysis` now exposes `response_shape: Option<ResponseShape>`.
 5. Field schema kind storage now uses `surrealdb_types::Kind`.
-6. Keep any removed `surrealguard-types` tests only as historical reference; do not port its type hierarchy.
+6. Keep any removed `surrealql-analyzer-types` tests only as historical reference; do not port its type hierarchy.
 
 Tests:
 
 - `schema_field_type_string_maps_to_surrealdb_kind_string`
 - `schema_field_type_record_person_maps_to_surrealdb_kind_record`
-- `statement_analysis_uses_response_shape_not_surrealguard_type`
+- `statement_analysis_uses_response_shape_not_surrealql_analyzer_type`
 
 Verification:
 
 ```bash
-cargo test -p surrealguard-workspace -- --nocapture
+cargo test -p surrealql-analyzer-workspace -- --nocapture
 cargo check --workspace
-git grep -n "surrealguard-types\|surrealguard_types" -- crates Cargo.toml README.md || true
+git grep -n "surrealql-analyzer-types\|surrealql_analyzer_types" -- crates Cargo.toml README.md || true
 ```
 
 Expected: no maintained-code references after the migration phase is complete.
@@ -487,7 +487,7 @@ For touched Rust files:
 ```bash
 rustfmt --edition 2021 <touched-rust-files>
 rustfmt --edition 2021 --check <touched-rust-files>
-cargo test -p surrealguard-workspace -- --nocapture
+cargo test -p surrealql-analyzer-workspace -- --nocapture
 cargo test --workspace -- --nocapture
 cargo check --workspace
 git diff --check
@@ -498,7 +498,7 @@ For doc-only planning commits:
 
 ```bash
 git diff --check
-git grep -n "SurrealGuard-owned type model\|surrealguard-types\|surrealguard_types" docs README.md crates || true
+git grep -n "SurrealQL Analyzer-owned type model\|surrealql-analyzer-types\|surrealql_analyzer_types" docs README.md crates || true
 # Remaining matches must be historical/anti-pattern notes only.
 ```
 

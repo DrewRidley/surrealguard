@@ -1,13 +1,13 @@
 /**
- * `surrealguard()` — the Svelte preprocessor that makes an inline query
+ * `surrealqlAnalyzer()` — the Svelte preprocessor that makes an inline query
  * attribute mean what it looks like it means.
  *
  * ```js
  * // svelte.config.js
  * import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
- * import { surrealguard } from "@surrealguard/svelte/preprocess";
+ * import { surrealqlAnalyzer } from "@surrealdb/analyzer-svelte/preprocess";
  *
- * export default { preprocess: [surrealguard(), vitePreprocess()] };
+ * export default { preprocess: [surrealqlAnalyzer(), vitePreprocess()] };
  * ```
  *
  * ```svelte
@@ -60,7 +60,7 @@ const QUERY_COMPONENTS = new Map([
 ]);
 
 const IMPORT_STATEMENT =
-  'import { sgQuery as __sg_query, sgLive as __sg_live } from "@surrealguard/svelte/inline";';
+  'import { sgQuery as __sg_query, sgLive as __sg_live } from "@surrealdb/analyzer-svelte/inline";';
 
 /** Minimal shapes from Svelte's modern AST — enough to walk what we care about. */
 interface Node {
@@ -84,7 +84,7 @@ export interface MarkupPreprocessor {
   markup(input: { content: string; filename?: string }): PreprocessorOutput | undefined;
 }
 
-export interface SurrealguardPreprocessOptions {
+export interface SurrealQLAnalyzerPreprocessOptions {
   /**
    * Which tags carry an inline query. Defaults to `Query` and `LiveQuery`.
    * Supply this if you re-export them under other names.
@@ -92,7 +92,7 @@ export interface SurrealguardPreprocessOptions {
   components?: Record<string, "query" | "live">;
 }
 
-export function surrealguard(options: SurrealguardPreprocessOptions = {}): MarkupPreprocessor {
+export function surrealqlAnalyzer(options: SurrealQLAnalyzerPreprocessOptions = {}): MarkupPreprocessor {
   const components = new Map(QUERY_COMPONENTS);
   for (const [name, kind] of Object.entries(options.components ?? {})) {
     components.set(name, kind === "live" ? "__sg_live" : "__sg_query");

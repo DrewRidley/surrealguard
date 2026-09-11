@@ -15,9 +15,9 @@ work below. Those six were each run against a live 3.2.3 first; an entry
 that is not from SurrealDB's suites earns its place by engine evidence, not
 by assertion.
 
-Runner: `cargo run -p surrealguard-syntax --example conformance`
+Runner: `cargo run -p surrealql-analyzer-syntax --example conformance`
 (add a path to check one file as a valid set only).
-Gate: `cargo test -p surrealguard-syntax --test conformance`.
+Gate: `cargo test -p surrealql-analyzer-syntax --test conformance`.
 
 ## The valid/rejected split
 

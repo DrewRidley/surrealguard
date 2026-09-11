@@ -1,19 +1,19 @@
-# SurrealGuard
+# SurrealQL Analyzer
 
-> Static analysis and type inference for SurrealQL. SurrealGuard parses your `.surql` schema and queries into a typed, span-carrying AST, infers the response type of every statement, and reports violations of each construct's contract - before a query reaches SurrealDB. The same engine powers a CLI, a language server, a Rust proc-macro, and TypeScript packages.
+> Static analysis and type inference for SurrealQL. SurrealQL Analyzer parses your `.surql` schema and queries into a typed, span-carrying AST, infers the response type of every statement, and reports violations of each construct's contract - before a query reaches SurrealDB. The same engine powers a CLI, a language server, a Rust proc-macro, and TypeScript packages.
 
-SurrealDB is permissive at runtime (cross-kind comparisons order by kind, coercions succeed silently, missing fields return NONE), so bugs hide in behavior the database accepts. SurrealGuard is contract-first: every construct has a contract, and violations are reported statically even when the engine would run the query.
+SurrealDB is permissive at runtime (cross-kind comparisons order by kind, coercions succeed silently, missing fields return NONE), so bugs hide in behavior the database accepts. SurrealQL Analyzer is contract-first: every construct has a contract, and violations are reported statically even when the engine would run the query.
 
 ## Using it with an agent
 
-- Run the CLI with `npx surrealguard` - it's published on npm, so no toolchain is needed (or install from source: `cargo install --git https://github.com/DrewRidley/surrealguard surrealguard`).
-- Run `surrealguard init` to create `surrealguard.toml`, point it at your `.surql` schema and query directories.
-- Run `surrealguard check --json` for machine-readable diagnostics (code, severity, message, byte span, help, note). Exit code reflects post-policy errors.
-- Run `surrealguard generate` to emit a TypeScript file that re-exports a ready `SurrealGuardClient` and augments its query registry (point `--out` at a `.ts`, e.g. `src/surrealguard.generated.ts`). `@surrealguard/client` must be installed or the augmentation silently does nothing and every query types as `any`; `generate` warns when it cannot resolve.
-- Run `surrealguard watch` beside a dev server: it checks on every change and regenerates when the check passes. `--check-only` writes nothing.
-- In Rust, wrap queries in the `query!` macro (crate `surrealguard-rs`) - they are checked against your schema at compile time and fail `cargo check` on any violation.
-- In TypeScript, import `SurrealGuardClient` from the generated file (one import). It extends the `surrealdb` SDK's `Surreal` class, so `new SurrealGuardClient()` has every SDK method. Pass a string literal to `db.query("...")` - result and params are typed from the query text; the SDK returns one result per statement, so destructure the first: `const [rows] = await db.query("...")`. A typed `db.live(query)` returns typed rows for the framework adapters.
-- In editors, install the `DrewRidley/zed-surreal` Zed extension (https://github.com/DrewRidley/zed-surreal) - it auto-downloads the language server, so you don't install the LSP manually: diagnostics for `.surql` and embedded SurrealQL, inlay type hints, hover on context params and table fields, greyed-out dead code, and live `[lints]` levels from `surrealguard.toml`.
+- Run the CLI with `npx surrealql-analyzer` - it's published on npm, so no toolchain is needed (or install from source: `cargo install --git https://github.com/surrealdb/analyzer surrealql-analyzer`).
+- Run `surrealql-analyzer init` to create `surrealql-analyzer.toml`, point it at your `.surql` schema and query directories.
+- Run `surrealql-analyzer check --json` for machine-readable diagnostics (code, severity, message, byte span, help, note). Exit code reflects post-policy errors.
+- Run `surrealql-analyzer generate` to emit a TypeScript file that re-exports a ready `SurrealQLAnalyzerClient` and augments its query registry (point `--out` at a `.ts`, e.g. `src/surrealql-analyzer.generated.ts`). `@surrealdb/analyzer-client` must be installed or the augmentation silently does nothing and every query types as `any`; `generate` warns when it cannot resolve.
+- Run `surrealql-analyzer watch` beside a dev server: it checks on every change and regenerates when the check passes. `--check-only` writes nothing.
+- In Rust, wrap queries in the `query!` macro (crate `surrealql-analyzer-rs`) - they are checked against your schema at compile time and fail `cargo check` on any violation.
+- In TypeScript, import `SurrealQLAnalyzerClient` from the generated file (one import). It extends the `surrealdb` SDK's `Surreal` class, so `new SurrealQLAnalyzerClient()` has every SDK method. Pass a string literal to `db.query("...")` - result and params are typed from the query text; the SDK returns one result per statement, so destructure the first: `const [rows] = await db.query("...")`. A typed `db.live(query)` returns typed rows for the framework adapters.
+- In editors, install the `DrewRidley/zed-surreal` Zed extension (https://github.com/DrewRidley/zed-surreal) - it auto-downloads the language server, so you don't install the LSP manually: diagnostics for `.surql` and embedded SurrealQL, inlay type hints, hover on context params and table fields, greyed-out dead code, and live `[lints]` levels from `surrealql-analyzer.toml`.
 
 ## Diagnostics
 
@@ -23,6 +23,6 @@ SurrealDB is permissive at runtime (cross-kind comparisons order by kind, coerci
 
 - Docs: https://surrealguard.dev/docs/
 - Full LLM context: https://surrealguard.dev/llms-full.txt
-- GitHub: https://github.com/DrewRidley/surrealguard
-- Rust crate: surrealguard-rs (re-exports the `query!` / `surql!` macros)
-- npm: @surrealguard/client, @surrealguard/query, @surrealguard/next, @surrealguard/svelte
+- GitHub: https://github.com/surrealdb/analyzer
+- Rust crate: surrealql-analyzer-rs (re-exports the `query!` / `surql!` macros)
+- npm: @surrealdb/analyzer-client, @surrealdb/analyzer-query, @surrealdb/analyzer-next, @surrealdb/analyzer-svelte

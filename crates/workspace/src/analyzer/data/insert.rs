@@ -4,7 +4,7 @@
 //! payload has its own forms (`InsertData`) the other mutations lack.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::contract::Position;
@@ -67,10 +67,12 @@ fn check_insert_payload(
         ast::InsertData::Rows { rows, misaligned } => {
             if let Some(counts) = misaligned {
                 let (values, columns) = counts.node;
-                let span =
-                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), counts.span);
+                let span = surrealql_analyzer_syntax::span::SourceSpan::new(
+                    ctx.source().clone(),
+                    counts.span,
+                );
                 ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         span,
                         4004,
                         format!(
@@ -201,22 +203,22 @@ mod tests {
     use super::*;
     use crate::schema::SchemaIndex;
     use crate::statement_env::StatementEnv;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use crate::schema::extract_schema;
 
     fn analyze(schema: &SchemaIndex, query: &str) -> Kind {
         let parsed = parse_source(SourceId::new("query"), query).expect("query should parse");
         let ast::Statement::Insert(stmt) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "InsertStatement")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "InsertStatement")
                 .expect("insert statement exists")
                 .node
         else {
             panic!("expected insert statement");
         };
         let env = StatementEnv::default();
-        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        let mut diagnostics: Vec<surrealql_analyzer_diagnostics::Finding> = Vec::new();
         let mut ctx = AnalysisContext::scoped(
             schema,
             parsed.source_id().clone(),
@@ -260,16 +262,16 @@ mod tests {
     fn diagnostics_for(
         schema: &SchemaIndex,
         query: &str,
-    ) -> Vec<surrealguard_diagnostics::Finding> {
+    ) -> Vec<surrealql_analyzer_diagnostics::Finding> {
         let parsed = parse_source(SourceId::new("query"), query).expect("query should parse");
         let ast::Statement::Insert(stmt) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "InsertStatement")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "InsertStatement")
                 .expect("insert statement exists")
                 .node
         else {
             panic!("expected insert statement");
         };
-        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        let mut diagnostics: Vec<surrealql_analyzer_diagnostics::Finding> = Vec::new();
         {
             let mut ctx = AnalysisContext::scoped(
                 schema,
@@ -295,7 +297,7 @@ mod tests {
         extract_schema(&[parsed]).schema
     }
 
-    fn missing_fields(diagnostics: &[surrealguard_diagnostics::Finding]) -> usize {
+    fn missing_fields(diagnostics: &[surrealql_analyzer_diagnostics::Finding]) -> usize {
         diagnostics
             .iter()
             .filter(|finding| finding.code().number() == 2034)

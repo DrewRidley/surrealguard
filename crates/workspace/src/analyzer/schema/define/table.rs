@@ -4,7 +4,7 @@
 //! EXISTS` is a duplicate definition (1022).
 
 use surrealdb_types::{Kind, Table};
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 

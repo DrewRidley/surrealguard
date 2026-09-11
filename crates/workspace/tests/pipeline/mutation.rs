@@ -5,8 +5,8 @@
 use std::collections::BTreeMap;
 
 use surrealdb_types::{Kind, KindLiteral};
-use surrealguard_diagnostics::FindingCode;
-use surrealguard_workspace::{analyze_workspace, Workspace};
+use surrealql_analyzer_diagnostics::FindingCode;
+use surrealql_analyzer_workspace::{analyze_workspace, Workspace};
 
 use crate::support::codes;
 

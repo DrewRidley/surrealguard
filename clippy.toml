@@ -8,7 +8,7 @@ doc-valid-idents = [
     "..",
     "SurrealQL",
     "SurrealDB",
-    "SurrealGuard",
+    "SurrealQL Analyzer",
     "TypeScript",
     "JavaScript",
     "GeoJSON",

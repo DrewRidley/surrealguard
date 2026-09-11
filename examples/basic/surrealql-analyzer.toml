@@ -1,4 +1,4 @@
-# SurrealGuard workspace config for the vanilla-TS example.
+# SurrealQL Analyzer workspace config for the vanilla-TS example.
 
 [sources]
 # The schema catalog — its DEFINEs are in scope for every analyzed query.

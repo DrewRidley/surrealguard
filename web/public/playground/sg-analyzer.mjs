@@ -1,4 +1,4 @@
-// Loader + marshalling for the SurrealGuard analyzer WASM module.
+// Loader + marshalling for the SurrealQL Analyzer engine WASM module.
 //
 // The module is a `wasm32-wasip1` cdylib exporting three functions
 // (`sg_alloc`, `sg_dealloc`, `sg_analyze`) plus its linear `memory`. It
@@ -79,7 +79,7 @@ function wasiShim(getMemory) {
     },
     // A guest abort should surface as a JS error, not a silent trap.
     proc_exit(code) {
-      throw new Error(`surrealguard wasm called proc_exit(${code})`);
+      throw new Error(`surrealql-analyzer wasm called proc_exit(${code})`);
     },
   };
 }

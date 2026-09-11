@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SurrealGuard — Static Safety for SurrealQL</title>
+  <title>SurrealQL Analyzer — Static Safety for SurrealQL</title>
   <style>
     :root{
       --bg:#05030a; --ink:#f6f1ff; --soft:#c9bdd8; --muted:#8f82a3;
@@ -56,6 +56,13 @@
     <p class="caption">You keep SurrealQL. The surrounding tooling finally understands it.</p>
   </section>
 
+  <section class="slide" data-title="What SurrealQL Analyzer is">
+    <div class="grid2">
+      <div><div class="kicker">What it is</div><h2>A static checker for SurrealDB projects.</h2><p class="lede">It is for the moment before runtime: when schema, migrations, database code, and app queries need to agree.</p></div>
+      <div class="card"><p style="font-size:34px;line-height:1.25">SurrealQL Analyzer reads `.surql` plus the queries your app sends to SurrealDB, then reports breakage before deploy — without replacing SurrealQL.</p><div class="language-strip"><div class="pill">schema</div><div class="pill">queries</div><div class="pill">params</div><div class="pill">graphs</div><div class="pill">events</div></div></div>
+    </div>
+  </section>
+
   <section class="slide split-slide" data-title="Split brain">
     <div class="split-head"><div class="kicker">The split brain</div><h2>Your SurrealDB schema knows the truth. Your app code cannot see it.</h2><p class="lede">The seam is the query boundary: typed host code hands SurrealQL text to the database, and the compiler loses sight of fields, params, and graph edges.</p></div>
     <div class="split-visual">
@@ -87,13 +94,6 @@
     </div>
   </section>
 
-  <section class="slide" data-title="Architecture gap">
-    <div class="grid2">
-      <div><div class="kicker">Audience frame</div><h2>If you use SurrealDB, this is about your schema and your queries staying in sync.</h2></div>
-      <div class="card"><p style="font-size:34px;line-height:1.25">SurrealGuard does not replace SurrealQL. It reads normal `.surql`, migrations, and embedded queries, then explains what will break.</p><div class="language-strip"><div class="pill">fields</div><div class="pill">params</div><div class="pill">graphs</div><div class="pill">functions</div></div></div>
-    </div>
-  </section>
-
   <section class="slide" data-title="Solution bridge">
     <div class="kicker">The bridge</div>
     <h2>Make the implicit contract explicit.</h2>
@@ -104,28 +104,9 @@
       <div class="bridge-source query"><div class="eyebrow">Query contract</div><pre><span class="kw">SELECT</span> name, email
 <span class="kw">FROM</span> person
 <span class="kw">WHERE</span> age <span class="op">&gt;</span> $min_age;</pre></div>
-      <div class="contract-card"><div class="eyebrow">SurrealGuard core</div><h3>checks the seam</h3><div class="contract-list"><div>✓ fields exist</div><div>✓ params match</div><div>✓ result shape inferred</div><div>✓ spans preserved</div></div></div>
+      <div class="contract-card"><div class="eyebrow">SurrealQL Analyzer core</div><h3>checks the seam</h3><div class="contract-list"><div>✓ fields exist</div><div>✓ params match</div><div>✓ result shape inferred</div><div>✓ spans preserved</div></div></div>
       <svg class="connector" viewBox="0 0 1712 590"><path d="M510 255 C640 315 710 315 790 255"/><path d="M1050 255 C1135 315 1185 315 1240 255"/><path d="M1090 405 C980 500 720 500 610 410"/></svg>
       <div class="bridge-output"><div class="pill">diagnostics</div><div class="pill">typed results</div><div class="pill">param requirements</div><div class="pill">editor spans</div></div>
-    </div>
-  </section>
-
-
-  <section class="slide" data-title="Analysis phases">
-    <div class="kicker">Analysis phases</div><h2>How SurrealGuard checks a normal SurrealDB project.</h2>
-    <div class="phase-board">
-      <svg class="phase-arrow" viewBox="0 0 1712 610"><path d="M430 175 C500 190 510 300 495 344"/><path d="M855 344 C925 315 940 205 920 175"/><path d="M1280 175 C1360 190 1390 300 1340 344"/></svg>
-      <div class="phase-card phase-a"><div class="mini-title">01 source</div><h3>Parse with spans</h3><p>Keep every token tied to source locations.</p></div>
-      <div class="phase-card phase-b"><div class="mini-title">02 schema</div><h3>Build the catalog</h3><p>Tables, fields, relations, indexes, events, functions, permissions.</p></div>
-      <div class="phase-card phase-c"><div class="mini-title">03 semantics</div><h3>Analyze statements</h3><p>Resolve fields, expressions, graph traversals, function bodies.</p></div>
-      <div class="phase-card phase-d"><div class="mini-title">04 contract</div><h3>Emit outputs</h3><p>Diagnostics, shapes, params, and span mappings.</p></div>
-    </div>
-  </section>
-
-  <section class="slide" data-title="Pipeline">
-    <div class="kicker">Core pipeline</div><h2>One analyzer. Many places to surface the answer.</h2>
-    <div class="pipeline"><svg class="svgline" viewBox="0 0 1712 610"><defs><marker id="ah2" markerWidth="12" markerHeight="8" refX="10" refY="4" orient="auto"><polygon points="0 0,12 4,0 8" fill="rgba(88,230,255,.8)"/></marker></defs><path d="M290 276 C335 235 320 160 345 148" marker-end="url(#ah2)"/><path d="M615 148 C655 160 635 270 670 282" marker-end="url(#ah2)"/><path d="M940 282 C985 250 965 155 995 148" marker-end="url(#ah2)"/><path d="M1265 148 C1305 164 1288 270 1320 282" marker-end="url(#ah2)"/></svg>
-      <div class="node a"><h3>Inputs</h3><p>.surql · migrations · embedded queries</p></div><div class="node b"><h3>Syntax</h3><p>parse tree · exact source spans</p></div><div class="node c"><h3>Semantics</h3><p>schema catalog · expression rules</p></div><div class="node d"><h3>Contract</h3><p>diagnostics · shapes · params</p></div><div class="node e"><h3>Surfaces</h3><p>CLI · LSP · Rust · TS · Python</p></div>
     </div>
   </section>
 
@@ -152,6 +133,24 @@
     <div class="callout">Same analysis core. Different consuming language.</div>
   </section>
 
+  <section class="slide" data-title="Analysis phases">
+    <div class="kicker">Analysis phases</div><h2>How SurrealQL Analyzer checks a SurrealDB project.</h2>
+    <div class="phase-board">
+      <svg class="phase-arrow" viewBox="0 0 1712 610"><path d="M430 175 C500 190 510 300 495 344"/><path d="M855 344 C925 315 940 205 920 175"/><path d="M1280 175 C1360 190 1390 300 1340 344"/></svg>
+      <div class="phase-card phase-a"><div class="mini-title">01 source</div><h3>Parse with spans</h3><p>Keep every token tied to source locations.</p></div>
+      <div class="phase-card phase-b"><div class="mini-title">02 schema</div><h3>Build the catalog</h3><p>Tables, fields, relations, indexes, events, functions, permissions.</p></div>
+      <div class="phase-card phase-c"><div class="mini-title">03 semantics</div><h3>Analyze statements</h3><p>Resolve fields, expressions, graph traversals, function bodies.</p></div>
+      <div class="phase-card phase-d"><div class="mini-title">04 contract</div><h3>Emit outputs</h3><p>Diagnostics, shapes, params, and span mappings.</p></div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Pipeline">
+    <div class="kicker">Core pipeline</div><h2>One analyzer. Many places to surface the answer.</h2>
+    <div class="pipeline"><svg class="svgline" viewBox="0 0 1712 610"><defs><marker id="ah2" markerWidth="12" markerHeight="8" refX="10" refY="4" orient="auto"><polygon points="0 0,12 4,0 8" fill="rgba(88,230,255,.8)"/></marker></defs><path d="M290 276 C335 235 320 160 345 148" marker-end="url(#ah2)"/><path d="M615 148 C655 160 635 270 670 282" marker-end="url(#ah2)"/><path d="M940 282 C985 250 965 155 995 148" marker-end="url(#ah2)"/><path d="M1265 148 C1305 164 1288 270 1320 282" marker-end="url(#ah2)"/></svg>
+      <div class="node a"><h3>Inputs</h3><p>.surql · migrations · embedded queries</p></div><div class="node b"><h3>Syntax</h3><p>parse tree · exact source spans</p></div><div class="node c"><h3>Semantics</h3><p>schema catalog · expression rules</p></div><div class="node d"><h3>Contract</h3><p>diagnostics · shapes · params</p></div><div class="node e"><h3>Surfaces</h3><p>CLI · LSP · Rust · TS · Python</p></div>
+    </div>
+  </section>
+
   <section class="slide" data-title="Surfaces">
     <div class="kicker">Surfaces</div><h2>The analyzer powers CI and host adapters.</h2>
     <div class="surface-grid">
@@ -161,7 +160,7 @@
         <div class="surface-row"><strong>TypeScript</strong><span>tagged templates or transforms feed types and diagnostics into tsserver.</span></div>
         <div class="surface-row"><strong>Python</strong><span>generated stubs provide Pyright/Pylance-compatible params and result types.</span></div>
       </div>
-      <div class="codebox cli-card"><div class="mini-title">CI / local</div><pre><span class="comment">$</span> surrealguard check
+      <div class="codebox cli-card"><div class="mini-title">CI / local</div><pre><span class="comment">$</span> surrealql-analyzer check
 <span class="ok">✓</span> schema/main.surql
 <span class="err">E1004</span> queries/feed.surql:12:24
   unknown field <span class="str">`publised_at`</span>
@@ -180,11 +179,11 @@
 
   <section class="slide" data-title="Future LSP">
     <div class="kicker">Future editor path</div><h2>Host adapters give language servers SurrealDB context.</h2>
-    <div class="zed-editor"><div class="sidebar"><div class="mini-title">project</div><div class="file active">src/feed.ts</div><div class="file">queries/feed.surql</div><div class="file">schema/main.surql</div></div><div class="zed-main"><pre><span class="kw">const</span> q = <span class="str">surql`</span>
+    <div class="zed-editor"><div class="sidebar"><div class="mini-title">project</div><div class="file">src/feed.ts</div><div class="file">queries/feed.surql</div><div class="file">schema/main.surql</div></div><div class="zed-main"><pre><span class="kw">const</span> q = <span class="str">surql`</span>
   <span class="kw">SELECT</span> title, author.name, <span class="squiggle">publised_at</span>
   <span class="kw">FROM</span> post
   <span class="kw">ORDER BY</span> created_at <span class="kw">DESC</span>;
-<span class="str">`</span>;</pre><div class="inline-panel"><div class="title"><span class="err">E1004</span> from SurrealGuard host adapter</div><div class="body">`publised_at` is not defined on table `post`.<br/>The host language server can show this where the query is written.</div></div><div class="status-strip"><span>Host LSPs: Pyright/Pylance · tsserver · rust-analyzer</span><span>SurrealQL LSP later · possible Zed PR</span></div></div></div>
+<span class="str">`</span>;</pre><div class="inline-panel"><div class="title"><span class="err">E1004</span> from SurrealQL Analyzer host adapter</div><div class="body">`publised_at` is not defined on table `post`.<br/>The host language server can show this where the query is written.</div></div><div class="status-strip"><span>Host LSPs: Pyright/Pylance · tsserver · rust-analyzer</span><span>SurrealQL LSP later · possible Zed PR</span></div></div></div>
   </section>
 
   <section class="slide" data-title="Roadmap">
@@ -199,12 +198,12 @@
   <section class="slide" data-title="Questions">
     <div class="kicker">Thank you</div>
     <h2>Questions?</h2>
-    <p class="lede">Make SurrealQL visible before runtime. SurrealGuard keeps SurrealQL intact while giving schema, queries, host code, and editor tooling the same contract.</p>
+    <p class="lede">Make SurrealQL visible before runtime. SurrealQL Analyzer keeps SurrealQL intact while giving schema, queries, host code, and editor tooling the same contract.</p>
     <div class="language-strip"><div class="pill">diagnostics</div><div class="pill">typed results</div><div class="pill">params</div><div class="pill">graphs</div><div class="pill">host adapters</div><div class="pill">LSP path</div></div>
   </section>
 </main></div>
 <nav class="footer-nav" aria-label="Slide navigation"><button id="prev" type="button">←</button><span id="counter">1 / 11</span><div class="progress"><div class="bar" id="bar"></div></div><button id="next" type="button">→</button></nav>
 <script>
-const slides=[...document.querySelectorAll('.slide')],stage=document.getElementById('stage'),counter=document.getElementById('counter'),bar=document.getElementById('bar');let current=Math.min(Math.max(Number(localStorage.getItem('surrealguard-deck-slide')||0),0),slides.length-1);function scaleStage(){const scale=Math.min(innerWidth/1920,innerHeight/1080);stage.style.transform=`translate(-50%, -50%) scale(${scale})`}function show(i){current=(i+slides.length)%slides.length;slides.forEach((s,n)=>s.classList.toggle('active',n===current));counter.textContent=`${current+1} / ${slides.length}`;bar.style.width=`${((current+1)/slides.length)*100}%`;localStorage.setItem('surrealguard-deck-slide',current)}document.getElementById('prev').onclick=()=>show(current-1);document.getElementById('next').onclick=()=>show(current+1);addEventListener('keydown',e=>{if(['ArrowRight','PageDown',' '].includes(e.key)){e.preventDefault();show(current+1)} if(['ArrowLeft','PageUp'].includes(e.key)){e.preventDefault();show(current-1)} if(e.key==='Home')show(0); if(e.key==='End')show(slides.length-1)});addEventListener('resize',scaleStage);scaleStage();show(current);
+const slides=[...document.querySelectorAll('.slide')],stage=document.getElementById('stage'),counter=document.getElementById('counter'),bar=document.getElementById('bar');let current=Math.min(Math.max(Number(localStorage.getItem('surrealql-analyzer-deck-slide')||0),0),slides.length-1);function scaleStage(){const scale=Math.min(innerWidth/1920,innerHeight/1080);stage.style.transform=`translate(-50%, -50%) scale(${scale})`}function show(i){current=(i+slides.length)%slides.length;slides.forEach((s,n)=>s.classList.toggle('active',n===current));counter.textContent=`${current+1} / ${slides.length}`;bar.style.width=`${((current+1)/slides.length)*100}%`;localStorage.setItem('surrealql-analyzer-deck-slide',current)}document.getElementById('prev').onclick=()=>show(current-1);document.getElementById('next').onclick=()=>show(current+1);addEventListener('keydown',e=>{if(['ArrowRight','PageDown',' '].includes(e.key)){e.preventDefault();show(current+1)} if(['ArrowLeft','PageUp'].includes(e.key)){e.preventDefault();show(current-1)} if(e.key==='Home')show(0); if(e.key==='End')show(slides.length-1)});addEventListener('resize',scaleStage);scaleStage();show(current);
 </script>
 </body></html>

@@ -1,7 +1,7 @@
 //! Golden test for the generated TypeScript — the harness that catches a
 //! generated file that does not compile.
 //!
-//! `surrealguard generate` writes a module (`SurrealGuardClient`, the query
+//! `surrealql-analyzer generate` writes a module (`SurrealQLAnalyzerClient`, the query
 //! registry, the response types) and until this test nothing ever handed that
 //! module to `tsc`: a type error in the emitter's output would ship, and the
 //! user would be the first to see it. The check has two halves that meet at
@@ -11,9 +11,9 @@
 //!    `QueryEntry::from_analysis` + `render_registry` `run_generate` calls —
 //!    over the fixture workspace at `tests/fixtures/typecheck/` and compares
 //!    the result byte for byte with the committed golden,
-//!    `packages/client/test-d/gen/surrealguard.generated.ts`.
+//!    `packages/client/test-d/gen/surrealql-analyzer.generated.ts`.
 //! 2. **`pnpm -r run typecheck`** compiles that golden as part of
-//!    `@surrealguard/client`, against the package's own source and the real
+//!    `@surrealdb/analyzer-client`, against the package's own source and the real
 //!    `surrealdb` types, and `test-d/gen/*.test-d.ts` plus
 //!    `test/generated.test.ts` assert what the resolved types are.
 //!
@@ -22,7 +22,7 @@
 //! in CI's package job. Regenerate with:
 //!
 //! ```text
-//! UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-codegen --test golden
+//! UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-codegen --test golden
 //! ```
 //!
 //! The golden records *current* output, not correct output: read the diff
@@ -30,12 +30,12 @@
 
 use std::path::{Path, PathBuf};
 
-use surrealguard_codegen::{render_registry, QueryEntry};
-use surrealguard_diagnostics::Severity;
-use surrealguard_workspace::config::WorkspaceConfig;
-use surrealguard_workspace::{analyze_workspace, Workspace};
+use surrealql_analyzer_codegen::{render_registry, QueryEntry};
+use surrealql_analyzer_diagnostics::Severity;
+use surrealql_analyzer_workspace::config::WorkspaceConfig;
+use surrealql_analyzer_workspace::{analyze_workspace, Workspace};
 
-/// The fixture workspace: a `surrealguard.toml`, schema and query `.surql`
+/// The fixture workspace: a `surrealql-analyzer.toml`, schema and query `.surql`
 /// files, and a host `src/queries.ts` carrying the embedded queries.
 fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/typecheck")
@@ -45,7 +45,7 @@ fn fixture_root() -> PathBuf {
 /// test, because the package's `tsconfig` is what compiles it.
 fn golden_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../packages/client/test-d/gen/surrealguard.generated.ts")
+        .join("../../packages/client/test-d/gen/surrealql-analyzer.generated.ts")
 }
 
 fn updating() -> bool {
@@ -66,7 +66,7 @@ fn generated_module_matches_the_committed_golden() {
     let expected = std::fs::read_to_string(&path).unwrap_or_else(|_| {
         panic!(
             "missing golden {}\n\
-             create it with: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-codegen --test golden",
+             create it with: UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-codegen --test golden",
             path.display()
         )
     });
@@ -74,7 +74,8 @@ fn generated_module_matches_the_committed_golden() {
     if expected != actual {
         // Leave the full actual output where a `diff` can reach it: the
         // first-difference excerpt below is for orientation, not review.
-        let actual_path = Path::new(env!("CARGO_TARGET_TMPDIR")).join("surrealguard.generated.ts");
+        let actual_path =
+            Path::new(env!("CARGO_TARGET_TMPDIR")).join("surrealql-analyzer.generated.ts");
         std::fs::write(&actual_path, &actual).expect("write actual output");
         panic!(
             "\n\
@@ -82,7 +83,7 @@ fn generated_module_matches_the_committed_golden() {
              {}\n\
              Golden:  {}\n\
              Actual:  {}\n\
-             Accept with: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-codegen --test golden\n\
+             Accept with: UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-codegen --test golden\n\
              then run:    pnpm -r run typecheck   (the golden is compiled by tsc there)\n",
             first_difference(&expected, &actual),
             path.display(),
@@ -110,7 +111,7 @@ fn fixture_is_free_of_error_findings() {
         .map(|finding| {
             format!(
                 "  {} {} in {}",
-                surrealguard_diagnostics::render_code(finding.code(), finding.severity()),
+                surrealql_analyzer_diagnostics::render_code(finding.code(), finding.severity()),
                 finding.message(),
                 finding.span().source().as_str()
             )
@@ -140,7 +141,7 @@ fn every_embedded_query_reaches_the_registry() {
             if index > 0 {
                 key.push_str(&format!(
                     "${}{}",
-                    surrealguard_embed::HOST_PARAM_PREFIX,
+                    surrealql_analyzer_embed::HOST_PARAM_PREFIX,
                     index - 1
                 ));
             }
@@ -161,8 +162,8 @@ fn every_embedded_query_reaches_the_registry() {
 /// One embedded query: the virtual source it was registered under, the
 /// extraction (for its template parts), and the host file it came from.
 type Embedded = (
-    surrealguard_syntax::source::SourceId,
-    surrealguard_embed::EmbeddedQuery,
+    surrealql_analyzer_syntax::source::SourceId,
+    surrealql_analyzer_embed::EmbeddedQuery,
     String,
 );
 
@@ -182,7 +183,7 @@ fn generate(root: &Path) -> String {
 }
 
 /// Loads the fixture the way the CLI loads a workspace: config from
-/// `surrealguard.toml`, `.surql` files in sorted path order with schema
+/// `surrealql-analyzer.toml`, `.surql` files in sorted path order with schema
 /// sources (those matching a `[sources] schema` glob) registered first, then
 /// every host file's embedded queries as virtual sources.
 ///
@@ -190,8 +191,8 @@ fn generate(root: &Path) -> String {
 /// where the repository is checked out. Nothing in the output names a source
 /// id, but a deterministic registration order is what keeps the golden stable.
 fn load(root: &Path) -> (Workspace, Vec<Embedded>, WorkspaceConfig) {
-    let config_text =
-        std::fs::read_to_string(root.join("surrealguard.toml")).expect("fixture surrealguard.toml");
+    let config_text = std::fs::read_to_string(root.join("surrealql-analyzer.toml"))
+        .expect("fixture surrealql-analyzer.toml");
     let config = WorkspaceConfig::from_toml_str(&config_text).expect("fixture config parses");
     let mut workspace = Workspace::new(config.clone());
 
@@ -212,7 +213,7 @@ fn load(root: &Path) -> (Workspace, Vec<Embedded>, WorkspaceConfig) {
     for path in files.iter().filter(|path| is_host_source(path)) {
         let text = read(path);
         let host_id = relative(root, path);
-        for (index, query) in surrealguard_embed::extract(&host_id, &text)
+        for (index, query) in surrealql_analyzer_embed::extract(&host_id, &text)
             .into_iter()
             .enumerate()
         {

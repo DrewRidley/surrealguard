@@ -18,7 +18,7 @@ import { PRESETS } from "./presets.mjs";
 import { formatKindText } from "./typefmt.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const wasmBytes = readFileSync(join(here, "surrealguard_wasm.wasm"));
+const wasmBytes = readFileSync(join(here, "surrealql_analyzer_wasm.wasm"));
 
 const analyzer = await createAnalyzer(wasmBytes);
 

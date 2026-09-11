@@ -1,6 +1,6 @@
 //! Dev tool: dump CSTs to design/verify lowering against real grammar shapes.
 //!
-//! Usage: `cargo run -p surrealguard-syntax --example dump_cst [-- "QUERY"]`
+//! Usage: `cargo run -p surrealql-analyzer-syntax --example dump_cst [-- "QUERY"]`
 
 fn dump(node: tree_sitter::Node, src: &str, depth: usize) {
     if node.is_named() {

@@ -5,15 +5,15 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use surrealguard_diagnostics::PolicyConfig;
-use surrealguard_syntax::parse::{parse_source, ParsedSource};
-use surrealguard_syntax::source::SourceId;
-use surrealguard_workspace::config::WorkspaceConfig;
-use surrealguard_workspace::query::{
+use surrealql_analyzer_diagnostics::PolicyConfig;
+use surrealql_analyzer_syntax::parse::{parse_source, ParsedSource};
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_workspace::config::WorkspaceConfig;
+use surrealql_analyzer_workspace::query::{
     definition_at_lowered, definition_at_parsed, function_return_hints_parsed, hover_at_lowered,
     hover_at_parsed, DefinitionTarget, HoverInfo,
 };
-use surrealguard_workspace::{AnalysisOutput, SchemaIndex};
+use surrealql_analyzer_workspace::{AnalysisOutput, SchemaIndex};
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -23,7 +23,7 @@ use crate::text::LineIndex;
 use crate::workspace::Workspace;
 use crate::{code_action, completion, diagnostics, semantic};
 
-/// The `surrealguard.toml` behind the workspace policy: where it is, and the
+/// The `surrealql-analyzer.toml` behind the workspace policy: where it is, and the
 /// text last successfully parsed from it. Kept so the "suppress workspace-wide"
 /// action can edit the real file, and so a change to it can be noticed.
 #[derive(Clone, Debug)]
@@ -34,13 +34,13 @@ struct LoadedConfig {
 }
 
 /// The language server: holds the LSP client handle, the tracked workspace,
-/// and the severity policy resolved from `surrealguard.toml`. Implements
+/// and the severity policy resolved from `surrealql-analyzer.toml`. Implements
 /// [`tower_lsp::LanguageServer`].
 pub struct Backend {
     client: Client,
     workspace: RwLock<Workspace>,
-    /// Severity policy from `surrealguard.toml`, so `[lints]` levels apply in
-    /// the editor exactly as they do in `surrealguard check`. Defaults until
+    /// Severity policy from `surrealql-analyzer.toml`, so `[lints]` levels apply in
+    /// the editor exactly as they do in `surrealql-analyzer check`. Defaults until
     /// `initialize` locates a config in a workspace root.
     policy: RwLock<PolicyConfig>,
     /// State of the one `workspace/semanticTokens/refresh` request that may
@@ -50,7 +50,7 @@ pub struct Backend {
     /// The last semantic-token answer per document, keyed by the text it was
     /// computed from; see [`Self::semantic_tokens_full`].
     semantic_cache: Mutex<HashMap<Url, SemanticEntry>>,
-    /// The `surrealguard.toml` the policy came from, when a workspace root has
+    /// The `surrealql-analyzer.toml` the policy came from, when a workspace root has
     /// one. `None` leaves the workspace-wide suppression action unoffered:
     /// creating a config file is a resource operation not every client
     /// supports, and inventing one behind the user's back is not a quick fix.
@@ -61,7 +61,7 @@ pub struct Backend {
     /// and answers `textDocument/codeAction` with nothing.
     code_action_literal_support: AtomicBool,
     /// Whether the client can be asked to watch files for us. The
-    /// "suppress workspace-wide" action edits `surrealguard.toml` through the
+    /// "suppress workspace-wide" action edits `surrealql-analyzer.toml` through the
     /// client, which then tells us nothing about it; a watcher is how the
     /// allowed diagnostic disappears without waiting for the next keystroke.
     /// Registration is a server->client *request*, so — like semantic-token
@@ -138,7 +138,7 @@ impl Backend {
         }
     }
 
-    /// Re-reads `surrealguard.toml` and rebuilds the policy when its text
+    /// Re-reads `surrealql-analyzer.toml` and rebuilds the policy when its text
     /// changed on disk.
     ///
     /// The editor is the one surface where the config can move *while the
@@ -231,7 +231,7 @@ impl Backend {
             return;
         };
 
-        // Presentation policy (from surrealguard.toml) applies here, at the
+        // Presentation policy (from surrealql-analyzer.toml) applies here, at the
         // consumption edge; the findings themselves carry only their
         // intrinsic class.
         let policy = self.policy.read().await;
@@ -329,7 +329,7 @@ impl Backend {
         });
     }
 
-    /// Asks the client to watch `surrealguard.toml`, when it said it would.
+    /// Asks the client to watch `surrealql-analyzer.toml`, when it said it would.
     ///
     /// Spawned, never awaited, for the same reason semantic-token refresh is:
     /// this is a server->client *request*, and awaiting one inside a handler
@@ -342,7 +342,7 @@ impl Backend {
         }
         let Ok(options) = serde_json::to_value(DidChangeWatchedFilesRegistrationOptions {
             watchers: vec![FileSystemWatcher {
-                glob_pattern: GlobPattern::String("**/surrealguard.toml".to_string()),
+                glob_pattern: GlobPattern::String("**/surrealql-analyzer.toml".to_string()),
                 kind: None,
             }],
         }) else {
@@ -352,7 +352,7 @@ impl Backend {
         tokio::spawn(async move {
             let _ = client
                 .register_capability(vec![Registration {
-                    id: "surrealguard-config-watcher".to_string(),
+                    id: "surrealql-analyzer-config-watcher".to_string(),
                     method: "workspace/didChangeWatchedFiles".to_string(),
                     register_options: Some(options),
                 }])
@@ -398,7 +398,7 @@ impl Backend {
         })
     }
 
-    /// The surrealguard diagnostics a code-action request is about, each
+    /// The surrealql-analyzer diagnostics a code-action request is about, each
     /// paired with the canonical code a suppression must name, deduplicated so
     /// one code never yields two identical actions.
     ///
@@ -415,7 +415,7 @@ impl Backend {
             .context
             .diagnostics
             .iter()
-            .filter(|diagnostic| diagnostic.source.as_deref() == Some("surrealguard"))
+            .filter(|diagnostic| diagnostic.source.as_deref() == Some("surrealql-analyzer"))
             .cloned()
             .collect();
         if candidates.is_empty() {
@@ -542,12 +542,12 @@ fn suppression_action(
     })
 }
 
-/// Loads and parses `surrealguard.toml` from a workspace root. Returns
+/// Loads and parses `surrealql-analyzer.toml` from a workspace root. Returns
 /// `None` when the root has no config file; a malformed config is treated as
 /// absent (the editor falls back to the default policy rather than failing to
 /// start).
 fn load_workspace_config(root: &Path) -> Option<LoadedConfig> {
-    let path = root.join("surrealguard.toml");
+    let path = root.join("surrealql-analyzer.toml");
     let text = std::fs::read_to_string(&path).ok()?;
     let config = WorkspaceConfig::from_toml_str(&text).ok()?;
     Some(LoadedConfig { path, text, config })
@@ -602,11 +602,11 @@ impl LanguageServer for Backend {
                 .filter_map(|f| f.uri.to_file_path().ok())
                 .collect();
 
-            // The first workspace root that carries a surrealguard.toml
+            // The first workspace root that carries a surrealql-analyzer.toml
             // speaks for the workspace: its `[lints]` levels become the
             // editor's policy and its `[sources]` globs decide what the scan
             // loads, so the editor honors the same config as
-            // `surrealguard check`. No config leaves the defaults. The file
+            // `surrealql-analyzer check`. No config leaves the defaults. The file
             // itself is remembered so the workspace-wide suppression action
             // can edit it, and so a later change to it is noticed.
             let loaded = roots.iter().find_map(|root| load_workspace_config(root));
@@ -630,7 +630,7 @@ impl LanguageServer for Backend {
 
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
-                name: "surrealguard-lsp".to_string(),
+                name: "surrealql-analyzer-lsp".to_string(),
                 version: Some(env!("CARGO_PKG_VERSION").to_string()),
             }),
             capabilities: ServerCapabilities {
@@ -693,11 +693,11 @@ impl LanguageServer for Backend {
         self.watch_config_file();
         self.publish_all_diagnostics().await;
         self.client
-            .log_message(MessageType::INFO, "SurrealGuard LSP ready")
+            .log_message(MessageType::INFO, "SurrealQL Analyzer LSP ready")
             .await;
     }
 
-    /// `surrealguard.toml` changed underneath us — usually because the
+    /// `surrealql-analyzer.toml` changed underneath us — usually because the
     /// "suppress workspace-wide" quick fix was just accepted. Re-resolve the
     /// policy and re-publish every document against it.
     async fn did_change_watched_files(&self, _params: DidChangeWatchedFilesParams) {
@@ -781,14 +781,14 @@ impl LanguageServer for Backend {
                 }
             }
 
-            // Offered only when a `surrealguard.toml` already exists: creating
+            // Offered only when a `surrealql-analyzer.toml` already exists: creating
             // one is a resource operation not every client supports, and a
             // quick fix should not invent a workspace's configuration.
             if let Some(loaded) = &config {
                 if let Some(edit) = code_action::lints_allow_edit(&loaded.text, &code) {
                     if let Ok(config_uri) = Url::from_file_path(&loaded.path) {
                         actions.push(suppression_action(
-                            format!("Suppress {shown} workspace-wide (surrealguard.toml)"),
+                            format!("Suppress {shown} workspace-wide (surrealql-analyzer.toml)"),
                             config_uri,
                             edit,
                             diagnostic.clone(),
@@ -818,7 +818,7 @@ impl LanguageServer for Backend {
             .as_deref()
             .map(|parsed| function_return_hints_parsed(parsed, &analysis.schema))
             .unwrap_or_default();
-        let hints = surrealguard_workspace::let_binding_hints(&analysis.output)
+        let hints = surrealql_analyzer_workspace::let_binding_hints(&analysis.output)
             .into_iter()
             .chain(return_hints)
             .map(|hint| {
@@ -949,7 +949,7 @@ impl LanguageServer for Backend {
             // against. Logged because it is otherwise indistinguishable, in the
             // editor, from "the server returned no candidates".
             eprintln!(
-                "[surrealguard] completion {}:{} → no analysis for this document",
+                "[surrealql-analyzer] completion {}:{} → no analysis for this document",
                 position.line + 1,
                 position.character
             );
@@ -957,7 +957,7 @@ impl LanguageServer for Backend {
         };
 
         let offset = analysis.index.position_to_offset(position) as u32;
-        let items: Vec<CompletionItem> = surrealguard_workspace::complete_at(
+        let items: Vec<CompletionItem> = surrealql_analyzer_workspace::complete_at(
             &analysis.output,
             &analysis.schema,
             &analysis.parsed,
@@ -977,7 +977,7 @@ impl LanguageServer for Backend {
             .unwrap_or("")
             .replace('\n', "⏎");
         eprintln!(
-            "[surrealguard] completion {}:{} (offset {offset}) near {around:?} → {} item(s){}",
+            "[surrealql-analyzer] completion {}:{} (offset {offset}) near {around:?} → {} item(s){}",
             position.line + 1,
             position.character,
             items.len(),
@@ -1079,7 +1079,7 @@ impl LanguageServer for Backend {
         };
         let sources = reanalyzed_after.saturating_sub(reanalyzed_before);
         eprintln!(
-            "[surrealguard] edit → {path} in {elapsed_ms:.1}ms ({sources} source(s) re-analyzed)"
+            "[surrealql-analyzer] edit → {path} in {elapsed_ms:.1}ms ({sources} source(s) re-analyzed)"
         );
     }
 

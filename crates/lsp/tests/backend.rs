@@ -9,7 +9,7 @@ use tower_lsp::jsonrpc::{Request, Response};
 use tower_lsp::lsp_types::*;
 use tower_lsp::LspService;
 
-use surrealguard_lsp::backend::Backend;
+use surrealql_analyzer_lsp::backend::Backend;
 
 struct Server {
     service: LspService<Backend>,
@@ -564,7 +564,7 @@ async fn refreshes_are_folded_onto_the_one_in_flight_while_the_client_has_not_an
 // `[analysis] surrealdb_version` — version-compatibility findings (8xxx)
 // ---------------------------------------------------------------------------
 
-/// A workspace root on disk carrying one `surrealguard.toml`, removed when the
+/// A workspace root on disk carrying one `surrealql-analyzer.toml`, removed when the
 /// test is done with it.
 struct ConfiguredRoot {
     path: std::path::PathBuf,
@@ -573,7 +573,7 @@ struct ConfiguredRoot {
 impl ConfiguredRoot {
     fn with_toml(name: &str, toml: &str) -> Self {
         let path = std::env::temp_dir().join(format!(
-            "surrealguard-lsp-{}-{name}-{}",
+            "surrealql-analyzer-lsp-{}-{name}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -581,7 +581,8 @@ impl ConfiguredRoot {
                 .unwrap_or_default()
         ));
         std::fs::create_dir_all(&path).expect("create workspace root");
-        std::fs::write(path.join("surrealguard.toml"), toml).expect("write surrealguard.toml");
+        std::fs::write(path.join("surrealql-analyzer.toml"), toml)
+            .expect("write surrealql-analyzer.toml");
         Self { path }
     }
 
@@ -598,7 +599,7 @@ impl Drop for ConfiguredRoot {
 
 impl Server {
     /// A server initialized with `root` as its one workspace folder, so the
-    /// `surrealguard.toml` there speaks for the workspace.
+    /// `surrealql-analyzer.toml` there speaks for the workspace.
     async fn started_in(root: &Url) -> Self {
         let (service, socket) = LspService::new(Backend::new);
         let mut server = Server {

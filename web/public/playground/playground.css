@@ -114,7 +114,7 @@ body.pg-shell .nav-links a:not(.nav-cta) { display: inline-flex; }
 /* Two columns: what you give the analyzer, and what it gives back.
  *
  * The split is vertical rather than the Rust playground's editor-over-console
- * because SurrealGuard has three outputs, not one — the diagnostics, the
+ * because SurrealQL Analyzer has three outputs, not one — the diagnostics, the
  * inferred response types, and the schema that both are relative to — and all
  * three want to be on screen while you type. Stacking would put the types
  * below the fold of their own pane. So: inputs left (schema over query),

@@ -1,4 +1,4 @@
-# SurrealGuard — SvelteKit demo
+# SurrealQL Analyzer — SvelteKit demo
 
 One page. Every query is written **in the markup**, where you are looking when
 you want to change it:
@@ -33,9 +33,9 @@ cd ../..            # the repository root
 cargo install --path crates/cli --force
 ```
 
-The demo needs a `surrealguard` built from **this** branch. A CLI older than
+The demo needs a `surrealql-analyzer` built from **this** branch. A CLI older than
 `0d3229f` reads the `<script>` block but not the markup, so the query in the
-`q=` attribute is invisible to it: `surrealguard check` says "no issues found"
+`q=` attribute is invisible to it: `surrealql-analyzer check` says "no issues found"
 however wrong the attribute is (that is demo beat 4), and `pnpm generate`
 writes a registry with the inline queries missing. Neither fails loudly, which
 is exactly why this step is here rather than in the troubleshooting table.
@@ -94,7 +94,7 @@ opened from the browser.
 | Port 8124 or 5178 in use | `pkill -f "surreal start"`, and Ctrl-C the old `pnpm dev`. |
 | The data drifted after rehearsing | `pnpm db:seed` in a third terminal. Reload the page. |
 | Rows are `unknown` in the editor | `pnpm generate` — the registry is stale. It refuses to write while there is an analysis error, so read the output. |
-| `pnpm generate` drops the inline queries, or breaking the `q=` attribute reports nothing | The `surrealguard` on your `PATH` predates markup extraction. `cargo install --path crates/cli --force`, from the repository root. |
+| `pnpm generate` drops the inline queries, or breaking the `q=` attribute reports nothing | The `surrealql-analyzer` on your `PATH` predates markup extraction. `cargo install --path crates/cli --force`, from the repository root. |
 
 ---
 
@@ -103,7 +103,7 @@ opened from the browser.
 **1. The slider.** Drag it. The list follows every step.
 
 The line to point at is the `q=` attribute. It is SurrealQL, it is typed from
-`schema/schema.surql`, and SurrealGuard reports a mistake in it *on that line*.
+`schema/schema.surql`, and SurrealQL Analyzer reports a mistake in it *on that line*.
 
 **2. Add a person.** Type a name, pick an age, pick a team, press the button.
 The row arrives over the subscription, not from the click. Open a second tab
@@ -153,16 +153,16 @@ error[E2004]: `>` can't combine a `int` and a `string`
 error[E4009]: a live query can't ORDER BY
 ```
 
-**Re-comment the line before moving on.** `surrealguard generate` refuses to
+**Re-comment the line before moving on.** `surrealql-analyzer generate` refuses to
 write the registry while there is an error.
 
-The command-line equivalent: `surrealguard check`, from this directory.
+The command-line equivalent: `surrealql-analyzer check`, from this directory.
 
 ---
 
 ## The schema
 
-`schema/schema.surql` is both what SurrealGuard analyses and what `scripts/db.mjs`
+`schema/schema.surql` is both what SurrealQL Analyzer analyses and what `scripts/db.mjs`
 applies to the running database, so the schema the types come from and the
 schema the demo runs on cannot drift. It carries no comments — this section is
 where its reasoning lives.
@@ -180,7 +180,7 @@ look at.
 **`email` and `password` are `option<>`** because not everyone in the roster has
 a login — `alan`, `katherine` and `barbara` in `scripts/seed.surql` do not — and
 because it keeps "add a person" a three-parameter write. Make `email` required
-instead and SurrealGuard says so immediately, on the `CREATE` in
+instead and SurrealQL Analyzer says so immediately, on the `CREATE` in
 `src/lib/queries.ts:17` and on the three seeded people who have no login:
 
 ```
@@ -213,7 +213,7 @@ Svelte compiles an interpolated attribute to string concatenation. Left alone,
 the query text — a SurrealQL injection for a string value, and a brand-new query
 text (so a brand-new cache entry) on every keystroke for a number.
 
-So `@surrealguard/svelte/preprocess` catches the attribute before the compiler
+So `@surrealdb/analyzer-svelte/preprocess` catches the attribute before the compiler
 and captures the parts:
 
 ```svelte
@@ -234,15 +234,15 @@ params  { __host0: minAge }
 ```
 
 One query text whatever the slider says, a real bound parameter on the wire, and
-a static skeleton for the registry to key and for SurrealGuard to analyse. The
+a static skeleton for the registry to key and for SurrealQL Analyzer to analyse. The
 thunk is what keeps it reactive — `Source<Q>` resolves it inside a tracking
 context, so `minAge` is read there.
 
 It is enabled in `svelte.config.js`:
 
 ```js
-import { surrealguard } from "@surrealguard/svelte/preprocess";
-export default { preprocess: [surrealguard(), vitePreprocess()] };
+import { surrealql-analyzer } from "@surrealdb/analyzer-svelte/preprocess";
+export default { preprocess: [surrealqlAnalyzer(), vitePreprocess()] };
 ```
 
 Leave it out and nothing silently misbehaves: `<Query>` throws with a message
@@ -250,7 +250,7 @@ telling you to add it.
 
 ### One stopgap left, marked and temporary
 
-`src/lib/inline-registry.ts` used to hold two. The first is gone: `surrealguard
+`src/lib/inline-registry.ts` used to hold two. The first is gone: `surrealql-analyzer
 generate` now keys an interpolated attribute with the hole spelled `$__host0`,
 which is exactly what the preprocessor emits, so the registry entry is looked up
 by the same bytes that run and no query text is restated anywhere in the
@@ -293,7 +293,7 @@ neither of which needs a database.
 | | |
 | --- | --- |
 | `src/routes/+page.svelte` | The demo. All three reads are in it, in the markup. |
-| `schema/schema.surql` | The schema, the `PERMISSIONS` and the `DEFINE ACCESS`. What SurrealGuard analyses **and** what the database runs. Its reasoning is [above](#the-schema). |
+| `schema/schema.surql` | The schema, the `PERMISSIONS` and the `DEFINE ACCESS`. What SurrealQL Analyzer analyses **and** what the database runs. Its reasoning is [above](#the-schema). |
 | `scripts/db.mjs` | Starts SurrealDB, applies the schema, seeds. `--seed-only` re-seeds a running one. |
 | `scripts/seed.surql` | The data. Deliberately tiny — a large seed was observed to drop live subscriptions. |
 | `scripts/verify.mjs` | The headless check above. |
@@ -301,7 +301,7 @@ neither of which needs a database.
 | `src/lib/db.ts` | The one client. Port 8124 lives here and in `scripts/db.mjs`, nowhere else. |
 | `src/lib/session.svelte.ts` | Sign-in, and the cache reset that has to follow it. |
 | `src/lib/inline-registry.ts` | The row types the snippets annotate themselves with, and nothing else. The stopgap above. Delete on sight, once you can. |
-| `src/lib/surrealguard.generated.ts` | Generated; committed on purpose, so a fresh checkout type-checks with no build step. `pnpm generate`. |
+| `src/lib/surrealql-analyzer.generated.ts` | Generated; committed on purpose, so a fresh checkout type-checks with no build step. `pnpm generate`. |
 
 ## Things not to do live
 

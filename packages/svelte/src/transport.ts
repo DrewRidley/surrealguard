@@ -1,5 +1,5 @@
 /**
- * `@surrealguard/svelte/transport` — a SvelteKit `transport` hook for the SDK's
+ * `@surrealdb/analyzer-svelte/transport` — a SvelteKit `transport` hook for the SDK's
  * value classes.
  *
  * You do not need this by default. The reactive layer and `preload` are
@@ -12,13 +12,13 @@
  *
  * ```ts
  * // src/hooks.ts
- * export { transport } from "@surrealguard/svelte/transport";
+ * export { transport } from "@surrealdb/analyzer-svelte/transport";
  * ```
  *
  * To add your own entries, spread it:
  * ```ts
- * import { transport as surrealguard } from "@surrealguard/svelte/transport";
- * export const transport = { ...surrealguard, MyType: { encode, decode } };
+ * import { transport as surrealqlAnalyzer } from "@surrealdb/analyzer-svelte/transport";
+ * export const transport = { ...surrealqlAnalyzer, MyType: { encode, decode } };
  * ```
  */
 

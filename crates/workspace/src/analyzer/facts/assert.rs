@@ -12,8 +12,8 @@
 //! site, which holds a `TableDef` and not the `DEFINE FIELD` statement, can
 //! still ask.
 
-use surrealguard_syntax::ast;
-use surrealguard_syntax::span::SourceSpan;
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::span::SourceSpan;
 
 use super::term::{fold_bool, Bindings, ConstValue};
 
@@ -80,13 +80,13 @@ pub(crate) fn constant_violates_assert(assert: &ast::Expr, value: &ConstValue) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     fn predicate(source: &str) -> ast::Expr {
         let query = format!("RETURN {source};");
         let parsed = parse_source(SourceId::new("assert:test"), query.as_str()).expect("parses");
-        let statements = surrealguard_syntax::lower::lower_statements(&parsed);
+        let statements = surrealql_analyzer_syntax::lower::lower_statements(&parsed);
         let ast::Statement::Return(stmt) = &statements.first().expect("one statement").node else {
             panic!("expected a RETURN");
         };

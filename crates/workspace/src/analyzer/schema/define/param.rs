@@ -5,7 +5,7 @@
 //! host-required — they carry the default's kind unless the host overrides.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 

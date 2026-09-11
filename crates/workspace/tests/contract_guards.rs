@@ -12,10 +12,10 @@
 
 mod support;
 
-use surrealguard_diagnostics::{catalog, LintLevel};
-use surrealguard_syntax::source::SourceId;
-use surrealguard_workspace::config::WorkspaceConfig;
-use surrealguard_workspace::{analyze_workspace, Workspace, WorkspaceAnalysis};
+use surrealql_analyzer_diagnostics::{catalog, LintLevel};
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_workspace::config::WorkspaceConfig;
+use surrealql_analyzer_workspace::{analyze_workspace, Workspace, WorkspaceAnalysis};
 
 use support::assert_no_syntax_findings;
 

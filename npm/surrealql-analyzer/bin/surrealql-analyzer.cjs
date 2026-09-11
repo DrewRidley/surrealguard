@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-// Download-on-first-run launcher for the `surrealguard` CLI (wasm-pack / esbuild
+// Download-on-first-run launcher for the `surrealql-analyzer` CLI (wasm-pack / esbuild
 // fallback pattern). On first invocation this detects the host platform + arch,
 // maps it to a Rust target triple, downloads the matching prebuilt binary from
 // the GitHub Release for this package's version, caches it under the package
@@ -11,11 +11,11 @@
 // [package.metadata.binstall] and .github/workflows/release.yml):
 //
 //   tag:     v{version}
-//   archive: surrealguard-{version}-{target}.tar.gz   (unix)
-//            surrealguard-{version}-{target}.zip       (windows)
-//   binary:  surrealguard | surrealguard.exe           (at archive root)
-//   url:     https://github.com/DrewRidley/surrealguard/releases/download/
-//              v{version}/surrealguard-{version}-{target}.{ext}
+//   archive: surrealql-analyzer-{version}-{target}.tar.gz   (unix)
+//            surrealql-analyzer-{version}-{target}.zip       (windows)
+//   binary:  surrealql-analyzer | surrealql-analyzer.exe           (at archive root)
+//   url:     https://github.com/surrealdb/analyzer/releases/download/
+//              v{version}/surrealql-analyzer-{version}-{target}.{ext}
 
 const fs = require("fs");
 const os = require("os");
@@ -25,7 +25,7 @@ const { execFileSync, spawnSync } = require("child_process");
 
 const pkg = require(path.join(__dirname, "..", "package.json"));
 const VERSION = pkg.version;
-const REPO = "DrewRidley/surrealguard";
+const REPO = "surrealdb/analyzer";
 const RELEASES_PAGE = `https://github.com/${REPO}/releases`;
 
 // process.platform + process.arch  ->  Rust target triple
@@ -38,7 +38,7 @@ const TARGETS = {
 };
 
 function fail(message) {
-  console.error(`surrealguard: ${message}`);
+  console.error(`surrealql-analyzer: ${message}`);
   console.error(`See ${RELEASES_PAGE} for available prebuilt binaries.`);
   process.exit(1);
 }
@@ -55,7 +55,7 @@ function resolveTarget() {
 }
 
 function assetName(target, ext) {
-  return `surrealguard-${VERSION}-${target}.${ext}`;
+  return `surrealql-analyzer-${VERSION}-${target}.${ext}`;
 }
 
 function downloadUrl(target, ext) {
@@ -71,7 +71,7 @@ function download(url, dest, redirectsLeft = 10) {
     }
     const request = https.get(
       url,
-      { headers: { "User-Agent": "surrealguard-npm-launcher" } },
+      { headers: { "User-Agent": "surrealql-analyzer-npm-launcher" } },
       (res) => {
         const { statusCode, headers } = res;
         if (statusCode >= 300 && statusCode < 400 && headers.location) {
@@ -127,7 +127,7 @@ function extract(archive, ext, destDir) {
 async function ensureBinary(target) {
   const isWindows = process.platform === "win32";
   const ext = isWindows ? "zip" : "tar.gz";
-  const binName = isWindows ? "surrealguard.exe" : "surrealguard";
+  const binName = isWindows ? "surrealql-analyzer.exe" : "surrealql-analyzer";
 
   const cacheDir = path.join(__dirname, "..", "binaries", target);
   const binPath = path.join(cacheDir, binName);
@@ -142,7 +142,7 @@ async function ensureBinary(target) {
     `${assetName(target, ext)}.${process.pid}`
   );
 
-  process.stderr.write(`surrealguard: downloading ${url}\n`);
+  process.stderr.write(`surrealql-analyzer: downloading ${url}\n`);
   try {
     await download(url, archivePath);
     extract(archivePath, ext, cacheDir);

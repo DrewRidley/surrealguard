@@ -6,7 +6,7 @@
 //! `type::field('name.first')` has `name.first`'s declared kind.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::const_value_arg;
@@ -34,9 +34,11 @@ pub(crate) fn analyze_type_field(
         Some(other) => {
             // The value is known and provably not a field path.
             if let Some(arg) = call.args.first() {
-                let span =
-                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), arg.span);
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                let span = surrealql_analyzer_syntax::span::SourceSpan::new(
+                    ctx.source().clone(),
+                    arg.span,
+                );
+                ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                     span,
                     5005,
                     format!("type::field expects a field-path string, found `{other:?}`"),
@@ -54,7 +56,7 @@ pub(crate) fn analyze_type_field(
                         .keys()
                         .map(|path| surrealdb_types::Value::String(path.clone()))
                         .collect();
-                    let span = surrealguard_syntax::span::SourceSpan::new(
+                    let span = surrealql_analyzer_syntax::span::SourceSpan::new(
                         ctx.source().clone(),
                         call.args[0].span,
                     );
@@ -74,10 +76,12 @@ pub(crate) fn analyze_type_field(
         None => {
             if ctx.row_table().is_some() {
                 if let Some(arg) = call.args.first() {
-                    let span =
-                        surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), arg.span);
+                    let span = surrealql_analyzer_syntax::span::SourceSpan::new(
+                        ctx.source().clone(),
+                        arg.span,
+                    );
                     let table = ctx.row_table().map(|t| t.name.clone()).unwrap_or_default();
-                    ctx.emit(surrealguard_diagnostics::catalog::finding(
+                    ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                         span,
                         5005,
                         format!("`{path}` is not a field of table `{table}`"),
@@ -98,9 +102,9 @@ pub(crate) fn field_kind_for_path(ctx: &AnalysisContext<'_>, path: &str) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_diagnostics::Finding;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use crate::analyzer::statement::analyze_lowered_statement;
     use crate::schema::extract_schema;
@@ -122,7 +126,7 @@ mod tests {
             "LET $paths = ['title', 'age'];\nSELECT type::fields($paths) FROM person;",
         )
         .expect("query parses");
-        let script = surrealguard_syntax::lower::lower(&parsed);
+        let script = surrealql_analyzer_syntax::lower::lower(&parsed);
         let mut diagnostics: Vec<Finding> = Vec::new();
         let mut ctx = AnalysisContext::new(
             &schema,
@@ -163,7 +167,7 @@ mod tests {
             "LET $param = 'name.first';\nSELECT type::field($param) FROM person;",
         )
         .expect("query parses");
-        let script = surrealguard_syntax::lower::lower(&parsed);
+        let script = surrealql_analyzer_syntax::lower::lower(&parsed);
         let mut diagnostics: Vec<Finding> = Vec::new();
         let mut ctx = AnalysisContext::new(
             &schema,

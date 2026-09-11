@@ -9,9 +9,9 @@
 use std::collections::BTreeSet;
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-use surrealguard_syntax::ast::visit::{walk_expr, walk_statement, Visitor};
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::ast::visit::{walk_expr, walk_statement, Visitor};
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::contract::{term_kind, Contract, Position};
@@ -43,7 +43,8 @@ pub(crate) fn infer_function_body_kind(
                 .as_ref()
                 .and_then(|ty| crate::schema::kind_from_type_expr(&ty.node, ctx.source_text()).kind)
                 .unwrap_or(Kind::Any);
-            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), name.span);
+            let span =
+                surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), name.span);
             let mut fact = ExpressionFact::new(span, ExpressionValueClass::Variable);
             fact.kind = Some(kind);
             ctx.define_local(name.node.trim_start_matches('$').to_string(), fact);
@@ -146,12 +147,12 @@ fn bare(name: &str) -> &str {
 /// to emit: a body with no suspect name never pays for it.
 fn source_declares_param(ctx: &AnalysisContext<'_>, name: &str) -> bool {
     let Ok(parsed) =
-        surrealguard_syntax::parse::parse_source(ctx.source().clone(), ctx.source_text())
+        surrealql_analyzer_syntax::parse::parse_source(ctx.source().clone(), ctx.source_text())
     else {
         // Unparsable: claiming the name unbound would be inventing a fact.
         return true;
     };
-    surrealguard_syntax::lower::lower_statements(&parsed)
+    surrealql_analyzer_syntax::lower::lower_statements(&parsed)
         .iter()
         .any(|statement| {
             matches!(
@@ -251,7 +252,7 @@ fn check_body_params_declared(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineF
         }
 
         let span = SourceSpan::new(ctx.source().clone(), *range);
-        let mut finding = surrealguard_diagnostics::catalog::finding(
+        let mut finding = surrealql_analyzer_diagnostics::catalog::finding(
             span,
             6008,
             format!(
@@ -296,16 +297,16 @@ pub(crate) fn analyze_define_function(
             let actual = returned_constant_kind(stmt).unwrap_or_else(|| body_kind.clone());
             let contract = Contract::new(Position::FunctionReturn, declared.clone());
             if contract.decide(&actual).is_violation() {
-                let span = surrealguard_syntax::span::SourceSpan::new(
+                let span = surrealql_analyzer_syntax::span::SourceSpan::new(
                     ctx.source().clone(),
                     return_ty.span,
                 );
-                let name_span = surrealguard_syntax::span::SourceSpan::new(
+                let name_span = surrealql_analyzer_syntax::span::SourceSpan::new(
                     ctx.source().clone(),
                     stmt.name.span,
                 );
                 ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         span,
                         contract.code(),
                         format!(

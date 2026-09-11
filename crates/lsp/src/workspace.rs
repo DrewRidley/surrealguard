@@ -1,7 +1,7 @@
 //! Workspace model for the LSP surface.
 //!
 //! The LSP keeps only document text and delegates analysis to the shared
-//! `surrealguard-workspace` facade. It must not depend on the old analyzer.
+//! `surrealql-analyzer-workspace` facade. It must not depend on the old analyzer.
 //!
 //! # Analysis caching
 //!
@@ -13,7 +13,7 @@
 //! the editor reactive we cache the whole-workspace analysis keyed by a hash
 //! of the analysis inputs (every `.surql` document's URI and text). Within a
 //! single unchanged document state the pass runs at most once; every
-//! subsequent request reuses the cached [`surrealguard_workspace::WorkspaceAnalysis`]. Any edit
+//! subsequent request reuses the cached [`surrealql_analyzer_workspace::WorkspaceAnalysis`]. Any edit
 //! (`upsert`) or close (`remove`) changes the key, so the next request
 //! recomputes — the cache can never serve analysis that predates the latest
 //! edit.
@@ -37,16 +37,16 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use tower_lsp::lsp_types::Url;
 
-use surrealguard_diagnostics::Finding;
-use surrealguard_syntax::parse::{parse_source, ParsedSource};
-use surrealguard_syntax::source::SourceId;
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
-use surrealguard_workspace::analysis::{
+use surrealql_analyzer_diagnostics::Finding;
+use surrealql_analyzer_syntax::parse::{parse_source, ParsedSource};
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_workspace::analysis::{
     build_workspace_schema, changed_symbols, reanalyze_sources, source_reference_set,
     source_requires_full_reanalysis, sources_with_changed_cycle_findings, SourceReferenceSet,
 };
-use surrealguard_workspace::config::{SourceConfig, WorkspaceConfig};
-use surrealguard_workspace::{
+use surrealql_analyzer_workspace::config::{SourceConfig, WorkspaceConfig};
+use surrealql_analyzer_workspace::{
     analyze_one_source, analyze_workspace, build_global_catalog, AnalysisOutput, GlobalCatalog,
     SchemaIndex, Workspace as AnalysisWorkspace,
 };
@@ -134,11 +134,11 @@ struct SurqlCache {
     /// a schema edit can diff it symbol-by-symbol (see
     /// [`Workspace::try_symbol_incremental`]).
     catalog: GlobalCatalog,
-    /// Per-source analysis output — [`surrealguard_workspace::WorkspaceAnalysis::sources`], with each
+    /// Per-source analysis output — [`surrealql_analyzer_workspace::WorkspaceAnalysis::sources`], with each
     /// output behind an `Arc` so an incremental rebuild carries the unchanged
     /// ones forward by pointer and a request borrows one without copying it.
     outputs: BTreeMap<SourceId, Arc<AnalysisOutput>>,
-    /// The schema index — [`surrealguard_workspace::WorkspaceAnalysis::schema`] — shared with every
+    /// The schema index — [`surrealql_analyzer_workspace::WorkspaceAnalysis::schema`] — shared with every
     /// feature request rather than cloned into each.
     schema: Arc<SchemaIndex>,
     /// Every `.surql` document in analysis order, with the source id it was
@@ -223,7 +223,7 @@ impl SurqlCache {
 #[derive(Debug)]
 struct HostQuery {
     /// The extraction: query text plus the map back to host offsets.
-    query: surrealguard_embed::EmbeddedQuery,
+    query: surrealql_analyzer_embed::EmbeddedQuery,
     /// The virtual source id the query was analyzed under.
     source: SourceId,
     /// The query's analysis output, in *embedded* coordinates.
@@ -261,9 +261,9 @@ pub struct Workspace {
     documents: BTreeMap<Url, Document>,
     /// Workspace root folders.
     pub roots: Vec<PathBuf>,
-    /// The resolved `surrealguard.toml`, so `[analysis]` (the target
+    /// The resolved `surrealql-analyzer.toml`, so `[analysis]` (the target
     /// SurrealDB version behind the 8xxx checks) and `[diagnostics]` steer
-    /// the editor's analysis exactly as they steer `surrealguard check`.
+    /// the editor's analysis exactly as they steer `surrealql-analyzer check`.
     /// Defaults until [`Self::set_config`] installs the workspace's own.
     config: WorkspaceConfig,
     /// Memoized whole-workspace analysis over the `.surql` documents. Interior
@@ -294,7 +294,7 @@ impl Workspace {
         Self::default()
     }
 
-    /// Installs the workspace's resolved `surrealguard.toml`. Every cached
+    /// Installs the workspace's resolved `surrealql-analyzer.toml`. Every cached
     /// analysis is dropped: the config is an analysis input the cache keys do
     /// not cover, so a result computed under the old one must never be served
     /// under the new.
@@ -792,7 +792,7 @@ impl Workspace {
         ))
     }
 
-    /// Analyze a document through the shared `surrealguard-workspace`
+    /// Analyze a document through the shared `surrealql-analyzer-workspace`
     /// pipeline. Plain `.surql` documents analyze as themselves (through the
     /// shared cache); host documents (TypeScript, Svelte, ...) analyze their
     /// embedded queries, with findings re-spanned onto the host file.
@@ -847,7 +847,7 @@ impl Workspace {
     /// A host file with no embedded query costs an extraction and nothing
     /// else — it never reaches the `.surql` analysis at all.
     fn host_analysis(&self, uri: &Url, target: &Document) -> Option<Arc<HostCache>> {
-        // Only the file types [`surrealguard_embed::extract`] actually knows.
+        // Only the file types [`surrealql_analyzer_embed::extract`] actually knows.
         // Anything else the client attached us to (JSON, Markdown, a lockfile)
         // would otherwise be parsed as TypeScript on every keystroke.
         if !is_host_uri(uri) {
@@ -856,7 +856,7 @@ impl Workspace {
 
         let host_hash = target.text_hash;
 
-        let queries = surrealguard_embed::extract(uri.path(), &target.text);
+        let queries = surrealql_analyzer_embed::extract(uri.path(), &target.text);
         if queries.is_empty() {
             // Nothing embedded: an empty result, keyed so a later edit that
             // *adds* a query still recomputes. Deliberately keyed on the
@@ -905,7 +905,7 @@ impl Workspace {
         uri: &Url,
         target: &Document,
         key: (u64, u64),
-        queries: Vec<surrealguard_embed::EmbeddedQuery>,
+        queries: Vec<surrealql_analyzer_embed::EmbeddedQuery>,
         host_source: &SourceId,
     ) -> HostCache {
         let source_id =
@@ -944,7 +944,7 @@ impl Workspace {
     /// rebuilt if the schema moved) exactly once for the whole host file.
     fn analyze_host_queries_incrementally(
         &self,
-        queries: Vec<surrealguard_embed::EmbeddedQuery>,
+        queries: Vec<surrealql_analyzer_embed::EmbeddedQuery>,
         source_id: &impl Fn(usize) -> SourceId,
     ) -> (Vec<HostQuery>, SourceTexts) {
         let require = self.config.diagnostics.require_suppression_reasons;
@@ -981,7 +981,7 @@ impl Workspace {
     /// workspace rather than against a snapshot of it.
     fn analyze_host_queries_fully(
         &self,
-        queries: Vec<surrealguard_embed::EmbeddedQuery>,
+        queries: Vec<surrealql_analyzer_embed::EmbeddedQuery>,
         source_id: &impl Fn(usize) -> SourceId,
     ) -> (Vec<HostQuery>, SourceTexts) {
         let documents = self.surql_documents();
@@ -1170,14 +1170,14 @@ impl Workspace {
     pub fn host_queries(
         &self,
         uri: &Url,
-    ) -> Option<(Arc<str>, Vec<surrealguard_embed::EmbeddedQuery>)> {
+    ) -> Option<(Arc<str>, Vec<surrealql_analyzer_embed::EmbeddedQuery>)> {
         let target = self.documents.get(uri)?;
         if !is_host_uri(uri) {
             return None;
         }
         Some((
             Arc::clone(&target.text),
-            surrealguard_embed::extract(uri.path(), &target.text),
+            surrealql_analyzer_embed::extract(uri.path(), &target.text),
         ))
     }
 
@@ -1187,8 +1187,8 @@ impl Workspace {
     /// Dependency, build, and VCS directories are never descended into: a
     /// `.surql` under `node_modules` is someone else's, and walking `.git` or
     /// `target` on every start is pure cost. When the workspace carries a
-    /// `surrealguard.toml`, its `[sources]` globs decide what is loaded — the
-    /// same globs `surrealguard check` reads, evaluated relative to each root
+    /// `surrealql-analyzer.toml`, its `[sources]` globs decide what is loaded — the
+    /// same globs `surrealql-analyzer check` reads, evaluated relative to each root
     /// — so the editor analyzes exactly the set CI does. A file the globs
     /// exclude can still be opened and analyzed on its own, it just does not
     /// enter the workspace-wide analysis unasked.
@@ -1290,7 +1290,7 @@ pub fn is_surrealql_uri(uri: &Url) -> bool {
 }
 
 /// Whether a document is a host file that may carry embedded SurrealQL — the
-/// same extension set `surrealguard check`/`generate` discover, so what the
+/// same extension set `surrealql-analyzer check`/`generate` discover, so what the
 /// editor flags and what CI flags can never disagree.
 fn is_host_uri(uri: &Url) -> bool {
     const EXTENSIONS: [&str; 7] = ["ts", "tsx", "js", "jsx", "svelte", "vue", "astro"];
@@ -1348,9 +1348,9 @@ fn contains_whole_word(haystack: &str, keyword: &str) -> bool {
 /// where they are.
 fn respan_to_host(
     finding: &Finding,
-    query: &surrealguard_embed::EmbeddedQuery,
-    embed_source: &surrealguard_syntax::source::SourceId,
-    host_source: &surrealguard_syntax::source::SourceId,
+    query: &surrealql_analyzer_embed::EmbeddedQuery,
+    embed_source: &surrealql_analyzer_syntax::source::SourceId,
+    host_source: &surrealql_analyzer_syntax::source::SourceId,
 ) -> Finding {
     finding.map_spans(|span| {
         // A related span may already point into a `.surql` schema file (the
@@ -1409,7 +1409,7 @@ pub struct HostFeatureAnalysis {
     /// The requested host offset, translated into the query text.
     pub offset: usize,
     /// The extraction, for mapping a resulting span back to the host file.
-    pub query: surrealguard_embed::EmbeddedQuery,
+    pub query: surrealql_analyzer_embed::EmbeddedQuery,
     /// The embedded query's cached parse tree. `None` when it did not parse.
     pub parsed: Option<Arc<ParsedSource>>,
 }
@@ -1531,7 +1531,7 @@ mod tests {
             let analysis = workspace
                 .completion_analysis(&query)
                 .expect("completion inputs are served from the cache");
-            let _ = surrealguard_workspace::complete_at(
+            let _ = surrealql_analyzer_workspace::complete_at(
                 &analysis.output,
                 &analysis.schema,
                 &analysis.parsed,
@@ -1925,7 +1925,7 @@ mod tests {
                         .diagnostics
                         .iter()
                         .filter(|finding| {
-                            finding.severity() == surrealguard_diagnostics::Severity::Error
+                            finding.severity() == surrealql_analyzer_diagnostics::Severity::Error
                         })
                         .map(|finding| finding.message().to_string())
                         .collect::<Vec<_>>()
@@ -1961,7 +1961,7 @@ mod tests {
     impl ScratchRoot {
         fn create(name: &str) -> Self {
             let root = std::env::temp_dir().join(format!(
-                "surrealguard-lsp-scan-{name}-{}",
+                "surrealql-analyzer-lsp-scan-{name}-{}",
                 std::process::id()
             ));
             let _ = std::fs::remove_dir_all(&root);
@@ -2017,7 +2017,7 @@ mod tests {
     }
 
     #[test]
-    fn a_scan_honours_the_source_globs_of_surrealguard_toml() {
+    fn a_scan_honours_the_source_globs_of_surrealql_analyzer_toml() {
         let root = ScratchRoot::create("globs");
         let config = WorkspaceConfig::from_toml_str(
             "[sources]\nschema = [\"schema/**/*.surql\"]\nqueries = [\"queries/**/*.surql\"]\n",
@@ -2029,7 +2029,7 @@ mod tests {
             "only what the globs select enters the workspace analysis"
         );
 
-        // `ignore` wins over an include, exactly as in `surrealguard check`.
+        // `ignore` wins over an include, exactly as in `surrealql-analyzer check`.
         let config = WorkspaceConfig::from_toml_str(
             "[sources]\nschema = [\"**/*.surql\"]\nqueries = [\"**/*.surql\"]\nignore = [\"notes/**\"]\n",
         )

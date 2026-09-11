@@ -3,7 +3,7 @@
  *
  * ```ts
  * // src/lib/queries.ts — the one place query text lives
- * import { defineQuery, defineLive } from "./surrealguard.generated";
+ * import { defineQuery, defineLive } from "./surrealql-analyzer.generated";
  *
  * export const allPeople = defineQuery("SELECT id, name, age FROM person");
  * export const peopleOf  = defineQuery("SELECT id, name FROM person WHERE team = $team");
@@ -121,11 +121,11 @@ export interface AnyQuery {
  */
 export type DefinedQuery<Q extends string> = Q extends keyof SurqlRegistry
   ? SurqlQuery<ResultOf<Q>, ParamsOf<Q>>
-  : SurqlError<"this query is not in the generated registry - run `surrealguard generate`">;
+  : SurqlError<"this query is not in the generated registry - run `surrealql-analyzer generate`">;
 
 export type DefinedLive<Q extends string> = Q extends keyof SurqlRegistry
   ? SurqlLive<RowOf<Rows<ResultOf<Q>>>, ParamsOf<Q>>
-  : SurqlError<"this query is not in the generated registry - run `surrealguard generate`">;
+  : SurqlError<"this query is not in the generated registry - run `surrealql-analyzer generate`">;
 
 /** Prefix `LIVE ` unless the text already begins with it. */
 function ensureLive(text: string): string {

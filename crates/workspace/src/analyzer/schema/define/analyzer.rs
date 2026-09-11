@@ -4,7 +4,7 @@
 //! and filters, with valid filter arguments (1032/2035).
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::schema::SchemaIndex;

@@ -6,7 +6,7 @@
  * ```svelte
  * <!-- src/routes/+layout.svelte -->
  * <script lang="ts">
- *   import { setClient } from "@surrealguard/svelte";
+ *   import { setClient } from "@surrealdb/analyzer-svelte";
  *   import { db } from "$lib/db";
  *
  *   setClient(db);
@@ -18,12 +18,12 @@
  */
 
 import { getContext, setContext } from "svelte";
-import type { SurrealGuardClient } from "@surrealguard/client";
+import type { SurrealQLAnalyzerClient } from "@surrealdb/analyzer-client";
 
-const CLIENT_KEY = Symbol.for("@surrealguard/svelte:client");
+const CLIENT_KEY = Symbol.for("@surrealdb/analyzer-svelte:client");
 
 /** Provide the client to descendant components. Call in the root `+layout.svelte`. */
-export function setClient(client: SurrealGuardClient): SurrealGuardClient {
+export function setClient(client: SurrealQLAnalyzerClient): SurrealQLAnalyzerClient {
   setContext(CLIENT_KEY, client);
   return client;
 }
@@ -37,11 +37,11 @@ export function setClient(client: SurrealGuardClient): SurrealGuardClient {
  * is TanStack Svelte v6's split; matching it exactly is free consistency for
  * anyone arriving from there.
  */
-export function useClient(override?: SurrealGuardClient): SurrealGuardClient {
-  const client = override ?? getContext<SurrealGuardClient | undefined>(CLIENT_KEY);
+export function useClient(override?: SurrealQLAnalyzerClient): SurrealQLAnalyzerClient {
+  const client = override ?? getContext<SurrealQLAnalyzerClient | undefined>(CLIENT_KEY);
   if (!client) {
     throw new Error(
-      "[@surrealguard/svelte] No client in context. Call setClient(db) in your root " +
+      "[@surrealdb/analyzer-svelte] No client in context. Call setClient(db) in your root " +
         "+layout.svelte, or pass { client } to the primitive.",
     );
   }

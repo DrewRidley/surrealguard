@@ -3,9 +3,9 @@
 //! resilience, suppression directives, and the broad coverage batches.
 
 use surrealdb_types::Kind;
-use surrealguard_diagnostics::{FindingCode, Severity};
-use surrealguard_workspace::config::WorkspaceConfig;
-use surrealguard_workspace::{analyze_query, analyze_source, analyze_workspace, Workspace};
+use surrealql_analyzer_diagnostics::{FindingCode, Severity};
+use surrealql_analyzer_workspace::config::WorkspaceConfig;
+use surrealql_analyzer_workspace::{analyze_query, analyze_source, analyze_workspace, Workspace};
 
 use crate::support::assert_no_syntax_findings;
 
@@ -246,7 +246,7 @@ fn resilient_editor_facts_survive_a_syntax_error_in_a_function_body() {
     // A syntax error inside a DEFINE FUNCTION body must not darken the rest
     // of the body: the LETs around the broken statement still bind and type,
     // and hover/inlay resolve against them.
-    use surrealguard_workspace::{hover_at, let_binding_hints};
+    use surrealql_analyzer_workspace::{hover_at, let_binding_hints};
     let mut workspace = Workspace::default();
     let text = "DEFINE FUNCTION fn::demo($p: int) {\n\
         LET $good_a = 1 + 2;\n\
@@ -289,7 +289,7 @@ fn resilient_editor_facts_survive_a_syntax_error_in_a_function_body() {
 fn resilient_go_to_definition_survives_a_syntax_error_sibling() {
     // Go-to-definition on a `$var` use still jumps to its binding even when
     // a sibling statement in the same body has a syntax error.
-    use surrealguard_workspace::definition_at;
+    use surrealql_analyzer_workspace::definition_at;
     let mut workspace = Workspace::default();
     let text = "DEFINE FUNCTION fn::demo($p: int) {\n\
         LET $good_a = 1 + 2;\n\
@@ -653,7 +653,7 @@ fn suppression_directive_silences_next_line_and_trailing_findings() {
     let mut workspace = Workspace::default();
     let source = workspace.add_virtual_source(
         "query".into(),
-        "-- surrealguard: allow(E1001) reason=\"fixture table\"\nSELECT * FROM ghost;\nSELECT * FROM phantom; -- surrealguard: allow(E1001) reason=\"also fine\"\nSELECT * FROM spectre;".into(),
+        "-- surrealql-analyzer: allow(E1001) reason=\"fixture table\"\nSELECT * FROM ghost;\nSELECT * FROM phantom; -- surrealql-analyzer: allow(E1001) reason=\"also fine\"\nSELECT * FROM spectre;".into(),
     );
 
     let output = analyze_workspace(&workspace);
@@ -675,7 +675,7 @@ fn suppression_directive_contract_violations_are_7013() {
     let mut workspace = Workspace::default();
     let source = workspace.add_virtual_source(
         "query".into(),
-        "-- surrealguard: allow(E9999)\n-- surrealguard: allow(lint.select_star)\n-- surrealguard: allow(*)\nSELECT * FROM person;".into(),
+        "-- surrealql-analyzer: allow(E9999)\n-- surrealql-analyzer: allow(lint.select_star)\n-- surrealql-analyzer: allow(*)\nSELECT * FROM person;".into(),
     );
 
     let output = analyze_workspace(&workspace);
@@ -699,7 +699,7 @@ fn suppression_reasons_are_required_when_configured() {
     let mut workspace = Workspace::new(config);
     let source = workspace.add_virtual_source(
         "query".into(),
-        "-- surrealguard: allow(E1001)\nSELECT * FROM ghost;".into(),
+        "-- surrealql-analyzer: allow(E1001)\nSELECT * FROM ghost;".into(),
     );
 
     let output = analyze_workspace(&workspace);

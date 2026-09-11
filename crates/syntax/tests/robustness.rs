@@ -30,10 +30,10 @@ use std::sync::LazyLock;
 
 use proptest::prelude::*;
 use proptest::test_runner::Config;
-use surrealguard_syntax::highlight;
-use surrealguard_syntax::lower::lower_statements;
-use surrealguard_syntax::parse::{parse_source, ParsedSource};
-use surrealguard_syntax::source::SourceId;
+use surrealql_analyzer_syntax::highlight;
+use surrealql_analyzer_syntax::lower::lower_statements;
+use surrealql_analyzer_syntax::parse::{parse_source, ParsedSource};
+use surrealql_analyzer_syntax::source::SourceId;
 
 use support::ast_walk::{check_span, collect, is_recovery_partial};
 use support::{corpus_path, load_corpus};
@@ -228,7 +228,7 @@ fn check(text: &str) -> Result<(), String> {
     // contract and must be disjoint and ascending.
     let tokens = highlight::tokens(&parsed);
     for token in &tokens {
-        let range = surrealguard_syntax::span::ByteRange::new(
+        let range = surrealql_analyzer_syntax::span::ByteRange::new(
             token.range.start as u32,
             token.range.end as u32,
         )

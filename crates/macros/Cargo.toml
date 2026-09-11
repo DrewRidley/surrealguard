@@ -1,5 +1,5 @@
 [package]
-name = "surrealguard-macros"
+name = "surrealql-analyzer-macros"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -19,8 +19,8 @@ proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
 surrealdb-types.workspace = true
-surrealguard-workspace = { path = "../workspace", version = "0.5.3" }
-surrealguard-diagnostics = { path = "../diagnostics", version = "0.5.3" }
+surrealql-analyzer-workspace = { path = "../workspace", version = "0.5.3" }
+surrealql-analyzer-diagnostics = { path = "../diagnostics", version = "0.5.3" }
 
 [lints]
 workspace = true

@@ -6,10 +6,10 @@
 //! top-level statement. `tests/execution.rs` covers the same ground against a
 //! live server.
 
-use surrealguard_rs::surrealdb_types::{
+use surrealql_analyzer_rs::surrealdb_types::{
     Datetime, Decimal, Duration, Number, Object, RecordId, SurrealValue, Value,
 };
-use surrealguard_rs::{query, query_file, surql, Rows};
+use surrealql_analyzer_rs::{query, query_file, surql, Rows};
 
 /// One statement's worth of response.
 fn one(value: Value) -> Vec<Value> {

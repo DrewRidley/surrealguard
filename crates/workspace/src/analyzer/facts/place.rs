@@ -20,7 +20,7 @@
 //! rule, not a limitation: narrowing `$x.items[WHERE p]` would refine a value
 //! that the next read need not produce.
 
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 /// A location whose kind can be refined.
 ///
@@ -185,14 +185,14 @@ fn step_of(part: &ast::IdiomPart) -> Option<Step> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     /// The place named by the expression in `RETURN <source>;`.
     fn place(source: &str) -> Option<Place> {
         let query = format!("RETURN {source};");
         let parsed = parse_source(SourceId::new("place:test"), query.as_str()).expect("parses");
-        let statements = surrealguard_syntax::lower::lower_statements(&parsed);
+        let statements = surrealql_analyzer_syntax::lower::lower_statements(&parsed);
         let ast::Statement::Return(stmt) = &statements.first().expect("one statement").node else {
             panic!("expected a RETURN");
         };

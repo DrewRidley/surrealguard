@@ -1,5 +1,5 @@
 /**
- * `@surrealguard/ts-plugin` — SurrealGuard's diagnostics and highlighting,
+ * `@surrealdb/analyzer-ts-plugin` — SurrealQL Analyzer's diagnostics and highlighting,
  * given as TypeScript's own answers.
  *
  * tsserver `require`s this module and calls the default export with its own
@@ -11,12 +11,12 @@
  * Usage is one entry in a `tsconfig.json`:
  *
  * ```json
- * { "compilerOptions": { "plugins": [{ "name": "@surrealguard/ts-plugin" }] } }
+ * { "compilerOptions": { "plugins": [{ "name": "@surrealdb/analyzer-ts-plugin" }] } }
  * ```
  *
  * Plugins load in tsserver — VS Code, Cursor, WebStorm, Zed, `svelte-check` —
  * and **not** in `tsc`. That is by design in TypeScript and it is the right
- * split here: CI should keep running `surrealguard check`, which sees the whole
+ * split here: CI should keep running `surrealql-analyzer check`, which sees the whole
  * workspace rather than one file at a time.
  */
 

@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark" />
 <style>html{background:#0a0b0e}</style>
-<title>CLI — SurrealGuard Docs</title>
-<meta name="description" content="The surrealguard CLI: init, check (with --json output shape), generate, and exit codes." />
+<title>CLI — SurrealQL Analyzer Docs</title>
+<meta name="description" content="The surrealql-analyzer CLI: init, check (with --json output shape), generate, and exit codes." />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
 <link rel="stylesheet" href="/styles.css" />
 <link rel="stylesheet" href="/docs/docs.css" />
@@ -15,13 +15,13 @@
 
 <nav>
   <div class="wrap">
-    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealQL Analyzer</a>
     <div class="nav-links">
       <a href="/docs/">Docs</a>
       <a href="/playground/">Playground</a>
       <a href="/#agents">For agents</a>
       <a href="/#install">Install</a>
-      <a class="nav-cta" href="https://github.com/DrewRidley/surrealguard">GitHub ↗</a>
+      <a class="nav-cta" href="https://github.com/surrealdb/analyzer">GitHub ↗</a>
     </div>
   </div>
 </nav>
@@ -40,7 +40,7 @@
     </nav>
     <div class="group">Integrations</div>
     <nav>
-      <a href="/docs/rust.html">Rust · surrealguard-rs</a>
+      <a href="/docs/rust.html">Rust · surrealql-analyzer-rs</a>
       <a href="/docs/typescript.html">TypeScript</a>
       <a href="/docs/agents.html">Coding agents</a>
     </nav>
@@ -49,24 +49,24 @@
   <main class="docs-main">
     <span class="eyebrow-doc">// reference</span>
     <h1>CLI</h1>
-    <p class="lead-p">The <code>surrealguard</code> binary analyzes a workspace of <code>.surql</code> sources and reports findings as text or JSON. It has four subcommands: <code>init</code>, <code>check</code>, <code>generate</code>, and <code>watch</code>.</p>
+    <p class="lead-p">The <code>surrealql-analyzer</code> binary analyzes a workspace of <code>.surql</code> sources and reports findings as text or JSON. It has four subcommands: <code>init</code>, <code>check</code>, <code>generate</code>, and <code>watch</code>.</p>
 
     <div class="pill-row">
-      <span class="p">surrealguard init</span>
-      <span class="p">surrealguard check [--json]</span>
-      <span class="p">surrealguard generate [--out &lt;path&gt;]</span>
-      <span class="p">surrealguard watch [--out &lt;path&gt;]</span>
+      <span class="p">surrealql-analyzer init</span>
+      <span class="p">surrealql-analyzer check [--json]</span>
+      <span class="p">surrealql-analyzer generate [--out &lt;path&gt;]</span>
+      <span class="p">surrealql-analyzer watch [--out &lt;path&gt;]</span>
     </div>
 
     <h2>init</h2>
-    <p>Writes a starter <code>surrealguard.toml</code> in the current directory. If one already exists, it is left untouched.</p>
-    <pre class="code"><span class="dollar">$</span> surrealguard init
-created surrealguard.toml
-next: point [sources] at your .surql files, then run `surrealguard check`</pre>
+    <p>Writes a starter <code>surrealql-analyzer.toml</code> in the current directory. If one already exists, it is left untouched.</p>
+    <pre class="code"><span class="dollar">$</span> surrealql-analyzer init
+created surrealql-analyzer.toml
+next: point [sources] at your .surql files, then run `surrealql-analyzer check`</pre>
 
     <h2>check</h2>
-    <p>Discovers every <code>.surql</code>/<code>.surrealql</code> file under the workspace root (the nearest ancestor directory containing <code>surrealguard.toml</code>), analyzes them in sorted path order against the schema they define, and reports findings. Severity is resolved through the workspace policy — <code>warnings_as_errors</code> promotion and <code>[lints]</code> levels (named lints, specific codes like <code>E1002</code>, and family wildcards like <code>"7xxx"</code>) apply here, at the consumption edge.</p>
-    <pre class="code"><span class="dollar">$</span> surrealguard check
+    <p>Discovers every <code>.surql</code>/<code>.surrealql</code> file under the workspace root (the nearest ancestor directory containing <code>surrealql-analyzer.toml</code>), analyzes them in sorted path order against the schema they define, and reports findings. Severity is resolved through the workspace policy — <code>warnings_as_errors</code> promotion and <code>[lints]</code> levels (named lints, specific codes like <code>E1002</code>, and family wildcards like <code>"7xxx"</code>) apply here, at the consumption edge.</p>
+    <pre class="code"><span class="dollar">$</span> surrealql-analyzer check
 <span class="err">error[E1002]: unknown field `team` on table `user`</span>
   --&gt; queries/users.surql:1:37
   |
@@ -79,7 +79,7 @@ checked 2 sources in 6ms
 found 1 error</pre>
 
     <h3 id="color">Colour</h3>
-    <p>On a terminal the severity word, the diagnostic code, file paths, the scaffold and the caret underline are coloured — a related <code>note:</code> is underlined in the scaffold's colour rather than the severity's, so it can never be mistaken for the finding itself. Everywhere else the output is the same text with no escape sequences, which is what makes <code>surrealguard check &gt; report.txt</code> and a CI log readable. Colour is off whenever any of these hold:</p>
+    <p>On a terminal the severity word, the diagnostic code, file paths, the scaffold and the caret underline are coloured — a related <code>note:</code> is underlined in the scaffold's colour rather than the severity's, so it can never be mistaken for the finding itself. Everywhere else the output is the same text with no escape sequences, which is what makes <code>surrealql-analyzer check &gt; report.txt</code> and a CI log readable. Colour is off whenever any of these hold:</p>
     <div class="tbl-wrap">
     <table>
       <thead><tr><th>Condition</th><th>Why</th></tr></thead>
@@ -144,32 +144,32 @@ found 1 error</pre>
     <h2 id="generate">generate</h2>
     <p>Scans host-language files for embedded SurrealQL, analyzes each query against the workspace schema, and writes a TypeScript module that re-exports the runtime entry points (<code>createClient</code>, <code>defineQuery</code>, <code>defineLive</code>, the SDK value classes) and augments the query registry. Host files are discovered by extension — <code>.ts</code>, <code>.tsx</code>, <code>.js</code>, <code>.jsx</code>, <code>.svelte</code>, <code>.vue</code>, <code>.astro</code> — honoring the same ignore patterns as <code>.surql</code> discovery.</p>
     <pre class="code"><span class="cmt"># the file re-exports a runtime value, so write it to a .ts</span>
-<span class="dollar">$</span> surrealguard generate --out src/surrealguard.generated.ts
-generated src/surrealguard.generated.ts (4 queries, 11ms)</pre>
-    <p>The emitted file both <strong>re-exports <code>createClient</code></strong> and <strong>augments <code>@surrealguard/client</code></strong>. Import the client from that one file — that also loads the augmentation, so every <code>db.query("…")</code> resolves the result and params of each analyzed query from its exact text, with no separate side-import. <strong>Pass an <code>--out</code> that matches how you import it</strong>: the default is the workspace root, which is rarely where <code>$lib/</code> or <code>@/</code> points, and a mismatch leaves two generated files that drift apart in silence. See the <a class="link" href="/docs/typescript.html">TypeScript</a> page.</p>
+<span class="dollar">$</span> surrealql-analyzer generate --out src/surrealql-analyzer.generated.ts
+generated src/surrealql-analyzer.generated.ts (4 queries, 11ms)</pre>
+    <p>The emitted file both <strong>re-exports <code>createClient</code></strong> and <strong>augments <code>@surrealdb/analyzer-client</code></strong>. Import the client from that one file — that also loads the augmentation, so every <code>db.query("…")</code> resolves the result and params of each analyzed query from its exact text, with no separate side-import. <strong>Pass an <code>--out</code> that matches how you import it</strong>: the default is the workspace root, which is rarely where <code>$lib/</code> or <code>@/</code> points, and a mismatch leaves two generated files that drift apart in silence. See the <a class="link" href="/docs/typescript.html">TypeScript</a> page.</p>
 
     <div class="callout">
-      <strong><code>@surrealguard/client</code> must be installed</strong> for that augmentation to mean anything. A <code>declare module</code> whose target does not resolve is not an augmentation — TypeScript reports <code>TS2664</code> <em>inside the generated file</em>, drops the whole registry, and every query in your own code silently becomes <code>any</code> with no error on it. <code>generate</code> checks the package resolves from the output's own directory and warns by name when it does not:
-      <pre class="code"><span class="err">warning: `@surrealguard/client` is not installed</span>
-  --&gt; src/surrealguard.generated.ts
+      <strong><code>@surrealdb/analyzer-client</code> must be installed</strong> for that augmentation to mean anything. A <code>declare module</code> whose target does not resolve is not an augmentation — TypeScript reports <code>TS2664</code> <em>inside the generated file</em>, drops the whole registry, and every query in your own code silently becomes <code>any</code> with no error on it. <code>generate</code> checks the package resolves from the output's own directory and warns by name when it does not:
+      <pre class="code"><span class="err">warning: `@surrealdb/analyzer-client` is not installed</span>
+  --&gt; src/surrealql-analyzer.generated.ts
   |
-  | this file augments `declare module "@surrealguard/client"`, and an
+  | this file augments `declare module "@surrealdb/analyzer-client"`, and an
   | augmentation whose target does not resolve is silently dropped —
   | TypeScript reports TS2664 here, and every query typed through it
   | degrades to `any` with no error on it.
   |
-  = help: npm install @surrealguard/client surrealdb</pre>
+  = help: npm install @surrealdb/analyzer-client surrealdb</pre>
     </div>
 
     <h2 id="watch">watch</h2>
-    <p>The development loop, to run beside your dev server. On every change to a <code>.surql</code> source, a host file, or <code>surrealguard.toml</code> it runs the full <code>check</code>, and regenerates the registry when — and only when — that check passes.</p>
-    <pre class="code"><span class="dollar">$</span> surrealguard watch --out src/surrealguard.generated.ts
-surrealguard watch /home/you/app
+    <p>The development loop, to run beside your dev server. On every change to a <code>.surql</code> source, a host file, or <code>surrealql-analyzer.toml</code> it runs the full <code>check</code>, and regenerates the registry when — and only when — that check passes.</p>
+    <pre class="code"><span class="dollar">$</span> surrealql-analyzer watch --out src/surrealql-analyzer.generated.ts
+surrealql-analyzer watch /home/you/app
 run 2 · schema/person.surql changed · 6ms
 
-<span class="ok">PASS</span> 4 sources · no diagnostics · wrote src/surrealguard.generated.ts (3 queries)
+<span class="ok">PASS</span> 4 sources · no diagnostics · wrote src/surrealql-analyzer.generated.ts (3 queries)
 
-watching .surql, host files and surrealguard.toml — Ctrl-C to stop</pre>
+watching .surql, host files and surrealql-analyzer.toml — Ctrl-C to stop</pre>
     <p>Pairing the two verbs is the point: <code>check</code> alone leaves the generated types stale, and <code>generate</code> alone reports only the queries it embeds, so a broken <code>.surql</code> file passes unmentioned. Generating second, and only on a clean check, means a half-typed save never overwrites a registry that worked.</p>
     <p>Each run repaints the screen rather than scrolling the last one away — a watch is a display of the workspace's current state, not a log of its history — and ends in a <code>PASS</code> / <code>WARN</code> / <code>FAIL</code> band. Piped output cannot be cleared, so runs are separated by a rule instead. <code>--check-only</code> writes nothing, which is the mode for a workspace whose registry is committed and reviewed. <code>check --watch</code> and <code>generate --watch</code> still watch a single verb each.</p>
 
@@ -201,16 +201,16 @@ watching .surql, host files and surrealguard.toml — Ctrl-C to stop</pre>
 <footer>
   <div class="wrap">
     <div>
-      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealQL Analyzer</a>
       <div class="tiny">Static analysis &amp; type inference for SurrealQL.</div>
     </div>
     <div class="cols">
       <a href="/docs/">Docs</a>
       <a href="/llms.txt">llms.txt</a>
       <a href="/llms-full.txt">llms-full.txt</a>
-      <a href="https://github.com/DrewRidley/surrealguard">GitHub</a>
-      <a href="https://crates.io/crates/surrealguard">crates.io</a>
-      <a href="https://www.npmjs.com/org/surrealguard">npm</a>
+      <a href="https://github.com/surrealdb/analyzer">GitHub</a>
+      <a href="https://crates.io/crates/surrealql-analyzer">crates.io</a>
+      <a href="https://www.npmjs.com/org/surrealdb">npm</a>
     </div>
     <div class="tiny">MIT OR Apache-2.0</div>
   </div>

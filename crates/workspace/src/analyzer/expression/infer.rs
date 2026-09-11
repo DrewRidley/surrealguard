@@ -10,8 +10,8 @@
 //! same diagnostics sink, environment, and row table.
 
 use surrealdb_types::{Kind, KindLiteral};
-use surrealguard_syntax::ast;
-use surrealguard_syntax::span::SourceSpan;
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::span::SourceSpan;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::expression::{ExpressionFact, ExpressionValueClass, PartialReason};
@@ -1400,8 +1400,8 @@ mod tests {
     use super::*;
     use crate::schema::TableDef;
     use crate::statement_env::StatementEnv;
-    use surrealguard_syntax::parse::{parse_source, ParsedSource};
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::parse::{parse_source, ParsedSource};
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use crate::schema::{extract_schema, SchemaIndex};
 
@@ -1425,9 +1425,9 @@ mod tests {
         row_table: Option<&TableDef>,
         env: &StatementEnv,
     ) -> ExpressionFact {
-        let expr = surrealguard_syntax::lower::lower_first_expr(parsed, kind)
+        let expr = surrealql_analyzer_syntax::lower::lower_first_expr(parsed, kind)
             .unwrap_or_else(|| panic!("no {kind} in {:?}", parsed.text()));
-        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        let mut diagnostics: Vec<surrealql_analyzer_diagnostics::Finding> = Vec::new();
         let mut ctx = AnalysisContext::scoped(
             schema,
             parsed.source_id().clone(),
@@ -1506,7 +1506,7 @@ mod tests {
             ExpressionFact::new(
                 SourceSpan::new(
                     parsed.source_id().clone(),
-                    surrealguard_syntax::span::ByteRange::new(0, 1).unwrap(),
+                    surrealql_analyzer_syntax::span::ByteRange::new(0, 1).unwrap(),
                 ),
                 ExpressionValueClass::Literal,
             )
@@ -1578,7 +1578,7 @@ mod tests {
 
     #[test]
     fn coalesce_strips_none_from_an_option_left_operand() {
-        use surrealguard_syntax::ast::BinaryOp;
+        use surrealql_analyzer_syntax::ast::BinaryOp;
 
         // `option<string> ?? 'd'` is a `string`: the default is exactly what
         // surfaces when the left side is NONE, so NONE cannot survive.
@@ -1780,7 +1780,7 @@ mod tests {
         // `Constant` at all: the grammar lists the closed set the engine
         // resolves, so it never reaches inference as one.
         let parsed = parse("RETURN math::nope;");
-        assert!(surrealguard_syntax::lower::lower_first_expr(&parsed, "Constant").is_none());
+        assert!(surrealql_analyzer_syntax::lower::lower_first_expr(&parsed, "Constant").is_none());
     }
 
     #[test]
@@ -1933,7 +1933,7 @@ mod tests {
             ExpressionFact::new(
                 SourceSpan::new(
                     SourceId::new("env"),
-                    surrealguard_syntax::span::ByteRange::new(0, 1).unwrap(),
+                    surrealql_analyzer_syntax::span::ByteRange::new(0, 1).unwrap(),
                 ),
                 ExpressionValueClass::Object,
             )

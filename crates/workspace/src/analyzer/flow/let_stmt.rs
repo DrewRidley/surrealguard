@@ -5,15 +5,16 @@
 //! The statement itself produces no value.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
 pub(crate) fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) -> Kind {
     if ctx.env().would_shadow(&stmt.name.node) {
-        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.name.span);
+        let span =
+            surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.name.span);
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 7002,
                 format!(
@@ -32,9 +33,10 @@ pub(crate) fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) ->
     // stand here was missing `$scope` and `$self`, both of which the engine
     // binds and this check silently allowed.
     if crate::context_params::is_engine_param(&stmt.name.node) {
-        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.name.span);
+        let span =
+            surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.name.span);
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 6007,
                 format!(
@@ -63,12 +65,12 @@ pub(crate) fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) ->
     {
         if let Some(let_kind) = &fact.kind {
             if shadows_with_different_kind(let_kind, &param_kind) {
-                let span = surrealguard_syntax::span::SourceSpan::new(
+                let span = surrealql_analyzer_syntax::span::SourceSpan::new(
                     ctx.source().clone(),
                     stmt.name.span,
                 );
                 ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         span,
                         6002,
                         format!(
@@ -89,7 +91,7 @@ pub(crate) fn analyze_let(ctx: &mut AnalysisContext<'_>, stmt: &ast::LetStmt) ->
     // at whatever nesting depth this LET sits. Drained to the source's
     // top-level env; changes no diagnostics.
     let name_span =
-        surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.name.span);
+        surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.name.span);
     ctx.record_let_binding(crate::analysis::LetBindingAnalysis {
         name: stmt.name.node.clone(),
         name_span,
@@ -120,9 +122,9 @@ fn shadows_with_different_kind(let_kind: &Kind, param_kind: &Kind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_diagnostics::Finding;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use crate::schema::SchemaIndex;
 
@@ -131,7 +133,7 @@ mod tests {
         let parsed =
             parse_source(SourceId::new("flow:test"), "LET $age = 42;").expect("query parses");
         let ast::Statement::Let(stmt) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "LetStatement")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "LetStatement")
                 .expect("no LetStatement node in tree")
                 .node
         else {

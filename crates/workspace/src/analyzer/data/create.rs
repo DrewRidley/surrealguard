@@ -5,7 +5,7 @@
 //! assignability) belong here.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::data::mutation;
@@ -52,8 +52,8 @@ mod tests {
     use super::*;
     use crate::schema::SchemaIndex;
     use crate::statement_env::StatementEnv;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use crate::schema::extract_schema;
 
@@ -61,16 +61,16 @@ mod tests {
         schema: &SchemaIndex,
         query: &str,
         env: StatementEnv,
-    ) -> Vec<surrealguard_diagnostics::Finding> {
+    ) -> Vec<surrealql_analyzer_diagnostics::Finding> {
         let parsed = parse_source(SourceId::new("query"), query).expect("query should parse");
         let ast::Statement::Create(stmt) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "CreateStatement")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "CreateStatement")
                 .expect("create statement exists")
                 .node
         else {
             panic!("expected create statement");
         };
-        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        let mut diagnostics: Vec<surrealql_analyzer_diagnostics::Finding> = Vec::new();
         {
             let mut ctx = AnalysisContext::scoped(
                 schema,
@@ -85,7 +85,7 @@ mod tests {
         diagnostics
     }
 
-    fn missing_fields(diagnostics: &[surrealguard_diagnostics::Finding]) -> usize {
+    fn missing_fields(diagnostics: &[surrealql_analyzer_diagnostics::Finding]) -> usize {
         diagnostics
             .iter()
             .filter(|finding| finding.code().number() == 2034)
@@ -106,9 +106,9 @@ mod tests {
     /// An env with `$p` bound to a closed object of `keys`.
     fn env_with_object(name: &str, keys: &[&str]) -> StatementEnv {
         use crate::expression::{ExpressionFact, ExpressionValueClass};
-        let span = surrealguard_syntax::span::SourceSpan::new(
+        let span = surrealql_analyzer_syntax::span::SourceSpan::new(
             SourceId::new("query"),
-            surrealguard_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered"),
+            surrealql_analyzer_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered"),
         );
         let fields: std::collections::BTreeMap<String, Kind> = keys
             .iter()
@@ -205,14 +205,14 @@ mod tests {
     fn analyze(schema: &SchemaIndex, query: &str) -> Kind {
         let parsed = parse_source(SourceId::new("query"), query).expect("query should parse");
         let ast::Statement::Create(stmt) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "CreateStatement")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "CreateStatement")
                 .expect("create statement exists")
                 .node
         else {
             panic!("expected create statement");
         };
         let env = StatementEnv::default();
-        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        let mut diagnostics: Vec<surrealql_analyzer_diagnostics::Finding> = Vec::new();
         let mut ctx = AnalysisContext::scoped(
             schema,
             parsed.source_id().clone(),

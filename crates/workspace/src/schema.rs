@@ -9,10 +9,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-use surrealguard_syntax::parse::ParsedSource;
-use surrealguard_syntax::source::SourceId;
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::parse::ParsedSource;
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
 use crate::expression::PartialReason;
 
@@ -440,7 +440,7 @@ pub struct SchemaExtraction {
     /// The assembled catalog.
     pub schema: SchemaIndex,
     /// Findings raised during extraction.
-    pub diagnostics: Vec<surrealguard_diagnostics::Finding>,
+    pub diagnostics: Vec<surrealql_analyzer_diagnostics::Finding>,
 }
 
 impl SchemaIndex {
@@ -488,7 +488,7 @@ impl SchemaIndex {
     /// valid arguments (1032/2035).
     pub(crate) fn validate_analyzer(
         analyzer: &AnalyzerDef,
-    ) -> Vec<surrealguard_diagnostics::Finding> {
+    ) -> Vec<surrealql_analyzer_diagnostics::Finding> {
         const TOKENIZERS: &[&str] = &["blank", "camel", "class", "punct"];
         const SNOWBALL_LANGS: &[&str] = &[
             "arabic",
@@ -513,7 +513,7 @@ impl SchemaIndex {
         for tokenizer in &analyzer.tokenizers {
             if !TOKENIZERS.contains(&tokenizer.to_ascii_lowercase().as_str()) {
                 findings.push(
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         analyzer.name_span.clone(),
                         1032,
                         format!(
@@ -542,7 +542,7 @@ impl SchemaIndex {
                         SNOWBALL_LANGS.contains(&lang.to_ascii_lowercase().as_str())
                     }) {
                         findings.push(
-                            surrealguard_diagnostics::catalog::finding(
+                            surrealql_analyzer_diagnostics::catalog::finding(
                                 analyzer.name_span.clone(),
                                 1032,
                                 format!(
@@ -563,7 +563,7 @@ impl SchemaIndex {
                         args.iter().map(|arg| arg.parse::<u64>().ok()).collect();
                     match bounds.as_slice() {
                         [Some(min), Some(max)] if min <= max => {}
-                        _ => findings.push(surrealguard_diagnostics::catalog::finding(
+                        _ => findings.push(surrealql_analyzer_diagnostics::catalog::finding(
                             analyzer.name_span.clone(),
                             2035,
                             format!("`{filter}` needs `(min, max)` with min <= max"),
@@ -571,7 +571,7 @@ impl SchemaIndex {
                     }
                 }
                 _ => findings.push(
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         analyzer.name_span.clone(),
                         1032,
                         format!("DEFINE ANALYZER will fail: `{name}` is not a supported filter"),
@@ -1108,7 +1108,7 @@ pub(crate) fn field_def_from_ast(
 /// (after coercion) or `$input` (before it). A `VALUE` clause that does is a
 /// transform of the write, not a replacement for it.
 fn expr_reads_written_value(expr: &ast::Spanned<ast::Expr>) -> bool {
-    use surrealguard_syntax::ast::visit::{walk_expr, Visitor};
+    use surrealql_analyzer_syntax::ast::visit::{walk_expr, Visitor};
 
     struct ReadsWrittenValue(bool);
 
@@ -1533,7 +1533,7 @@ pub(crate) fn infer_untyped_return(
     }
     let empty = SchemaIndex::default();
     let schema = schema.unwrap_or(&empty);
-    let mut scratch: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+    let mut scratch: Vec<surrealql_analyzer_diagnostics::Finding> = Vec::new();
     let mut ctx =
         crate::analyzer::context::AnalysisContext::new(schema, source.clone(), text, &mut scratch);
     match crate::analyzer::schema::define::function::infer_function_body_kind(&mut ctx, def) {
@@ -1614,7 +1614,7 @@ pub(crate) fn infer_field_value_kind(
     let self_table = schema.and_then(|s| s.tables.get(&def.table.node));
     let empty = SchemaIndex::default();
     let schema = schema.unwrap_or(&empty);
-    let mut scratch: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+    let mut scratch: Vec<surrealql_analyzer_diagnostics::Finding> = Vec::new();
     let mut ctx =
         crate::analyzer::context::AnalysisContext::new(schema, source.clone(), text, &mut scratch);
     let inferred = ctx.with_row_table(self_table, |ctx| {
@@ -1649,10 +1649,10 @@ pub(crate) struct ParsedFieldKind {
 /// The `Kind::Geometry` for `geometry<point | line | ...>`: every argument
 /// must name a known shape, else `None`.
 fn geometry_kind(
-    args: &[surrealguard_syntax::ast::Spanned<surrealguard_syntax::ast::TypeExpr>],
+    args: &[surrealql_analyzer_syntax::ast::Spanned<surrealql_analyzer_syntax::ast::TypeExpr>],
 ) -> Option<Kind> {
     use surrealdb_types::GeometryKind;
-    use surrealguard_syntax::ast::TypeExpr;
+    use surrealql_analyzer_syntax::ast::TypeExpr;
     let kinds = args
         .iter()
         .map(|arg| match &arg.node {
@@ -1677,10 +1677,10 @@ fn geometry_kind(
 /// Anything the conversion can't express reports why as an explicit
 /// partial reason.
 pub(crate) fn kind_from_type_expr(
-    ty: &surrealguard_syntax::ast::TypeExpr,
+    ty: &surrealql_analyzer_syntax::ast::TypeExpr,
     text: &str,
 ) -> ParsedFieldKind {
-    use surrealguard_syntax::ast::TypeExpr;
+    use surrealql_analyzer_syntax::ast::TypeExpr;
 
     fn convert(ty: &TypeExpr, text: &str) -> Result<Kind, PartialReason> {
         match ty {
@@ -1722,7 +1722,7 @@ pub(crate) fn kind_from_type_expr(
 
     fn parameterized_kind(
         name: &str,
-        args: &[surrealguard_syntax::ast::Spanned<TypeExpr>],
+        args: &[surrealql_analyzer_syntax::ast::Spanned<TypeExpr>],
         text: &str,
     ) -> Result<Kind, PartialReason> {
         let unsupported = || PartialReason::UnsupportedSyntax(format!("{name}<...>"));
@@ -1731,7 +1731,7 @@ pub(crate) fn kind_from_type_expr(
                 // `record<user>` takes named tables directly; `record<team |
                 // user | org>` writes the same set of tables as a single union
                 // argument, which the grammar nests as one `TypeExpr::Union`.
-                let table_names: &[surrealguard_syntax::ast::Spanned<TypeExpr>] = match args {
+                let table_names: &[surrealql_analyzer_syntax::ast::Spanned<TypeExpr>] = match args {
                     [single] => match &single.node {
                         TypeExpr::Union(variants) => variants,
                         _ => args,
@@ -1759,7 +1759,7 @@ pub(crate) fn kind_from_type_expr(
                 let mut max_len = None;
                 for arg in args {
                     match &arg.node {
-                        TypeExpr::Literal(surrealguard_syntax::ast::Literal::Int(len)) => {
+                        TypeExpr::Literal(surrealql_analyzer_syntax::ast::Literal::Int(len)) => {
                             max_len = u64::try_from(*len).ok();
                         }
                         other => element = convert(other, text)?,
@@ -1775,9 +1775,11 @@ pub(crate) fn kind_from_type_expr(
         }
     }
 
-    fn literal_kind(literal: &surrealguard_syntax::ast::Literal) -> Result<Kind, PartialReason> {
+    fn literal_kind(
+        literal: &surrealql_analyzer_syntax::ast::Literal,
+    ) -> Result<Kind, PartialReason> {
         use surrealdb_types::KindLiteral;
-        use surrealguard_syntax::ast::Literal;
+        use surrealql_analyzer_syntax::ast::Literal;
         let kind = match literal {
             Literal::String(value) => KindLiteral::String(value.clone()),
             Literal::Int(value) => KindLiteral::Integer(*value),
@@ -1832,8 +1834,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use surrealdb_types::{Kind, KindLiteral};
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use super::{extract_schema, FieldPath, SchemaIndex};
 

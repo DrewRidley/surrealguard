@@ -1,7 +1,7 @@
-# @surrealguard/client
+# @surrealdb/analyzer-client
 
 A typed SurrealQL client. You write the SurrealQL you already know;
-`surrealguard generate` analyses it against your schema and types the result.
+`surrealql-analyzer generate` analyses it against your schema and types the result.
 
 ```ts
 const [people] = await db.query("SELECT id, name, age, team FROM person");
@@ -17,16 +17,16 @@ cast, and nothing to wrap the string in. `person.nope` is a compile error;
 Three steps. Skip any one of them and you get `any` with no error, so none of
 them are optional — see [When everything is `any`](#when-everything-is-any).
 
-**1. Install.** `@surrealguard/client` is a real runtime dependency *and* the
+**1. Install.** `@surrealdb/analyzer-client` is a real runtime dependency *and* the
 module the generated file augments by name. `surrealdb` is its peer.
 
 ```sh
-npm install @surrealguard/client surrealdb
-npm install -D surrealguard typescript
+npm install @surrealdb/analyzer-client surrealdb
+npm install -D surrealql-analyzer typescript
 ```
 
-**2. Point it at your schema.** `npx surrealguard init` writes a commented
-`surrealguard.toml`; the part that matters is:
+**2. Point it at your schema.** `npx surrealql-analyzer init` writes a commented
+`surrealql-analyzer.toml`; the part that matters is:
 
 ```toml
 [sources]
@@ -51,15 +51,15 @@ you import it:
 
 | Project | Command | Import as |
 | --- | --- | --- |
-| Vanilla TS | `npx surrealguard generate --out src/surrealguard.generated.ts` | `./surrealguard.generated` |
-| SvelteKit | `npx surrealguard generate --out src/lib/surrealguard.generated.ts` | `$lib/surrealguard.generated` |
-| Next (`src/`) | `npx surrealguard generate --out src/surrealguard.generated.ts` | `@/surrealguard.generated` |
-| Next (no `src/`) | `npx surrealguard generate --out surrealguard.generated.ts` | `@/surrealguard.generated` |
+| Vanilla TS | `npx surrealql-analyzer generate --out src/surrealql-analyzer.generated.ts` | `./surrealql-analyzer.generated` |
+| SvelteKit | `npx surrealql-analyzer generate --out src/lib/surrealql-analyzer.generated.ts` | `$lib/surrealql-analyzer.generated` |
+| Next (`src/`) | `npx surrealql-analyzer generate --out src/surrealql-analyzer.generated.ts` | `@/surrealql-analyzer.generated` |
+| Next (no `src/`) | `npx surrealql-analyzer generate --out surrealql-analyzer.generated.ts` | `@/surrealql-analyzer.generated` |
 
 Put it in `package.json` so it is one command and one path forever:
 
 ```json
-{ "scripts": { "generate": "surrealguard generate --out src/surrealguard.generated.ts" } }
+{ "scripts": { "generate": "surrealql-analyzer generate --out src/surrealql-analyzer.generated.ts" } }
 ```
 
 Commit the generated module — it is what makes a fresh checkout type-check with
@@ -69,7 +69,7 @@ no build step. Re-run it whenever the schema or a query changes.
 
 ```ts
 // src/db.ts
-import { createClient } from "./surrealguard.generated";
+import { createClient } from "./surrealql-analyzer.generated";
 
 export const db = createClient({
   url: "ws://localhost:8000/rpc",
@@ -79,7 +79,7 @@ export const db = createClient({
 ```
 
 Import `createClient` **from the generated file**. That import is what loads the
-`declare module` augmentation; importing it from `@surrealguard/client` directly
+`declare module` augmentation; importing it from `@surrealdb/analyzer-client` directly
 compiles fine and gives you `unknown[]` forever.
 
 The connection opens **lazily**, on first use, so a module-level `db` is safe and
@@ -129,7 +129,7 @@ is a value:
 
 ```ts
 // src/queries.ts — the one place these texts live
-import { defineQuery, defineLive } from "./surrealguard.generated";
+import { defineQuery, defineLive } from "./surrealql-analyzer.generated";
 
 export const allPeople    = defineQuery("SELECT id, name, age, team FROM person");
 export const peopleOf     = defineQuery("SELECT id, name FROM person WHERE team = $team");
@@ -171,7 +171,7 @@ file is stale:
 
 ```
 TS2345: Argument of type 'SurqlError<"this query is not in the generated
-  registry - run `surrealguard generate`">' is not assignable to …
+  registry - run `surrealql-analyzer generate`">' is not assignable to …
 ```
 
 That also catches the case nobody recognises as an edit: reformatting a query
@@ -184,14 +184,14 @@ A type generator that silently produces `any` is worse than no type generator.
 There are exactly four ways to get there, and all four are silent on *your*
 code. If a result is `any`, it is one of these:
 
-1. **`@surrealguard/client` is not installed.** The generated file says
-   `declare module "@surrealguard/client"`. If that specifier does not resolve,
+1. **`@surrealdb/analyzer-client` is not installed.** The generated file says
+   `declare module "@surrealdb/analyzer-client"`. If that specifier does not resolve,
    TypeScript reports `TS2664: Invalid module name in augmentation` **inside the
    generated file** — which you would never open — and drops the entire
-   registry. Every lookup then falls back. `npm ls @surrealguard/client`.
-2. **You imported from `@surrealguard/client` instead of the generated file.**
+   registry. Every lookup then falls back. `npm ls @surrealdb/analyzer-client`.
+2. **You imported from `@surrealdb/analyzer-client` instead of the generated file.**
    The augmentation loads with the import. Import `createClient`, `defineQuery`
-   and `RecordId` from `./surrealguard.generated`.
+   and `RecordId` from `./surrealql-analyzer.generated`.
 3. **The generated file is somewhere else.** Bare `generate` writes to the
    workspace root. If your import points at `src/lib/` and the file is at the
    root, you now have two of them and they will drift. One `--out`, in
@@ -234,7 +234,7 @@ Construct params from the generated import — it re-exports the classes so this
 needs no second package:
 
 ```ts
-import { RecordId } from "./surrealguard.generated";
+import { RecordId } from "./surrealql-analyzer.generated";
 await db.query("SELECT id, name FROM person WHERE team = $team", {
   team: new RecordId("team", "red"),
 });
@@ -251,19 +251,19 @@ const rows = await db.runJson(allPeople);
 //    ^? Array<{ age: number; id: `person:${string}`; name: string; team: `team:${string}` }>
 ```
 
-`db.runJson`, `preload`, and the whole reactive layer (`@surrealguard/query`,
-`@surrealguard/svelte`, `@surrealguard/next`) are `Json<T>`-shaped for this
+`db.runJson`, `preload`, and the whole reactive layer (`@surrealdb/analyzer-query`,
+`@surrealdb/analyzer-svelte`, `@surrealdb/analyzer-next`) are `Json<T>`-shaped for this
 reason. `db.query` and `db.run` are not.
 
 ## Errors
 
 ```ts
-import { SurrealGuardError } from "./surrealguard.generated";
+import { SurrealQLAnalyzerError } from "./surrealql-analyzer.generated";
 
 try {
   await db.run(peopleOf, { team });
 } catch (error) {
-  if (error instanceof SurrealGuardError) {
+  if (error instanceof SurrealQLAnalyzerError) {
     console.error(error.query, error.params);
     // The SDK's own typed error is kept, not flattened:
     if (error.cause instanceof AuthenticationError) redirectToLogin();
@@ -286,12 +286,12 @@ does for you which cannot be recovered afterwards.
 
 ## How it works
 
-`surrealguard generate` scans your source for query text — `db.query("…")`,
+`surrealql-analyzer generate` scans your source for query text — `db.query("…")`,
 `defineQuery("…")`, `defineLive("…")` — analyses each against your schema, and
 writes one file:
 
 ```ts
-declare module "@surrealguard/client" {
+declare module "@surrealdb/analyzer-client" {
   interface SurqlRegistry {
     "SELECT id, name FROM person WHERE team = $team": {
       result: [Array<{ id: RecordId<"person">; name: string }>];
@@ -310,7 +310,7 @@ the whole mechanism. Two rules keep it honest:
 
 ### Why compose the SDK instead of extending it
 
-`class SurrealGuardClient extends Surreal` does not compile. The SDK already owns
+`class SurrealQLAnalyzerClient extends Surreal` does not compile. The SDK already owns
 `run` (RPC function invocation), `subscribe` (the event emitter) and
 `invalidate` — and `Surreal.invalidate()` *logs the session out*. tsc reports
 TS2416 on each. So the SDK instance lives at `db.surreal`, the session methods
@@ -329,7 +329,7 @@ the data vocabulary is ours.
 | `defineQuery(text)` / `defineLive(text)` | name a query; `.unchecked` opts out of the registry |
 | `preload(db, query)` | server-fetched, serialisable, self-describing |
 | `fromSurreal(surreal)` | wrap a `Surreal` you already own |
-| `SurrealGuardError` | `{ query, params, cause }` |
+| `SurrealQLAnalyzerError` | `{ query, params, cause }` |
 | `RecordId` / `Uuid` / `Duration` / `Decimal` | the SDK value classes |
 | `Json<T>` / `Rows<R>` / `SurqlQuery` / `SurqlLive` / `Preloaded<T>` | types |
 

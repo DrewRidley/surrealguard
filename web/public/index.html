@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark" />
 <style>html{background:#0a0b0e}</style>
-<title>SurrealGuard — Static analysis & type inference for SurrealQL</title>
+<title>SurrealQL Analyzer — Static analysis & type inference for SurrealQL</title>
 <meta name="description" content="Catch SurrealQL bugs before they run. Contract-first static analysis with fully typed results in Rust and TypeScript — compile-time checked queries, an LSP, and an agent-friendly CLI." />
-<meta property="og:title" content="SurrealGuard — Static analysis for SurrealQL" />
+<meta property="og:title" content="SurrealQL Analyzer — Static analysis for SurrealQL" />
 <meta property="og:description" content="Catch SurrealQL bugs before they run. Typed results in Rust and TypeScript, a language server, and an agent-friendly CLI." />
 <meta property="og:type" content="website" />
 <meta name="theme-color" content="#0a0b0e" />
@@ -21,7 +21,7 @@
   <div class="wrap">
     <a class="brand" href="/">
       <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="url(#g)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b9afff"/><stop offset="1" stop-color="#34d399"/></linearGradient></defs><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span>
-      SurrealGuard
+      SurrealQL Analyzer
     </a>
     <div class="nav-links">
       <a href="/docs/">Docs</a>
@@ -45,7 +45,7 @@
           <a href="/AGENTS.md"><svg class="i" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 4v4M9 14h.01M15 14h.01"/></svg><span>AGENTS.md<span class="mi-sub">rules for agents editing the repo</span></span></a>
         </div>
       </div>
-      <a class="nav-cta" href="https://github.com/DrewRidley/surrealguard">GitHub ↗</a>
+      <a class="nav-cta" href="https://github.com/surrealdb/analyzer">GitHub ↗</a>
     </div>
   </div>
 </nav>
@@ -55,7 +55,7 @@
   <div class="wrap">
     <span class="eyebrow reveal">Static analysis for SurrealQL</span>
     <h1 class="reveal">Catch SurrealQL bugs<br /><span class="grad">before they run.</span></h1>
-    <p class="lead reveal">SurrealGuard infers the type of every SurrealQL statement and reports contract violations — unknown fields, kind mismatches, bad graph traversals — with fully typed results in Rust and TypeScript.</p>
+    <p class="lead reveal">SurrealQL Analyzer infers the type of every SurrealQL statement and reports contract violations — unknown fields, kind mismatches, bad graph traversals — with fully typed results in Rust and TypeScript.</p>
     <div class="hero-cta reveal">
       <a class="btn btn-primary" href="/docs/">Get started</a>
       <!-- Down the page, not off it. "Try it live" is a promise of something
@@ -65,10 +65,10 @@
            wants the tool rather than the taste. -->
       <a class="btn btn-ghost" href="#demo">Try it live</a>
     </div>
-    <div class="cmd reveal"><span class="dollar">$</span> npx surrealguard check <button data-copy="npx surrealguard check">Copy</button></div>
+    <div class="cmd reveal"><span class="dollar">$</span> npx surrealql-analyzer check <button data-copy="npx surrealql-analyzer check">Copy</button></div>
 
     <!-- live Guard: the real WASM analyzer catching bugs in a curated stream -->
-    <div class="guard reveal" id="guard" role="img" aria-label="Live demonstration of the SurrealGuard analyzer checking SurrealQL statements against a schema.">
+    <div class="guard reveal" id="guard" role="img" aria-label="Live demonstration of the SurrealQL Analyzer engine checking SurrealQL statements against a schema.">
       <div class="guard-top">
         <span class="guard-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>guard</span>
         <span class="guard-schema">schema: user · post · follows · wrote</span>
@@ -87,7 +87,7 @@
 <section class="problem sec">
   <div class="wrap">
     <h2 class="reveal">SurrealDB says <em>yes</em> to almost anything.</h2>
-    <p class="reveal">Cross-kind comparisons order by kind instead of failing. Coercions succeed silently. A misspelled field just returns <code>NONE</code>. Those are exactly the places bugs hide — so SurrealGuard checks each construct's contract, statically.</p>
+    <p class="reveal">Cross-kind comparisons order by kind instead of failing. Coercions succeed silently. A misspelled field just returns <code>NONE</code>. Those are exactly the places bugs hide — so SurrealQL Analyzer checks each construct's contract, statically.</p>
   </div>
 </section>
 
@@ -99,7 +99,7 @@
     <div class="sec-head">
       <div class="kicker">// try it</div>
       <h2 class="reveal">See the analyzer think</h2>
-      <p class="reveal">Real diagnostics from the actual engine. Pick a query — SurrealGuard checks it against the schema and sets out each statement's inferred response type in full, below the query.</p>
+      <p class="reveal">Real diagnostics from the actual engine. Pick a query — SurrealQL Analyzer checks it against the schema and sets out each statement's inferred response type in full, below the query.</p>
     </div>
     <div class="demo reveal">
       <div class="demo-tabs" id="demoTabs">
@@ -136,7 +136,7 @@ DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
         </div>
       </div>
     </div>
-    <p style="text-align:center;color:var(--faint);font-size:13px;margin-top:16px">The real SurrealGuard engine, compiled to WebAssembly, running in your browser — edit anything. <a href="/playground/" style="color:var(--accent)">Open the full playground →</a></p>
+    <p style="text-align:center;color:var(--faint);font-size:13px;margin-top:16px">The real SurrealQL Analyzer engine, compiled to WebAssembly, running in your browser — edit anything. <a href="/playground/" style="color:var(--accent)">Open the full playground →</a></p>
   </div>
 </section>
 
@@ -144,23 +144,23 @@ DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
   <div class="wrap showcase">
     <div class="card card-split reveal">
       <div class="card-copy">
-        <div class="tag">Rust · surrealguard-rs</div>
+        <div class="tag">Rust · surrealql-analyzer-rs</div>
         <h3>The compiler is the checker</h3>
         <p><code>query!</code> runs the analyzer at compile time and generates the result type. A wrong table or field is a <code>cargo check</code> error — no codegen step, no language server, no runtime schema fetch.</p>
       </div>
-      <div class="code"><span class="k">use</span> surrealguard_rs::query;
+      <div class="code"><span class="k">use</span> surrealql_analyzer_rs::query;
 
 <span class="k">let</span> users = <span class="fn">query!</span>(<span class="s">"SELECT name, age FROM user"</span>);
 <span class="c">//  users: Query&lt;Vec&lt;{ name: String, age: i64 }&gt;&gt;  ← inferred</span>
 
 <span class="k">let</span> bad = <span class="fn">query!</span>(<span class="s">"SELECT name, ssn FROM user"</span>);
-<span class="err">// error: SurrealGuard rejected this query:
+<span class="err">// error: SurrealQL Analyzer rejected this query:
 //   [E1002] unknown field `ssn` on table `user`</span></div>
     </div>
 
     <div class="card ts-card reveal">
       <div class="ts-head">
-        <div class="tag">TypeScript · @surrealguard/{client, next, svelte}</div>
+        <div class="tag">TypeScript · @surrealdb/analyzer-{client, next, svelte}</div>
         <h3>Typed queries in every framework</h3>
         <p>One typed <code>db.query</code> — no wrapper, no cast, nothing to provide first — plus reactive live-query adapters for Next.js and Svelte 5. The row type is always inferred from the query text; a query built at runtime degrades to <code>unknown[]</code> and still runs.</p>
       </div>
@@ -207,7 +207,7 @@ DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
     <div class="sec-head">
       <div class="kicker">// for AI agents</div>
       <h2 class="reveal">A compile check for SurrealQL your agent can run</h2>
-      <p class="reveal">Agents like Claude Code already lean on <code>tsc</code> and <code>cargo check</code> to know their edits compile. SurrealGuard gives them the same signal for SurrealQL — run <code>surrealguard check</code> in the loop and every unknown table, missing field, or type mismatch comes back as a structured, byte-precise finding to fix.</p>
+      <p class="reveal">Agents like Claude Code already lean on <code>tsc</code> and <code>cargo check</code> to know their edits compile. SurrealQL Analyzer gives them the same signal for SurrealQL — run <code>surrealql-analyzer check</code> in the loop and every unknown table, missing field, or type mismatch comes back as a structured, byte-precise finding to fix.</p>
     </div>
     <div class="agent reveal">
       <div class="agent-grid">
@@ -215,18 +215,18 @@ DEFINE TABLE wrote TYPE RELATION IN user OUT post;</textarea>
           <h3>The check-and-fix loop</h3>
           <p style="color:var(--muted);font-size:15.5px">Point the agent at your project once. From then on it runs the CLI on every change and reads the results — no editor integration required, works in any harness.</p>
           <ul>
-            <li><code>surrealguard check --json</code> → code, severity, message, help &amp; byte range per finding</li>
-            <li><code>surrealguard generate</code> → typed query results, so downstream field access is checked too</li>
+            <li><code>surrealql-analyzer check --json</code> → code, severity, message, help &amp; byte range per finding</li>
+            <li><code>surrealql-analyzer generate</code> → typed query results, so downstream field access is checked too</li>
             <li>Deterministic non-zero exit on error-severity findings — the loop knows when it's done</li>
             <li>Context files: <a href="/llms.txt" style="color:var(--accent)">llms.txt</a>, <a href="/llms-full.txt" style="color:var(--accent)">llms-full.txt</a> &amp; <a href="/AGENTS.md" style="color:var(--accent)">AGENTS.md</a></li>
             <li><span style="color:var(--faint)">Secondary:</span> the editor LSP for humans, and any MCP bridge that surfaces the same diagnostics</li>
           </ul>
         </div>
         <div class="prompt-box">
-          <button class="copy-prompt" data-copy="Set up SurrealGuard in this project. Run the CLI with `npx surrealguard init`, point surrealguard.toml at my .surql schema and query directories, then run `npx surrealguard check --json` and fix any reported findings. Where I write queries, use the Rust `query!` macro (surrealguard-rs) or the typed `@surrealguard/client` db.query so they're checked against my schema.">Copy prompt</button>
-Set up SurrealGuard in this project. Run the CLI with <span style="color:#86efac">`npx surrealguard init`</span>, point surrealguard.toml at my .surql schema and query directories, then run <span style="color:#86efac">`npx surrealguard check --json`</span> and fix any reported findings.
+          <button class="copy-prompt" data-copy="Set up SurrealQL Analyzer in this project. Run the CLI with `npx surrealql-analyzer init`, point surrealql-analyzer.toml at my .surql schema and query directories, then run `npx surrealql-analyzer check --json` and fix any reported findings. Where I write queries, use the Rust `query!` macro (surrealql-analyzer-rs) or the typed `@surrealdb/analyzer-client` db.query so they're checked against my schema.">Copy prompt</button>
+Set up SurrealQL Analyzer in this project. Run the CLI with <span style="color:#86efac">`npx surrealql-analyzer init`</span>, point surrealql-analyzer.toml at my .surql schema and query directories, then run <span style="color:#86efac">`npx surrealql-analyzer check --json`</span> and fix any reported findings.
 
-Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> macro or the typed <span style="color:#c4b5fd">`@surrealguard/client`</span> db.query so they're checked against my schema.
+Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> macro or the typed <span style="color:#c4b5fd">`@surrealdb/analyzer-client`</span> db.query so they're checked against my schema.
         </div>
       </div>
     </div>
@@ -249,7 +249,7 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
       <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M4 7l5 5-5 5"/><path d="M13 17h7"/></svg></div><h4>Editor LSP</h4><p>Diagnostics for <code>.surql</code> and SurrealQL embedded in TypeScript, Svelte, Vue, and Astro — plus inlay type hints, hover on context params and table fields, greyed-out dead code, and live <code>[lints]</code> levels. Runs in Zed.</p></div>
       <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg></div><h4>Rust <code>query!</code> macro</h4><p>Compile-time checked, typed SurrealQL. The compiler is the checker — no external step; results as nameless typed structs.</p></div>
       <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/><path d="M13 7h5M15.5 4.5v5"/></svg></div><h4>TypeScript packages</h4><p>A typed <code>db.query</code>, a reactive query core, and Next.js + SvelteKit adapters with live queries and SSR handled.</p></div>
-      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 4v4M8.5 14h.01M15.5 14h.01M9 18h6"/></svg></div><h4>Agent-friendly</h4><p>JSON diagnostics, <code>llms.txt</code>, <code>AGENTS.md</code>, and compile-time errors make SurrealGuard a first-class tool for AI agents and CI.</p></div>
+      <div class="feat reveal"><div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 4v4M8.5 14h.01M15.5 14h.01M9 18h6"/></svg></div><h4>Agent-friendly</h4><p>JSON diagnostics, <code>llms.txt</code>, <code>AGENTS.md</code>, and compile-time errors make SurrealQL Analyzer a first-class tool for AI agents and CI.</p></div>
     </div>
   </div>
 </section>
@@ -259,23 +259,23 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
     <div class="sec-head">
       <div class="kicker">// install</div>
       <h2 class="reveal">Get it</h2>
-      <p class="reveal">Run the CLI with <code>npx surrealguard</code> — zero install, no toolchain. The engine, Rust SDK, macros, and language server are published on crates.io; the TypeScript packages on npm; a Zed extension brings live diagnostics to your editor.</p>
+      <p class="reveal">Run the CLI with <code>npx surrealql-analyzer</code> — zero install, no toolchain. The engine, Rust SDK, macros, and language server are published on crates.io; the TypeScript packages on npm; a Zed extension brings live diagnostics to your editor.</p>
     </div>
 
     <div class="pkg-links reveal">
-      <a class="pkg-btn npm" href="https://www.npmjs.com/package/surrealguard">
+      <a class="pkg-btn npm" href="https://www.npmjs.com/package/surrealql-analyzer">
         <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M1.763 0C.786 0 0 .786 0 1.763v20.474C0 23.214.786 24 1.763 24h20.474c.977 0 1.763-.786 1.763-1.763V1.763C24 .786 23.214 0 22.237 0zM5.13 5.323l13.837.019-.009 13.836h-3.464l.01-10.382h-3.456L12.04 19.17H5.113z"/></svg>
-        <span>npm<em>surrealguard · @surrealguard/*</em></span>
+        <span>npm<em>surrealql-analyzer · @surrealdb/analyzer-*</em></span>
       </a>
-      <a class="pkg-btn crates" href="https://crates.io/crates/surrealguard">
+      <a class="pkg-btn crates" href="https://crates.io/crates/surrealql-analyzer">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 8l9-5 9 5v8l-9 5-9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>
         <span>crates.io<em>4 crates published</em></span>
       </a>
-      <a class="pkg-btn docs" href="https://docs.rs/surrealguard-rs">
+      <a class="pkg-btn docs" href="https://docs.rs/surrealql-analyzer-rs">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2V5z"/><path d="M19 17H6a2 2 0 0 0-2 2M9 7h7M9 10h5"/></svg>
         <span>docs.rs<em>full API reference</em></span>
       </a>
-      <a class="pkg-btn gh" href="https://github.com/DrewRidley/surrealguard">
+      <a class="pkg-btn gh" href="https://github.com/surrealdb/analyzer">
         <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.37.5 0 5.78 0 12.29c0 5.2 3.44 9.6 8.2 11.16.6.1.82-.25.82-.56v-2c-3.34.72-4.04-1.6-4.04-1.6-.55-1.36-1.33-1.72-1.33-1.72-1.08-.73.08-.72.08-.72 1.2.08 1.83 1.22 1.83 1.22 1.07 1.8 2.8 1.28 3.49.98.1-.76.42-1.28.76-1.57-2.67-.3-5.47-1.31-5.47-5.84 0-1.29.47-2.34 1.23-3.17-.12-.3-.53-1.52.12-3.16 0 0 1-.32 3.3 1.21a11.5 11.5 0 0 1 6 0c2.3-1.53 3.3-1.21 3.3-1.21.65 1.64.24 2.86.12 3.16.77.83 1.23 1.88 1.23 3.17 0 4.54-2.81 5.53-5.49 5.83.43.37.81 1.1.81 2.22v3.29c0 .32.22.68.83.56C20.57 21.88 24 17.48 24 12.29 24 5.78 18.63.5 12 .5z"/></svg>
         <span>GitHub<em>source · issues</em></span>
       </a>
@@ -285,14 +285,14 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
       <div class="install-card reveal">
         <div class="label">CLI <span class="pill">npx · zero-install</span></div>
         <div class="term">
-          <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">surrealguard — cli</span></div>
+          <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">surrealql-analyzer — cli</span></div>
           <div class="term-body">
             <div class="term-line comment"># zero-install via npm — no toolchain needed</div>
-            <div class="term-line"><span class="prompt">$</span><code>npx surrealguard init</code><button class="term-copy" data-copy="npx surrealguard init">Copy</button></div>
-            <div class="term-line"><span class="prompt">$</span><code>npx surrealguard check</code><button class="term-copy" data-copy="npx surrealguard check">Copy</button></div>
-            <div class="term-line"><span class="prompt">$</span><code>npx surrealguard generate</code><button class="term-copy" data-copy="npx surrealguard generate">Copy</button></div>
+            <div class="term-line"><span class="prompt">$</span><code>npx surrealql-analyzer init</code><button class="term-copy" data-copy="npx surrealql-analyzer init">Copy</button></div>
+            <div class="term-line"><span class="prompt">$</span><code>npx surrealql-analyzer check</code><button class="term-copy" data-copy="npx surrealql-analyzer check">Copy</button></div>
+            <div class="term-line"><span class="prompt">$</span><code>npx surrealql-analyzer generate</code><button class="term-copy" data-copy="npx surrealql-analyzer generate">Copy</button></div>
             <div class="term-line comment"># or install the binary from crates.io:</div>
-            <div class="term-line"><span class="prompt">$</span><code>cargo install surrealguard</code><button class="term-copy" data-copy="cargo install surrealguard">Copy</button></div>
+            <div class="term-line"><span class="prompt">$</span><code>cargo install surrealql-analyzer</code><button class="term-copy" data-copy="cargo install surrealql-analyzer">Copy</button></div>
           </div>
         </div>
       </div>
@@ -302,14 +302,14 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
           <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">cargo</span></div>
           <div class="term-body">
             <div class="term-line comment"># query! / surql! macros + typed SDK</div>
-            <div class="term-line"><span class="prompt">$</span><code>cargo add surrealguard-rs</code><button class="term-copy" data-copy="cargo add surrealguard-rs">Copy</button></div>
+            <div class="term-line"><span class="prompt">$</span><code>cargo add surrealql-analyzer-rs</code><button class="term-copy" data-copy="cargo add surrealql-analyzer-rs">Copy</button></div>
           </div>
         </div>
         <div class="crate-list">
-          <a class="crate" href="https://crates.io/crates/surrealguard"><code>surrealguard</code><span>CLI + engine</span></a>
-          <a class="crate" href="https://crates.io/crates/surrealguard-rs"><code>surrealguard-rs</code><span>SDK + macros</span></a>
-          <a class="crate" href="https://crates.io/crates/surrealguard-macros"><code>surrealguard-macros</code><span>proc-macros</span></a>
-          <a class="crate" href="https://crates.io/crates/surrealguard-lsp"><code>surrealguard-lsp</code><span>language server</span></a>
+          <a class="crate" href="https://crates.io/crates/surrealql-analyzer"><code>surrealql-analyzer</code><span>CLI + engine</span></a>
+          <a class="crate" href="https://crates.io/crates/surrealql-analyzer-rs"><code>surrealql-analyzer-rs</code><span>SDK + macros</span></a>
+          <a class="crate" href="https://crates.io/crates/surrealql-analyzer-macros"><code>surrealql-analyzer-macros</code><span>proc-macros</span></a>
+          <a class="crate" href="https://crates.io/crates/surrealql-analyzer-lsp"><code>surrealql-analyzer-lsp</code><span>language server</span></a>
         </div>
       </div>
       <div class="install-card reveal">
@@ -317,9 +317,9 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
         <div class="term">
           <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">npm</span></div>
           <div class="term-body">
-            <div class="term-line"><span class="prompt">$</span><code>npm i @surrealguard/client surrealdb</code><button class="term-copy" data-copy="npm i @surrealguard/client surrealdb">Copy</button></div>
-            <div class="term-line"><span class="prompt">$</span><code>npm i -D surrealguard</code><button class="term-copy" data-copy="npm i -D surrealguard">Copy</button></div>
-            <div class="term-line comment"># + @surrealguard/{query,next,svelte} for live queries</div>
+            <div class="term-line"><span class="prompt">$</span><code>npm i @surrealdb/analyzer-client surrealdb</code><button class="term-copy" data-copy="npm i @surrealdb/analyzer-client surrealdb">Copy</button></div>
+            <div class="term-line"><span class="prompt">$</span><code>npm i -D surrealql-analyzer</code><button class="term-copy" data-copy="npm i -D surrealql-analyzer">Copy</button></div>
+            <div class="term-line comment"># + @surrealdb/analyzer-{query,next,svelte} for live queries</div>
           </div>
         </div>
       </div>
@@ -346,11 +346,11 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
   <div class="wrap">
     <div class="sec-head"><div class="kicker">// faq</div><h2 class="reveal">Questions</h2></div>
     <div class="faq">
-      <details class="q reveal"><summary>Doesn't SurrealDB already validate my queries?</summary><p>At runtime, and permissively — cross-kind comparisons order by kind, coercions succeed, missing fields return <code>NONE</code>. SurrealGuard checks each construct's <em>contract</em> statically, so those silent behaviors become errors you see before shipping.</p></details>
-      <details class="q reveal"><summary>Do I have to change how I write SurrealQL?</summary><p>No. You write normal SurrealQL. In Rust you wrap it in <code>query!("…")</code>; in TypeScript you pass a literal to <code>db.query("…")</code> (or run <code>surrealguard generate</code> for standalone types). Dynamic strings still work — they just aren't typed.</p></details>
+      <details class="q reveal"><summary>Doesn't SurrealDB already validate my queries?</summary><p>At runtime, and permissively — cross-kind comparisons order by kind, coercions succeed, missing fields return <code>NONE</code>. SurrealQL Analyzer checks each construct's <em>contract</em> statically, so those silent behaviors become errors you see before shipping.</p></details>
+      <details class="q reveal"><summary>Do I have to change how I write SurrealQL?</summary><p>No. You write normal SurrealQL. In Rust you wrap it in <code>query!("…")</code>; in TypeScript you pass a literal to <code>db.query("…")</code> (or run <code>surrealql-analyzer generate</code> for standalone types). Dynamic strings still work — they just aren't typed.</p></details>
       <details class="q reveal"><summary>Does it need a running database?</summary><p>No. It analyzes your <code>.surql</code> schema and queries statically. The Rust macro reads your <code>schema/</code> or <code>migrations/</code> directory at compile time and checks against it.</p></details>
-      <details class="q reveal"><summary>How does it parse SurrealQL if the database's parser can't?</summary><p>SurrealDB discards spans before producing its AST, so it can't power tooling. SurrealGuard parses with tree-sitter into a typed, span-carrying AST and runs all analysis on that.</p></details>
-      <details class="q reveal"><summary>Is it production-ready?</summary><p>The engine, CLI, LSP, Rust macros, and TypeScript packages are built and tested. The first public release is in preparation — <a href="https://github.com/DrewRidley/surrealguard" style="color:var(--accent)">follow along on GitHub</a>.</p></details>
+      <details class="q reveal"><summary>How does it parse SurrealQL if the database's parser can't?</summary><p>SurrealDB discards spans before producing its AST, so it can't power tooling. SurrealQL Analyzer parses with tree-sitter into a typed, span-carrying AST and runs all analysis on that.</p></details>
+      <details class="q reveal"><summary>Is it production-ready?</summary><p>The engine, CLI, LSP, Rust macros, and TypeScript packages are built and tested. The first public release is in preparation — <a href="https://github.com/surrealdb/analyzer" style="color:var(--accent)">follow along on GitHub</a>.</p></details>
     </div>
   </div>
 </section>
@@ -360,7 +360,7 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
     <div>
       <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex">
         <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span>
-        SurrealGuard
+        SurrealQL Analyzer
       </a>
       <div class="tiny">Static analysis &amp; type inference for SurrealQL.</div>
     </div>
@@ -368,8 +368,8 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
       <a href="/docs/">Docs</a>
       <a href="/llms.txt">llms.txt</a>
       <a href="/AGENTS.md">AGENTS.md</a>
-      <a href="https://github.com/DrewRidley/surrealguard">GitHub</a>
-      <a href="https://crates.io/crates/surrealguard">crates.io</a>
+      <a href="https://github.com/surrealdb/analyzer">GitHub</a>
+      <a href="https://crates.io/crates/surrealql-analyzer">crates.io</a>
     </div>
     <div class="tiny">MIT OR Apache-2.0</div>
   </div>
@@ -396,7 +396,7 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
   aiBtn.addEventListener("click", (e) => { e.stopPropagation(); const o = ai.classList.toggle("open"); aiBtn.setAttribute("aria-expanded", o); });
   document.addEventListener("click", () => ai.classList.remove("open"));
   ai.addEventListener("click", (e) => e.stopPropagation());
-  const AI_PROMPT = "I want to use SurrealGuard (static analysis and type inference for SurrealQL) in my project. First read its full reference at https://surrealguard.dev/llms-full.txt, then help me install it, point it at my schema, and get typed, statically-checked queries working. Ask whether I'm on Rust or TypeScript if it changes the steps.";
+  const AI_PROMPT = "I want to use SurrealQL Analyzer (static analysis and type inference for SurrealQL) in my project. First read its full reference at https://surrealguard.dev/llms-full.txt, then help me install it, point it at my schema, and get typed, statically-checked queries working. Ask whether I'm on Rust or TypeScript if it changes the steps.";
   ai.querySelector('[data-ai="chatgpt"]').href = "https://chatgpt.com/?q=" + encodeURIComponent(AI_PROMPT);
   ai.querySelector('[data-ai="claude"]').href = "https://claude.ai/new?q=" + encodeURIComponent(AI_PROMPT);
 
@@ -430,7 +430,7 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
 
   // =====================================================================
   //  Shared engine loader + SurrealQL highlighter, then the live hero and
-  //  the interactive playground — both driven by the REAL SurrealGuard
+  //  the interactive playground — both driven by the REAL SurrealQL Analyzer
   //  analyzer compiled to WebAssembly.
   // =====================================================================
 
@@ -441,7 +441,7 @@ Where I write queries, use the Rust <span style="color:#c4b5fd">`query!`</span> 
       analyzerPromise = (async () => {
         const [{ createAnalyzer }, bytes] = await Promise.all([
           import("/playground/sg-analyzer.mjs"),
-          fetch("/playground/surrealguard_wasm.wasm").then((r) => r.arrayBuffer()),
+          fetch("/playground/surrealql_analyzer_wasm.wasm").then((r) => r.arrayBuffer()),
         ]);
         const a = await createAnalyzer(bytes);
         analyzerReady = true;

@@ -2,9 +2,9 @@
 // with a registry augmentation standing in for the generated file. Using the
 // real `defineLive`/`defineQuery` (not `.unchecked`) means the runtime tests
 // exercise the typed path, so `user.name` below is a real `string`.
-import { defineLive, defineQuery, type RecordId } from "@surrealguard/client";
+import { defineLive, defineQuery, type RecordId } from "@surrealdb/analyzer-client";
 
-declare module "@surrealguard/client" {
+declare module "@surrealdb/analyzer-client" {
   interface SurqlRegistry {
     "SELECT * FROM user": {
       result: [Array<{ id: RecordId<"user">; name: string }>];
@@ -18,7 +18,7 @@ declare module "@surrealguard/client" {
     // one INSIDE a `<Query>`, parameterised by a field of the outer row, and a
     // reactive row is `Json`-shaped — so a `record` param would need
     // reconstructing from `` `user:${string}` `` before it could be passed
-    // back. That cost is real (`recordId` in `@surrealguard/client` pays it),
+    // back. That cost is real (`recordId` in `@surrealdb/analyzer-client` pays it),
     // but it is not what these tests are about.
     "SELECT * FROM user WHERE name = $name": {
       result: [Array<{ id: RecordId<"user">; name: string }>];

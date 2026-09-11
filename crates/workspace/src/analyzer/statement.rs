@@ -7,7 +7,7 @@
 //! per-statement rules stay attached to their own analyzer.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
@@ -59,10 +59,10 @@ pub(crate) fn analyze_lowered_statement(
 #[cfg(test)]
 mod tests {
     use surrealdb_types::Kind;
-    use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::lower::lower;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_diagnostics::Finding;
+    use surrealql_analyzer_syntax::lower::lower;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use super::analyze_lowered_statement;
     use crate::analyzer::context::AnalysisContext;

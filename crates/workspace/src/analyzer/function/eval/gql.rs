@@ -5,7 +5,7 @@
 //! unknowable statically — only the arguments are checked.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{apply, ParamKind, ReturnKind, Signature};

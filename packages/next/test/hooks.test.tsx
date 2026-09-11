@@ -6,12 +6,12 @@ import {
   type Json,
   type Preloaded,
   type RecordId as RecordIdType,
-  type SurrealGuardClient,
-} from "@surrealguard/client";
+  type SurrealQLAnalyzerClient,
+} from "@surrealdb/analyzer-client";
 import { RecordId, type LiveMessage } from "surrealdb";
-import { SurrealGuardProvider, useLive } from "../src/index.js";
+import { SurrealQLAnalyzerProvider, useLive } from "../src/index.js";
 
-declare module "@surrealguard/client" {
+declare module "@surrealdb/analyzer-client" {
   interface SurqlRegistry {
     "SELECT * FROM user": {
       result: [Array<{ id: RecordIdType<"user">; name: string }>];
@@ -48,7 +48,7 @@ function makeClient(rows: Array<Record<string, unknown>> = []) {
     surreal: { query, liveOf },
     onInvalidate: () => () => {},
     runLiveOnce: async () => rows,
-  } as unknown as SurrealGuardClient;
+  } as unknown as SurrealQLAnalyzerClient;
   return { client, query, emit: (m: LiveMessage) => handler?.(m) };
 }
 
@@ -85,8 +85,8 @@ function Users({ preloaded }: { preloaded?: Preloaded<Row[]> }) {
   );
 }
 
-const withClient = (client: SurrealGuardClient, node: React.ReactNode) => (
-  <SurrealGuardProvider client={client}>{node}</SurrealGuardProvider>
+const withClient = (client: SurrealQLAnalyzerClient, node: React.ReactNode) => (
+  <SurrealQLAnalyzerProvider client={client}>{node}</SurrealQLAnalyzerProvider>
 );
 
 describe("useLive", () => {
@@ -133,7 +133,7 @@ describe("useLive", () => {
       },
       surreal: {},
       onInvalidate: () => () => {},
-    } as unknown as SurrealGuardClient;
+    } as unknown as SurrealQLAnalyzerClient;
 
     render(withClient(client, <Users />));
     await flush();

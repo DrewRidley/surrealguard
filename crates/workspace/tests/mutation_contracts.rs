@@ -13,8 +13,8 @@
 //! time::now()` / `DEFAULT rand::uuid()` are the created-at and id idioms, and
 //! `VALUE time::now()` is the updated-at idiom; none may fire.
 
-use surrealguard_diagnostics::Finding;
-use surrealguard_workspace::{analyze_workspace, Workspace};
+use surrealql_analyzer_diagnostics::Finding;
+use surrealql_analyzer_workspace::{analyze_workspace, Workspace};
 
 /// Every finding a schema and a query raise together.
 fn findings(schema: &str, query: &str) -> Vec<Finding> {

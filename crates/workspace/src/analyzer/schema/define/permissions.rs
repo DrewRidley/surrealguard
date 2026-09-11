@@ -27,8 +27,8 @@
 //! field-level predicate resolves fully against the fields declared before it.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analyzer::context::AnalysisContext;
 use crate::expression::{ExpressionFact, ExpressionValueClass};
@@ -106,7 +106,7 @@ pub(crate) fn analyze_permission_predicates(
                     .is_violation()
                     {
                         let span = SourceSpan::new(ctx.source().clone(), predicate.span);
-                        ctx.emit(surrealguard_diagnostics::catalog::finding(
+                        ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                             span,
                             2005,
                             format!(

@@ -1,8 +1,8 @@
-# SurrealGuard Implementation Plan
+# SurrealQL Analyzer Implementation Plan
 
 ## Goal
 
-Build the ground-up SurrealGuard rewrite around stable tree-sitter syntax, diagnostics, SurrealDB-backed semantic kinds, workspace analysis, CLI, LSP, MCP, and host adapters.
+Build the ground-up SurrealQL Analyzer rewrite around stable tree-sitter syntax, diagnostics, SurrealDB-backed semantic kinds, workspace analysis, CLI, LSP, MCP, and host adapters.
 
 `docs/DESIGN.md` is the source of truth. This plan tracks the next practical slices only.
 
@@ -24,7 +24,7 @@ Build the ground-up SurrealGuard rewrite around stable tree-sitter syntax, diagn
 
 Cleaned-up type model:
 
-- `crates/types` / `surrealguard-types` has been removed from the maintained architecture. Use tree-sitter CST nodes for syntax and upstream `surrealdb_types::Kind` / other public SurrealDB types for semantic kind/value facts.
+- `crates/types` / `surrealql-analyzer-types` has been removed from the maintained architecture. Use tree-sitter CST nodes for syntax and upstream `surrealdb_types::Kind` / other public SurrealDB types for semantic kind/value facts.
 
 ## Completed foundation
 
@@ -32,7 +32,7 @@ Cleaned-up type model:
 - Source IDs and source spans.
 - Stable finding code families.
 - Severity policy and suppression parsing.
-- Removed obsolete owned type model and assignability rules in `surrealguard-types`; use `surrealdb_types::Kind` and response-shape facts instead.
+- Removed obsolete owned type model and assignability rules in `surrealql-analyzer-types`; use `surrealdb_types::Kind` and response-shape facts instead.
 - Historical generic function signature solving was removed with the obsolete type crate; reintroduce only if it can be expressed over upstream `Kind` and response-shape facts.
 - Workspace source registry and syntax-analysis pipeline.
 - CLI `check` routed through workspace analysis with stable JSON output.
@@ -136,7 +136,7 @@ Objective: correct the architecture before adding more SELECT semantics.
 
 Implemented:
 
-1. Deleted `crates/types` / `surrealguard-types`.
+1. Deleted `crates/types` / `surrealql-analyzer-types`.
 2. Added upstream `surrealdb-types` as a workspace dependency.
 3. Store schema leaf kinds as `surrealdb_types::Kind`.
 4. Replaced the old `StatementAnalysis` result-type placeholder with a response-shape contract that uses SurrealDB public kinds at the leaves.

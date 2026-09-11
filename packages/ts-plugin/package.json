@@ -1,12 +1,12 @@
 {
-  "name": "@surrealguard/ts-plugin",
+  "name": "@surrealdb/analyzer-ts-plugin",
   "version": "0.5.3",
   "description": "TypeScript language service plugin: SurrealQL diagnostics and highlighting inside db.query(\"\u2026\"), reported as TypeScript's own.",
   "license": "MIT OR Apache-2.0",
   "author": "Drew Ridley",
   "repository": {
     "type": "git",
-    "url": "https://github.com/DrewRidley/surrealguard",
+    "url": "https://github.com/surrealdb/analyzer",
     "directory": "packages/ts-plugin"
   },
   "keywords": [

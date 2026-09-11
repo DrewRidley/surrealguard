@@ -5,8 +5,8 @@
 //! release), which must never fire. The facts behind each pinned version are
 //! cited in `crates/workspace/src/analyzer/version.rs`.
 
-use surrealguard_workspace::config::WorkspaceConfig;
-use surrealguard_workspace::{analyze_query, Workspace};
+use surrealql_analyzer_workspace::config::WorkspaceConfig;
+use surrealql_analyzer_workspace::{analyze_query, Workspace};
 
 /// `(code, message)` for every finding of `query` under `surrealdb_version`
 /// (`None` leaves the key unset).

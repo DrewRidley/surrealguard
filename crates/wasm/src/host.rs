@@ -28,17 +28,17 @@
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use surrealguard_diagnostics::{Finding, FindingTag, Severity};
-use surrealguard_embed::EmbeddedQuery;
-use surrealguard_syntax::highlight;
-use surrealguard_syntax::parse::{parse_source, ParsedSource};
-use surrealguard_syntax::source::SourceId;
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
-use surrealguard_workspace::analysis::{
+use surrealql_analyzer_diagnostics::{Finding, FindingTag, Severity};
+use surrealql_analyzer_embed::EmbeddedQuery;
+use surrealql_analyzer_syntax::highlight;
+use surrealql_analyzer_syntax::parse::{parse_source, ParsedSource};
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_workspace::analysis::{
     analyze_one_source, analyze_workspace, build_global_catalog, build_workspace_schema,
     AnalysisOutput, GlobalCatalog, Workspace,
 };
-use surrealguard_workspace::schema::SchemaIndex;
+use surrealql_analyzer_workspace::schema::SchemaIndex;
 
 /// What the host asks about one file.
 #[derive(Deserialize)]
@@ -246,7 +246,7 @@ pub fn analyze_host(request: &Request) -> String {
 }
 
 fn run(request: &Request) -> Response {
-    let queries = surrealguard_embed::extract(&request.file_name, &request.source);
+    let queries = surrealql_analyzer_embed::extract(&request.file_name, &request.source);
     if queries.is_empty() {
         return Response::empty();
     }
@@ -378,7 +378,7 @@ fn hover(schema: &str, analyzed: &[Analyzed], host_offset: u32) -> Option<Hover>
     let offset = entry.query.embed_offset(host_offset as usize)?;
 
     let render = |schema_index: &SchemaIndex| {
-        surrealguard_workspace::hover_at(
+        surrealql_analyzer_workspace::hover_at(
             &entry.output,
             schema_index,
             &entry.source,
@@ -639,7 +639,7 @@ mod tests {
     #[test]
     fn an_empty_schema_says_every_table_is_unknown_and_that_is_the_callers_problem() {
         // Asked to analyze against no schema, the analyzer answers the way
-        // `surrealguard check` on an empty workspace does: nothing is defined,
+        // `surrealql-analyzer check` on an empty workspace does: nothing is defined,
         // so nothing resolves. That is correct and it is also unusable in an
         // editor — which is exactly why "no config, no findings" is decided by
         // the caller (which knows whether the project opted in) and not here.

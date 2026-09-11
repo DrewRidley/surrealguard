@@ -380,7 +380,7 @@ A trailing same-line comment behaves identically (`… 'g' -- note` / newline /
 
 ### Root cause — confirmed against the CST
 
-`cargo run -p surrealguard-syntax --example dump_cst` on the shape above:
+`cargo run -p surrealql-analyzer-syntax --example dump_cst` on the shape above:
 
 ```
 WhereClause "WHERE x = 1\n\t-- note\n\tAND y = 2"
@@ -528,7 +528,7 @@ uncertainties are recorded honestly:
 
 - Engine: `surreal start --user root --pass root --bind 127.0.0.1:18234 memory`
   (SurrealDB 3.0.5, macOS aarch64), stopped after use.
-- Analyzer: `target/release/surrealguard` at HEAD `56dbea3`, run with
+- Analyzer: `target/release/surrealql-analyzer` at HEAD `56dbea3`, run with
   `cwd = /Users/drewridley/Documents/Projects/workshop/database`.
 - The corpus was never modified. The comment-stripping experiment ran against a
   copy in the session scratchpad.

@@ -10,7 +10,7 @@
 //! prove and answers `Verdict::Unknown` the instant an operand is
 //! runtime-dependent, so greying a branch never rests on a guess.
 
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::facts::{KindOracle, Place, Verdict};
 
@@ -105,15 +105,15 @@ pub fn branch_reachability(stmt: &ast::IfElseStmt) -> Reachability {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_syntax::ast;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::ast;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     /// Builds the first `IfElseStatement` in `source`.
     fn reachability_of(source: &str) -> Reachability {
         let parsed = parse_source(SourceId::new("const:test"), source).expect("query parses");
         let ast::Statement::IfElse(stmt) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
                 .expect("no IfElseStatement node")
                 .node
         else {

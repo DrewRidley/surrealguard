@@ -3,8 +3,8 @@
 //! selectors, and modifier facts.
 
 use surrealdb_types::{Kind, KindLiteral};
-use surrealguard_diagnostics::FindingCode;
-use surrealguard_workspace::{analyze_query, analyze_workspace, render_kind, Workspace};
+use surrealql_analyzer_diagnostics::FindingCode;
+use surrealql_analyzer_workspace::{analyze_query, analyze_workspace, render_kind, Workspace};
 
 use crate::support::{assert_no_syntax_findings, codes};
 
@@ -148,7 +148,7 @@ fn wildcard_under_group_fires_4025_once_per_wildcard() {
             .diagnostics
             .iter()
             .filter(|finding| finding.code().number() == 4025)
-            .all(|finding| finding.severity() == surrealguard_diagnostics::Severity::Error),
+            .all(|finding| finding.severity() == surrealql_analyzer_diagnostics::Severity::Error),
         "4025 is an error: the engine rejects the query"
     );
 }

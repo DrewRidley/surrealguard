@@ -11,7 +11,7 @@
  * server entry can import it too.
  */
 
-import type { Bound, Preloaded, SurqlLive } from "@surrealguard/client";
+import type { Bound, Preloaded, SurqlLive } from "@surrealdb/analyzer-client";
 
 export function isPreloaded(value: unknown): value is Preloaded<unknown> {
   return (

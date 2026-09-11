@@ -1,6 +1,6 @@
 //! Mapping engine candidates onto LSP completion items.
 //!
-//! The ranking itself lives in `surrealguard_workspace::completion`; this
+//! The ranking itself lives in `surrealql_analyzer_workspace::completion`; this
 //! module only translates. Two translation choices carry weight:
 //!
 //! * **`sort_text` is passed through verbatim.** Without it a client re-sorts
@@ -15,7 +15,7 @@ use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionItemLabelDetails, Documentation, TextEdit,
 };
 
-use surrealguard_workspace::{CandidateKind, CompletionCandidate};
+use surrealql_analyzer_workspace::{CandidateKind, CompletionCandidate};
 
 /// Converts one ranked candidate into the item the editor shows.
 pub fn candidate_to_item(text: &str, candidate: CompletionCandidate) -> CompletionItem {

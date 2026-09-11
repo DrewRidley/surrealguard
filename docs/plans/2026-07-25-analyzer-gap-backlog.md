@@ -4,20 +4,20 @@ _Produced by an 8-lens multi-agent audit (2026-07-25). Every gap was reproduced 
 prebuilt analyzer and adversarially verified. Hand-spot-checked afterwards: TI-1 (`??` E2004 FP)
 and DX-1 (GROUP BY alias E1002 FP) both reproduce exactly._
 
-**Additional finding not in the audit (verified by hand):** `surrealguard check` scans only
+**Additional finding not in the audit (verified by hand):** `surrealql-analyzer check` scans only
 `.surql` files — it never reads host files (`.ts/.tsx/.svelte/...`), so embedded queries are
 invisible to it. A project whose `generate` aborts with 2 errors passes `check` green with
 exit 0. CI gating on `check` does not cover the embedded-query surface at all.
 
 ---
 
-# SurrealGuard Analysis-Gap Backlog
+# SurrealQL Analyzer Analysis-Gap Backlog
 
 **Source:** 56 independently reproduced-and-confirmed gaps, deduped to **34 work items**. Several lenses hit the same root cause from different angles (the implicit-`id` cluster alone accounted for 5 separate filings); those are merged with their symptom lists intact.
 
 **Two methodology facts worth encoding in the repo docs**, because ~15 verifiers independently rediscovered them and one wasted a full cycle on it:
 
-1. `surrealguard generate` only emits registry entries for queries **embedded in host files** (`.ts/.tsx/.js/.jsx/.svelte/.vue/.astro` via `surql`/`db.query`). A `queries/**/*.surql`-only project is *checked* but produces an **empty `SurqlRegistry`**. All repros below assume a host `.ts` probe file.
+1. `surrealql-analyzer generate` only emits registry entries for queries **embedded in host files** (`.ts/.tsx/.js/.jsx/.svelte/.vue/.astro` via `surql`/`db.query`). A `queries/**/*.surql`-only project is *checked* but produces an **empty `SurqlRegistry`**. All repros below assume a host `.ts` probe file.
 2. `/Users/drewridley/Documents/Projects/workshop/database` has **no host files**, so `generate` over it is empty. Corpus type-impact must be probed by copying `schema/` into a scratch project with a probe `.ts`.
 
 ---
@@ -1009,7 +1009,7 @@ SELECT dept, salary FROM emp GROUP BY dept;
 ```
 3.x returns `{dept: 'a', salary: [10, 20]}` — the non-grouped field collapses to the **array** of
 that group's values. 2.x takes the first value. The analyzer types `salary` as the scalar in both
-cases, so under the 3.x target it is a wrong type, not a loose one. Not version-gated: SurrealGuard
+cases, so under the 3.x target it is a wrong type, not a loose one. Not version-gated: SurrealQL Analyzer
 targets the latest release, so the 3.x answer is simply the answer. (The dead `surrealdb_version`
 config key this once pointed at was removed — it gated nothing and read as a claim to target 2.x.)
 

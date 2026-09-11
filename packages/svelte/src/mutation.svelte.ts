@@ -7,7 +7,7 @@
  *
  * ```svelte
  * <script lang="ts">
- *   import { createMutation } from "@surrealguard/svelte";
+ *   import { createMutation } from "@surrealdb/analyzer-svelte";
  *   import { addPerson, allPeople, livePeople } from "$lib/queries";
  *
  *   const add = createMutation(addPerson, { invalidates: [allPeople, livePeople] });
@@ -20,18 +20,18 @@
  */
 
 import {
-  SurrealGuardError,
+  SurrealQLAnalyzerError,
   type AnyQuery,
   type ParamsArg,
   type Rows,
   type SurqlQuery,
-  type SurrealGuardClient,
-} from "@surrealguard/client";
-import { getQueryClient } from "@surrealguard/query";
+  type SurrealQLAnalyzerClient,
+} from "@surrealdb/analyzer-client";
+import { getQueryClient } from "@surrealdb/analyzer-query";
 import { useClient } from "./context.js";
 
 export interface MutationOptions<R> {
-  client?: SurrealGuardClient;
+  client?: SurrealQLAnalyzerClient;
   /**
    * Queries this write makes stale. Deliberately untyped as {@link AnyQuery}:
    * an invalidation target has no reason to agree with the mutation's own
@@ -39,7 +39,7 @@ export interface MutationOptions<R> {
    */
   invalidates?: readonly AnyQuery[];
   onSuccess?(data: Rows<R>): void;
-  onError?(error: SurrealGuardError): void;
+  onError?(error: SurrealQLAnalyzerError): void;
 }
 
 export interface MutationHandle<R, P extends Record<string, unknown>> {
@@ -48,7 +48,7 @@ export interface MutationHandle<R, P extends Record<string, unknown>> {
   /** Await the result; errors throw. */
   mutateAsync(...args: ParamsArg<P>): Promise<Rows<R>>;
   readonly data: Rows<R> | undefined;
-  readonly error: SurrealGuardError | undefined;
+  readonly error: SurrealQLAnalyzerError | undefined;
   readonly pending: boolean;
   reset(): void;
 }
@@ -60,7 +60,7 @@ export function createMutation<R, P extends Record<string, unknown>>(
   const client = options.client ?? useClient();
 
   let data = $state.raw<Rows<R> | undefined>(undefined);
-  let error = $state.raw<SurrealGuardError | undefined>(undefined);
+  let error = $state.raw<SurrealQLAnalyzerError | undefined>(undefined);
   let pending = $state(false);
 
   const run = async (params?: Record<string, unknown>): Promise<Rows<R>> => {
@@ -76,7 +76,7 @@ export function createMutation<R, P extends Record<string, unknown>>(
       options.onSuccess?.(result);
       return result;
     } catch (cause) {
-      const wrapped = SurrealGuardError.from(cause, { query: query.text, params });
+      const wrapped = SurrealQLAnalyzerError.from(cause, { query: query.text, params });
       error = wrapped;
       options.onError?.(wrapped);
       throw wrapped;

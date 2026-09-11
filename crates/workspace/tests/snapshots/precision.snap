@@ -1,6 +1,6 @@
-# SurrealGuard precision snapshot — every inferred type the corpus produces.
+# SurrealQL Analyzer precision snapshot — every inferred type the corpus produces.
 #
-# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test precision_snapshot
+# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test precision_snapshot
 #
 # This file records CURRENT behaviour, not correct behaviour. A diff means a
 # type changed: read it, decide whether the change is an improvement, and only

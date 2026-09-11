@@ -1,8 +1,8 @@
 //! Expression typing: binary-operator operand contracts, temporal and
 //! collection arithmetic, possibly-NONE operands, indexing, and casts.
 
-use surrealguard_diagnostics::{Finding, FindingCode};
-use surrealguard_workspace::{analyze_workspace, Workspace};
+use surrealql_analyzer_diagnostics::{Finding, FindingCode};
+use surrealql_analyzer_workspace::{analyze_workspace, Workspace};
 
 use crate::support::assert_no_syntax_findings;
 

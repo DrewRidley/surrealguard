@@ -13,7 +13,7 @@
   reports "Expected 2 arguments, but got 1".
 -->
 <script lang="ts">
-  import type { Preloaded, RecordId } from "@surrealguard/client";
+  import type { Preloaded, RecordId } from "@surrealdb/analyzer-client";
   import { LiveQuery, Query } from "../src/index.js";
   import { exact } from "./expect.js";
   import {
@@ -31,7 +31,7 @@
   const expectNamed = exact<Array<{ id: `member:${string}`; name: string }>>();
   const expectCount = exact<number>();
   const expectRetry = exact<() => Promise<void>>();
-  const expectError = exact<import("@surrealguard/client").SurrealGuardError>();
+  const expectError = exact<import("@surrealdb/analyzer-client").SurrealQLAnalyzerError>();
 
   let {
     team,

@@ -1,4 +1,4 @@
--- The schema SurrealGuard analyzes. `surrealguard generate` reads these
+-- The schema SurrealQL Analyzer analyzes. `surrealql-analyzer generate` reads these
 -- DEFINEs to type every embedded `db.query(...)` against them.
 
 DEFINE TABLE team SCHEMAFULL;

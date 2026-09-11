@@ -1,6 +1,6 @@
-# @surrealguard/svelte
+# @surrealdb/analyzer-svelte
 
-Svelte 5 / SvelteKit bindings for SurrealGuard.
+Svelte 5 / SvelteKit bindings for SurrealQL Analyzer.
 
 **You may not need this package.** The typed client works in a component with
 nothing around it — no provider, no wrapper, no helper:
@@ -35,26 +35,26 @@ for it when you want one of those.
 Three steps, and skipping any of them yields `any` with no error on your own
 code — see [When everything is `any`](#when-everything-is-any).
 
-**1. Install.** All three, including `@surrealguard/client`: the generated file
+**1. Install.** All three, including `@surrealdb/analyzer-client`: the generated file
 augments that module *by name*, and if the name does not resolve the whole
 registry is silently dropped.
 
 ```sh
-npm install @surrealguard/svelte @surrealguard/client surrealdb
-npm install -D surrealguard
+npm install @surrealdb/analyzer-svelte @surrealdb/analyzer-client surrealdb
+npm install -D surrealql-analyzer
 ```
 
-**2. Generate into `src/lib`,** so `$lib/surrealguard.generated` resolves. Bare
+**2. Generate into `src/lib`,** so `$lib/surrealql-analyzer.generated` resolves. Bare
 `generate` writes to the workspace root, which is not where that import points:
 
 ```sh
-npx surrealguard generate --out src/lib/surrealguard.generated.ts
+npx surrealql-analyzer generate --out src/lib/surrealql-analyzer.generated.ts
 ```
 
 Put it in `package.json` so the path is written once:
 
 ```json
-{ "scripts": { "generate": "surrealguard generate --out src/lib/surrealguard.generated.ts" } }
+{ "scripts": { "generate": "surrealql-analyzer generate --out src/lib/surrealql-analyzer.generated.ts" } }
 ```
 
 Commit the generated module — it is what makes a fresh checkout type-check
@@ -65,7 +65,7 @@ without a build step. Re-run on every schema or query change, or leave
 
 ```ts
 // src/lib/db.ts
-import { createClient } from "$lib/surrealguard.generated";
+import { createClient } from "$lib/surrealql-analyzer.generated";
 
 export const db = createClient({
   url: "ws://localhost:8000/rpc",
@@ -93,7 +93,7 @@ props.
 ```svelte
 <!-- src/routes/+layout.svelte — only if you use the reactive helpers -->
 <script lang="ts">
-  import { setClient } from "@surrealguard/svelte";
+  import { setClient } from "@surrealdb/analyzer-svelte";
   import { db } from "$lib/db";
 
   setClient(db);
@@ -122,7 +122,7 @@ query appears in two files, which is exactly the SSR case:
 
 ```ts
 // src/lib/queries.ts
-import { defineQuery, defineLive } from "$lib/surrealguard.generated";
+import { defineQuery, defineLive } from "$lib/surrealql-analyzer.generated";
 
 export const allPeople  = defineQuery("SELECT id, name, age, team FROM person");
 export const addPerson  = defineQuery("CREATE person SET name = $name, age = $age, team = $team");
@@ -137,7 +137,7 @@ re-subscribe with.
 
 ```svelte
 <script lang="ts">
-  import { createLive } from "@surrealguard/svelte";
+  import { createLive } from "@surrealdb/analyzer-svelte";
   import { livePeople } from "$lib/queries";
 
   const people = createLive(livePeople);
@@ -166,9 +166,9 @@ so the query re-subscribes:
 
 ```svelte
 <script lang="ts">
-  import { createLive } from "@surrealguard/svelte";
+  import { createLive } from "@surrealdb/analyzer-svelte";
   import { liveTeam } from "$lib/queries";
-  import { RecordId } from "$lib/surrealguard.generated";
+  import { RecordId } from "$lib/surrealql-analyzer.generated";
 
   let { slug }: { slug: string } = $props();
 
@@ -188,9 +188,9 @@ must be wrapped in a function to preserve reactivity*.
 
 ```svelte
 <script lang="ts">
-  import { createLive } from "@surrealguard/svelte";
+  import { createLive } from "@surrealdb/analyzer-svelte";
   import { liveTeam } from "$lib/queries";
-  import { RecordId } from "$lib/surrealguard.generated";
+  import { RecordId } from "$lib/surrealql-analyzer.generated";
 
   let { slug }: { slug: string | undefined } = $props();
 
@@ -204,7 +204,7 @@ must be wrapped in a function to preserve reactivity*.
 
 ```svelte
 <script lang="ts">
-  import { createQuery } from "@surrealguard/svelte";
+  import { createQuery } from "@surrealdb/analyzer-svelte";
   import { allPeople } from "$lib/queries";
 
   const roster = createQuery(allPeople);
@@ -236,9 +236,9 @@ than assemble a handle first.
 
 ```svelte
 <script lang="ts">
-  import { LiveQuery, Query } from "@surrealguard/svelte";
+  import { LiveQuery, Query } from "@surrealdb/analyzer-svelte";
   import { allPeople, liveTeam } from "$lib/queries";
-  import { recordId } from "@surrealguard/client";
+  import { recordId } from "@surrealdb/analyzer-client";
 </script>
 
 <Query q={allPeople}>
@@ -260,7 +260,7 @@ than assemble a handle first.
 </Query>
 ```
 
-(`recordId` ships in `@surrealguard/client`. A reactive row is `Json`-shaped, so
+(`recordId` ships in `@surrealdb/analyzer-client`. A reactive row is `Json`-shaped, so
 `person.team` is the string `"team:red"`, while a record *parameter* has to be
 the SDK's `RecordId` to match on the wire — and the table name survives in the
 literal type, so `recordId(person.team)` infers `RecordId<"team">` with no
@@ -318,9 +318,9 @@ With the preprocessor installed, `q` takes the SurrealQL directly:
 ```js
 // svelte.config.js
 import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
-import { surrealguard } from "@surrealguard/svelte/preprocess";
+import { surrealql-analyzer } from "@surrealdb/analyzer-svelte/preprocess";
 
-export default { preprocess: [surrealguard(), vitePreprocess()] };
+export default { preprocess: [surrealqlAnalyzer(), vitePreprocess()] };
 ```
 
 `{minAge}` is **not** interpolation. Svelte compiles an interpolated attribute
@@ -335,7 +335,7 @@ params  { __host0: minAge }
 ```
 
 One text whatever the value is; a real bound parameter on the wire; a static
-skeleton for the registry to key and for `surrealguard` to analyse. It is
+skeleton for the registry to key and for `surrealql-analyzer` to analyse. It is
 wrapped in a thunk, so it stays reactive through the same `Source` machinery as
 everything else.
 
@@ -344,7 +344,7 @@ Forget the preprocessor and nothing misbehaves quietly: the string reaches
 
 Two things this does not do yet, both external:
 
-- `surrealguard generate` extracts queries from call expressions, not from
+- `surrealql-analyzer generate` extracts queries from call expressions, not from
   markup attributes, so the skeleton has to reach the registry another way until
   it does.
 - `svelte2tsx` — what `svelte-check` and the editor use — applies `script` and
@@ -356,9 +356,9 @@ Two things this does not do yet, both external:
 
 ```svelte
 <script lang="ts">
-  import { createMutation } from "@surrealguard/svelte";
+  import { createMutation } from "@surrealdb/analyzer-svelte";
   import { addPerson, allPeople, livePeople } from "$lib/queries";
-  import { RecordId } from "$lib/surrealguard.generated";
+  import { RecordId } from "$lib/surrealql-analyzer.generated";
 
   const add = createMutation(addPerson, { invalidates: [allPeople, livePeople] });
 </script>
@@ -379,7 +379,7 @@ cannot do for you.
 
 ```ts
 // src/routes/+page.ts
-import { preload } from "@surrealguard/svelte";
+import { preload } from "@surrealdb/analyzer-svelte";
 import { db } from "$lib/db";
 import { livePeople } from "$lib/queries";
 
@@ -391,7 +391,7 @@ export async function load() {
 ```svelte
 <!-- src/routes/+page.svelte : the query text appears nowhere -->
 <script lang="ts">
-  import { createLive } from "@surrealguard/svelte";
+  import { createLive } from "@surrealdb/analyzer-svelte";
   import type { load } from "./+page";
 
   let { data }: { data: Awaited<ReturnType<typeof load>> } = $props();
@@ -423,8 +423,8 @@ replaces `data` re-runs it rather than pinning the first payload forever.
 Four ways to get `any` with no error on your own code. All four have bitten a
 real reader of these docs:
 
-1. **`@surrealguard/client` is not installed.** The generated file says
-   `declare module "@surrealguard/client"`. If the specifier does not resolve,
+1. **`@surrealdb/analyzer-client` is not installed.** The generated file says
+   `declare module "@surrealdb/analyzer-client"`. If the specifier does not resolve,
    TypeScript reports `TS2664` **inside the generated file** — which you would
    never open — and drops the entire registry.
 2. **No `lang="ts"` on the `<script>` tag.** Svelte does not typecheck an
@@ -432,9 +432,9 @@ real reader of these docs:
    `people[0].nope.definitely.not.a.field`. Every snippet above says `lang="ts"`
    because people copy the whole block.
 3. **The generated file is somewhere else.** Bare `generate` writes to the
-   workspace root, not `src/lib`. If your import says `$lib/surrealguard.generated`
+   workspace root, not `src/lib`. If your import says `$lib/surrealql-analyzer.generated`
    and the file is at the root, you now have two of them and they will drift.
-4. **You imported `createClient` / `defineQuery` from `@surrealguard/client`**
+4. **You imported `createClient` / `defineQuery` from `@surrealdb/analyzer-client`**
    rather than from the generated file. The augmentation loads with the import.
 
 ## Values are JSON here
@@ -456,15 +456,15 @@ own. Register the transport hook:
 
 ```ts
 // src/hooks.ts
-export { transport } from "@surrealguard/svelte/transport";
+export { transport } from "@surrealdb/analyzer-svelte/transport";
 ```
 
 It covers `RecordId`, `DateTime`, `Duration`, `Uuid` and `Decimal`. Spread it to
 add your own:
 
 ```ts
-import { transport as surrealguard } from "@surrealguard/svelte/transport";
-export const transport = { ...surrealguard, MyType: { encode, decode } };
+import { transport as surrealql-analyzer } from "@surrealdb/analyzer-svelte/transport";
+export const transport = { ...surrealql-analyzer, MyType: { encode, decode } };
 ```
 
 ## Sharing a query from a `.svelte.ts` module
@@ -474,7 +474,7 @@ component and tear down automatically:
 
 ```ts
 // src/lib/people.svelte.ts
-import { createLive } from "@surrealguard/svelte";
+import { createLive } from "@surrealdb/analyzer-svelte";
 import { db } from "$lib/db";
 import { livePeople } from "$lib/queries";
 
@@ -493,7 +493,7 @@ initialisation, so a module cannot read it.
 | `createMutation(query, options?)` | write + invalidation |
 | `<Query q children loading? error? client?>` | `createQuery` in markup |
 | `<LiveQuery q children loading? error? client?>` | `createLive` in markup |
-| `surrealguard()` (`/preprocess`) | the inline `q="SELECT … {value}"` attribute |
+| `surrealqlAnalyzer()` (`/preprocess`) | the inline `q="SELECT … {value}"` attribute |
 | `preload(db, query)` | SSR payload that remembers its query |
 | `setClient(db)` / `useClient(override?)` | context, for the helpers above |
 | `dehydrate(db)` / `hydrate(db, state)` | whole-cache transport |

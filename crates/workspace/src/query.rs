@@ -4,12 +4,12 @@
 //! (`AnalysisOutput`, `SchemaIndex`) and shapes them for presentation.
 
 use surrealdb_types::{Kind, KindLiteral};
-use surrealguard_syntax::ast;
-use surrealguard_syntax::ast::visit::{self, Visitor};
-use surrealguard_syntax::lower::lower_statements;
-use surrealguard_syntax::parse::{parse_source, ParsedSource};
-use surrealguard_syntax::source::SourceId;
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::ast::visit::{self, Visitor};
+use surrealql_analyzer_syntax::lower::lower_statements;
+use surrealql_analyzer_syntax::parse::{parse_source, ParsedSource};
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analysis::{AnalysisOutput, NarrowingAnalysis};
 use crate::analyzer::expression::infer::collection_element_kind;
@@ -2054,7 +2054,7 @@ mod tests {
     fn parse_as_type(label: &str) -> Option<Kind> {
         let text = format!("DEFINE FIELD f ON t TYPE {label};");
         let parsed = parse_source(SourceId::new("label"), text.as_str()).ok()?;
-        let statements = surrealguard_syntax::lower::lower_statements(&parsed);
+        let statements = surrealql_analyzer_syntax::lower::lower_statements(&parsed);
         let ast::Statement::Define(ast::DefineStmt::Field(field)) = &statements.first()?.node
         else {
             return None;

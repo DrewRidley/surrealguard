@@ -2,7 +2,7 @@
 //! shapes and conditions, branch-local scope, and guard narrowing.
 
 use surrealdb_types::Kind;
-use surrealguard_workspace::{analyze_workspace, render_kind, Workspace};
+use surrealql_analyzer_workspace::{analyze_workspace, render_kind, Workspace};
 
 use crate::support::codes;
 

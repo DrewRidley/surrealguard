@@ -34,7 +34,7 @@
 use std::collections::BTreeSet;
 
 use surrealdb_types::{Kind, Table};
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::statement_env::StatementEnv;
 
@@ -662,15 +662,15 @@ mod tests {
     use super::super::place::PlaceRoot;
     use super::*;
     use surrealdb_types::KindLiteral;
-    use surrealguard_syntax::lower::lower_first_expr;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::lower::lower_first_expr;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     /// The guard of the condition in `IF <source> { RETURN 1; }`.
     fn guard(source: &str, polarity: bool) -> Guard {
         let query = format!("IF {source} {{ RETURN 1; }};");
         let parsed = parse_source(SourceId::new("guard:test"), query.as_str()).expect("parses");
-        let statements = surrealguard_syntax::lower::lower_statements(&parsed);
+        let statements = surrealql_analyzer_syntax::lower::lower_statements(&parsed);
         let ast::Statement::IfElse(stmt) = &statements.first().expect("one statement").node else {
             panic!("expected an IF");
         };
@@ -892,7 +892,7 @@ mod tests {
 
     fn where_cond(query: &str) -> ast::Expr {
         let parsed = parse_source(SourceId::new("guard:test"), query).expect("parses");
-        match surrealguard_syntax::lower::lower_first_statement(&parsed, "SelectStatement")
+        match surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "SelectStatement")
             .expect("select statement exists")
             .node
         {

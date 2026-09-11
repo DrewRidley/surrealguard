@@ -20,8 +20,8 @@
 //! Every positive case has its near-miss beside it: a check that fires on the
 //! intended form is worse than one that misses the accident.
 
-use surrealguard_diagnostics::Finding;
-use surrealguard_workspace::{analyze_workspace, Workspace, WorkspaceAnalysis};
+use surrealql_analyzer_diagnostics::Finding;
+use surrealql_analyzer_workspace::{analyze_workspace, Workspace, WorkspaceAnalysis};
 
 fn analyze(source: &str) -> WorkspaceAnalysis {
     let mut workspace = Workspace::default();

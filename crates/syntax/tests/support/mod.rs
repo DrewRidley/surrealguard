@@ -12,8 +12,8 @@ pub mod ast_walk;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use surrealguard_syntax::parse::parse_source;
-use surrealguard_syntax::source::SourceId;
+use surrealql_analyzer_syntax::parse::parse_source;
+use surrealql_analyzer_syntax::source::SourceId;
 
 /// The committed valid corpus: a JSON array of query strings extracted from
 /// SurrealDB's own test suites. Every entry must parse cleanly.

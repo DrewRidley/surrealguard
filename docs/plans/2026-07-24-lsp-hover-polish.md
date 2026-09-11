@@ -47,5 +47,5 @@ fields
 - The inline **diagnostic** message is plain text per LSP spec (Zed renders it
   literally), so rich/markdown formatting for kinds belongs in the **hover**
   (`MarkupContent`, markdown), not in `crates/lsp/src/diagnostics.rs`.
-- Reminder: none of this shows in Zed until `surrealguard-lsp` is rebuilt and
+- Reminder: none of this shows in Zed until `surrealql-analyzer-lsp` is rebuilt and
   the language server is restarted.

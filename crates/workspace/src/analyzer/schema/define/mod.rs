@@ -9,8 +9,8 @@
 //! `IF NOT EXISTS` the intent to keep the first, so neither is a duplicate.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analyzer::context::AnalysisContext;
 
@@ -52,7 +52,7 @@ pub(crate) fn emit_duplicate_definition(
 ) {
     let span = SourceSpan::new(ctx.source().clone(), name_span);
     ctx.emit(
-        surrealguard_diagnostics::catalog::finding(
+        surrealql_analyzer_diagnostics::catalog::finding(
             span,
             1022,
             format!("{subject} is already defined; this DEFINE silently replaces the earlier one"),

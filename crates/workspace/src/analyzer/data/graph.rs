@@ -33,8 +33,8 @@
 //! position that walk never sees, so this module checks that one's fields too.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analyzer::context::AnalysisContext;
 use crate::schema::TableDef;
@@ -166,7 +166,7 @@ pub(crate) fn check_graph_idiom_at(
             ast::IdiomPart::Recurse { bounded } => {
                 if !bounded {
                     ctx.emit(
-                        surrealguard_diagnostics::catalog::finding(
+                        surrealql_analyzer_diagnostics::catalog::finding(
                             SourceSpan::new(ctx.source().clone(), part.span),
                             3011,
                             "this recursion has no upper bound and can walk the entire graph"
@@ -218,7 +218,7 @@ pub(crate) fn check_graph_idiom_at(
         if let Some((edge, _)) = &pending_edge {
             if let Some(last) = idiom.parts.last() {
                 ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         SourceSpan::new(ctx.source().clone(), last.span),
                         3004,
                         format!("this FROM target stops on the edge `{edge}`, not on a table"),
@@ -244,14 +244,14 @@ fn report_unresolved_step(ctx: &mut AnalysisContext<'_>, span: ByteRange, step: 
         // else stood where the table name goes.
         let (message, help) = if unmodeled.cst_kind == "Fields" {
             (
-                "surrealguard can't type what this graph selection projects",
+                "surrealql-analyzer can't type what this graph selection projects",
                 "plain field names, `*`, and `VALUE <path>` are modeled here; \
                  an alias or a dotted key is not"
                     .to_string(),
             )
         } else {
             (
-                "surrealguard can't resolve this graph target",
+                "surrealql-analyzer can't resolve this graph target",
                 format!(
                     "SurrealDB accepts a table name, `?`, or a record range after `->`/`<-`, \
                      not a `{}`",
@@ -260,7 +260,7 @@ fn report_unresolved_step(ctx: &mut AnalysisContext<'_>, span: ByteRange, step: 
             )
         };
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 SourceSpan::new(ctx.source().clone(), unmodeled.span),
                 6003,
                 message.to_string(),
@@ -270,10 +270,10 @@ fn report_unresolved_step(ctx: &mut AnalysisContext<'_>, span: ByteRange, step: 
     }
     if step.wildcard {
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 SourceSpan::new(ctx.source().clone(), span),
                 6003,
-                "`?` traverses every edge, so surrealguard can't name what this step reaches"
+                "`?` traverses every edge, so surrealql-analyzer can't name what this step reaches"
                     .to_string(),
             )
             .with_help("name the edge or table to have the traversal typed"),
@@ -282,11 +282,11 @@ fn report_unresolved_step(ctx: &mut AnalysisContext<'_>, span: ByteRange, step: 
     }
     if step.targets.len() > 1 {
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 SourceSpan::new(ctx.source().clone(), span),
                 6003,
                 format!(
-                    "this step names {} tables, so surrealguard can't resolve the traversal to one",
+                    "this step names {} tables, so surrealql-analyzer can't resolve the traversal to one",
                     step.targets.len()
                 ),
             )
@@ -362,7 +362,7 @@ fn rebase_through_fields(
     let kind = crate::analyzer::data::select::resolve_field_path(ctx.schema(), table, fields)?;
     if kind != Kind::Any && !kind_is_recordish(&kind) {
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 SourceSpan::new(ctx.source().clone(), graph_span),
                 3009,
                 format!(
@@ -457,7 +457,7 @@ fn check_step(
             // is a traversal — and a traversal must name a relation.
             if !after_edge {
                 ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         SourceSpan::new(ctx.source().clone(), target.span),
                         3001,
                         format!("`{edge}` can't be traversed — it is not a relation table"),
@@ -584,7 +584,7 @@ fn check_edge_is_relation(ctx: &mut AnalysisContext<'_>, edge: &str, span: ByteR
     match ctx.schema().tables.get(edge) {
         Some(table) if table.relation.is_none() => {
             ctx.emit(
-                surrealguard_diagnostics::catalog::finding(
+                surrealql_analyzer_diagnostics::catalog::finding(
                     SourceSpan::new(ctx.source().clone(), span),
                     3001,
                     format!("`{edge}` can't be traversed — it is not a relation table"),
@@ -663,7 +663,7 @@ fn emit_with_declaration(
         .get(edge)
         .map(|table| table.name_span.clone());
     let span = SourceSpan::new(ctx.source().clone(), span);
-    let mut finding = surrealguard_diagnostics::catalog::finding(span, code, message);
+    let mut finding = surrealql_analyzer_diagnostics::catalog::finding(span, code, message);
     if let Some(declared_at) = declared_at {
         finding = finding.with_related(declared_at, format!("relation `{edge}` declared here"));
     }
@@ -737,14 +737,14 @@ DEFINE FIELD since ON wrote TYPE datetime;
         assert_eq!(
             findings("SELECT ->wrote->(post, comment) FROM user;"),
             vec![
-                "E6003 this step names 2 tables, so surrealguard can't resolve the traversal to one",
+                "E6003 this step names 2 tables, so surrealql-analyzer can't resolve the traversal to one",
                 "E3002 relation `wrote` connects `user`->`wrote`->`post`, so this hop cannot land on `comment`",
             ]
         );
         assert_eq!(
             findings("SELECT ->wrote->(post, ghost) FROM user;"),
             vec![
-                "E6003 this step names 2 tables, so surrealguard can't resolve the traversal to one",
+                "E6003 this step names 2 tables, so surrealql-analyzer can't resolve the traversal to one",
                 "E1001 `ghost` is not a defined table",
                 "E3002 relation `wrote` connects `user`->`wrote`->`post`, so this hop cannot land on `ghost`",
             ]
@@ -753,7 +753,7 @@ DEFINE FIELD since ON wrote TYPE datetime;
         assert_eq!(
             findings("SELECT ->(wrote, post) FROM user;"),
             vec![
-                "E6003 this step names 2 tables, so surrealguard can't resolve the traversal to one",
+                "E6003 this step names 2 tables, so surrealql-analyzer can't resolve the traversal to one",
                 "E3001 `post` can't be traversed — it is not a relation table",
             ]
         );
@@ -803,13 +803,13 @@ DEFINE FIELD since ON wrote TYPE datetime;
         assert_eq!(
             findings("SELECT ->? AS p FROM user;"),
             vec![
-                "E6003 `?` traverses every edge, so surrealguard can't name what this step reaches"
+                "E6003 `?` traverses every edge, so surrealql-analyzer can't name what this step reaches"
             ]
         );
         assert_eq!(
             findings("SELECT ->wrote->(?) AS p FROM user;"),
             vec![
-                "E6003 `?` traverses every edge, so surrealguard can't name what this step reaches"
+                "E6003 `?` traverses every edge, so surrealql-analyzer can't name what this step reaches"
             ]
         );
         // Targets the vendored grammar admits and SurrealDB's parser rejects
@@ -823,7 +823,7 @@ DEFINE FIELD since ON wrote TYPE datetime;
         ] {
             assert_eq!(
                 findings(query),
-                vec!["E6003 surrealguard can't resolve this graph target"],
+                vec!["E6003 surrealql-analyzer can't resolve this graph target"],
                 "for {query}"
             );
             assert_eq!(projected(query), "array<{ p: any }>", "for {query}");
@@ -895,7 +895,7 @@ DEFINE FIELD since ON wrote TYPE datetime;
         ] {
             assert_eq!(
                 findings(query),
-                vec!["E6003 surrealguard can't type what this graph selection projects"],
+                vec!["E6003 surrealql-analyzer can't type what this graph selection projects"],
                 "for {query}"
             );
             assert_eq!(projected(query), "array<{ p: any }>", "for {query}");

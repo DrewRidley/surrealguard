@@ -21,7 +21,7 @@
  * ```svelte
  * <script lang="ts">
  *   import { page } from "$app/state";
- *   import { createLive, createQuery } from "@surrealguard/svelte";
+ *   import { createLive, createQuery } from "@surrealdb/analyzer-svelte";
  *   import { allPeople, liveTeam } from "$lib/queries";
  *
  *   // re-subscribes whenever page.params.team changes; the old LIVE is KILLed
@@ -40,10 +40,10 @@ import {
   type Rows,
   type SurqlLive,
   type SurqlQuery,
-  type SurrealGuardClient,
-  type SurrealGuardError,
-} from "@surrealguard/client";
-import { getQueryClient, type Observable, type QueryState } from "@surrealguard/query";
+  type SurrealQLAnalyzerClient,
+  type SurrealQLAnalyzerError,
+} from "@surrealdb/analyzer-client";
+import { getQueryClient, type Observable, type QueryState } from "@surrealdb/analyzer-query";
 import { useClient } from "./context.js";
 import { resolveSource, type Source } from "./source.js";
 
@@ -52,7 +52,7 @@ export type QueryStatus = "pending" | "success" | "error";
 /** A one-shot query's reactive view. `data` may be a scalar, so it is optional. */
 export interface QueryHandle<T> {
   readonly data: T | undefined;
-  readonly error: SurrealGuardError | undefined;
+  readonly error: SurrealQLAnalyzerError | undefined;
   readonly loading: boolean;
   readonly status: QueryStatus;
   refetch(): Promise<void>;
@@ -61,14 +61,14 @@ export interface QueryHandle<T> {
 /** A live query's reactive view. `data` is always an array: it is a row stream. */
 export interface LiveHandle<Row> {
   readonly data: Row[];
-  readonly error: SurrealGuardError | undefined;
+  readonly error: SurrealQLAnalyzerError | undefined;
   readonly loading: boolean;
   readonly status: QueryStatus;
 }
 
 export interface CreateOptions<T> {
   /** Override the context client (tests, a second connection). */
-  client?: SurrealGuardClient;
+  client?: SurrealQLAnalyzerClient;
   /** Seed data for a gap-free first render. `preload` supplies this for you. */
   initial?: T;
 }
@@ -93,7 +93,7 @@ function fromPreloaded(payload: Preloaded<unknown>): SurqlLive<unknown, Bound> {
 
 /**
  * A raw string reaching here means the inline attribute form was written and
- * `@surrealguard/svelte/preprocess` is not in the `svelte.config.js` preprocess
+ * `@surrealdb/analyzer-svelte/preprocess` is not in the `svelte.config.js` preprocess
  * chain — so Svelte concatenated the attribute and handed us the finished text.
  * That is precisely the case the preprocessor exists to prevent, so it fails
  * loudly rather than running an unparameterised, un-cached query.
@@ -101,10 +101,10 @@ function fromPreloaded(payload: Preloaded<unknown>): SurqlLive<unknown, Bound> {
 function assertPreprocessed(resolved: unknown): void {
   if (typeof resolved !== "string" || resolved === "skip") return;
   throw new Error(
-    "[@surrealguard/svelte] <Query>/<LiveQuery> received a plain string. Add the " +
+    "[@surrealdb/analyzer-svelte] <Query>/<LiveQuery> received a plain string. Add the " +
       "preprocessor to svelte.config.js:\n\n" +
-      '  import { surrealguard } from "@surrealguard/svelte/preprocess";\n' +
-      "  export default { preprocess: [surrealguard(), vitePreprocess()] };\n\n" +
+      '  import { surrealqlAnalyzer } from "@surrealdb/analyzer-svelte/preprocess";\n' +
+      "  export default { preprocess: [surrealqlAnalyzer(), vitePreprocess()] };\n\n" +
       `Got: ${JSON.stringify(resolved.slice(0, 80))}`,
   );
 }
@@ -132,7 +132,7 @@ interface View {
  * whose teardown fires as soon as nothing reads it.
  */
 function makeView(
-  client: SurrealGuardClient,
+  client: SurrealQLAnalyzerClient,
   query: SurqlQuery<unknown, Bound> | SurqlLive<unknown, Bound>,
   initial: unknown,
   live: boolean,

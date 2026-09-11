@@ -1,17 +1,17 @@
-# surrealguard-lsp
+# surrealql-analyzer-lsp
 
 The Language Server Protocol implementation for
-[SurrealGuard](https://github.com/DrewRidley/surrealguard).
+[SurrealQL Analyzer](https://github.com/surrealdb/analyzer).
 
-The `surrealguard-lsp` binary serves the analyzer over stdio: it tracks
-workspace documents, runs analysis through `surrealguard-workspace`, and
+The `surrealql-analyzer-lsp` binary serves the analyzer over stdio: it tracks
+workspace documents, runs analysis through `surrealql-analyzer-workspace`, and
 converts findings into LSP diagnostics, with hover and go-to-definition backed
 by the same inference. Point any LSP-capable editor at the binary to get live
 SurrealQL diagnostics and type information.
 
 Every diagnostic also carries suppression quick fixes: silence it at its site
-with a `-- surrealguard: allow(...)` directive, or across the workspace with a
-`[lints]` entry in `surrealguard.toml`. In a host file (`.ts`, `.svelte`) the
+with a `-- surrealql-analyzer: allow(...)` directive, or across the workspace with a
+`[lints]` entry in `surrealql-analyzer.toml`. In a host file (`.ts`, `.svelte`) the
 site fix is offered only where a comment line can be inserted without breaking
 the string literal the query lives in — elsewhere only the workspace fix is
 offered.

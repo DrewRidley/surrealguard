@@ -5,7 +5,7 @@
 //! wrap an argument kind into an array, so the return kind is derived here.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{ParamKind, ReturnKind, Signature};

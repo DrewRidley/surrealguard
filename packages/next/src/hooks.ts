@@ -13,7 +13,7 @@
  *
  * ```tsx
  * "use client";
- * import { useLive } from "@surrealguard/next";
+ * import { useLive } from "@surrealdb/analyzer-next";
  * import { livePeople } from "@/lib/queries";
  *
  * export function People() {
@@ -26,7 +26,7 @@
 
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
-  SurrealGuardError,
+  SurrealQLAnalyzerError,
   type AnyQuery,
   type Bound,
   type Json,
@@ -35,9 +35,9 @@ import {
   type Rows,
   type SurqlLive,
   type SurqlQuery,
-  type SurrealGuardClient,
-} from "@surrealguard/client";
-import { getQueryClient, type Observable, type QueryState } from "@surrealguard/query";
+  type SurrealQLAnalyzerClient,
+} from "@surrealdb/analyzer-client";
+import { getQueryClient, type Observable, type QueryState } from "@surrealdb/analyzer-query";
 import { useClient } from "./context.js";
 import { fromPreloaded, isPreloaded } from "./preloaded.js";
 
@@ -46,19 +46,19 @@ export type Skip = "skip";
 
 export interface UseQueryOptions {
   /** Override the context client (tests, multiple connections). */
-  client?: SurrealGuardClient;
+  client?: SurrealQLAnalyzerClient;
 }
 
 export interface QueryResult<T> {
   readonly data: T | undefined;
-  readonly error: SurrealGuardError | undefined;
+  readonly error: SurrealQLAnalyzerError | undefined;
   readonly loading: boolean;
   readonly status: "pending" | "success" | "error";
 }
 
 export interface LiveResult<Row> {
   readonly data: Row[];
-  readonly error: SurrealGuardError | undefined;
+  readonly error: SurrealQLAnalyzerError | undefined;
   readonly loading: boolean;
   readonly status: "pending" | "success" | "error";
 }
@@ -68,7 +68,7 @@ const NOOP = () => () => {};
 
 /** Shared plumbing: memoise on the key, then `useSyncExternalStore`. */
 function useObservedState(
-  client: SurrealGuardClient,
+  client: SurrealQLAnalyzerClient,
   source: SurqlQuery<unknown, Bound> | SurqlLive<unknown, Bound> | Preloaded<unknown> | Skip,
   live: boolean,
 ): QueryState<unknown> {
@@ -136,7 +136,7 @@ export function useLive<Row>(
 }
 
 export interface UseMutationOptions<R> {
-  client?: SurrealGuardClient;
+  client?: SurrealQLAnalyzerClient;
   /**
    * Queries this write makes stale. Deliberately untyped as {@link AnyQuery}:
    * an invalidation target has no reason to agree with the mutation's own
@@ -144,7 +144,7 @@ export interface UseMutationOptions<R> {
    */
   invalidates?: readonly AnyQuery[];
   onSuccess?(data: Rows<R>): void;
-  onError?(error: SurrealGuardError): void;
+  onError?(error: SurrealQLAnalyzerError): void;
 }
 
 export interface MutationResult<R, P extends Record<string, unknown>> {
@@ -153,7 +153,7 @@ export interface MutationResult<R, P extends Record<string, unknown>> {
   /** Await the result; errors throw. */
   mutateAsync(...args: ParamsArg<P>): Promise<Rows<R>>;
   readonly data: Rows<R> | undefined;
-  readonly error: SurrealGuardError | undefined;
+  readonly error: SurrealQLAnalyzerError | undefined;
   readonly pending: boolean;
   reset(): void;
 }
@@ -168,7 +168,7 @@ export function useMutation<R, P extends Record<string, unknown>>(
 ): MutationResult<R, P> {
   const client = useClient(options.client);
   const [data, setData] = useState<Rows<R> | undefined>(undefined);
-  const [error, setError] = useState<SurrealGuardError | undefined>(undefined);
+  const [error, setError] = useState<SurrealQLAnalyzerError | undefined>(undefined);
   const [pending, setPending] = useState(false);
   // Keep the latest callbacks without making them a dependency of `run`.
   const latest = useRef(options);
@@ -188,7 +188,7 @@ export function useMutation<R, P extends Record<string, unknown>>(
         latest.current.onSuccess?.(result);
         return result;
       } catch (cause) {
-        const wrapped = SurrealGuardError.from(cause, { query: query.text, params });
+        const wrapped = SurrealQLAnalyzerError.from(cause, { query: query.text, params });
         setError(wrapped);
         latest.current.onError?.(wrapped);
         throw wrapped;

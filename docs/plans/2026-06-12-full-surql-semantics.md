@@ -8,7 +8,7 @@
 
 **Architecture:** Keep tree-sitter SurrealQL CST as the syntax authority and SurrealDB public value/kind concepts as semantic leaf facts. Add an analyzer-owned semantic layer for facts SurrealDB public types do not provide directly: spans, field paths, statement facts, expression facts, function signatures, variable environments, response shapes, partial-analysis reasons, and graph relationship facts. CLI, LSP, MCP, and host adapters must consume this one core output rather than reimplementing rules.
 
-**Tech Stack:** Rust workspace, `tree-sitter-surrealql`, `surrealdb_types::Kind`, `surrealguard-syntax`, `surrealguard-diagnostics`, `surrealguard-workspace`, local `surreal` smoke tests for behavior-dependent semantics, `cargo test --workspace -- --nocapture`.
+**Tech Stack:** Rust workspace, `tree-sitter-surrealql`, `surrealdb_types::Kind`, `surrealql-analyzer-syntax`, `surrealql-analyzer-diagnostics`, `surrealql-analyzer-workspace`, local `surreal` smoke tests for behavior-dependent semantics, `cargo test --workspace -- --nocapture`.
 
 ---
 
@@ -139,7 +139,7 @@ Current implementation:
 
 - added `ExpressionFact`, `ExpressionValueClass`, and `ExpressionDependencies` in `crates/workspace/src/expression.rs`
 - expression facts carry `SourceSpan`, optional `surrealdb_types::Kind`, optional `ResponseShape`, value class, partial reasons, and dependency metadata
-- exported expression fact types from `surrealguard-workspace`
+- exported expression fact types from `surrealql-analyzer-workspace`
 - no analyzer pipeline behavior or diagnostics changed in this scaffolding slice
 
 Tests:
@@ -156,7 +156,7 @@ Files:
 Verification:
 
 ```bash
-cargo test -p surrealguard-workspace expression -- --nocapture
+cargo test -p surrealql-analyzer-workspace expression -- --nocapture
 cargo test --workspace -- --nocapture
 cargo check --workspace
 ```
@@ -373,7 +373,7 @@ Acceptance:
 - a fixture file with mutation misuse has table/field/type/function diagnostics
 - a fixture file with graph misuse has graph diagnostics
 - a fixture file with dynamic/unknown constructs has explicit partial facts, not silence
-- `surrealguard check --json` exposes enough structured facts for adapters
+- `surrealql-analyzer check --json` exposes enough structured facts for adapters
 - docs list known static-analysis bypasses and runtime-only limits
 
 Only after Slice K do we start host adapters.
@@ -392,7 +392,7 @@ Every implementation slice must do:
 cargo fmt
 cargo fmt --check
 git diff --check
-cargo test -p surrealguard-workspace <targeted-filter> -- --nocapture
+cargo test -p surrealql-analyzer-workspace <targeted-filter> -- --nocapture
 cargo test --workspace -- --nocapture
 cargo check --workspace
 ```

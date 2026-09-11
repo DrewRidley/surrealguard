@@ -13,8 +13,8 @@ types. None of this shows on the site until the WASM is rebuilt.
 ## 2. Install section overhaul
 - Buttons/icons for **npm**, **crates.io**, **GitHub** (Zed = GitHub icon, not a
   "recommend the LSP" line — per prior feedback link to the Zed extension repo).
-- npx as primary; list the newly-published crates (surrealguard, -rs, -macros,
-  -lsp) + `cargo add surrealguard-rs` for the Rust SDK.
+- npx as primary; list the newly-published crates (surrealql-analyzer, -rs, -macros,
+  -lsp) + `cargo add surrealql-analyzer-rs` for the Rust SDK.
 - Link crates.io + docs.rs (thorough docs shipped with the release).
 
 ## 3. Diagnostics docs — completeness + UI overhaul
@@ -29,9 +29,9 @@ types. None of this shows on the site until the WASM is rebuilt.
   `allow(reason=)` suppression documented. Fold in all prior styling feedback (no
   generic AI gradients; unique/real).
 
-## 4. AI section — agents using SurrealGuard
+## 4. AI section — agents using SurrealQL Analyzer
 Headline (works today, unambiguous): agents (Claude Code, etc.) run
-`surrealguard check` / `surrealguard generate` in their loop — a compile-time-
+`surrealql-analyzer check` / `surrealql-analyzer generate` in their loop — a compile-time-
 style correctness signal for SurrealQL (unknown tables/fields, type mismatches)
 + typed query results, like `tsc`/`cargo check`. Secondary: editor/LSP + any
 MCP-LSP bridge. VERIFY Claude Code's exact LSP-consumption story (native vs MCP

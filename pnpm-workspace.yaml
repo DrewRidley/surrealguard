@@ -1,5 +1,5 @@
 # `chore(release)` rewrites every cross-package dependency to an exact
-# version (`"@surrealguard/client": "0.5.3"`) so the published tarballs pin
+# version (`"@surrealdb/analyzer-client": "0.5.3"`) so the published tarballs pin
 # each other. Inside the workspace those must still resolve to the sibling
 # directory: pnpm 10 defaults this to false, and with it off `packages/svelte`
 # gets the registry copy of the client while `examples/*` (which ask for
@@ -9,7 +9,7 @@ linkWorkspacePackages: true
 
 packages:
   - "packages/*"
-  # The `surrealguard` CLI shim. Outside packages/, so `pnpm -r` skipped it
+  # The `surrealql-analyzer` CLI shim. Outside packages/, so `pnpm -r` skipped it
   # and it sat at 0.1.0 while everything else was released.
   - "npm/*"
   - "examples/*"

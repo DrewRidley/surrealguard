@@ -4195,7 +4195,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "surrealguard"
+name = "surrealql-analyzer"
 version = "0.5.3"
 dependencies = [
  "clap",
@@ -4203,36 +4203,36 @@ dependencies = [
  "notify-debouncer-full",
  "serde",
  "serde_json",
- "surrealguard-codegen",
- "surrealguard-diagnostics",
- "surrealguard-embed",
- "surrealguard-syntax",
- "surrealguard-workspace",
+ "surrealql-analyzer-codegen",
+ "surrealql-analyzer-diagnostics",
+ "surrealql-analyzer-embed",
+ "surrealql-analyzer-syntax",
+ "surrealql-analyzer-workspace",
  "walkdir",
 ]
 
 [[package]]
-name = "surrealguard-codegen"
+name = "surrealql-analyzer-codegen"
 version = "0.5.3"
 dependencies = [
  "glob",
  "surrealdb-types",
- "surrealguard-diagnostics",
- "surrealguard-embed",
- "surrealguard-syntax",
- "surrealguard-workspace",
+ "surrealql-analyzer-diagnostics",
+ "surrealql-analyzer-embed",
+ "surrealql-analyzer-syntax",
+ "surrealql-analyzer-workspace",
 ]
 
 [[package]]
-name = "surrealguard-diagnostics"
+name = "surrealql-analyzer-diagnostics"
 version = "0.5.3"
 dependencies = [
  "serde",
- "surrealguard-syntax",
+ "surrealql-analyzer-syntax",
 ]
 
 [[package]]
-name = "surrealguard-embed"
+name = "surrealql-analyzer-embed"
 version = "0.5.3"
 dependencies = [
  "tree-sitter",
@@ -4241,16 +4241,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "surrealguard-lsp"
+name = "surrealql-analyzer-lsp"
 version = "0.5.3"
 dependencies = [
  "futures",
  "glob",
  "serde_json",
- "surrealguard-diagnostics",
- "surrealguard-embed",
- "surrealguard-syntax",
- "surrealguard-workspace",
+ "surrealql-analyzer-diagnostics",
+ "surrealql-analyzer-embed",
+ "surrealql-analyzer-syntax",
+ "surrealql-analyzer-workspace",
  "tokio",
  "tower 0.4.13",
  "tower-lsp",
@@ -4259,42 +4259,42 @@ dependencies = [
 ]
 
 [[package]]
-name = "surrealguard-macros"
+name = "surrealql-analyzer-macros"
 version = "0.5.3"
 dependencies = [
  "proc-macro2",
  "quote",
  "surrealdb-types",
- "surrealguard-diagnostics",
- "surrealguard-workspace",
+ "surrealql-analyzer-diagnostics",
+ "surrealql-analyzer-workspace",
  "syn 2.0.117",
 ]
 
 [[package]]
-name = "surrealguard-rs"
+name = "surrealql-analyzer-rs"
 version = "0.5.3"
 dependencies = [
  "chrono",
  "rustversion",
  "surrealdb",
  "surrealdb-types",
- "surrealguard-macros",
+ "surrealql-analyzer-macros",
  "tokio",
  "trybuild",
 ]
 
 [[package]]
-name = "surrealguard-syntax"
+name = "surrealql-analyzer-syntax"
 version = "0.5.3"
 dependencies = [
  "proptest",
  "serde",
- "surrealguard-tree-sitter-surrealql",
+ "surrealql-analyzer-tree-sitter-surrealql",
  "tree-sitter",
 ]
 
 [[package]]
-name = "surrealguard-tree-sitter-surrealql"
+name = "surrealql-analyzer-tree-sitter-surrealql"
 version = "0.5.3"
 dependencies = [
  "cc",
@@ -4303,26 +4303,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "surrealguard-wasm"
+name = "surrealql-analyzer-wasm"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "surrealguard-diagnostics",
- "surrealguard-embed",
- "surrealguard-syntax",
- "surrealguard-workspace",
+ "surrealql-analyzer-diagnostics",
+ "surrealql-analyzer-embed",
+ "surrealql-analyzer-syntax",
+ "surrealql-analyzer-workspace",
 ]
 
 [[package]]
-name = "surrealguard-workspace"
+name = "surrealql-analyzer-workspace"
 version = "0.5.3"
 dependencies = [
  "serde",
  "serde_json",
  "surrealdb-types",
- "surrealguard-diagnostics",
- "surrealguard-syntax",
+ "surrealql-analyzer-diagnostics",
+ "surrealql-analyzer-syntax",
  "toml 0.8.20",
 ]
 

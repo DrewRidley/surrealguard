@@ -3,7 +3,7 @@
  *
  * ```ts
  * // src/lib/db.ts
- * import { createClient } from "./surrealguard.generated";
+ * import { createClient } from "./surrealql-analyzer.generated";
  *
  * export const db = createClient({
  *   url: "ws://localhost:8000/rpc",
@@ -18,7 +18,7 @@
  * ```
  *
  * **The client composes the SDK rather than extending it.** `class
- * SurrealGuardClient extends Surreal` does not compile: `Surreal` already owns
+ * SurrealQLAnalyzerClient extends Surreal` does not compile: `Surreal` already owns
  * `run` (RPC function invocation), `subscribe` (the event emitter) and
  * `invalidate` — and `Surreal.invalidate()` *logs the session out*, which makes
  * that collision a hazard rather than an inconvenience. tsc reports TS2416 on
@@ -36,7 +36,7 @@ import type {
   Token,
   Tokens,
 } from "surrealdb";
-import { SurrealGuardError } from "./error.js";
+import { SurrealQLAnalyzerError } from "./error.js";
 import { openLive, reconcile, type ReconcilableRow } from "./live.js";
 import type { AnyQuery, Rows, SurqlLive, SurqlQuery } from "./query.js";
 import type { Bound, Json, ParamsArg, SurqlRegistry } from "./registry.js";
@@ -72,7 +72,7 @@ export interface CreateClientOptions extends ConnectOptions, DriverOptions {
   url: string | URL;
 }
 
-export interface SurrealGuardClient {
+export interface SurrealQLAnalyzerClient {
   /**
    * The underlying SDK instance — the escape hatch. Anything the SDK can do and
    * this client does not, do here: `db.surreal.export()`, or
@@ -101,7 +101,7 @@ export interface SurrealGuardClient {
   ): Promise<Rows<R>>;
 
   /**
-   * {@link SurrealGuardClient.run}, projected through {@link Json} — the shape
+   * {@link SurrealQLAnalyzerClient.run}, projected through {@link Json} — the shape
    * that survives a serialisation boundary. This is what SSR helpers and the
    * reactive layer are built on.
    */
@@ -123,14 +123,14 @@ export interface SurrealGuardClient {
    * Subscribe to a live query. `onRows` receives the whole reconciled array on
    * every change; the returned function unsubscribes.
    *
-   * This is what makes `@surrealguard/client` usable on its own. Before, the
-   * only way to receive a live row was to install `@surrealguard/query` and
+   * This is what makes `@surrealdb/analyzer-client` usable on its own. Before, the
+   * only way to receive a live row was to install `@surrealdb/analyzer-query` and
    * discover `getQueryClient(db).observeLive(...).subscribe(...)`.
    */
   watch<Row>(
     query: SurqlLive<Row, Bound>,
     onRows: (rows: Row[]) => void,
-    onError?: (error: SurrealGuardError) => void,
+    onError?: (error: SurrealQLAnalyzerError) => void,
   ): () => void;
 
   /**
@@ -140,7 +140,7 @@ export interface SurrealGuardClient {
   invalidate(...queries: AnyQuery[]): Promise<void>;
 
   /**
-   * Register an invalidation listener. `@surrealguard/query` uses this to
+   * Register an invalidation listener. `@surrealdb/analyzer-query` uses this to
    * attach its cache without the client depending on it — which would be a
    * cycle, since the reactive core is built on the client.
    */
@@ -154,7 +154,7 @@ export interface SurrealGuardClient {
   query<Q extends string>(query: Q, ...args: ArgsOf<Q>): Promise<QueryResultOf<Q>>;
 }
 
-class GuardClient implements SurrealGuardClient {
+class GuardClient implements SurrealQLAnalyzerClient {
   readonly surreal: Surreal;
   readonly #open: (() => Promise<void>) | undefined;
   readonly #listeners = new Set<InvalidationListener>();
@@ -171,7 +171,7 @@ class GuardClient implements SurrealGuardClient {
     this.#connecting ??= open().catch((cause: unknown) => {
       // Let a later call retry rather than caching the failure forever.
       this.#connecting = undefined;
-      throw SurrealGuardError.from(cause, {});
+      throw SurrealQLAnalyzerError.from(cause, {});
     });
     return this.#connecting;
   }
@@ -207,7 +207,7 @@ class GuardClient implements SurrealGuardClient {
     try {
       return (await this.surreal.query(text, params)) as unknown[];
     } catch (cause) {
-      throw SurrealGuardError.from(cause, { query: text, params });
+      throw SurrealQLAnalyzerError.from(cause, { query: text, params });
     }
   }
 
@@ -237,7 +237,7 @@ class GuardClient implements SurrealGuardClient {
   watch<Row>(
     query: SurqlLive<Row, Bound>,
     onRows: (rows: Row[]) => void,
-    onError?: (error: SurrealGuardError) => void,
+    onError?: (error: SurrealQLAnalyzerError) => void,
   ): () => void {
     let rows: readonly ReconcilableRow[] = [];
     let subscription: LiveSubscription | undefined;
@@ -260,7 +260,7 @@ class GuardClient implements SurrealGuardClient {
         if (stopped) void subscription.kill();
       } catch (cause) {
         if (stopped) return;
-        const error = SurrealGuardError.from(cause, {
+        const error = SurrealQLAnalyzerError.from(cause, {
           query: query.liveText,
           params: query.params,
         });
@@ -318,7 +318,7 @@ function unwrap(results: unknown[]): unknown {
  * generated `Date` type true — without it the SDK decodes its own `DateTime`
  * class and `row.created.getTime()` typechecks and throws at runtime.
  */
-export function createClient(options: CreateClientOptions): SurrealGuardClient {
+export function createClient(options: CreateClientOptions): SurrealQLAnalyzerClient {
   const { url, engines, codecs, codecOptions, websocketImpl, fetchImpl, ...connectOptions } =
     options;
   const surreal = new Surreal({
@@ -340,6 +340,6 @@ export function createClient(options: CreateClientOptions): SurrealGuardClient {
  * `Date` types will be a lie — that is the one thing `createClient` does for you
  * which cannot be recovered afterwards.
  */
-export function fromSurreal(surreal: Surreal): SurrealGuardClient {
+export function fromSurreal(surreal: Surreal): SurrealQLAnalyzerClient {
   return new GuardClient(surreal);
 }

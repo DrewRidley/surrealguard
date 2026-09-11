@@ -6,11 +6,11 @@
   // of `Source<Q>`: changing `team` (or the route's preloaded `data`)
   // re-resolves the query and re-subscribes. In 0.4 params were read once at
   // construction, so this could not work at all.
-  import type { Json, Preloaded } from "@surrealguard/client";
+  import type { Json, Preloaded } from "@surrealdb/analyzer-client";
   import { createLive } from "../src/index.js";
   import { liveUsers, liveUsersOfTeam } from "./queries.js";
 
-  type Row = Json<{ id: import("@surrealguard/client").RecordId<"user">; name: string }>;
+  type Row = Json<{ id: import("@surrealdb/analyzer-client").RecordId<"user">; name: string }>;
 
   let {
     team = undefined,

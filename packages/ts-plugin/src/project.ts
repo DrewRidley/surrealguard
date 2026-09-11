@@ -1,16 +1,16 @@
 /**
  * Finding the project a source file belongs to, and its schema.
  *
- * The rule is `surrealguard check`'s: walk up from the file's directory until
- * a `surrealguard.toml` turns up. **No config means no project**, and no
+ * The rule is `surrealql-analyzer check`'s: walk up from the file's directory until
+ * a `surrealql-analyzer.toml` turns up. **No config means no project**, and no
  * project means the plugin says nothing at all — not "unknown table" on every
  * query, which is what analysing against an empty schema would produce. A
- * plugin installed in a repo that does not use SurrealGuard has to be
+ * plugin installed in a repo that does not use SurrealQL Analyzer has to be
  * invisible, and the config file is the only signal that someone opted in.
  *
  * Everything here is cached, because it is on the keystroke path:
  *
- * - the upward walk, per directory, forever (a `surrealguard.toml` appearing
+ * - the upward walk, per directory, forever (a `surrealql-analyzer.toml` appearing
  *   mid-session is a project reload in every editor anyway);
  * - the schema text, per root, revalidated by mtime and no more often than
  *   {@link REVALIDATE_MS} — a `stat` per `.surql` file per keystroke is real
@@ -38,7 +38,7 @@ const DEFAULT_SOURCES: Sources = {
 
 /** A resolved project: where it is, and what its schema currently says. */
 export interface Project {
-  /** The directory holding `surrealguard.toml`. */
+  /** The directory holding `surrealql-analyzer.toml`. */
   root: string;
   /** Every `.surql` source concatenated, schema-glob matches first. */
   schema: string;
@@ -65,7 +65,7 @@ const projects = new Map<string, Cached>();
 let versionCounter = 0;
 
 /**
- * The directory containing the `surrealguard.toml` that governs `fileName`, or
+ * The directory containing the `surrealql-analyzer.toml` that governs `fileName`, or
  * `null` when there is none above it.
  */
 export function findRoot(fileName: string): string | null {
@@ -78,7 +78,7 @@ export function findRoot(fileName: string): string | null {
       return known;
     }
     visited.push(dir);
-    if (exists(join(dir, "surrealguard.toml"))) {
+    if (exists(join(dir, "surrealql-analyzer.toml"))) {
       for (const seen of visited) roots.set(seen, dir);
       return dir;
     }
@@ -108,11 +108,11 @@ export function findProject(fileName: string): Project | null {
     return { root, schema: cached.schema, version: cached.version };
   }
 
-  const configMtime = mtime(join(root, "surrealguard.toml"));
+  const configMtime = mtime(join(root, "surrealql-analyzer.toml"));
   const sources =
     cached && cached.configMtime === configMtime
       ? cached.sources
-      : readSources(join(root, "surrealguard.toml"));
+      : readSources(join(root, "surrealql-analyzer.toml"));
 
   const files = discover(root, sources);
   const stamp = files.map((file) => `${file}:${mtime(join(root, file))}`).join("\n");
@@ -230,15 +230,15 @@ function globToRegExp(glob: string): RegExp {
 }
 
 /**
- * The `[sources]` globs from a `surrealguard.toml`.
+ * The `[sources]` globs from a `surrealql-analyzer.toml`.
  *
  * A deliberately small reader rather than a TOML dependency: the plugin is
  * loaded into tsserver, where every dependency is another thing that can fail
  * to resolve, and the three keys it needs are all plain string arrays. Any key
  * it cannot read falls back to the default — the same result as not setting it,
- * which is what the overwhelming majority of configs do. A `surrealguard.toml`
+ * which is what the overwhelming majority of configs do. A `surrealql-analyzer.toml`
  * with an exotic `[sources]` gets the default globs in the editor and the real
- * ones in `surrealguard check`; that is a narrower discrepancy than refusing to
+ * ones in `surrealql-analyzer check`; that is a narrower discrepancy than refusing to
  * load, and `check` remains the authority.
  */
 function readSources(configPath: string): Sources {

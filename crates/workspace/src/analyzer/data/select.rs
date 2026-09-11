@@ -14,7 +14,8 @@
 use std::collections::BTreeMap;
 
 use surrealdb_types::{Kind, KindLiteral};
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::span::SourceSpan;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::contract::{Contract, Position};
@@ -233,7 +234,7 @@ fn resolve_from_table(
                 .keys()
                 .map(|name| surrealdb_types::Value::String(name.clone()))
                 .collect();
-            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from.span);
+            let span = SourceSpan::new(ctx.source().clone(), from.span);
             ctx.constrain_param(
                 param,
                 span,
@@ -255,13 +256,13 @@ fn check_source_table_shape(
     stmt: &ast::SelectStmt,
     table_name: &str,
     table: &TableDef,
-    from_span: surrealguard_syntax::span::ByteRange,
+    from_span: surrealql_analyzer_syntax::span::ByteRange,
     ctx: &mut AnalysisContext<'_>,
 ) -> Option<Kind> {
     if table.drop_table {
-        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from_span);
+        let span = SourceSpan::new(ctx.source().clone(), from_span);
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 4022,
                 format!("`{table_name}` is a DROP table, so this SELECT never returns rows"),
@@ -270,9 +271,9 @@ fn check_source_table_shape(
         );
     }
     if table.fields.is_empty() && !stmt.projections.iter().any(is_graph_projection) {
-        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from_span);
+        let span = SourceSpan::new(ctx.source().clone(), from_span);
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 7008,
                 format!("`{table_name}` has no declared fields, so field-level checks are skipped"),
@@ -311,9 +312,9 @@ fn check_where_clause<'a>(
             .decide(&kind)
             .is_violation()
         {
-            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), cond.span);
+            let span = SourceSpan::new(ctx.source().clone(), cond.span);
             ctx.emit(
-                surrealguard_diagnostics::catalog::finding(
+                surrealql_analyzer_diagnostics::catalog::finding(
                     span,
                     2005,
                     format!(
@@ -360,12 +361,9 @@ fn check_fetch_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analy
                             });
                     if let Some(kind) = aliased_kind {
                         if kind != Kind::Any && !kind_may_hold_record(&kind) {
-                            let span = surrealguard_syntax::span::SourceSpan::new(
-                                ctx.source().clone(),
-                                idiom.span,
-                            );
+                            let span = SourceSpan::new(ctx.source().clone(), idiom.span);
                             ctx.emit(
-                                surrealguard_diagnostics::catalog::finding(
+                                surrealql_analyzer_diagnostics::catalog::finding(
                                     span,
                                     1023,
                                     format!(
@@ -393,12 +391,9 @@ fn check_fetch_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analy
             // linked field's kind rather than the opaque `Any` boundary.
             if let Some(kind) = resolve_field_path(ctx.schema(), table, &segments) {
                 if kind != Kind::Any && !kind_may_hold_record(&kind) {
-                    let span = surrealguard_syntax::span::SourceSpan::new(
-                        ctx.source().clone(),
-                        idiom.span,
-                    );
+                    let span = SourceSpan::new(ctx.source().clone(), idiom.span);
                     ctx.emit(
-                        surrealguard_diagnostics::catalog::finding(
+                        surrealql_analyzer_diagnostics::catalog::finding(
                             span,
                             1023,
                             format!(
@@ -430,12 +425,9 @@ fn check_split_clauses(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analy
                     .decide(&kind)
                     .is_violation()
                 {
-                    let span = surrealguard_syntax::span::SourceSpan::new(
-                        ctx.source().clone(),
-                        idiom.span,
-                    );
+                    let span = SourceSpan::new(ctx.source().clone(), idiom.span);
                     ctx.emit(
-                        surrealguard_diagnostics::catalog::finding(
+                        surrealql_analyzer_diagnostics::catalog::finding(
                             span,
                             1024,
                             format!(
@@ -494,9 +486,8 @@ fn check_order_clause(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analys
             _ => None,
         };
         let Some(segments) = field else {
-            let span =
-                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), key.expr.span);
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
+            let span = SourceSpan::new(ctx.source().clone(), key.expr.span);
+            ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 2017,
                 "ORDER BY must name a field of the result rows (or `RAND()`)".to_string(),
@@ -515,9 +506,8 @@ fn check_order_clause(stmt: &ast::SelectStmt, table: &TableDef, ctx: &mut Analys
         if let Some(keys) = &explicit_keys {
             let name = segments.join(".");
             if !keys.contains(&name) {
-                let span =
-                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), key.expr.span);
-                let mut finding = surrealguard_diagnostics::catalog::finding(
+                let span = SourceSpan::new(ctx.source().clone(), key.expr.span);
+                let mut finding = surrealql_analyzer_diagnostics::catalog::finding(
                     span,
                     2017,
                     format!("ORDER BY `{name}` doesn't name a field of this query's rows"),
@@ -564,7 +554,7 @@ pub(crate) fn check_row_count_clause(
 ) {
     if let ast::Expr::Param(param) = &expr.node {
         if ctx.env().let_fact(param).is_none() {
-            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
+            let span = SourceSpan::new(ctx.source().clone(), expr.span);
             ctx.constrain_param(
                 param,
                 span,
@@ -585,8 +575,8 @@ pub(crate) fn check_row_count_clause(
             .decide(kind)
             .is_violation()
         {
-            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
+            let span = SourceSpan::new(ctx.source().clone(), expr.span);
+            ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 2018,
                 format!(
@@ -599,8 +589,8 @@ pub(crate) fn check_row_count_clause(
     }
     if let Some(surrealdb_types::Value::Number(surrealdb_types::Number::Int(value))) = &fact.value {
         if *value < 0 {
-            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
+            let span = SourceSpan::new(ctx.source().clone(), expr.span);
+            ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 2018,
                 format!("{name} can't be negative"),
@@ -627,9 +617,8 @@ fn check_clause_values(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_>) {
                 .decide(&kind)
                 .is_violation()
             {
-                let span =
-                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                let span = SourceSpan::new(ctx.source().clone(), expr.span);
+                ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                     span,
                     2019,
                     format!(
@@ -683,9 +672,9 @@ fn check_only_filter_cardinality(
     if only_filter_is_single_row(stmt, from, table, &cond.node) {
         return;
     }
-    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), cond.span);
+    let span = SourceSpan::new(ctx.source().clone(), cond.span);
     ctx.emit(
-        surrealguard_diagnostics::catalog::finding(
+        surrealql_analyzer_diagnostics::catalog::finding(
             span,
             4026,
             "this filter isn't provably single-row, so `ONLY` fails at runtime \
@@ -813,12 +802,9 @@ fn check_select_statement_shape(
             if let ast::Projection::Expr { expr, alias: None } = projection {
                 if let ast::Expr::Idiom(idiom) = &expr.node {
                     if plain_field_segments(idiom).is_some() {
-                        let span = surrealguard_syntax::span::SourceSpan::new(
-                            ctx.source().clone(),
-                            expr.span,
-                        );
+                        let span = SourceSpan::new(ctx.source().clone(), expr.span);
                         ctx.emit(
-                            surrealguard_diagnostics::catalog::finding(
+                            surrealql_analyzer_diagnostics::catalog::finding(
                                 span,
                                 7007,
                                 "this field is already included by `*`".to_string(),
@@ -837,9 +823,9 @@ fn check_select_statement_shape(
     // this fires only when the wildcard is the *sole* projection.
     if stmt.projections.len() == 1 {
         if let Some(ast::Projection::Wildcard(range)) = stmt.projections.first() {
-            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), *range);
+            let span = SourceSpan::new(ctx.source().clone(), *range);
             ctx.emit(
-                surrealguard_diagnostics::catalog::finding(
+                surrealql_analyzer_diagnostics::catalog::finding(
                     span,
                     7015,
                     "`SELECT *` fetches every column and breaks silently when the schema changes"
@@ -858,10 +844,9 @@ fn check_select_statement_shape(
     if !stmt.only && stmt.where_clause.is_none() && stmt.limit.is_none() {
         if let Some(from) = stmt.from.first() {
             if let ast::Expr::Table(name) = &from.node {
-                let span =
-                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from.span);
+                let span = SourceSpan::new(ctx.source().clone(), from.span);
                 ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         span,
                         7014,
                         format!(
@@ -897,10 +882,9 @@ fn check_select_statement_shape(
         // needs no explicit LIMIT 1.
         if let Some(from) = table_target {
             if !limited_to_one && stmt.where_clause.is_none() {
-                let span =
-                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), from.span);
+                let span = SourceSpan::new(ctx.source().clone(), from.span);
                 ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         span,
                         4003,
                         "ONLY needs a single-row target, but this reads a whole table".to_string(),
@@ -922,9 +906,9 @@ fn check_select_statement_shape(
         };
         let span = alias.as_ref().map_or(expr.span, |a| a.span);
         if seen.insert(key.clone(), span).is_some() {
-            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
+            let span = SourceSpan::new(ctx.source().clone(), span);
             ctx.emit(
-                surrealguard_diagnostics::catalog::finding(
+                surrealql_analyzer_diagnostics::catalog::finding(
                     span,
                     4011,
                     format!("`{key}` is projected twice; the later one wins"),
@@ -957,9 +941,9 @@ fn check_wildcard_under_group(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<
         let ast::Projection::Wildcard(range) = projection else {
             continue;
         };
-        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), *range);
+        let span = SourceSpan::new(ctx.source().clone(), *range);
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 4025,
                 "`*` cannot be aggregated by a GROUP clause — SurrealDB rejects this query"
@@ -1032,9 +1016,9 @@ fn check_group_key_projection(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<
             continue;
         }
         if !projected_name_covers(&projected, &name) {
-            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), key.span);
+            let span = SourceSpan::new(ctx.source().clone(), key.span);
             ctx.emit(
-                surrealguard_diagnostics::catalog::finding(
+                surrealql_analyzer_diagnostics::catalog::finding(
                     span,
                     4013,
                     format!(
@@ -1077,9 +1061,9 @@ fn check_non_key_projection_under_group(stmt: &ast::SelectStmt, ctx: &mut Analys
         let Some(offender) = accumulated_field(expr, alias.as_ref(), group) else {
             continue;
         };
-        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
+        let span = SourceSpan::new(ctx.source().clone(), expr.span);
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 4029,
                 format!(
@@ -1217,9 +1201,9 @@ fn check_page_without_order(stmt: &ast::SelectStmt, ctx: &mut AnalysisContext<'_
     if !matches!(from.node, ast::Expr::Table(_)) {
         return;
     }
-    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), clause.span);
+    let span = SourceSpan::new(ctx.source().clone(), clause.span);
     ctx.emit(
-        surrealguard_diagnostics::catalog::finding(
+        surrealql_analyzer_diagnostics::catalog::finding(
             span,
             7016,
             "LIMIT/START without ORDER BY cuts the page from storage order, so which rows it holds is not deterministic"
@@ -1309,8 +1293,8 @@ fn check_count_without_group(
             continue;
         };
         if is_bare_count(call) {
-            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
+            let span = SourceSpan::new(ctx.source().clone(), expr.span);
+            ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 4023,
                 "count() without GROUP BY yields 1 per row, not a total; add GROUP ALL for a total"
@@ -1359,8 +1343,8 @@ fn check_read_position_subquery(ctx: &mut AnalysisContext<'_>, expr: &ast::Spann
                 | ast::Statement::Insert(_)
                 | ast::Statement::Relate(_)
         ) {
-            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
+            let span = SourceSpan::new(ctx.source().clone(), expr.span);
+            ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 4018,
                 "this SELECT hides a write; run the mutation as its own statement".to_string(),
@@ -2245,9 +2229,9 @@ fn ungrouped_column_aggregate_kind(
         scalar_columns.push((segments.join("."), column));
     }
     for (call, (column_name, column)) in calls.iter().zip(&scalar_columns) {
-        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), call.span);
+        let span = SourceSpan::new(ctx.source().clone(), call.span);
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 4028,
                 format!(
@@ -2886,11 +2870,11 @@ pub(crate) fn validate_graph_tail(ctx: &mut AnalysisContext<'_>, idiom: &ast::Id
             ast::IdiomPart::Partial(_) => "syntax that did not lower",
         };
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
-                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), part.span),
+            surrealql_analyzer_diagnostics::catalog::finding(
+                SourceSpan::new(ctx.source().clone(), part.span),
                 6003,
                 format!(
-                    "surrealguard can't type what follows this traversal — {unmodelled} is not modelled here"
+                    "surrealql-analyzer can't type what follows this traversal — {unmodelled} is not modelled here"
                 ),
             )
             .with_help(
@@ -3300,7 +3284,7 @@ pub(crate) fn constant_row_limit(expr: &ast::Expr) -> Option<u64> {
     }
 }
 
-fn slice(text: &str, range: surrealguard_syntax::span::ByteRange) -> &str {
+fn slice(text: &str, range: surrealql_analyzer_syntax::span::ByteRange) -> &str {
     text[range.start() as usize..range.end() as usize].trim()
 }
 
@@ -3587,7 +3571,7 @@ pub(crate) fn validate_field_path(
     ctx: &mut AnalysisContext<'_>,
     table: &TableDef,
     segments: &[String],
-    span: surrealguard_syntax::span::ByteRange,
+    span: surrealql_analyzer_syntax::span::ByteRange,
     code: u16,
 ) {
     for split in 1..segments.len() {
@@ -3641,7 +3625,7 @@ fn check_clause_field_path(
     ctx: &mut AnalysisContext<'_>,
     table: &TableDef,
     segments: &[String],
-    span: surrealguard_syntax::span::ByteRange,
+    span: surrealql_analyzer_syntax::span::ByteRange,
 ) -> bool {
     // The predicate is `validate_field_path`'s non-emitting twin — asking it
     // first is what makes "1002 fired" answerable before the emit, and keeps
@@ -3664,7 +3648,7 @@ pub(crate) fn emit_absent_on_every_link_target(
     ctx: &mut AnalysisContext<'_>,
     targets: &[surrealdb_types::Table],
     segments: &[String],
-    span: surrealguard_syntax::span::ByteRange,
+    span: surrealql_analyzer_syntax::span::ByteRange,
     code: u16,
 ) {
     if targets.is_empty() {
@@ -3697,8 +3681,8 @@ pub(crate) fn emit_absent_on_every_link_target(
         .collect::<Vec<_>>()
         .join(" | ");
     let path = segments.join(".");
-    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
-    let mut finding = surrealguard_diagnostics::catalog::finding(
+    let span = SourceSpan::new(ctx.source().clone(), span);
+    let mut finding = surrealql_analyzer_diagnostics::catalog::finding(
         span,
         code,
         format!("`record<{named}>` has no field `{path}`"),
@@ -3784,9 +3768,9 @@ mod tests {
     use super::*;
     use crate::schema::SchemaIndex;
     use crate::statement_env::StatementEnv;
-    use surrealguard_syntax::parse::{parse_source, ParsedSource};
-    use surrealguard_syntax::source::SourceId;
-    use surrealguard_syntax::span::{ByteRange, SourceSpan};
+    use surrealql_analyzer_syntax::parse::{parse_source, ParsedSource};
+    use surrealql_analyzer_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
     use crate::expression::{ExpressionFact, ExpressionValueClass};
     use crate::schema::extract_schema;
@@ -3801,7 +3785,7 @@ mod tests {
     }
 
     fn lower_select(parsed: &ParsedSource) -> ast::SelectStmt {
-        match surrealguard_syntax::lower::lower_first_statement(parsed, "SelectStatement")
+        match surrealql_analyzer_syntax::lower::lower_first_statement(parsed, "SelectStatement")
             .expect("select statement exists")
             .node
         {
@@ -3817,7 +3801,7 @@ mod tests {
     fn analyze_with_env(schema: &SchemaIndex, query: &str, env: &StatementEnv) -> Kind {
         let parsed = parse(query);
         let stmt = lower_select(&parsed);
-        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        let mut diagnostics: Vec<surrealql_analyzer_diagnostics::Finding> = Vec::new();
         let mut ctx = AnalysisContext::scoped(
             schema,
             parsed.source_id().clone(),
@@ -3832,10 +3816,10 @@ mod tests {
     fn diagnostics_for(
         schema: &SchemaIndex,
         query: &str,
-    ) -> Vec<surrealguard_diagnostics::Finding> {
+    ) -> Vec<surrealql_analyzer_diagnostics::Finding> {
         let parsed = parse(query);
         let stmt = lower_select(&parsed);
-        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        let mut diagnostics: Vec<surrealql_analyzer_diagnostics::Finding> = Vec::new();
         {
             let mut ctx = AnalysisContext::scoped(
                 schema,
@@ -4647,7 +4631,7 @@ mod tests {
     fn workspace_last_kind(
         schema: &str,
         query: &str,
-    ) -> (Option<Kind>, Vec<surrealguard_diagnostics::Finding>) {
+    ) -> (Option<Kind>, Vec<surrealql_analyzer_diagnostics::Finding>) {
         let mut workspace = crate::analysis::Workspace::default();
         workspace.add_virtual_source("schema".into(), schema.into());
         let id = workspace.add_virtual_source("query".into(), query.into());
@@ -5205,10 +5189,10 @@ mod tests {
     fn analyze_diagnostics(
         schema: &SchemaIndex,
         query: &str,
-    ) -> (Kind, Vec<surrealguard_diagnostics::Finding>) {
+    ) -> (Kind, Vec<surrealql_analyzer_diagnostics::Finding>) {
         let parsed = parse(query);
         let stmt = lower_select(&parsed);
-        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        let mut diagnostics: Vec<surrealql_analyzer_diagnostics::Finding> = Vec::new();
         let mut ctx = AnalysisContext::scoped(
             schema,
             parsed.source_id().clone(),
@@ -5221,7 +5205,7 @@ mod tests {
         (kind, diagnostics)
     }
 
-    fn codes(diagnostics: &[surrealguard_diagnostics::Finding]) -> Vec<u16> {
+    fn codes(diagnostics: &[surrealql_analyzer_diagnostics::Finding]) -> Vec<u16> {
         diagnostics.iter().map(|d| d.code().number()).collect()
     }
 
@@ -5707,7 +5691,7 @@ mod tests {
             "expected the selection itself to be reported: {:?}",
             graph
                 .iter()
-                .map(surrealguard_diagnostics::Finding::message)
+                .map(surrealql_analyzer_diagnostics::Finding::message)
                 .collect::<Vec<_>>()
         );
 
@@ -5719,7 +5703,7 @@ mod tests {
                     && finding.message().contains("`nope`")),
             "expected the selection itself to be reported: {:?}",
             row.iter()
-                .map(surrealguard_diagnostics::Finding::message)
+                .map(surrealql_analyzer_diagnostics::Finding::message)
                 .collect::<Vec<_>>()
         );
     }
@@ -5791,7 +5775,7 @@ mod tests {
             "expected 1002 naming the empty selection: {:?}",
             diagnostics
                 .iter()
-                .map(surrealguard_diagnostics::Finding::message)
+                .map(surrealql_analyzer_diagnostics::Finding::message)
                 .collect::<Vec<_>>()
         );
     }

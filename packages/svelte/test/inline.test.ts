@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { HOST_PARAM_PREFIX, sgLive, sgQuery } from "../src/inline.js";
-import { surrealguard } from "../src/preprocess.js";
+import { surrealqlAnalyzer } from "../src/preprocess.js";
 
-const run = (content: string) => surrealguard().markup({ content, filename: "T.svelte" })?.code;
+const run = (content: string) => surrealqlAnalyzer().markup({ content, filename: "T.svelte" })?.code;
 
 describe("the inline query attribute", () => {
   it("captures the parts, so the value never reaches the text", () => {
@@ -63,7 +63,7 @@ describe("the preprocessor", () => {
     expect(out).toContain(
       'q={() => __sg_query(["SELECT id FROM person WHERE age > ", ""], [minAge])}',
     );
-    expect(out).toContain('from "@surrealguard/svelte/inline"');
+    expect(out).toContain('from "@surrealdb/analyzer-svelte/inline"');
   });
 
   it("wraps it in a thunk, which is what keeps it reactive", () => {

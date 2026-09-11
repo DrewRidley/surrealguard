@@ -17,7 +17,7 @@
 //!   before, the query attribute, so a byte-counted column is off by one
 //!   even when the line is right.
 
-use surrealguard_embed::{extract, EmbeddedQuery};
+use surrealql_analyzer_embed::{extract, EmbeddedQuery};
 
 const FIXTURE: &str = include_str!("fixtures/attributes.svelte");
 const FIXTURE_NAME: &str = "attributes.svelte";

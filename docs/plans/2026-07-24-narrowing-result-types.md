@@ -1,7 +1,7 @@
 # Narrowing-based result types
 
 Status: design / proposal
-Author: SurrealGuard principal engineering
+Author: SurrealQL Analyzer principal engineering
 Date: 2026-07-24
 Supersedes: nothing (net-new capability); depends on the flow engine in `crates/workspace/src/analyzer/flow/`
 
@@ -9,7 +9,7 @@ Supersedes: nothing (net-new capability); depends on the flow engine in `crates/
 
 ## 1. Motivation and the core idea
 
-Today SurrealGuard computes a query's result type as the **schema shape**: for `SELECT name, email FROM user`, `select_response_kind` (`crates/workspace/src/analyzer/data/select.rs:25`) builds `Kind::Array(Kind::Literal(Object({name: string, email: option<string>})))` straight from each field's declared `FieldDef.kind`. The WHERE clause is thrown away for typing purposes — `check_where_clause` (`select.rs:197`) literally comments *"The WHERE kind is irrelevant to the response"* and only emits findings. Permissions never touch the type at all.
+Today SurrealQL Analyzer computes a query's result type as the **schema shape**: for `SELECT name, email FROM user`, `select_response_kind` (`crates/workspace/src/analyzer/data/select.rs:25`) builds `Kind::Array(Kind::Literal(Object({name: string, email: option<string>})))` straight from each field's declared `FieldDef.kind`. The WHERE clause is thrown away for typing purposes — `check_where_clause` (`select.rs:197`) literally comments *"The WHERE kind is irrelevant to the response"* and only emits findings. Permissions never touch the type at all.
 
 That is correct but coarse, and it is wrong in the two directions a real SurrealDB query is *most* precise:
 
@@ -35,7 +35,7 @@ SurrealDB evaluates the `FOR select` predicate **per surviving row** and *cuts t
 
 ### 2.1 One narrowed response kind
 
-There is exactly one output contract: `StatementAnalysis.response_kind` → `surrealguard_codegen::ts_type` (generation) and `render_kind` (hover). We do **not** add a parallel "narrowed kind" field — MEMORY's `no_speculative_state_channels` rule forbids a second channel with no distinct reader, and there is only one reader. Instead **the narrowed kind *is* `response_kind`**: narrowing is a post-pass applied *inside* `select_response_kind`, over the already-built `row_kind` object literal, before it is wrapped in the outer `Kind::Array`.
+There is exactly one output contract: `StatementAnalysis.response_kind` → `surrealql_analyzer_codegen::ts_type` (generation) and `render_kind` (hover). We do **not** add a parallel "narrowed kind" field — MEMORY's `no_speculative_state_channels` rule forbids a second channel with no distinct reader, and there is only one reader. Instead **the narrowed kind *is* `response_kind`**: narrowing is a post-pass applied *inside* `select_response_kind`, over the already-built `row_kind` object literal, before it is wrapped in the outer `Kind::Array`.
 
 The narrowed response kind is computed from four inputs:
 
@@ -206,7 +206,7 @@ The **union** (not any single table) plus NONE is the only sound default: a sing
 A project **declares** (config/pragma) which access method a query set runs under and whether it is authenticated; `generate` then specializes `$auth` to the single non-optional `record<user>` of that method, so `$auth`-dependent permission gates evaluate precisely:
 
 ```surql
-// surrealguard config: { "session": { "access": "user_access", "authenticated": true } }
+// surrealql-analyzer config: { "session": { "access": "user_access", "authenticated": true } }
 SELECT *, password FROM user;
 --  $auth : record<user>   (only under an explicit scope declaration)
 ```

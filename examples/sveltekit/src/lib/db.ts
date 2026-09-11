@@ -1,5 +1,5 @@
 
-import { createClient } from "$lib/surrealguard.generated";
+import { createClient } from "$lib/surrealql-analyzer.generated";
 
 export const RPC_URL = "ws://127.0.0.1:8124/rpc";
 

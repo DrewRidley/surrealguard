@@ -20,8 +20,8 @@
      background below covers the same window for the html box itself. -->
 <meta name="color-scheme" content="dark" />
 <style>html{background:#0a0b0e}</style>
-<title>Diagnostics &amp; lints — SurrealGuard Docs</title>
-<meta name="description" content="The complete SurrealGuard diagnostic catalog: every code across nine families, with its severity, default level (allow / warn / deny), and what trips it." />
+<title>Diagnostics &amp; lints — SurrealQL Analyzer Docs</title>
+<meta name="description" content="The complete SurrealQL Analyzer diagnostic catalog: every code across nine families, with its severity, default level (allow / warn / deny), and what trips it." />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
 <link rel="stylesheet" href="/styles.css" />
 <link rel="stylesheet" href="/docs/docs.css" />
@@ -124,12 +124,12 @@
 
 <nav>
   <div class="wrap">
-    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealQL Analyzer</a>
     <div class="nav-links">
       <a href="/docs/">Docs</a>
       <a href="/#agents">For agents</a>
       <a href="/#install">Install</a>
-      <a class="nav-cta" href="https://github.com/DrewRidley/surrealguard">GitHub ↗</a>
+      <a class="nav-cta" href="https://github.com/surrealdb/analyzer">GitHub ↗</a>
     </div>
   </div>
 </nav>
@@ -148,7 +148,7 @@
     </nav>
     <div class="group">Integrations</div>
     <nav>
-      <a href="/docs/rust.html">Rust · surrealguard-rs</a>
+      <a href="/docs/rust.html">Rust · surrealql-analyzer-rs</a>
       <a href="/docs/typescript.html">TypeScript</a>
       <a href="/docs/agents.html">Coding agents</a>
     </nav>
@@ -183,10 +183,10 @@
 
     <h3>In-source suppression</h3>
     <p>A suppression comment is source-authored intent, so it applies at analysis time, rustc-style — the directive covers the next line (or its own line when trailing a statement), and a suppressed finding never leaves the pipeline. It must name a real catalog code; blanket suppressions are rejected, and a directive that violates its own contract (unknown code, or a missing <code>reason</code> where one is required) is <a class="link" href="#fam-7">7013</a>.</p>
-    <pre class="code"><span class="c">-- surrealguard: allow(E1001) reason="table created by a migration tool at runtime"</span>
+    <pre class="code"><span class="c">-- surrealql-analyzer: allow(E1001) reason="table created by a migration tool at runtime"</span>
 <span class="k">SELECT</span> * <span class="k">FROM</span> external_table;
 
-<span class="k">SELECT</span> ssn <span class="k">FROM</span> user; <span class="c">-- surrealguard: allow(1002) reason="column added out-of-band"</span></pre>
+<span class="k">SELECT</span> ssn <span class="k">FROM</span> user; <span class="c">-- surrealql-analyzer: allow(1002) reason="column added out-of-band"</span></pre>
     <p>The directive accepts a code with or without its severity letter (<code>allow(E1001)</code> or <code>allow(1001)</code>). A <code>reason="…"</code> is required for any <code>deny</code>-level code so the waiver is self-documenting.</p>
 
     <div class="callout">
@@ -194,7 +194,7 @@
     </div>
 
     <h2>Graph edge-filter <code>WHERE</code></h2>
-    <p>A graph step may carry an inline predicate that filters the edge (or target) rows during traversal. SurrealGuard supports both spellings and type-checks the predicate <strong>against the fields of the filtered table</strong> — exactly as it would a top-level <code>WHERE</code>:</p>
+    <p>A graph step may carry an inline predicate that filters the edge (or target) rows during traversal. SurrealQL Analyzer supports both spellings and type-checks the predicate <strong>against the fields of the filtered table</strong> — exactly as it would a top-level <code>WHERE</code>:</p>
     <pre class="code"><span class="c">-- parenthesised edge filter</span>
 <span class="k">SELECT</span> -&gt;(likes <span class="k">WHERE</span> strength &gt; <span class="n">3</span>)-&gt;post <span class="k">FROM</span> user;
 
@@ -428,7 +428,7 @@
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7009</span></span></td><td><span class="lvl allow">allow</span></td><td>Whole-table UPDATE/DELETE without WHERE <span class="covers">— <code>DELETE person;</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7011</span></span></td><td><span class="lvl warn">warn</span></td><td>Assignment to <code>id</code> in SET <span class="covers">— <code>SET id = ...</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7012</span></span></td><td><span class="lvl warn">warn</span></td><td>Blocking or side-effecting call in a computed context <span class="covers">— <code>http::get(...)</code> / <code>sleep()</code> in any field clause; <code>rand::*</code> / <code>sequence::next*</code> in a <code>VALUE</code> or <code>COMPUTED</code>, and <code>time::now()</code> in a <code>COMPUTED</code> — clauses that re-run, so the field never holds one value. <code>DEFAULT time::now()</code> / <code>DEFAULT rand::uuid()</code> and <code>VALUE time::now()</code> are the created-at, id and updated-at idioms and stay silent</span></td></tr>
-          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7013</span></span></td><td><span class="lvl warn">warn</span></td><td>A suppression directive names a catalog code (with a reason when required) <span class="covers">— <code>-- surrealguard: allow(ghost)</code>; missing reason under <code>require_suppression_reasons</code></span></td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">7013</span></span></td><td><span class="lvl warn">warn</span></td><td>A suppression directive names a catalog code (with a reason when required) <span class="covers">— <code>-- surrealql-analyzer: allow(ghost)</code>; missing reason under <code>require_suppression_reasons</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">7014</span></span></td><td><span class="lvl allow">allow</span></td><td>Whole-table SELECT without WHERE/LIMIT <span class="covers">— <code>SELECT * FROM person;</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">7015</span></span></td><td><span class="lvl allow">allow</span></td><td>Bare <code>SELECT *</code> (over-fetch / schema-drift brittleness) <span class="covers">— <code>SELECT * FROM person WHERE id = person:tobie;</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb i">I</span><span class="num">7016</span></span></td><td><span class="lvl allow">allow</span></td><td>LIMIT/START without ORDER BY (the page is not deterministic) <span class="covers">— <code>SELECT * FROM person LIMIT 10 START 20;</code> — record order is storage order, so two pages can overlap or skip rows. Table targets only; silent for <code>ONLY … LIMIT 1</code> (a cardinality proof, not a page) and <code>GROUP ALL</code> (one row)</span></td></tr>
@@ -478,7 +478,7 @@
       </a>
       <a class="next" href="/docs/rust.html">
         <span class="dir">Next →</span>
-        <span class="ttl">Rust · surrealguard-rs</span>
+        <span class="ttl">Rust · surrealql-analyzer-rs</span>
       </a>
     </div>
   </main>
@@ -487,16 +487,16 @@
 <footer>
   <div class="wrap">
     <div>
-      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealQL Analyzer</a>
       <div class="tiny">Static analysis &amp; type inference for SurrealQL.</div>
     </div>
     <div class="cols">
       <a href="/docs/">Docs</a>
       <a href="/llms.txt">llms.txt</a>
       <a href="/llms-full.txt">llms-full.txt</a>
-      <a href="https://github.com/DrewRidley/surrealguard">GitHub</a>
-      <a href="https://crates.io/crates/surrealguard">crates.io</a>
-      <a href="https://www.npmjs.com/org/surrealguard">npm</a>
+      <a href="https://github.com/surrealdb/analyzer">GitHub</a>
+      <a href="https://crates.io/crates/surrealql-analyzer">crates.io</a>
+      <a href="https://www.npmjs.com/org/surrealdb">npm</a>
     </div>
     <div class="tiny">MIT OR Apache-2.0</div>
   </div>

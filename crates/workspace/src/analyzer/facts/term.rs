@@ -19,7 +19,7 @@
 //! of a fold must never act on uncertainty.
 
 use surrealdb_types::{Kind, KindLiteral};
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use super::place::{place_of, Place};
 
@@ -407,14 +407,14 @@ fn const_as_f64(value: &ConstValue) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     /// The term of the expression in `RETURN <source>;`.
     fn term(source: &str, bindings: Bindings<'_>) -> Term {
         let query = format!("RETURN {source};");
         let parsed = parse_source(SourceId::new("term:test"), query.as_str()).expect("parses");
-        let statements = surrealguard_syntax::lower::lower_statements(&parsed);
+        let statements = surrealql_analyzer_syntax::lower::lower_statements(&parsed);
         let ast::Statement::Return(stmt) = &statements.first().expect("one statement").node else {
             panic!("expected a RETURN");
         };

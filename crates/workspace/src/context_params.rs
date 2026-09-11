@@ -16,10 +16,10 @@
 use std::collections::BTreeMap;
 
 use surrealdb_types::{Kind, KindLiteral, Table};
-use surrealguard_syntax::ast::{DefineStmt, Statement};
-use surrealguard_syntax::parse::parse_source;
-use surrealguard_syntax::source::SourceId;
-use surrealguard_syntax::span::ByteRange;
+use surrealql_analyzer_syntax::ast::{DefineStmt, Statement};
+use surrealql_analyzer_syntax::parse::parse_source;
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_syntax::span::ByteRange;
 
 use crate::schema::SchemaIndex;
 
@@ -159,11 +159,11 @@ pub fn context_param_map(
 /// already, so re-parsing per request would be pure waste.
 pub(crate) fn context_param_map_in(
     schema: &SchemaIndex,
-    parsed: &surrealguard_syntax::parse::ParsedSource,
+    parsed: &surrealql_analyzer_syntax::parse::ParsedSource,
     offset: u32,
 ) -> Option<BTreeMap<String, Kind>> {
     let text = parsed.text();
-    let statements = surrealguard_syntax::lower::lower_statements(parsed);
+    let statements = surrealql_analyzer_syntax::lower::lower_statements(parsed);
 
     // The enclosing construct is the smallest *DEFINE* whose span covers the
     // cursor. Restricting to DEFINEs matters on incomplete text: a body whose

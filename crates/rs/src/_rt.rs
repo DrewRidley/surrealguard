@@ -2,8 +2,8 @@
 //!
 //! Hidden: not a stable API surface. Everything here exists so a generated
 //! type can be written as a self-contained block that names only
-//! `::surrealguard_rs::_rt::*`, and so the crate calling the macro needs no
-//! dependency but `surrealguard-rs`.
+//! `::surrealql_analyzer_rs::_rt::*`, and so the crate calling the macro needs no
+//! dependency but `surrealql-analyzer-rs`.
 
 pub use surrealdb_types::{
     Bytes, Datetime, Decimal, Duration, Error, Geometry, Kind, Number, Object, RecordId, Regex,

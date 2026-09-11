@@ -9,12 +9,12 @@
 
 mod support;
 
-use surrealguard_syntax::ast::{Expr, Statement, TypeExpr};
-use surrealguard_syntax::lower::lower_statements;
-use surrealguard_syntax::parse::{
+use surrealql_analyzer_syntax::ast::{Expr, Statement, TypeExpr};
+use surrealql_analyzer_syntax::lower::lower_statements;
+use surrealql_analyzer_syntax::parse::{
     parse_source, ParsedSource, SyntaxDiagnostic, SyntaxDiagnosticKind,
 };
-use surrealguard_syntax::source::SourceId;
+use surrealql_analyzer_syntax::source::SourceId;
 
 use support::ast_walk::{check_span, collect, is_recovery_partial};
 
@@ -26,7 +26,7 @@ fn front_end(
     text: &str,
 ) -> (
     ParsedSource,
-    Vec<surrealguard_syntax::ast::Spanned<Statement>>,
+    Vec<surrealql_analyzer_syntax::ast::Spanned<Statement>>,
 ) {
     let parsed = parse_source(SourceId::new("recovery"), text).expect("tree-sitter returns a tree");
     let statements = lower_statements(&parsed);
@@ -56,7 +56,7 @@ fn at(text: &str, needle: &str) -> (u32, u32) {
     (start as u32, (start + needle.len()) as u32)
 }
 
-fn span_of<T>(spanned: &surrealguard_syntax::ast::Spanned<T>) -> (u32, u32) {
+fn span_of<T>(spanned: &surrealql_analyzer_syntax::ast::Spanned<T>) -> (u32, u32) {
     (spanned.span.start(), spanned.span.end())
 }
 

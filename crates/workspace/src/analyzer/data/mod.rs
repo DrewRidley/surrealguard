@@ -21,13 +21,13 @@ pub mod upsert;
 pub(crate) fn check_table_reference(
     ctx: &mut crate::analyzer::context::AnalysisContext<'_>,
     name: &str,
-    span: surrealguard_syntax::span::ByteRange,
+    span: surrealql_analyzer_syntax::span::ByteRange,
 ) -> bool {
     if ctx.schema().tables.contains_key(name) {
         return true;
     }
-    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
-    let finding = surrealguard_diagnostics::catalog::finding(
+    let span = surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), span);
+    let finding = surrealql_analyzer_diagnostics::catalog::finding(
         span,
         1001,
         format!("`{name}` is not a defined table"),
@@ -50,13 +50,13 @@ pub(crate) fn check_table_reference(
 pub(crate) fn check_table_defined_anywhere(
     ctx: &mut crate::analyzer::context::AnalysisContext<'_>,
     name: &str,
-    span: surrealguard_syntax::span::ByteRange,
+    span: surrealql_analyzer_syntax::span::ByteRange,
 ) -> bool {
     if ctx.table_defined_anywhere(name) {
         return true;
     }
-    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
-    let mut finding = surrealguard_diagnostics::catalog::finding(
+    let span = surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), span);
+    let mut finding = surrealql_analyzer_diagnostics::catalog::finding(
         span,
         1001,
         format!("`{name}` is not a defined table"),
@@ -74,10 +74,10 @@ pub(crate) fn check_table_defined_anywhere(
 /// "no `DEFINE TABLE <name>` exists" note. Shared so every emit site that
 /// reports a missing table offers the same suggestion.
 pub(crate) fn with_table_suggestion(
-    finding: surrealguard_diagnostics::Finding,
+    finding: surrealql_analyzer_diagnostics::Finding,
     ctx: &crate::analyzer::context::AnalysisContext<'_>,
     name: &str,
-) -> surrealguard_diagnostics::Finding {
+) -> surrealql_analyzer_diagnostics::Finding {
     match crate::suggest::closest(name, ctx.schema().tables.keys().map(String::as_str)) {
         Some(nearest) => finding.with_help(format!("did you mean `{nearest}`?")),
         None => finding.with_help(format!("no `DEFINE TABLE {name}` exists in the workspace")),
@@ -91,15 +91,15 @@ pub(crate) fn check_field_path(
     ctx: &mut crate::analyzer::context::AnalysisContext<'_>,
     table: &crate::schema::TableDef,
     segments: &[String],
-    span: surrealguard_syntax::span::ByteRange,
+    span: surrealql_analyzer_syntax::span::ByteRange,
     code: u16,
 ) {
     if table.fields.is_empty() || select::kind_for_path(table, segments).is_some() {
         return;
     }
-    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
+    let span = surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), span);
     let path = segments.join(".");
-    let mut finding = surrealguard_diagnostics::catalog::finding(
+    let mut finding = surrealql_analyzer_diagnostics::catalog::finding(
         span,
         code,
         format!("`{}` has no field `{path}`", table.name),
@@ -126,11 +126,11 @@ pub(crate) fn check_field_path(
 pub(crate) fn check_expression_field_paths(
     ctx: &mut crate::analyzer::context::AnalysisContext<'_>,
     table: &crate::schema::TableDef,
-    expr: &surrealguard_syntax::ast::Spanned<surrealguard_syntax::ast::Expr>,
+    expr: &surrealql_analyzer_syntax::ast::Spanned<surrealql_analyzer_syntax::ast::Expr>,
     code: u16,
 ) {
     match &expr.node {
-        surrealguard_syntax::ast::Expr::Idiom(idiom) => {
+        surrealql_analyzer_syntax::ast::Expr::Idiom(idiom) => {
             if select::is_graph_projection_idiom(idiom) {
                 return;
             }
@@ -139,29 +139,29 @@ pub(crate) fn check_expression_field_paths(
                 select::validate_field_path(ctx, table, &segments, expr.span, code);
             }
         }
-        surrealguard_syntax::ast::Expr::Binary { lhs, rhs, .. } => {
+        surrealql_analyzer_syntax::ast::Expr::Binary { lhs, rhs, .. } => {
             check_expression_field_paths(ctx, table, lhs, code);
             check_expression_field_paths(ctx, table, rhs, code);
         }
-        surrealguard_syntax::ast::Expr::Prefix { expr: inner, .. } => {
+        surrealql_analyzer_syntax::ast::Expr::Prefix { expr: inner, .. } => {
             check_expression_field_paths(ctx, table, inner, code);
         }
-        surrealguard_syntax::ast::Expr::Array(elements) => {
+        surrealql_analyzer_syntax::ast::Expr::Array(elements) => {
             for element in elements {
                 check_expression_field_paths(ctx, table, element, code);
             }
         }
-        surrealguard_syntax::ast::Expr::Object(fields) => {
+        surrealql_analyzer_syntax::ast::Expr::Object(fields) => {
             for (_, value) in fields {
                 check_expression_field_paths(ctx, table, value, code);
             }
         }
-        surrealguard_syntax::ast::Expr::Call(call) => {
+        surrealql_analyzer_syntax::ast::Expr::Call(call) => {
             for arg in &call.args {
                 check_expression_field_paths(ctx, table, arg, code);
             }
         }
-        surrealguard_syntax::ast::Expr::Cast { expr: inner, .. } => {
+        surrealql_analyzer_syntax::ast::Expr::Cast { expr: inner, .. } => {
             check_expression_field_paths(ctx, table, inner, code);
         }
         _ => {}

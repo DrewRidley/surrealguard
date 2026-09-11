@@ -2,8 +2,8 @@
 //! inside a `FOR` body (4005).
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-use surrealguard_syntax::span::ByteRange;
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::span::ByteRange;
 
 use crate::analyzer::context::AnalysisContext;
 
@@ -14,9 +14,9 @@ pub(crate) fn analyze_continue(
 ) -> Kind {
     let _ = stmt;
     if !ctx.in_loop() {
-        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span);
+        let span = surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), span);
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 4005,
                 "CONTINUE here does nothing — it is outside any FOR loop".to_string(),

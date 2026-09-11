@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Release helper for SurrealGuard.
+# Release helper for SurrealQL Analyzer.
 #
 #   scripts/release.sh check          # verify only — safe, changes nothing
 #   scripts/release.sh bump 0.4.0     # rewrite versions, then re-run `check`
@@ -12,18 +12,18 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Dependency order — a crate must be on the registry before anything that
-# depends on it can build there. surrealguard-wasm is `publish = false`.
+# depends on it can build there. surrealql-analyzer-wasm is `publish = false`.
 CRATES=(
-  surrealguard-tree-sitter-surrealql
-  surrealguard-syntax
-  surrealguard-embed
-  surrealguard-diagnostics
-  surrealguard-workspace
-  surrealguard-codegen
-  surrealguard-macros
-  surrealguard-rs
-  surrealguard-lsp
-  surrealguard
+  surrealql-analyzer-tree-sitter-surrealql
+  surrealql-analyzer-syntax
+  surrealql-analyzer-embed
+  surrealql-analyzer-diagnostics
+  surrealql-analyzer-workspace
+  surrealql-analyzer-codegen
+  surrealql-analyzer-macros
+  surrealql-analyzer-rs
+  surrealql-analyzer-lsp
+  surrealql-analyzer
 )
 
 crate_dir() {
@@ -110,21 +110,21 @@ cmd_bump() {
   # npm packages that are published (private/example packages are skipped).
 
   # Every publishable npm package. NOTE the search covers more than packages/:
-  # the `surrealguard` CLI shim lives in npm/ and was silently skipped when this
-  # only looked at packages/ and only matched the @surrealguard/ scope — so
-  # `npx surrealguard` kept installing an old version.
+  # the `surrealql-analyzer` CLI shim lives in npm/ and was silently skipped when this
+  # only looked at packages/ and only matched the @surrealdb/analyzer- scope — so
+  # `npx surrealql-analyzer` kept installing an old version.
   for p in $(find packages npm -name package.json -not -path '*/node_modules/*' 2>/dev/null); do
     python3 - "$p" "$v" <<'PY'
 import json, sys
 path, ver = sys.argv[1], sys.argv[2]
 d = json.load(open(path))
 name = d.get("name", "")
-if d.get("private") or not (name == "surrealguard" or name.startswith("@surrealguard/")):
+if d.get("private") or not (name == "surrealql-analyzer" or name.startswith("@surrealdb/analyzer-")):
     raise SystemExit
 d["version"] = ver
 for field in ("dependencies", "devDependencies", "peerDependencies"):
     for dep in d.get(field, {}):
-        if dep.startswith("@surrealguard/"):
+        if dep.startswith("@surrealdb/analyzer-"):
             d[field][dep] = ver
 json.dump(d, open(path, "w"), indent=2)
 open(path, "a").write("\n")
@@ -140,7 +140,7 @@ cmd_publish() {
   local v; v=$(grep -m1 -A2 '\[workspace.package\]' Cargo.toml | grep -m1 '^version' | cut -d'"' -f2)
   [ "$confirm" = "$v" ] || { echo "aborted (expected $v)"; exit 1; }
 
-  # The `surrealguard` npm shim and the Zed extension both download a prebuilt
+  # The `surrealql-analyzer` npm shim and the Zed extension both download a prebuilt
   # binary from the GitHub Release for their version. Publishing either before
   # that release exists gives users a 404 instead of a stale version — strictly
   # worse. The `v*` tag is what triggers .github/workflows/release.yml to build
@@ -164,7 +164,7 @@ cmd_publish() {
     echo "    git tag v$v && git push origin v$v"
     echo
     echo "Wait for .github/workflows/release.yml to finish, confirm the assets at"
-    echo "    https://github.com/DrewRidley/surrealguard/releases/tag/v$v"
+    echo "    https://github.com/surrealdb/analyzer/releases/tag/v$v"
     echo "then re-run this. crates.io does not depend on the tag; npm does."
     read -r -p "Publish crates.io now and do npm later? [y/N] " go
     [ "$go" = "y" ] || exit 1
@@ -203,11 +203,11 @@ cmd_publish() {
   fi
   # `pnpm -r` covers whatever pnpm-workspace.yaml lists. The CLI shim lives in
   # npm/, which was missing from that list — so this used to publish 4 of the 5
-  # packages and silently leave `npx surrealguard` on an old version.
+  # packages and silently leave `npx surrealql-analyzer` on an old version.
   echo "== npm =="
   pnpm -r publish --access public --no-git-checks
   echo "   published:"
-  pnpm -r list --depth -1 2>/dev/null | grep -E '^(surrealguard|@surrealguard/)' | sed 's/^/     /' 
+  pnpm -r list --depth -1 2>/dev/null | grep -E '^(surrealql-analyzer|@surrealdb/analyzer-)' | sed 's/^/     /' 
 }
 
 case "${1:-check}" in

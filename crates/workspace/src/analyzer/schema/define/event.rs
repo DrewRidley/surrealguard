@@ -10,8 +10,8 @@
 //! operand/comparison rules).
 
 use surrealdb_types::{Kind, KindLiteral};
-use surrealguard_syntax::ast;
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::contract::{Contract, Position};
@@ -27,8 +27,10 @@ pub(crate) fn analyze_define_event(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
 
     ctx.with_child_env(|ctx| {
         let bind = |ctx: &mut AnalysisContext<'_>, name: &str, kind: Option<Kind>| {
-            let span =
-                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.name.span);
+            let span = surrealql_analyzer_syntax::span::SourceSpan::new(
+                ctx.source().clone(),
+                stmt.name.span,
+            );
             let mut fact = ExpressionFact::new(span, ExpressionValueClass::Variable);
             fact.kind = kind;
             ctx.define_local(name.to_string(), fact);
@@ -79,7 +81,7 @@ pub(crate) fn analyze_define_event(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
                 {
                     let span = SourceSpan::new(ctx.source().clone(), when.span);
                     ctx.emit(
-                        surrealguard_diagnostics::catalog::finding(
+                        surrealql_analyzer_diagnostics::catalog::finding(
                             span,
                             2005,
                             format!(
@@ -120,7 +122,7 @@ pub(crate) fn analyze_define_event(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
 /// (1002).
 fn check_event_references(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineEvent) {
     if !ctx.schema().tables.contains_key(&stmt.table.node) {
-        let finding = surrealguard_diagnostics::catalog::finding(
+        let finding = surrealql_analyzer_diagnostics::catalog::finding(
             SourceSpan::new(ctx.source().clone(), stmt.table.span),
             1001,
             format!(
@@ -176,7 +178,7 @@ fn check_event_references(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineEvent
     };
     let source = ctx.source().clone();
     for (text, span) in unknown {
-        let mut finding = surrealguard_diagnostics::catalog::finding(
+        let mut finding = surrealql_analyzer_diagnostics::catalog::finding(
             SourceSpan::new(source.clone(), span),
             1002,
             format!(

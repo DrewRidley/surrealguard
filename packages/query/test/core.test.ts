@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { defineLive, defineQuery, type SurrealGuardClient } from "@surrealguard/client";
+import { defineLive, defineQuery, type SurrealQLAnalyzerClient } from "@surrealdb/analyzer-client";
 import { RecordId, type LiveMessage } from "surrealdb";
 import { QueryClient } from "../src/index.js";
 
@@ -35,7 +35,7 @@ function makeClient(
     query,
     surreal: { query, liveOf },
     onInvalidate: () => () => {},
-  } as unknown as SurrealGuardClient;
+  } as unknown as SurrealQLAnalyzerClient;
   return { client, killed, liveOf, queried, query, emit: (m: LiveMessage) => handler?.(m) };
 }
 
@@ -55,7 +55,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 const ids = (rows: unknown) => (rows as Array<{ id: unknown }>).map((row) => String(row.id));
 
 // The registry is empty in this package, so queries are built through the
-// `unchecked` factories; the typed path is proven in `@surrealguard/client`.
+// `unchecked` factories; the typed path is proven in `@surrealdb/analyzer-client`.
 const users = defineQuery.unchecked("SELECT * FROM user");
 const liveUsers = defineLive.unchecked("SELECT * FROM user");
 
@@ -87,7 +87,7 @@ describe("QueryClient", () => {
       query: async () => [42],
       surreal: {},
       onInvalidate: () => () => {},
-    } as unknown as SurrealGuardClient;
+    } as unknown as SurrealQLAnalyzerClient;
     const scalar = defineQuery.unchecked("RETURN 42");
     const observable = new QueryClient(client).observe(scalar);
     const unsubscribe = observable.subscribe(() => {});
@@ -136,14 +136,14 @@ describe("QueryClient", () => {
     expect(killed).toEqual(["live-1"]);
   });
 
-  it("reports errors as SurrealGuardError carrying the query", async () => {
+  it("reports errors as SurrealQLAnalyzerError carrying the query", async () => {
     const client = {
       query: async () => {
         throw new Error("boom");
       },
       surreal: {},
       onInvalidate: () => () => {},
-    } as unknown as SurrealGuardClient;
+    } as unknown as SurrealQLAnalyzerClient;
     const observable = new QueryClient(client).observe(users);
     const unsubscribe = observable.subscribe(() => {});
     await flush();
@@ -229,7 +229,7 @@ describe("QueryClient", () => {
   it("mutate runs the write and invalidates what it affects", async () => {
     const { client } = makeClient();
     const run = vi.fn(async () => [{ id: new RecordId("user", 3) }]);
-    const queryClient = new QueryClient({ ...client, run } as unknown as SurrealGuardClient);
+    const queryClient = new QueryClient({ ...client, run } as unknown as SurrealQLAnalyzerClient);
     await queryClient.fetch(users);
     expect(queryClient.getData(users.key)).toBeDefined();
 

@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { flushSync } from "svelte";
 import { render, screen } from "@testing-library/svelte";
-import { preload, type SurrealGuardClient } from "@surrealguard/client";
+import { preload, type SurrealQLAnalyzerClient } from "@surrealdb/analyzer-client";
 import { RecordId, type LiveMessage } from "surrealdb";
 import Users from "./Users.svelte";
 import { liveUsers } from "./queries.js";
 
 // The context key `setClient` / `useClient` use — pass it via render's
 // `context` to exercise the real context path (no explicit `client` override).
-const CLIENT_KEY = Symbol.for("@surrealguard/svelte:client");
+const CLIENT_KEY = Symbol.for("@surrealdb/analyzer-svelte:client");
 const isLive = (sql: string) => /^\s*live\b/i.test(sql);
 
 /** A fake client with a canned `query`, a capturable live handler, kill tracking. */
@@ -40,7 +40,7 @@ function makeClient(rows: Array<Record<string, unknown>> = []) {
     surreal: { query, liveOf },
     onInvalidate: () => () => {},
     runLiveOnce: async () => rows,
-  } as unknown as SurrealGuardClient;
+  } as unknown as SurrealQLAnalyzerClient;
   return { client, killed, subscribed, query, emit: (m: LiveMessage) => handler?.(m) };
 }
 
@@ -124,7 +124,7 @@ describe("createLive", () => {
       },
       surreal: {},
       onInvalidate: () => () => {},
-    } as unknown as SurrealGuardClient;
+    } as unknown as SurrealQLAnalyzerClient;
 
     render(Users, { context: new Map([[CLIENT_KEY, client]]) });
     await flush();

@@ -1,12 +1,12 @@
 /**
- * The query registry — the contract between `surrealguard generate` and this
+ * The query registry — the contract between `surrealql-analyzer generate` and this
  * client.
  *
- * `surrealguard generate` emits a module augmentation that adds one entry per
+ * `surrealql-analyzer generate` emits a module augmentation that adds one entry per
  * analyzed query, keyed by the exact query text:
  *
  * ```ts
- * declare module "@surrealguard/client" {
+ * declare module "@surrealdb/analyzer-client" {
  *   interface SurqlRegistry {
  *     "SELECT * FROM user": {
  *       result: [Array<{ id: RecordId<"user">; name: string }>];
@@ -47,7 +47,7 @@ export type GeoJSON = { type: string; coordinates: unknown };
  * `` `team:${string}` ``, and `Date` / `Duration` / `Uuid` / `Decimal` become
  * `string`.
  *
- * The reactive layer (`@surrealguard/query` and both framework adapters) is
+ * The reactive layer (`@surrealdb/analyzer-query` and both framework adapters) is
  * `Json<T>` throughout, because a React Server Component boundary accepts only
  * plain values and offers no transport hook to widen that. `db.run` is not — it
  * hands back the SDK's real values.

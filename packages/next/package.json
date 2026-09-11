@@ -1,13 +1,13 @@
 {
-  "name": "@surrealguard/next",
+  "name": "@surrealdb/analyzer-next",
   "version": "0.5.3",
-  "description": "Next.js / React bindings for SurrealGuard: typed live queries as hooks, App Router SSR seeding.",
+  "description": "Next.js / React bindings for SurrealQL Analyzer: typed live queries as hooks, App Router SSR seeding.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
   "author": "Drew Ridley",
   "repository": {
     "type": "git",
-    "url": "https://github.com/DrewRidley/surrealguard",
+    "url": "https://github.com/surrealdb/analyzer",
     "directory": "packages/next"
   },
   "keywords": [
@@ -39,8 +39,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@surrealguard/client": "0.5.3",
-    "@surrealguard/query": "0.5.3"
+    "@surrealdb/analyzer-client": "0.5.3",
+    "@surrealdb/analyzer-query": "0.5.3"
   },
   "peerDependencies": {
     "react": ">=18",

@@ -1,6 +1,6 @@
 # TypeScript package API redesign — design proposal
 
-Status: **proposal**, not built. Target: `@surrealguard/{client,query,svelte,next}` 0.5.0.
+Status: **proposal**, not built. Target: `@surrealdb/analyzer-{client,query,svelte,next}` 0.5.0.
 Scope: the *published surface*. Nothing here proposes changing the analyzer, and nothing
 here weakens the literal-key type guarantee.
 
@@ -58,25 +58,25 @@ Not everything needs redesigning. These are load-bearing and correct:
 | **No permissive `string` overload**, ever | A literal is also a `string`; a fallback overload rescues every mis-call into `unknown`. This rule is correct and this proposal does not break it. |
 | Degrade to `unknown`, never `any` | Asserted with `IsAny<T>` in three test-d files. Keep the assertions. |
 | The per-statement response tuple | Truthful to the SDK. Multi-statement queries genuinely return one result per statement. The tuple stays; §3 only *unwraps* it at a new, differently-named call site. |
-| `@surrealguard/query`'s refcounted live core | This is the hard part and it is done: N subscribers share one `LIVE SELECT`, one `KILL` at zero, reconcile by record `id` (CREATE→append, UPDATE→replace, DELETE→remove). Four vitest tests cover it. The proposal reuses it wholesale. |
+| `@surrealdb/analyzer-query`'s refcounted live core | This is the hard part and it is done: N subscribers share one `LIVE SELECT`, one `KILL` at zero, reconcile by record `id` (CREATE→append, UPDATE→replace, DELETE→remove). Four vitest tests cover it. The proposal reuses it wholesale. |
 | Live is a *separate explicit* call, not a `query()` that sniffs `LIVE` | One method returning two different things is worse. Keep the split. |
 | Context-provided client with an explicit `{ client }` override | Standard, correct, matches every comparable library. |
 | `useSyncExternalStore` in the React adapter | The correct primitive. Keep it. |
-| Framework-agnostic core in its own package | Correct layering. `@surrealguard/query` should stay independently usable. |
-| The generated file re-exporting `SurrealGuardClient` so one import loads the augmentation | Genuinely nice. Users never write a side-effect import. Keep it and extend it (§3.1). |
+| Framework-agnostic core in its own package | Correct layering. `@surrealdb/analyzer-query` should stay independently usable. |
+| The generated file re-exporting `SurrealQLAnalyzerClient` so one import loads the augmentation | Genuinely nice. Users never write a side-effect import. Keep it and extend it (§3.1). |
 
 ---
 
 ## 2. Honest assessment, per package
 
-### 2.1 `@surrealguard/client`
+### 2.1 `@surrealdb/analyzer-client`
 
 **Smallest path from install to a typed result today.** Six concepts:
 
 ```ts
-// 1. surrealguard.toml   2. surrealguard generate   3. the generated file
-import { SurrealGuardClient } from "../surrealguard.generated";  // 4. import from *there*, not the package
-const db = new SurrealGuardClient();
+// 1. surrealql-analyzer.toml   2. surrealql-analyzer generate   3. the generated file
+import { SurrealQLAnalyzerClient } from "../surrealql-analyzer.generated";  // 4. import from *there*, not the package
+const db = new SurrealQLAnalyzerClient();
 await db.connect("ws://localhost:8000/rpc");                     // 5. connect, manually
 const [rows] = await db.query("SELECT name FROM person");        // 6. destructure statement 0
 ```
@@ -100,23 +100,23 @@ const users = db.live(`SELECT * FROM user`);   // => { sql: "LIVE SELECT * FROM 
 The only way to actually receive rows is:
 
 ```ts
-import { getQueryClient } from "@surrealguard/query";        // a different package
+import { getQueryClient } from "@surrealdb/analyzer-query";        // a different package
 getQueryClient(db).observeLive(users).subscribe((s) => { /* s.data */ });
 ```
 
 Three concepts (`getQueryClient`, `observeLive`, `Observable`) in a package the vanilla user
 was never told to install, none of it in the client's README. **This is the "the vanilla js
-one even" complaint, and it is real: `@surrealguard/client` alone cannot do a live query.**
+one even" complaint, and it is real: `@surrealdb/analyzer-client` alone cannot do a live query.**
 
 **P3 — `live()` overrides an SDK method with incompatible semantics.** `Surreal.live(table)`
-returns `ManagedLivePromise<T>` — an awaitable subscription. `SurrealGuardClient.live(text)`
-returns a plain descriptor object. A `SurrealGuardClient` is therefore not substitutable for
+returns `ManagedLivePromise<T>` — an awaitable subscription. `SurrealQLAnalyzerClient.live(text)`
+returns a plain descriptor object. A `SurrealQLAnalyzerClient` is therefore not substitutable for
 a `Surreal` for anyone who calls `.live()`. The class also inherits the SDK's `live` for
 `Table` arguments through a third overload, so one method name now means two things.
 
 **P4 — no connection lifecycle.** Nothing awaits readiness; every example calls
 `await db.connect(...)` by hand, and the SvelteKit and Next examples **never call it at
-all** (`examples/sveltekit/src/lib/db.ts` is `export const db = new SurrealGuardClient()`,
+all** (`examples/sveltekit/src/lib/db.ts` is `export const db = new SurrealQLAnalyzerClient()`,
 and no route connects it). Convex, Supabase and TanStack all take config at construction and
 connect lazily. We should too.
 
@@ -151,19 +151,19 @@ person\`))` returns rows containing `RecordId` instances, so the SvelteKit examp
 likely a runtime failure the moment it meets a real database. (It has never been run against
 one — `examples/sveltekit` currently does not even typecheck: its generated file predates the
 per-statement tuple change, so `const [rows] = …` destructures a *row*, and
-`pnpm --filter @surrealguard-example/sveltekit exec tsc --noEmit` fails with TS2339
+`pnpm --filter @surrealql-analyzer-example/sveltekit exec tsc --noEmit` fails with TS2339
 `Property 'map' does not exist on type '{ name: string; }'`.)
 
 **P6 — subclassing `Surreal` makes the SDK's namespace ours to dodge, forever.** I tried to
-add `run`, `subscribe` and `invalidate` to a `class SurrealGuardClient extends Surreal` and
+add `run`, `subscribe` and `invalidate` to a `class SurrealQLAnalyzerClient extends Surreal` and
 tsc rejected all three: `Surreal.run(name, args)` is RPC function invocation,
 `Surreal.subscribe(event, listener)` is the event emitter, and `Surreal.invalidate()` **logs
 the session out**. Real compiler output:
 
 ```
-src/client.ts(42,3): error TS2416: Property 'run' in type 'SurrealGuardClient' is not
+src/client.ts(42,3): error TS2416: Property 'run' in type 'SurrealQLAnalyzerClient' is not
   assignable to the same property in base type 'Surreal'.
-src/client.ts(54,3): error TS2416: Property 'subscribe' in type 'SurrealGuardClient' is not
+src/client.ts(54,3): error TS2416: Property 'subscribe' in type 'SurrealQLAnalyzerClient' is not
   assignable to the same property in base type 'Surreal'.
 ```
 
@@ -172,7 +172,7 @@ relate reset run select set signin signup subscribe unset update upsert use`. Ev
 name for a data API is already spoken for, and the SDK can take more at any minor version.
 
 **P7 — no mutations, no invalidation.** `db.query("CREATE …")` works and is typed, but
-nothing in `@surrealguard/query` can be told a write happened. Non-live cached queries stay
+nothing in `@surrealdb/analyzer-query` can be told a write happened. Non-live cached queries stay
 stale forever. `QueryClient` has no `invalidate`, no `refetch`, no `setData`.
 
 **P8 — errors are raw SDK errors.** No query text, no params, no code. Debugging a failed
@@ -181,7 +181,7 @@ query means finding it yourself.
 **Genuinely fine, leave alone:** the `ParamsArg` conditional-rest trick; the `unknown`
 fallback; `BoundQuery` pass-through; the tuple result; the generated-file re-export.
 
-### 2.2 `@surrealguard/query`
+### 2.2 `@surrealdb/analyzer-query`
 
 The core is the strongest package here. `observe`/`observeLive` refcounting, reconcile-by-id
 and dehydrate/hydrate are all correct and tested. Gaps:
@@ -204,21 +204,21 @@ errored until the last subscriber leaves and a new one arrives.
 source to the browser inside the SSR payload. Minor, but it is bytes and it is your schema
 shape on the wire.
 
-### 2.3 `@surrealguard/svelte`
+### 2.3 `@surrealdb/analyzer-svelte`
 
 Before-code, taken verbatim from `examples/sveltekit`:
 
 ```svelte
 <!-- +layout.svelte -->
 <script lang="ts">
-  import { setClient } from "@surrealguard/svelte";
+  import { setClient } from "@surrealdb/analyzer-svelte";
   import { db } from "$lib/db";
   setClient(db);
 </script>
 ```
 ```ts
 // +page.ts
-import { loadLive } from "@surrealguard/svelte";
+import { loadLive } from "@surrealdb/analyzer-svelte";
 import { db } from "$lib/db";
 export async function load() {
   const people = await loadLive(db, db.live(`SELECT name, age, team FROM person`));
@@ -228,7 +228,7 @@ export async function load() {
 ```svelte
 <!-- +page.svelte -->
 <script lang="ts">
-  import { liveQuery } from "@surrealguard/svelte";
+  import { liveQuery } from "@surrealdb/analyzer-svelte";
   let { data } = $props();
   const people = liveQuery(
     (db) => db.live(`SELECT name, age, team FROM person`),
@@ -281,12 +281,12 @@ confirmed present in the repo's svelte 5.56.7. We should be using it.
 **Genuinely fine:** the returned object exposing `.data` / `.status` / `.loading` / `.error`
 as getters is correct Svelte 5 (no `$` prefix, reads track). Keep that shape.
 
-### 2.4 `@surrealguard/next`
+### 2.4 `@surrealdb/analyzer-next`
 
 ```tsx
 // app/providers.tsx
 "use client";
-<SurrealGuardProvider client={db}>{children}</SurrealGuardProvider>
+<SurrealQLAnalyzerProvider client={db}>{children}</SurrealQLAnalyzerProvider>
 
 // app/users/page.tsx  (Server Component)
 const users = await queryServer(db, db.live(`SELECT * FROM user`));
@@ -300,14 +300,14 @@ const { data } = useLiveQuery((db) => db.live(`SELECT * FROM user`), { initialDa
 Same duplicated-literal problem as Svelte (P13), plus:
 
 **P18 — a module-level client is shared across requests on the server.** `lib/db.ts` exports
-`new SurrealGuardClient()`; Next imports that module into the server runtime, so one
+`new SurrealQLAnalyzerClient()`; Next imports that module into the server runtime, so one
 connection — and one auth session, one `getQueryClient` cache — is shared by every concurrent
 request and every user. Any `signin()` mutates global state. This needs a per-request server
 client (React `cache()` scoping) and the docs need to say so loudly.
 
 **P19 — the most common Next data pattern is unsupported.** In App Router, the default way
 to read data is `const rows = await something()` *inside a Server Component*, shipping zero
-client JS. Nothing in `@surrealguard/next` serves that; the only server export is
+client JS. Nothing in `@surrealdb/analyzer-next` serves that; the only server export is
 `queryServer`, which takes a `LiveDescriptor` and exists to seed a client hook.
 
 **P20 — no Suspense/streaming story.** No `useSuspenseQuery` equivalent, no `loading.tsx`
@@ -338,11 +338,11 @@ module, instead of once per consumer.
 
 Everything else follows from that.
 
-### 3.1 `@surrealguard/client`
+### 3.1 `@surrealdb/analyzer-client`
 
 ```ts
 // src/lib/queries.ts  — the one place query text lives
-import { defineQuery, defineLive } from "./surrealguard.generated";
+import { defineQuery, defineLive } from "./surrealql-analyzer.generated";
 
 export const allPeople   = defineQuery("SELECT id, name, age FROM person");
 export const peopleOf    = defineQuery("SELECT id, name FROM person WHERE team = $team");
@@ -353,7 +353,7 @@ export const liveTeam    = defineLive("SELECT id, name FROM person WHERE team = 
 
 ```ts
 // src/lib/db.ts  — setup
-import { createClient } from "./surrealguard.generated";
+import { createClient } from "./surrealql-analyzer.generated";
 
 export const db = createClient({
   url: "ws://localhost:8000/rpc",
@@ -386,7 +386,7 @@ await db.invalidate(peopleOf.with({ team: teamId }));   // just that binding
 // errors carry context
 try { await db.run(peopleOf, { team: teamId }); }
 catch (e) {
-  if (e instanceof SurrealGuardError) console.error(e.query, e.params, e.cause);
+  if (e instanceof SurrealQLAnalyzerError) console.error(e.query, e.params, e.cause);
 }
 
 // escape hatches, all still here
@@ -410,13 +410,13 @@ export interface SurqlQuery<R, P extends Record<string, unknown> = Bound> {
   with(params: P): SurqlQuery<R, Bound>;   // bind -> "no params remaining"
 }
 
-interface SurrealGuardClient {
+interface SurrealQLAnalyzerClient {
   readonly surreal: Surreal;               // escape hatch
   ready(): Promise<void>;
   run    <R, P>(q: SurqlQuery<R, P>, ...args: ParamsArg<P>): Promise<Rows<R>>;
   runJson<R, P>(q: SurqlQuery<R, P>, ...args: ParamsArg<P>): Promise<Json<Rows<R>>>;
   watch  <Row>(q: SurqlLive<Row, Bound>, onRows: (rows: Row[]) => void,
-               onError?: (e: SurrealGuardError) => void): () => void;
+               onError?: (e: SurrealQLAnalyzerError) => void): () => void;
   invalidate(...queries: AnyQuery[]): Promise<void>;
 }
 
@@ -455,16 +455,16 @@ Five deliberate decisions in there:
 `extends Surreal` costs us `run`, `subscribe` and `invalidate` — and `invalidate` colliding
 with "log out" is a hazard, not just an inconvenience. Two options:
 
-- **A. Keep `class SurrealGuardClient extends Surreal`.** Free SDK compatibility, zero
+- **A. Keep `class SurrealQLAnalyzerClient extends Surreal`.** Free SDK compatibility, zero
   migration. Cost: rename the new methods to something the SDK hasn't claimed (`execute`,
   `watch`, `refresh`) and accept that any future SDK minor can collide with us.
 - **B. `createClient()` returns an object with `.surreal`.** *(recommended.)* Our vocabulary
   is ours. Cost: `db.signin(...)` becomes `db.surreal.signin(...)` unless we re-export the
   handful of session methods (`connect/close/use/signin/signup/authenticate` — we should),
-  and `SurrealGuardClient` is no longer structurally a `Surreal`.
+  and `SurrealQLAnalyzerClient` is no longer structurally a `Surreal`.
 
 Recommend **B**, with `fromSurreal(existing)` for people who already own a connection and
-`class SurrealGuardClient extends Surreal` kept exported and deprecated through 0.5.x.
+`class SurrealQLAnalyzerClient extends Surreal` kept exported and deprecated through 0.5.x.
 
 **Should a registry *miss* be an error?** `db.query` must tolerate a non-literal (dynamic
 strings are legal), so it degrades to `unknown`. `defineQuery` is different: it *always*
@@ -478,21 +478,21 @@ type error:
 ```ts
 type Strict<Q extends string> = Q extends keyof SurqlRegistry
   ? SurqlQuery<ResultOf<Q>, ParamsOf<Q>>
-  : SurqlError<"this query is not in the generated registry - run `surrealguard generate`">;
+  : SurqlError<"this query is not in the generated registry - run `surrealql-analyzer generate`">;
 ```
 ```
 TS2345: Argument of type 'SurqlError<"this query is not in the generated registry -
-  run `surrealguard generate`">' is not assignable to parameter of type 'SurqlQuery<…>'.
+  run `surrealql-analyzer generate`">' is not assignable to parameter of type 'SurqlQuery<…>'.
 ```
 
 Compiled, §9 check 14. Recommendation: **hard-fail by default** for `defineQuery`/`defineLive`
 (a stale registry is a bug, not a mode), with `defineQuery.unchecked("…")` for the rare
 deliberate case. `db.query`'s soft `unknown` fallback stays exactly as it is.
 
-**`SurrealGuardError` wraps, it does not replace.** The SDK ships a real hierarchy —
+**`SurrealQLAnalyzerError` wraps, it does not replace.** The SDK ships a real hierarchy —
 `SurrealError → ServerError → { QueryError, ValidationError, AuthenticationError,
 NotFoundError, NotAllowedError, … }` plus a separate `SqonError` family for value parsing.
-`SurrealGuardError` should carry `{ query, params, cause }` and keep `cause` as the original
+`SurrealQLAnalyzerError` should carry `{ query, params, cause }` and keep `cause` as the original
 typed SDK error, so `e.cause instanceof AuthenticationError` still works. Do not flatten it.
 
 **Value types — pin one mode and make the generated types true.** Recommended:
@@ -508,7 +508,7 @@ typed SDK error, so `e.cause instanceof AuthenticationError` still works. Do not
   who want plain JSON everywhere. Document that a string param cannot match a record link;
   do not make it the default.
 
-### 3.2 `@surrealguard/query` (core)
+### 3.2 `@surrealdb/analyzer-query` (core)
 
 Same engine, four additions and one generalisation:
 
@@ -533,19 +533,19 @@ class QueryClient {
 type QueryState<T> =
   | { status: "pending"; data: T | undefined; error: undefined }
   | { status: "success"; data: T;             error: undefined }
-  | { status: "error";   data: T | undefined; error: SurrealGuardError };
+  | { status: "error";   data: T | undefined; error: SurrealQLAnalyzerError };
 ```
 
 `observe` keys off `query.key` (precomputed on the ref) rather than re-serialising params on
 every call, which also makes "did the SSR seed match?" a value comparison rather than a
 string-equality accident.
 
-### 3.3 `@surrealguard/svelte`
+### 3.3 `@surrealdb/analyzer-svelte`
 
 ```svelte
 <!-- +layout.svelte : unchanged -->
 <script lang="ts">
-  import { setClient } from "@surrealguard/svelte";
+  import { setClient } from "@surrealdb/analyzer-svelte";
   import { db } from "$lib/db";
   setClient(db);
   let { children } = $props();
@@ -555,7 +555,7 @@ string-equality accident.
 
 ```ts
 // +page.ts : SSR. `preload` returns a serialisable payload that REMEMBERS which query it is.
-import { preload } from "@surrealguard/svelte";
+import { preload } from "@surrealdb/analyzer-svelte";
 import { db } from "$lib/db";
 import { livePeople } from "$lib/queries";
 
@@ -567,7 +567,7 @@ export async function load() {
 ```svelte
 <!-- +page.svelte : the query text appears nowhere. The key cannot drift. -->
 <script lang="ts">
-  import { createLive } from "@surrealguard/svelte";
+  import { createLive } from "@surrealdb/analyzer-svelte";
   let { data } = $props();
   const people = createLive(data.people);
 </script>
@@ -584,7 +584,7 @@ Reactive params — the thunk form, which is the whole point:
 ```svelte
 <script lang="ts">
   import { page } from "$app/state";
-  import { createLive, createQuery, createMutation } from "@surrealguard/svelte";
+  import { createLive, createQuery, createMutation } from "@surrealdb/analyzer-svelte";
   import { liveTeam, allPeople, addPerson } from "$lib/queries";
 
   // re-subscribes whenever page.params.team changes; old subscription is KILLed
@@ -616,16 +616,16 @@ function createMutation<R, P>(q: SurqlQuery<R, P>,
                         options?: { invalidates?: AnyQuery[]; onSuccess?(d: Rows<R>): void }
                         ): MutationHandle<R, P>;
 
-interface QueryHandle<T> { readonly data: T | undefined; readonly error: SurrealGuardError | undefined;
+interface QueryHandle<T> { readonly data: T | undefined; readonly error: SurrealQLAnalyzerError | undefined;
                            readonly loading: boolean; readonly status: "pending"|"success"|"error";
                            refetch(): Promise<void>; }
 interface LiveHandle<Row> { readonly data: Row[];   /* always an array: a live query is a row stream */
-                            readonly error: SurrealGuardError | undefined;
+                            readonly error: SurrealQLAnalyzerError | undefined;
                             readonly loading: boolean; readonly status: "pending"|"success"|"error"; }
 interface MutationHandle<R, P> { mutate(...args: ParamsArg<P>): void;
                                  mutateAsync(...args: ParamsArg<P>): Promise<Rows<R>>;
                                  readonly data: Rows<R> | undefined;
-                                 readonly error: SurrealGuardError | undefined;
+                                 readonly error: SurrealQLAnalyzerError | undefined;
                                  readonly pending: boolean; }
 ```
 
@@ -642,18 +642,18 @@ Implementation notes that matter for idiom:
 - `LiveHandle.data` is `Row[]` and starts `[]` (no `?? []` in markup). `QueryHandle.data` is
   `T | undefined`, because a one-shot query's result may be a scalar and there is nothing
   honest to default it to.
-- Ship `@surrealguard/svelte/transport` — a SvelteKit `transport` hook entry
+- Ship `@surrealdb/analyzer-svelte/transport` — a SvelteKit `transport` hook entry
   (`export const transport = { RecordId: {...}, DateTime: {...}, Duration: {...}, Uuid: {...},
   Decimal: {...} }`) so users who prefer SDK-class fidelity over `Json<>` can pass raw values
   through `load` without devalue rejecting them. The `Json<>` default means most people never
   need it; the people who do currently have no option at all.
 
-### 3.4 `@surrealguard/next`
+### 3.4 `@surrealdb/analyzer-next`
 
 ```tsx
 // lib/db.server.ts — per-request server client, NOT module-global
 import { cache } from "react";
-import { createClient } from "@/surrealguard.generated";
+import { createClient } from "@/surrealql-analyzer.generated";
 export const getDb = cache(() => createClient({ url: process.env.SURREAL_URL!, ... }));
 ```
 
@@ -661,7 +661,7 @@ export const getDb = cache(() => createClient({ url: process.env.SURREAL_URL!, .
 // app/people/page.tsx — Server Component. Zero client JS for the static path.
 import { getDb } from "@/lib/db.server";
 import { allPeople, livePeople } from "@/lib/queries";
-import { preload } from "@surrealguard/next/server";
+import { preload } from "@surrealdb/analyzer-next/server";
 import { PeopleList } from "./people-list";
 
 export default async function Page() {
@@ -679,9 +679,9 @@ export default async function Page() {
 ```tsx
 // app/people/people-list.tsx
 "use client";
-import { useLive, useMutation } from "@surrealguard/next";
+import { useLive, useMutation } from "@surrealdb/analyzer-next";
 import { addPerson, allPeople, livePeople } from "@/lib/queries";
-import type { Preloaded, Json, RowOf } from "@surrealguard/next";
+import type { Preloaded, Json, RowOf } from "@surrealdb/analyzer-next";
 
 export function PeopleList({ preloaded }: { preloaded: Preloaded<Json<Person>[]> }) {
   const people = useLive(preloaded);             // hydrates, then upgrades to live
@@ -708,7 +708,7 @@ need one, because the ref already carries a stable `key` string, so the hook's `
 dependency is `[client, source.key]` and the "did my deps change" problem disappears. This is
 the one place Svelte and React diverge, and they diverge because the frameworks do.
 
-`@surrealguard/next/server` exports `preload`, `dehydrate`, `hydrate`, and nothing that needs
+`@surrealdb/analyzer-next/server` exports `preload`, `dehydrate`, `hydrate`, and nothing that needs
 `"use client"`. `queryServer` stays as a deprecated alias for one minor.
 
 ---
@@ -743,7 +743,7 @@ What we actually give up:
    type and the SSR seed key) and once `LIVE`-prefixed (for diagnostics only). Related: the
    `` `LIVE ${Q}` `` branch in `packages/client/src/live.ts::LiveRowOf` is **dead code today**
    — the extractor stores the argument text verbatim, so no generated file ever contains a
-   `LIVE …` key (confirmed: `examples/sveltekit/surrealguard.generated.ts` has none). It
+   `LIVE …` key (confirmed: `examples/sveltekit/surrealql-analyzer.generated.ts` has none). It
    should be deleted.
 4. **Truthful value types are a breaking change to generated output** (§5). `row.id` stops
    being a string. This is the price of `WHERE team = $team` actually matching.
@@ -779,12 +779,12 @@ low, so most of it can be additive anyway.
 | Addition | Notes |
 | --- | --- |
 | `defineQuery` / `defineLive` / `SurqlQuery` / `SurqlLive` | new exports |
-| `createClient` / `fromSurreal` / `SurrealGuardError` | new exports |
+| `createClient` / `fromSurreal` / `SurrealQLAnalyzerError` | new exports |
 | `db.run` / `db.runJson` / `db.watch` / `db.invalidate` | on the *new* client object |
 | `createQuery` / `createMutation` / `preload` (svelte) | new exports |
 | `useQuery` / `useLive` / `useMutation` / `preload` (next) | new exports |
 | `QueryClient.invalidate` / `refetch` / `setData` / `mutate` | additive on the core |
-| `[codegen] out` + `[codegen] sinks` in `surrealguard.toml` | new optional keys; existing configs keep working |
+| `[codegen] out` + `[codegen] sinks` in `surrealql-analyzer.toml` | new optional keys; existing configs keep working |
 
 `db.query("literal", params)` and the whole `SurqlRegistry` mechanism are untouched.
 
@@ -793,11 +793,11 @@ low, so most of it can be additive anyway.
 | Break | Blast radius | Mitigation |
 | --- | --- | --- |
 | **Generated value types: `RecordId`/`Uuid`/`Duration`/`Decimal` become SDK classes** | Any code doing string ops on `row.id`, or passing a string param where a record is expected (which was already broken at runtime) | `[codegen] record_ids = "string"` restores the old shape; codemod is mechanical (`"team:red"` → `new RecordId("team","red")`) |
-| `SurqlRegistry` `result` values now assumed to be the per-statement tuple everywhere | Already true since the multi-statement change; `examples/sveltekit/surrealguard.generated.ts` is stale and does not typecheck today | Regenerate |
+| `SurqlRegistry` `result` values now assumed to be the per-statement tuple everywhere | Already true since the multi-statement change; `examples/sveltekit/surrealql-analyzer.generated.ts` is stale and does not typecheck today | Regenerate |
 | `QueryState` becomes a discriminated union (`data` is `T \| undefined` in `pending`) | Anyone reading `state.data` before checking `status` | Type error, not a runtime break |
 | `QueryClient.observe` no longer forces `R extends Record<string, unknown>` / `data: Row[]` | Only affects direct core users | Widening; existing calls keep compiling |
 | `liveQuery` (svelte) / `useLiveQuery` (next) / `loadLive` / `queryServer` / `db.live()` | The current public surface of both adapters | **Deprecate, do not delete, in 0.5.0**; delete in 0.6.0. Each is ≤15 lines re-expressed over the new core |
-| `class SurrealGuardClient extends Surreal` stops being the recommended client | The class stays exported and working | `fromSurreal(new SurrealGuardClient())` bridges; deprecation warning in the docs, not at runtime |
+| `class SurrealQLAnalyzerClient extends Surreal` stops being the recommended client | The class stays exported and working | `fromSurreal(new SurrealQLAnalyzerClient())` bridges; deprecation warning in the docs, not at runtime |
 | `LiveRowOf`'s `` `LIVE ${Q}` `` branch removed | None — dead code | — |
 
 ### 5.3 Mechanical migration
@@ -831,7 +831,7 @@ Signatures below were read out of installed `.d.ts` files (versions given), not 
 | **tRPC v11** (`@trpc/tanstack-react-query@11.18.0`) | `trpc.post.list.queryOptions(input)` — plus per-procedure `queryKey`, `queryFilter`, `mutationOptions`, `subscriptionOptions`, and per-path `pathKey`/`pathFilter`. Keys carry TanStack's `DataTag` with **both** output and error types | SSE via `httpSubscriptionLink` | delegated to TanStack | `createTRPCOptionsProxy({ router, ctx })` on the server calls in-process; `{ client }` goes over HTTP — **same call sites** | **Follow the structural lesson, which is the biggest one in this table:** v11's headline change was *deleting* its bespoke hook layer. It no longer wraps `useQuery`; it **emits options objects** the host library consumes. If we ever want a TanStack integration, the right shape is `surqlOptions(ref)` → pass to their `useQuery`, not a parallel hook universe. **Reject** the router — our "procedure name" is the query text. |
 | **Drizzle** (`drizzle-orm@0.45.2`) | Schema *is* TypeScript; the builder accumulates config into a phantom `_` property and `$inferSelect` is a declared-but-nonexistent instance property | only in the expo-sqlite adapter | plain awaits | none | **Reject** the builder — reproducing SurrealQL's surface is a second language to learn and a second thing to keep correct; our differentiator is that you write real SurrealQL. **Heed the cost warning**: a cited benchmark puts Drizzle at ~41k type instantiations vs Prisma's ~428 on the same schema. Deep conditional-type machinery is not free, which is an argument for our *generated table* over a type-level parser. |
 | **Kysely** (`kysely@0.29.4`) | `db.selectFrom('person').select(['person.name as n']).execute()` over a codegen'd `DB` interface. The select string is decomposed by a **cascade of template-literal `infer` patterns**, most-specific first, then re-keyed by extracted alias | none | plain awaits | none | **Follow** `.execute()` returning rows, not a wrapper. **Note for later**: `ColumnType<Select, Insert, Update>` modelling one column as three projections is directly applicable to SurrealDB's `VALUE`/`DEFAULT`/`READONLY` asymmetry, which our codegen currently ignores. Their `DrainOuterGeneric` wrapper exists purely to fight instantiation blowup — same warning as Drizzle. |
-| **Prisma** (`prisma@7.9.0`) | `prisma.user.findMany({ include: { posts: true } })`; `SelectSubset<T, Args>` preserves the args literal so `GetResult<$Payload, T>` narrows the return | none | plain awaits, `$transaction` | none | **Reject** the client. **Take two lessons**: (1) errors with stable codes (`PrismaClientKnownRequestError.code === 'P2002'`) beat raw driver errors — hence `SurrealGuardError` keeping the SDK's typed `cause`; (2) Prisma 7 had to break every user to *un*-conflate type-source, migration-source and runtime config, which had all lived in `schema.prisma`. Our `surrealguard.toml` is drifting the same way — `[codegen]` should stay clearly separate from `[sources]` and `[analysis]`. Also relevant: `$queryRaw<User[]>` is a manual, unchecked generic — the same hole the SurrealDB SDK has. |
+| **Prisma** (`prisma@7.9.0`) | `prisma.user.findMany({ include: { posts: true } })`; `SelectSubset<T, Args>` preserves the args literal so `GetResult<$Payload, T>` narrows the return | none | plain awaits, `$transaction` | none | **Reject** the client. **Take two lessons**: (1) errors with stable codes (`PrismaClientKnownRequestError.code === 'P2002'`) beat raw driver errors — hence `SurrealQLAnalyzerError` keeping the SDK's typed `cause`; (2) Prisma 7 had to break every user to *un*-conflate type-source, migration-source and runtime config, which had all lived in `schema.prisma`. Our `surrealql-analyzer.toml` is drifting the same way — `[codegen]` should stay clearly separate from `[sources]` and `[analysis]`. Also relevant: `$queryRaw<User[]>` is a manual, unchecked generic — the same hole the SurrealDB SDK has. |
 | **Supabase JS v2** (`@supabase/supabase-js@2.110.8`) | `createClient<Database>()` from generated types; `.from('person').select('id, name, posts(title)')` — the select string is parsed by a genuine **1,867-line type-level recursive-descent parser** (`ParseQuery` → `Ast.Node[]` → `ProcessNodes` against the schema) | `.channel().on('postgres_changes', …)` — a completely separate, untyped API | `.insert()/.update()`; no cache, no invalidation | `@supabase/ssr`: `createServerClient(url, key, { cookies: { getAll, setAll } })`, per-request | **Follow** the per-request server client (our P18) and **`ParserError<M> = { error: true } & M`**, which puts a human-readable message *into* the type error — we use it for the stale-registry case (§3.1). Their two-stage parse-then-resolve split is the right architecture *if* one ever writes a type-level SurrealQL parser; we don't have to, because Rust already parsed it. **Reject** `{ data, error }` on every call: their most-cited daily complaint is that `data` stays `T \| null` even after checking `error`, because the pair is not a discriminated union. If we ever return a pair, it must discriminate. Also note their type system's documented failure modes — "Type instantiation is excessively deep" on nested joins, wrong cardinality on relations — which a generated table simply cannot have. |
 | **SurrealDB JS SDK 2.x** (`surrealdb@2.0.8`; there is **no 3.x line** — dist-tags are `latest 2.0.8`, `beta 2.0.0-beta.2`) | `db.query<[Person[]]>("…")`; `` surql`…` `` → `BoundQuery<R>`; `db.live<T>(new Table('users'))`; value classes `RecordId`(`.table`/`.id`, not `.tb`)/`DateTime`/`Duration`/`Uuid`/`Decimal`; `.json()` → `Jsonify<T>` | `live()`/`liveOf()`, subscription is both `AsyncIterable<LiveMessage>` **and** `.subscribe(handler) => unsubscribe` | none | none | **The central fact: every generic in this SDK is an unverified cast.** `surql<R extends unknown[] = unknown[]>` never infers `R` from the template — the tag does injection-safe binding only. `live<T>` uses `T` only for the *builder's* field names; the delivered `LiveMessage.value` is `Record<string, unknown>`, so **`T` never reaches the payload**. That is the hole we fill, and it is bigger than I assumed: our typed live rows are not a nicety, they are the only typed live rows that exist for SurrealDB. **Follow**: `Jsonify<T>` is the SDK's own serialisation answer, so `Json<T>` is *their* mapping (§3.1); keep `BoundQuery` pass-through; copy the dual iterable/`subscribe()` shape for `db.watch`. |
 | **gql.tada 1.11.3 / graphql-codegen client-preset 6.1.0** | `graphql("query { … }")` — a **call form**, not a tagged template, because TS widens a tagged template's cooked text to `string` (TS#33304). codegen emits one overload **per document** plus a `string → unknown` fallback overload *declared first*; gql.tada instead runs a real tokenizer + recursive-descent parser in conditional types and uses its generated `interface setupCache` registry as an **optional cache** | n/a | n/a | n/a | **Follow, and note we already do**: `defineQuery("…")` is the same call form for the same reason. Their `documents` map keyed by document string is our `SurqlRegistry`. Two sharp findings: (1) **neither normalises the key** — reformatting a query changes it, whitespace and all; that constraint is inherent and we should stop worrying about it and instead make staleness *loud* (§3.1). (2) **gql.tada's registry is a cache, ours is a contract.** A miss costs them compile time; a miss costs us correctness. We cannot become a cache without a type-level SurrealQL parser (which Supabase shows is ~1,900 lines and Drizzle/Kysely show is expensive), so the right move is the opposite: make a miss a **hard type error** with a readable message. Their `TadaDocumentNode` riding on a real `DocumentNode` — brand the runtime value, don't invent a client contract — is also why `SurqlQuery` carries `text`/`params`/`key` as real runtime fields with the types as phantoms. |
@@ -854,7 +854,7 @@ Ordered by ergonomic gain per unit of churn. Stages 1–3 ship without breaking 
 
 **Stage 1 — the query ref (largest gain, additive).**
 `defineQuery` / `defineLive` / `SurqlQuery` / `SurqlLive` / `.with()` / `db.run` in
-`@surrealguard/client`, plus the `[codegen] sinks` config key and the `is_surql_tag`
+`@surrealdb/analyzer-client`, plus the `[codegen] sinks` config key and the `is_surql_tag`
 addition in `crates/embed`. Nothing existing changes. This alone kills the duplicated-literal
 problem and the `const [rows] =` papercut.
 *Also do here:* delete the dead `` `LIVE ${Q}` `` branch; analyse `defineLive` sinks twice
@@ -866,14 +866,14 @@ problem and the `const [rows] =` papercut.
 demo into a working one. Do it before anyone depends on the old shape.
 
 **Stage 3 — vanilla live + errors (closes the "vanilla JS" hole).**
-`db.watch(live, cb)`, `SurrealGuardError` with query/params attached, `createClient` with lazy
-connect. `@surrealguard/client` becomes usable on its own for the first time.
+`db.watch(live, cb)`, `SurrealQLAnalyzerError` with query/params attached, `createClient` with lazy
+connect. `@surrealdb/analyzer-client` becomes usable on its own for the first time.
 
 **Stage 4 — core additions.** `QueryClient.invalidate` / `refetch` / `setData` / `mutate`,
 the discriminated `QueryState`, non-array results, bounded cache (`gcTime`, `maxEntries`).
 
 **Stage 5 — Svelte rebuild.** `createQuery` / `createLive` / `createMutation` / `preload` on
-`createSubscriber`, thunk `Source<Q>` form, `@surrealguard/svelte/transport`. Deprecate
+`createSubscriber`, thunk `Source<Q>` form, `@surrealdb/analyzer-svelte/transport`. Deprecate
 `liveQuery` / `loadLive` (keep them working as thin shims).
 
 **Stage 6 — Next rebuild.** `useQuery` / `useLive` / `useMutation` / `preload` /
@@ -882,7 +882,7 @@ example. Deprecate `useLiveQuery` / `queryServer`. **Ship a `examples/next` app*
 isn't one today, which is why the Next package's problems are the least understood.
 
 **Stage 7 — polish and optional integrations.** LSP hover on a query ref showing text +
-inferred type; a codemod for `db.live(\`X\`)` → `defineLive("X")`; `@surrealguard/query` cache
+inferred type; a codemod for `db.live(\`X\`)` → `defineLive("X")`; `@surrealdb/analyzer-query` cache
 devtools; and — worth evaluating rather than assuming — a `surqlOptions(ref)` helper that
 emits a TanStack `queryOptions` object, following tRPC v11's "emit options, don't wrap hooks"
 move. That would let a TanStack user adopt typed one-shot queries without leaving their cache,
@@ -942,7 +942,7 @@ than passing for an unrelated reason.
 | 11 | A live query whose projection omits `id` can be rejected at the type level with a named reason | `LiveOf<Row>` conditional compiles and rejects |
 | 12 | An **untagged template literal** `defineQuery(\`SELECT …\`)` keeps its literal type (a `const` string variable does too; a `let` degrades to `unknown[]`) | asserted, all three |
 | 13 | `db.query("literal", params)` is **unchanged** — same result tuple, same param enforcement | back-compat block compiles |
-| 14 | A **stale-registry miss can hard-fail with a readable message** (`SurqlError<M> = { … } & M`) | `TS2345: Argument of type 'SurqlError<"this query is not in the generated registry - run \`surrealguard generate\`">' is not assignable to …` |
+| 14 | A **stale-registry miss can hard-fail with a readable message** (`SurqlError<M> = { … } & M`) | `TS2345: Argument of type 'SurqlError<"this query is not in the generated registry - run \`surrealql-analyzer generate\`">' is not assignable to …` |
 | 15 | The `"skip"` sentinel works in both direct and thunk position and preserves the row type | `createLive(() => enabled ? ref : "skip")` ✅ |
 | 16 | A `DataTag`-branded key types imperative cache reads with zero annotation | `getData(q.key)` infers `Array<{ name: string }> \| undefined` |
 
@@ -966,7 +966,7 @@ TS2339  people.data[0]!.nope                             unknown row field
 
 **Red — what did *not* compile, and what that told us:**
 
-- `class SurrealGuardClient extends Surreal { run(...); subscribe(...) }` → **TS2416** on both.
+- `class SurrealQLAnalyzerClient extends Surreal { run(...); subscribe(...) }` → **TS2416** on both.
   The SDK already owns those names (and `invalidate`). This is what turned §3.1's
   composition-vs-subclass question from a preference into an argument. *(Reproduced in
   `/tmp/apidesign-ts/collision/`.)*

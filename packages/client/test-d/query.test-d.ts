@@ -14,7 +14,7 @@ import {
   fromSurreal,
   preload,
   RecordId,
-  SurrealGuardError,
+  SurrealQLAnalyzerError,
   type Bound,
   type Json,
   type Preloaded,
@@ -24,7 +24,7 @@ import {
 } from "../src/index.js";
 import type { Equal, Expect, IsAny } from "./assert.js";
 
-// Stand in for what `surrealguard generate` emits. Each `result` is the
+// Stand in for what `surrealql-analyzer generate` emits. Each `result` is the
 // per-statement response tuple: one element per statement, `null` for a
 // non-responder. A single-statement query is a one-element tuple.
 //
@@ -37,7 +37,7 @@ import type { Equal, Expect, IsAny } from "./assert.js";
 // `defineQuery` in `gen/consumer.test-d.ts` report every golden query as "not
 // in the registry" while indexing `SurqlRegistry` still found them. One
 // specifier, one merged interface.
-declare module "@surrealguard/client" {
+declare module "@surrealdb/analyzer-client" {
   interface SurqlRegistry {
     "SELECT id, name, age FROM person": {
       result: [Array<{ id: RecordId<"person">; name: string; age: number }>];
@@ -171,7 +171,7 @@ async function main() {
   try {
     await db.run(peopleOf, { team });
   } catch (error) {
-    if (error instanceof SurrealGuardError) {
+    if (error instanceof SurrealQLAnalyzerError) {
       const query: string | undefined = error.query;
       const params: Record<string, unknown> | undefined = error.params;
       const cause: unknown = error.cause;
@@ -228,7 +228,7 @@ async function main() {
   // A registry miss is a HARD failure, not a silent degrade to `unknown`. The
   // message rides inside the type, so the compiler prints the remedy:
   //   TS2345: Argument of type 'SurqlError<"this query is not in the generated
-  //   registry - run `surrealguard generate`">' is not assignable to …
+  //   registry - run `surrealql-analyzer generate`">' is not assignable to …
   const stale = defineQuery("SELECT nope FROM nowhere");
   // @ts-expect-error the generated registry has no such query
   await db.run(stale);

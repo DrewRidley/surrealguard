@@ -1,6 +1,6 @@
 //! `type` function family: every built-in it dispatches, with its analyzer.
 
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::BuiltinEntry;

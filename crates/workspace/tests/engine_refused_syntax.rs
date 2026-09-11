@@ -18,9 +18,9 @@
 
 mod support;
 
-use surrealguard_diagnostics::Finding;
-use surrealguard_syntax::source::SourceId;
-use surrealguard_workspace::{analyze_workspace, Workspace};
+use surrealql_analyzer_diagnostics::Finding;
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_workspace::{analyze_workspace, Workspace};
 
 const SCHEMA: &str = "\
 DEFINE TABLE person SCHEMAFULL CHANGEFEED 1d;
@@ -29,7 +29,8 @@ DEFINE FIELD name ON person TYPE string;
 
 /// Analyzes one query against `SCHEMA` and returns the findings on it.
 fn findings(query: &str) -> Vec<Finding> {
-    let mut workspace = Workspace::new(surrealguard_workspace::config::WorkspaceConfig::default());
+    let mut workspace =
+        Workspace::new(surrealql_analyzer_workspace::config::WorkspaceConfig::default());
     workspace.add_virtual_source("schema".into(), SCHEMA.into());
     let source: SourceId = workspace.add_virtual_source("query".into(), query.into());
     analyze_workspace(&workspace)

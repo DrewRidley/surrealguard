@@ -5,7 +5,7 @@
 //! closure receives `[value, index]`). Mapping preserves the array length.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::expression::infer::closure_return_kind;
@@ -43,16 +43,16 @@ pub(crate) fn analyze_array_map(
 #[cfg(test)]
 mod tests {
     use surrealdb_types::Kind;
-    use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_diagnostics::Finding;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use crate::analyzer::context::AnalysisContext;
     use crate::schema::SchemaIndex;
 
     fn analyze(query: &str) -> Kind {
         let parsed = parse_source(SourceId::new("fn:test"), query).expect("query parses");
-        let lowered = surrealguard_syntax::lower::lower_first_expr(&parsed, "FunctionCall")
+        let lowered = surrealql_analyzer_syntax::lower::lower_first_expr(&parsed, "FunctionCall")
             .expect("function call node");
         let schema = SchemaIndex::default();
         let mut diagnostics: Vec<Finding> = Vec::new();

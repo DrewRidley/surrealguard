@@ -12,7 +12,7 @@
 //! per-line cost here localises the superlinearity to `crates/workspace`.
 //!
 //! Run with:
-//!   cargo test -p surrealguard-workspace --test `analysis_scaling` -- --ignored --nocapture
+//!   cargo test -p surrealql-analyzer-workspace --test `analysis_scaling` -- --ignored --nocapture
 //!
 //! The target that matters: the SurrealDB `surrealql-language-server`
 //! integration gates CI on whole-document analysis under **60 ms for a
@@ -20,7 +20,7 @@
 
 use std::time::Instant;
 
-use surrealguard_workspace::{analyze_workspace, Workspace};
+use surrealql_analyzer_workspace::{analyze_workspace, Workspace};
 
 /// A small schema the generated document types against — the same shape
 /// `scratchpad/posbench.py` uses over the wire, so the in-process and

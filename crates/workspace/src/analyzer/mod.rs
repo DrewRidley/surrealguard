@@ -1,8 +1,8 @@
 //! The SurrealQL analyzer tree: one module per statement, expression, or
 //! function family, each owning its own analysis logic.
 //!
-//! Analyzers consume the typed AST from `surrealguard_syntax::ast` (lowered
-//! once per source by `surrealguard_syntax::lower`) and infer upstream
+//! Analyzers consume the typed AST from `surrealql_analyzer_syntax::ast` (lowered
+//! once per source by `surrealql_analyzer_syntax::lower`) and infer upstream
 //! `surrealdb_types::Kind` response types: closed objects are
 //! `Kind::Literal(KindLiteral::Object(..))`, and undeterminable positions
 //! are `Kind::Any` poison values. Diagnostics are appended through the

@@ -14,8 +14,8 @@
 //! never disagree about what the same condition proves.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-use surrealguard_syntax::span::ByteRange;
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::span::ByteRange;
 
 use crate::analyzer::const_eval::{BranchReach, Reachability};
 use crate::analyzer::context::AnalysisContext;
@@ -312,10 +312,10 @@ pub(crate) fn branch_reachability_in_env(
 mod tests {
     use super::*;
     use surrealdb_types::Table;
-    use surrealguard_syntax::ast;
-    use surrealguard_syntax::lower::lower_first_expr;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::ast;
+    use surrealql_analyzer_syntax::lower::lower_first_expr;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     fn cond(query: &str) -> ast::Expr {
         let parsed = parse_source(SourceId::new("narrow:test"), query).expect("parses");
@@ -818,7 +818,7 @@ mod tests {
     // --- Narrowing-aware guard verdicts ------------------------------------
 
     use crate::expression::{ExpressionFact, ExpressionValueClass};
-    use surrealguard_syntax::span::{ByteRange, SourceSpan};
+    use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
     /// An env binding the bare param `$name` to `kind` and marking it as
     /// **flow-narrowed** — the state a prior guard leaves behind, which is what
@@ -991,7 +991,7 @@ mod tests {
         )
         .expect("parses");
         let ast::Statement::IfElse(stmt) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
                 .expect("if statement")
                 .node
         else {
@@ -1008,7 +1008,7 @@ mod tests {
         )
         .expect("parses");
         let ast::Statement::IfElse(stmt) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "IfElseStatement")
                 .expect("if statement")
                 .node
         else {

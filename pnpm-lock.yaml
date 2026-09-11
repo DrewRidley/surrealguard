@@ -20,7 +20,7 @@ importers:
 
   examples/basic:
     dependencies:
-      '@surrealguard/client':
+      '@surrealdb/analyzer-client':
         specifier: workspace:*
         version: link:../../packages/client
       surrealdb:
@@ -33,13 +33,13 @@ importers:
 
   examples/sveltekit:
     dependencies:
-      '@surrealguard/client':
+      '@surrealdb/analyzer-client':
         specifier: workspace:*
         version: link:../../packages/client
-      '@surrealguard/query':
+      '@surrealdb/analyzer-query':
         specifier: workspace:*
         version: link:../../packages/query
-      '@surrealguard/svelte':
+      '@surrealdb/analyzer-svelte':
         specifier: workspace:*
         version: link:../../packages/svelte
       surrealdb:
@@ -74,7 +74,7 @@ importers:
         specifier: ^5.4.21
         version: 5.4.21(@types/node@22.20.1)(lightningcss@1.32.0)
 
-  npm/surrealguard: {}
+  npm/surrealql-analyzer: {}
 
   packages/client:
     devDependencies:
@@ -84,10 +84,10 @@ importers:
 
   packages/next:
     dependencies:
-      '@surrealguard/client':
+      '@surrealdb/analyzer-client':
         specifier: 0.5.3
         version: link:../client
-      '@surrealguard/query':
+      '@surrealdb/analyzer-query':
         specifier: 0.5.3
         version: link:../query
     devDependencies:
@@ -115,7 +115,7 @@ importers:
 
   packages/query:
     dependencies:
-      '@surrealguard/client':
+      '@surrealdb/analyzer-client':
         specifier: 0.5.3
         version: link:../client
     devDependencies:
@@ -125,10 +125,10 @@ importers:
 
   packages/svelte:
     dependencies:
-      '@surrealguard/client':
+      '@surrealdb/analyzer-client':
         specifier: 0.5.3
         version: link:../client
-      '@surrealguard/query':
+      '@surrealdb/analyzer-query':
         specifier: 0.5.3
         version: link:../query
       '@sveltejs/kit':

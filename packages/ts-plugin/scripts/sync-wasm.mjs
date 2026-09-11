@@ -21,8 +21,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, "..");
 const repoRoot = join(packageRoot, "..", "..");
 
-const source = join(repoRoot, "web", "public", "playground", "surrealguard_wasm.wasm");
-const destination = join(packageRoot, "wasm", "surrealguard.wasm");
+const source = join(repoRoot, "web", "public", "playground", "surrealql_analyzer_wasm.wasm");
+const destination = join(packageRoot, "wasm", "surrealql-analyzer.wasm");
 
 try {
   statSync(source);
@@ -37,4 +37,4 @@ try {
 mkdirSync(dirname(destination), { recursive: true });
 copyFileSync(source, destination);
 const size = (statSync(destination).size / 1024 / 1024).toFixed(1);
-console.log(`sync-wasm: wrote wasm/surrealguard.wasm (${size} MB)`);
+console.log(`sync-wasm: wrote wasm/surrealql-analyzer.wasm (${size} MB)`);

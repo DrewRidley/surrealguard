@@ -1,0 +1,43 @@
+{
+  "name": "surrealql-analyzer",
+  "version": "0.5.3",
+  "description": "Static analyzer and type-inference engine for SurrealQL \u2014 run the surrealql-analyzer CLI via npx.",
+  "bin": {
+    "surrealql-analyzer": "bin/surrealql-analyzer.cjs"
+  },
+  "files": [
+    "bin/surrealql-analyzer.cjs",
+    "README.md"
+  ],
+  "keywords": [
+    "surrealql",
+    "surrealdb",
+    "static-analysis",
+    "type-inference",
+    "lsp",
+    "cli"
+  ],
+  "author": "Drew Ridley",
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://github.com/surrealdb/analyzer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/surrealdb/analyzer.git",
+    "directory": "npm/surrealql-analyzer"
+  },
+  "bugs": {
+    "url": "https://github.com/surrealdb/analyzer/issues"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}

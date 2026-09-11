@@ -1,8 +1,8 @@
-# SurrealGuard TypeScript Runtime — Design
+# SurrealQL Analyzer TypeScript Runtime — Design
 
 Status: packages publish-ready pending the actual publish (2026-07-17). The `packages/` pnpm
-monorepo — `@surrealguard/client`, `@surrealguard/query`, `@surrealguard/next`,
-`@surrealguard/svelte` — builds (tsup → ESM + CJS + `.d.ts`), typechecks, and the query core
+monorepo — `@surrealdb/analyzer-client`, `@surrealdb/analyzer-query`, `@surrealdb/analyzer-next`,
+`@surrealdb/analyzer-svelte` — builds (tsup → ESM + CJS + `.d.ts`), typechecks, and the query core
 has vitest tests (one-shot, live CREATE/UPDATE/DELETE reconcile, refcount share+kill,
 dehydrate/hydrate). Publish metadata is set (`exports`→dist, `files:["dist"]`, `publishConfig`,
 `repository`, per-package README); `npm pack --dry-run` shows clean tarballs. Codegen now emits
@@ -13,22 +13,22 @@ optional deeper framework-level (jsdom) integration tests. Dioxus deprioritized 
 
 ## Built so far (`packages/`)
 
-- **`@surrealguard/client`** — the typed client. `SurqlRegistry` base interface (augmented by
-  codegen), `RecordId<T>`, the proven single-generic `SurrealGuardClient.query` (result +
+- **`@surrealdb/analyzer-client`** — the typed client. `SurqlRegistry` base interface (augmented by
+  codegen), `RecordId<T>`, the proven single-generic `SurrealQLAnalyzerClient.query` (result +
   params inferred from the query text; dynamic strings → `unknown`), and `fromSurreal` to
   adapt the SurrealDB JS SDK. Type contract verified against tsc via `test-d`.
-- **`@surrealguard/query`** — framework-agnostic core: `QueryClient` with a `(sql, params)`
+- **`@surrealdb/analyzer-query`** — framework-agnostic core: `QueryClient` with a `(sql, params)`
   cache, reference-counted subscriptions (N subscribers share one live subscription),
   `LIVE SELECT` reconciliation by record `id` (CREATE→append, UPDATE→replace, DELETE→remove),
   and `dehydrate`/`hydrate` for SSR.
-- **`@surrealguard/next`** — `useLiveQuery` over `useSyncExternalStore` (seeds from
+- **`@surrealdb/analyzer-next`** — `useLiveQuery` over `useSyncExternalStore` (seeds from
   `initialData`, subscribes on mount, releases on unmount).
-- **`@surrealguard/svelte`** — `liveQuery` returning a `svelte/store` `Readable` (seeds from
+- **`@surrealdb/analyzer-svelte`** — `liveQuery` returning a `svelte/store` `Readable` (seeds from
   `initial`, auto-releases when the last subscriber leaves).
 
 **Connecting gap (codegen): RESOLVED (2026-07-17).** `render_registry` now emits a module
-augmentation — `import type { RecordId, GeoJSON } from "@surrealguard/client"` +
-`declare module "@surrealguard/client" { interface SurqlRegistry { "…": { result; params } } }`
+augmentation — `import type { RecordId, GeoJSON } from "@surrealdb/analyzer-client"` +
+`declare module "@surrealdb/analyzer-client" { interface SurqlRegistry { "…": { result; params } } }`
 — so the package's single-generic `query` resolves each entry. Proven end to end: the codegen
 `sample` output dropped into `packages/client/test-d/gen` typechecks, with `@ts-expect-error`
 confirming missing-params and unknown-field are rejected.
@@ -39,7 +39,7 @@ Idea: augment the SDK's own `Surreal.query` (keyed by query text/hash) so users 
 existing client with no wrapper. **Soundness constraint:** the SDK's `query` returns
 per-statement *wrapped* results (`[rows]`), not `rows` — and type augmentation cannot change
 runtime unwrapping. So:
-- **Wrapper (chosen):** `SurrealGuardClient` composes a `Connection`; its `query` unwraps
+- **Wrapper (chosen):** `SurrealQLAnalyzerClient` composes a `Connection`; its `query` unwraps
   `result[0]` at runtime, so the clean result type is *truthful*. `fromSurreal(db)` adapts a
   real `Surreal` instance — you keep your connection and wrap it once. Sound + clean.
 - **Truthful raw-SDK augmentation:** module-augment `Surreal.query` to return the *wrapped*
@@ -93,11 +93,11 @@ signature with a conditional arg-tuple and conditional return; a second permissi
 param checking.
 
 ```ts
-// Shipped once by @surrealguard/client (hand-written, stable):
+// Shipped once by @surrealdb/analyzer-client (hand-written, stable):
 interface SurqlRegistry {}                       // base — augmented by generated file
 type ParamsArg<P> = P extends Record<string, never> ? [] : [params: P];
 
-declare class SurrealGuardClient {
+declare class SurrealQLAnalyzerClient {
   query<Q extends string>(
     query: Q,
     ...args: Q extends keyof SurqlRegistry
@@ -107,7 +107,7 @@ declare class SurrealGuardClient {
 }
 ```
 ```ts
-// Emitted by `surrealguard generate` (regenerated on schema/query change):
+// Emitted by `surrealql-analyzer generate` (regenerated on schema/query change):
 interface SurqlRegistry {
   "SELECT * FROM user": {
     result: Array<{ id: RecordId<"user">; name: string; age: number }>;
@@ -139,17 +139,17 @@ but the analyzer/LSP still check it.
 
 ## Package layout (`packages/`, pnpm workspace)
 
-- **`@surrealguard/client`** — framework-agnostic. The typed `query()` / `live()`,
+- **`@surrealdb/analyzer-client`** — framework-agnostic. The typed `query()` / `live()`,
   connection management, auth-token handling. Ships the base `SurqlRegistry` + the
   proven `query` signature. Wraps the SurrealDB JS SDK.
-- **`@surrealguard/query`** — framework-agnostic cache/dedup/live-store engine (the
+- **`@surrealdb/analyzer-query`** — framework-agnostic cache/dedup/live-store engine (the
   "shared cache + dedup" tier). A `QueryCache` keyed by (canonical sql + stable params),
   reference-counted live subscriptions, and SSR dehydrate/hydrate. Exposes a minimal
   observable that adapters wrap.
-- **`@surrealguard/sveltekit`** — Svelte 5 runes / stores over the core; `load` helpers.
-- **`@surrealguard/next`** — React hooks over the core; RSC helpers + hydration boundary.
+- **`@surrealdb/analyzer-sveltekit`** — Svelte 5 runes / stores over the core; `load` helpers.
+- **`@surrealdb/analyzer-next`** — React hooks over the core; RSC helpers + hydration boundary.
 
-The generated `surrealguard.d.ts` is consumed by all of them via global interface merge.
+The generated `surrealql-analyzer.d.ts` is consumed by all of them via global interface merge.
 
 ## Cache + dedup + live model
 
@@ -190,12 +190,12 @@ update the reactive value, (4) `KILL` on **destroy**.
 as `{ action: CREATE | UPDATE | DELETE, result: row }`, not a fresh array. The store
 seeds from initial data (SSR or first fetch) and reconciles per notification: CREATE →
 append, UPDATE → replace the row whose `id` matches, DELETE → remove by `id`. Every live
-row type therefore needs an `id` to key on (SurrealGuard types record ids, so this holds).
+row type therefore needs an `id` to key on (SurrealQL Analyzer types record ids, so this holds).
 
 **Lifetime under dedup.** On mount: refcount++ (attach to the shared subscription for
 the key, or open it). On destroy: refcount--; at zero, one `KILL`. N components sharing a
 live query share one subscription and one reconciled array. Socket drop → reconnect +
-resubscribe. All in `@surrealguard/query`; adapters are thin bindings.
+resubscribe. All in `@surrealdb/analyzer-query`; adapters are thin bindings.
 
 **Destroy, not visibility.** Cancel on unmount (simplest, correct, no "why didn't it
 update" surprises). Pausing off-screen (`IntersectionObserver`) is an opt-in later tier.
@@ -261,7 +261,7 @@ const users = useLiveQuery("LIVE SELECT * FROM user", { initialData });
   in markup* to be diagnosed. `script_blocks()` currently scans `<script>` only. The
   runtime `liveQuery(...)` + `{#each users}` form avoids this, so markup extraction is a
   later, optional item.
-- **LSP-driven regeneration**: today `surrealguard generate` is a manual batch step.
+- **LSP-driven regeneration**: today `surrealql-analyzer generate` is a manual batch step.
   Debounced regeneration on `didChange` is what makes the *types* feel as instant as the
   diagnostics already are. Tracked as a separate engine task.
 
@@ -269,9 +269,9 @@ const users = useLiveQuery("LIVE SELECT * FROM user", { initialData });
 
 1. **codegen** (Rust, small): emit the `SurqlRegistry` augmentation + ship the proven
    client signature shape; cover both `db.query("…")` and `db.surql`…``.
-2. **`@surrealguard/client`**: typed `query`/`live` + connection/auth over the SDK.
-3. **`@surrealguard/query`**: cache/dedup/live/dehydrate core.
-4. **`@surrealguard/sveltekit`**, then **`@surrealguard/next`** (thin over the core).
+2. **`@surrealdb/analyzer-client`**: typed `query`/`live` + connection/auth over the SDK.
+3. **`@surrealdb/analyzer-query`**: cache/dedup/live/dehydrate core.
+4. **`@surrealdb/analyzer-sveltekit`**, then **`@surrealdb/analyzer-next`** (thin over the core).
 5. **embed**: `db.query`/`db.surql` sink extraction for inline diagnostics.
 6. **LSP regen**: debounced `.d.ts` regeneration for the instant-types loop.
 

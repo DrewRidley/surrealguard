@@ -12,9 +12,9 @@
 //! vendored tree-sitter grammar: `OmitClause` lowers alongside any `Fields`),
 //! so this is an analyzer contract, not a parse error.
 
-use surrealguard_syntax::ast;
-use surrealguard_syntax::ast::visit::{self, Visitor};
-use surrealguard_syntax::span::SourceSpan;
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::ast::visit::{self, Visitor};
+use surrealql_analyzer_syntax::span::SourceSpan;
 
 use crate::analyzer::context::AnalysisContext;
 
@@ -33,7 +33,7 @@ struct OmitWithoutWildcard<'c, 'a> {
 }
 
 impl OmitWithoutWildcard<'_, '_> {
-    fn text(&self, span: surrealguard_syntax::span::ByteRange) -> &str {
+    fn text(&self, span: surrealql_analyzer_syntax::span::ByteRange) -> &str {
         self.ctx
             .source_text()
             .get(span.start() as usize..span.end() as usize)
@@ -66,7 +66,7 @@ impl Visitor for OmitWithoutWildcard<'_, '_> {
                 let name = self.text(omitted.span).to_string();
                 let span = SourceSpan::new(self.ctx.source().clone(), omitted.span);
                 let finding = if projected.contains(&name) {
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         span,
                         4012,
                         format!("`{name}` is projected and then omitted"),
@@ -75,7 +75,7 @@ impl Visitor for OmitWithoutWildcard<'_, '_> {
                         "drop `{name}` from the projection list instead of omitting it"
                     ))
                 } else {
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         span,
                         4012,
                         format!(

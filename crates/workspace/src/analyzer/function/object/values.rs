@@ -4,7 +4,7 @@
 //! is the union of the field kinds; a bare `object` yields `array<any>`.
 
 use surrealdb_types::{Kind, KindLiteral};
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::signature::{ParamKind, ReturnKind, Signature};
@@ -44,8 +44,8 @@ pub(crate) fn analyze_object_values(
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
-    use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_diagnostics::Finding;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use crate::schema::SchemaIndex;
 
@@ -57,7 +57,7 @@ mod tests {
         let call = ast::Call {
             path: ast::Spanned::new(
                 "object::values".into(),
-                surrealguard_syntax::span::ByteRange::new(0, 1).unwrap(),
+                surrealql_analyzer_syntax::span::ByteRange::new(0, 1).unwrap(),
             ),
             written: "object::values".into(),
             args: Vec::new(),

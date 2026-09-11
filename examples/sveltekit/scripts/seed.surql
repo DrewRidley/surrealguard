@@ -5,11 +5,11 @@
 -- nothing an audience gains from row two hundred.
 --
 -- This file lives under `scripts/` rather than `schema/` on purpose:
--- `surrealguard.toml` scans `schema/**/*.surql` as SCHEMA and `queries/**` as
+-- `surrealql-analyzer.toml` scans `schema/**/*.surql` as SCHEMA and `queries/**` as
 -- queries, so data lives where neither glob reaches it.
 
 -- `scripts/db.mjs` drops the database, applies `schema/schema.surql` and then
--- this file — so the schema SurrealGuard analyses and the schema this data
+-- this file — so the schema SurrealQL Analyzer analyses and the schema this data
 -- lands in are the same bytes.
 
 CREATE team:red   SET name = "Red";

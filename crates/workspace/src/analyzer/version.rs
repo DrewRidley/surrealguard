@@ -69,9 +69,9 @@
 //! is deliberate: an unsourced annotation would be a guess, and a guess in
 //! an error-severity check aborts codegen for a whole workspace.
 
-use surrealguard_syntax::ast;
-use surrealguard_syntax::ast::visit::{self, Visitor};
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::ast::visit::{self, Visitor};
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analyzer::context::AnalysisContext;
 use crate::config::{TargetVersion, Version};
@@ -553,7 +553,7 @@ impl SyntaxVersions<'_, '_> {
         let target = self.target;
         let span = SourceSpan::new(self.ctx.source().clone(), span);
         self.ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 8003,
                 format!(
@@ -573,7 +573,7 @@ impl SyntaxVersions<'_, '_> {
         let target = self.target;
         let span = SourceSpan::new(self.ctx.source().clone(), span);
         self.ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 8002,
                 format!(

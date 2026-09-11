@@ -1,44 +1,44 @@
-//! The `surrealguard` command-line interface.
+//! The `surrealql-analyzer` command-line interface.
 //!
-//! `surrealguard` analyzes a workspace of `.surql` sources — and the SurrealQL
+//! `surrealql-analyzer` analyzes a workspace of `.surql` sources — and the SurrealQL
 //! embedded in host-language files — reporting findings as rustc-style text or
 //! machine-readable JSON. Effective severity is resolved through the
 //! workspace's policy configuration, and the process exit code reflects the
-//! post-policy error count, so `surrealguard check` drops straight into CI.
+//! post-policy error count, so `surrealql-analyzer check` drops straight into CI.
 //!
 //! # Subcommands
 //!
-//! - `surrealguard init` — write a starter `surrealguard.toml` to the current
+//! - `surrealql-analyzer init` — write a starter `surrealql-analyzer.toml` to the current
 //!   directory.
-//! - `surrealguard check [--json] [--watch]` — discover sources via the config
+//! - `surrealql-analyzer check [--json] [--watch]` — discover sources via the config
 //!   globs, split them into the schema set (DEFINE/REMOVE catalog) and the
 //!   query set, run the analyzer, and print findings. Exits non-zero when any
 //!   survive as errors.
-//! - `surrealguard generate [--out PATH] [--watch]` — emit the typed TypeScript
+//! - `surrealql-analyzer generate [--out PATH] [--watch]` — emit the typed TypeScript
 //!   client and literal-keyed query registry (defaults to
-//!   `surrealguard.generated.ts` at the workspace root).
-//! - `surrealguard watch [--out PATH] [--check-only]` — the development loop:
+//!   `surrealql-analyzer.generated.ts` at the workspace root).
+//! - `surrealql-analyzer watch [--out PATH] [--check-only]` — the development loop:
 //!   check, then regenerate, on every change. See [`watch`].
 //!
 //! `--watch` turns either verb into a loop too: run once, then re-run on every
 //! change to an input the analysis consumes (`.surql` sources, host files
-//! carrying embedded queries, and `surrealguard.toml`).
+//! carrying embedded queries, and `surrealql-analyzer.toml`).
 //!
 //! # Output
 //!
 //! Human output is coloured when — and only when — it is going to a terminal
 //! that wants colour: `--no-color`, `NO_COLOR`, `TERM=dumb` and a redirected
-//! stream each turn it off, so `surrealguard check > report.txt` is clean text.
+//! stream each turn it off, so `surrealql-analyzer check > report.txt` is clean text.
 //! See [`style`]. `--json` is a machine contract (one document, one exit code)
 //! and is never decorated.
 //!
-//! # `surrealguard.toml`
+//! # `surrealql-analyzer.toml`
 //!
 //! The config file — discovered by walking up from the working directory —
 //! declares the source globs (`[sources]` `schema` / `queries` / `ignore`),
 //! analysis toggles (`[analysis]` `strict`), diagnostic
 //! policy (`[diagnostics]` `warnings_as_errors`, `require_suppression_reasons`),
-//! and per-code lint levels (`[lints]`). `surrealguard init` writes a fully
+//! and per-code lint levels (`[lints]`). `surrealql-analyzer init` writes a fully
 //! commented example.
 
 mod render;
@@ -56,11 +56,11 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use style::{count, tint, Outcome, Styles};
-use surrealguard_diagnostics::{render_code, Finding, Severity};
-use surrealguard_syntax::source::SourceId;
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
-use surrealguard_workspace::config::WorkspaceConfig;
-use surrealguard_workspace::{analyze_workspace, Workspace};
+use surrealql_analyzer_diagnostics::{render_code, Finding, Severity};
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_workspace::config::WorkspaceConfig;
+use surrealql_analyzer_workspace::{analyze_workspace, Workspace};
 use walkdir::{DirEntry, WalkDir};
 
 #[derive(Parser)]
@@ -80,7 +80,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Create a new surrealguard.toml config file
+    /// Create a new surrealql-analyzer.toml config file
     Init,
 
     /// Check schema and queries without generating output
@@ -90,7 +90,7 @@ enum Commands {
         json: bool,
 
         /// Re-check on every change to a `.surql` source, a host file, or
-        /// `surrealguard.toml`. Runs once first, then blocks until interrupted.
+        /// `surrealql-analyzer.toml`. Runs once first, then blocks until interrupted.
         ///
         /// Mutually exclusive with `--json`: that flag is a one-run machine
         /// contract (one document, one exit code), and a watch produces neither.
@@ -98,16 +98,16 @@ enum Commands {
         watch: bool,
     },
 
-    /// Generate the typed SurrealGuard client + query registry
+    /// Generate the typed SurrealQL Analyzer client + query registry
     Generate {
         /// Output path for the generated module (default:
-        /// surrealguard.generated.ts at the workspace root). It re-exports a
+        /// surrealql-analyzer.generated.ts at the workspace root). It re-exports a
         /// runtime value, so the extension must be `.ts`, not `.d.ts`.
         #[arg(long)]
         out: Option<std::path::PathBuf>,
 
         /// Regenerate on every change to a `.surql` source, a host file, or
-        /// `surrealguard.toml`. Runs once first, then blocks until interrupted.
+        /// `surrealql-analyzer.toml`. Runs once first, then blocks until interrupted.
         #[arg(long)]
         watch: bool,
     },
@@ -121,7 +121,7 @@ enum Commands {
     /// unmentioned. A run that fails the check does not write the registry.
     Watch {
         /// Output path for the generated module (default:
-        /// surrealguard.generated.ts at the workspace root).
+        /// surrealql-analyzer.generated.ts at the workspace root).
         #[arg(long)]
         out: Option<std::path::PathBuf>,
 
@@ -132,7 +132,7 @@ enum Commands {
     },
 }
 
-const EXAMPLE_CONFIG: &str = r#"# surrealguard.toml — SurrealGuard workspace configuration.
+const EXAMPLE_CONFIG: &str = r#"# surrealql-analyzer.toml — SurrealQL Analyzer workspace configuration.
 # Docs: https://surrealguard.dev/docs/getting-started
 
 [sources]
@@ -235,7 +235,7 @@ impl CheckDiagnostic {
 impl fmt::Display for CheckFailed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.rendered.is_empty() {
-            write!(f, "SurrealGuard check failed")?;
+            write!(f, "SurrealQL Analyzer check failed")?;
             for diagnostic in &self.diagnostics {
                 write!(f, "\n{diagnostic}")?;
             }
@@ -264,7 +264,7 @@ impl Error for CheckFailed {}
 /// The embedded queries a `check` analyzes, keyed by the virtual source id they
 /// were added under, with the host file each came from.
 type EmbeddedQueries =
-    std::collections::BTreeMap<String, (surrealguard_embed::EmbeddedQuery, String)>;
+    std::collections::BTreeMap<String, (surrealql_analyzer_embed::EmbeddedQuery, String)>;
 
 /// Adds every embedded query found in a host file to `workspace` as a virtual
 /// source, and records the host file's text so findings can be rendered against
@@ -287,7 +287,7 @@ fn add_embedded_queries(
             continue;
         };
         let host_id = path.display().to_string();
-        let queries = surrealguard_embed::extract(&host_id, &text);
+        let queries = surrealql_analyzer_embed::extract(&host_id, &text);
         if queries.is_empty() {
             continue;
         }
@@ -450,7 +450,7 @@ struct GenerateReport {
     /// How many embedded queries landed in the registry. `--watch` prints it so
     /// a repeating line still shows the run did something.
     queries: usize,
-    /// The rendered "`@surrealguard/client` is not installed" block, when the
+    /// The rendered "`@surrealdb/analyzer-client` is not installed" block, when the
     /// package the written module augments cannot be resolved from its
     /// directory. See [`client_package_is_resolvable`] for why this is fatal in
     /// practice and silent without it.
@@ -458,7 +458,7 @@ struct GenerateReport {
 }
 
 /// The npm package the generated module imports from and augments.
-const CLIENT_PACKAGE: &str = "@surrealguard/client";
+const CLIENT_PACKAGE: &str = "@surrealdb/analyzer-client";
 
 /// Whether Node/TypeScript would resolve [`CLIENT_PACKAGE`] from `dir`, by the
 /// rule they both use: walk up from the importing file's directory and take the
@@ -466,7 +466,7 @@ const CLIENT_PACKAGE: &str = "@surrealguard/client";
 ///
 /// This is the difference between a generated file that types everything and
 /// one that types nothing. The module ends in
-/// `declare module "@surrealguard/client" { … }`, and a module augmentation is
+/// `declare module "@surrealdb/analyzer-client" { … }`, and a module augmentation is
 /// only an augmentation if the target resolves. When it does not, TypeScript
 /// reports `TS2664: Invalid module name in augmentation` **inside the generated
 /// file** and drops the block — so the user's own `db.query(…)` keeps
@@ -475,7 +475,7 @@ const CLIENT_PACKAGE: &str = "@surrealguard/client";
 /// to say it out loud.
 ///
 /// `package.json` is the marker rather than the directory, because a leftover
-/// empty `node_modules/@surrealguard/client/` resolves for neither tool.
+/// empty `node_modules/@surrealdb/analyzer-client/` resolves for neither tool.
 fn client_package_is_resolvable(dir: &Path) -> bool {
     let scope_path: PathBuf = CLIENT_PACKAGE.split('/').collect();
     let mut current = Some(dir);
@@ -529,7 +529,7 @@ fn missing_client_warning(out_path: &Path, styles: Styles) -> String {
 }
 
 /// A path relative to the working directory when it is under it, so output
-/// reads `src/surrealguard.generated.ts` rather than an absolute path.
+/// reads `src/surrealql-analyzer.generated.ts` rather than an absolute path.
 fn display_path(path: &Path) -> String {
     env::current_dir()
         .ok()
@@ -572,7 +572,7 @@ impl Error for GenerateFailed {}
 /// query references) are left as-is.
 fn remap_finding_to_host(
     finding: &Finding,
-    query: &surrealguard_embed::EmbeddedQuery,
+    query: &surrealql_analyzer_embed::EmbeddedQuery,
     embed_source: &SourceId,
     host_id: &str,
 ) -> Finding {
@@ -602,7 +602,7 @@ fn run_generate(
     styles: Styles,
 ) -> Result<GenerateReport, Box<dyn Error>> {
     let config = load_workspace_config(root)?;
-    let mut workspace = surrealguard_workspace::analysis::Workspace::new(config.clone());
+    let mut workspace = surrealql_analyzer_workspace::analysis::Workspace::new(config.clone());
     for path in discover_surrealql_sources(root, &config) {
         let text = fs::read_to_string(&path)?;
         workspace.add_virtual_source(path.display().to_string(), text);
@@ -620,7 +620,7 @@ fn run_generate(
             continue;
         };
         let host_id = path.display().to_string();
-        let embedded = surrealguard_embed::extract(&host_id, &text);
+        let embedded = surrealql_analyzer_embed::extract(&host_id, &text);
         if embedded.is_empty() {
             continue;
         }
@@ -674,11 +674,11 @@ fn run_generate(
     // Entry construction (the per-statement response tuple, the params) is
     // the codegen crate's, shared with its `tsc`-checked golden test so the
     // module this writes is the module that test compiles.
-    let entries: Vec<surrealguard_codegen::QueryEntry> = queries
+    let entries: Vec<surrealql_analyzer_codegen::QueryEntry> = queries
         .iter()
         .filter_map(|(source_id, query, _host_id)| {
             let output = analysis.sources.get(source_id)?;
-            Some(surrealguard_codegen::QueryEntry::from_analysis(
+            Some(surrealql_analyzer_codegen::QueryEntry::from_analysis(
                 query.parts(),
                 output,
             ))
@@ -686,7 +686,7 @@ fn run_generate(
         .collect();
 
     let out_path = generated_registry_path(root, out);
-    let module = surrealguard_codegen::render_registry(&entries);
+    let module = surrealql_analyzer_codegen::render_registry(&entries);
     fs::write(&out_path, &module)?;
 
     // Resolution is asked from the *written module's* directory, not the
@@ -853,7 +853,10 @@ fn display_relative(root: &Path, path: &Path) -> String {
 /// the path *before* the first run in order to exclude it from the watched
 /// input set — a run that triggered itself would never stop.
 fn generated_registry_path(root: &Path, out: Option<&Path>) -> PathBuf {
-    out.map_or_else(|| root.join("surrealguard.generated.ts"), Path::to_path_buf)
+    out.map_or_else(
+        || root.join("surrealql-analyzer.generated.ts"),
+        Path::to_path_buf,
+    )
 }
 
 /// Every host file (`.ts`/`.svelte`/…) under `root` that may carry embedded
@@ -906,7 +909,7 @@ fn severity_name(severity: Severity) -> &'static str {
 fn find_workspace_root(start_dir: &Path) -> PathBuf {
     let mut current = start_dir.to_path_buf();
     loop {
-        if current.join("surrealguard.toml").exists() {
+        if current.join("surrealql-analyzer.toml").exists() {
             return current;
         }
         if !current.pop() {
@@ -916,7 +919,7 @@ fn find_workspace_root(start_dir: &Path) -> PathBuf {
 }
 
 fn load_workspace_config(root: &Path) -> Result<WorkspaceConfig, Box<dyn Error>> {
-    let config_path = root.join("surrealguard.toml");
+    let config_path = root.join("surrealql-analyzer.toml");
     if config_path.exists() {
         let text = fs::read_to_string(config_path)?;
         Ok(WorkspaceConfig::from_toml_str(&text)?)
@@ -987,7 +990,7 @@ fn is_surrealql_source(path: &Path) -> bool {
 /// The styling for each of the two output streams.
 ///
 /// Two, not one, because the destination is what decides whether an escape
-/// sequence is safe: `surrealguard check > report.txt` must write clean text to
+/// sequence is safe: `surrealql-analyzer check > report.txt` must write clean text to
 /// the file while the errors that stay on the terminal keep their colour, and
 /// `2>/dev/null` is the same argument in reverse.
 #[derive(Clone, Copy)]
@@ -1037,10 +1040,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn command_init(styles: Styles) -> Result<(), Box<dyn Error>> {
-    let config_path = env::current_dir()?.join("surrealguard.toml");
+    let config_path = env::current_dir()?.join("surrealql-analyzer.toml");
     if config_path.exists() {
         println!(
-            "{} surrealguard.toml already exists at {}",
+            "{} surrealql-analyzer.toml already exists at {}",
             styles.warn("skipped"),
             styles.path(&display_path(&config_path))
         );
@@ -1051,11 +1054,12 @@ fn command_init(styles: Styles) -> Result<(), Box<dyn Error>> {
     println!(
         "{} {}",
         styles.ok("created"),
-        styles.path("surrealguard.toml")
+        styles.path("surrealql-analyzer.toml")
     );
     println!(
         "{}",
-        styles.dim("next: point [sources] at your .surql files, then run `surrealguard check`")
+        styles
+            .dim("next: point [sources] at your .surql files, then run `surrealql-analyzer check`")
     );
     Ok(())
 }
@@ -1243,7 +1247,7 @@ mod tests {
     fn example_config_matches_the_parsed_schema() {
         // The `init` template must parse against the real config schema, and
         // its sections must be the ones the parser actually reads — otherwise
-        // `surrealguard init` would write a config the CLI silently ignores.
+        // `surrealql-analyzer init` would write a config the CLI silently ignores.
         let config =
             WorkspaceConfig::from_toml_str(EXAMPLE_CONFIG).expect("example config must parse");
         assert!(config
@@ -1270,7 +1274,7 @@ mod tests {
         fs::create_dir_all(root.join("schema")).expect("schema dir");
         fs::create_dir_all(root.join("queries")).expect("queries dir");
         fs::write(
-            root.join("surrealguard.toml"),
+            root.join("surrealql-analyzer.toml"),
             "[sources]\nschema = [\"schema/**/*.surql\"]\nqueries = [\"queries/**/*.surql\"]\n",
         )
         .expect("write config");
@@ -1298,7 +1302,7 @@ mod tests {
     fn check_loads_surrealql_files_through_workspace_analysis() {
         let root = temp_project_dir("valid-check");
         fs::create_dir_all(root.join("schema")).expect("create schema dir");
-        fs::write(root.join("surrealguard.toml"), "").expect("write config");
+        fs::write(root.join("surrealql-analyzer.toml"), "").expect("write config");
         fs::write(root.join("schema/person.surql"), "DEFINE TABLE person;").expect("write schema");
 
         let summary = run_check(&root, StylePair::both(Styles::plain()))
@@ -1313,7 +1317,7 @@ mod tests {
     fn check_reports_syntax_errors_from_workspace_analysis() {
         let root = temp_project_dir("invalid-check");
         fs::create_dir_all(root.join("queries")).expect("create queries dir");
-        fs::write(root.join("surrealguard.toml"), "").expect("write config");
+        fs::write(root.join("surrealql-analyzer.toml"), "").expect("write config");
         fs::write(root.join("queries/bad.surql"), "SELECT * FROM ;").expect("write query");
 
         let err = run_check(&root, StylePair::both(Styles::plain()))
@@ -1329,7 +1333,7 @@ mod tests {
         let root = temp_project_dir("parent-config-check");
         let child = root.join("nested").join("project");
         fs::create_dir_all(&child).expect("create child dir");
-        fs::write(root.join("surrealguard.toml"), "").expect("write config");
+        fs::write(root.join("surrealql-analyzer.toml"), "").expect("write config");
         fs::write(root.join("person.surql"), "DEFINE TABLE person;").expect("write schema");
 
         let summary = run_check(&child, StylePair::both(Styles::plain()))
@@ -1342,7 +1346,7 @@ mod tests {
     fn check_json_output_uses_stable_diagnostic_keys() {
         let root = temp_project_dir("json-check");
         fs::create_dir_all(root.join("queries")).expect("create queries dir");
-        fs::write(root.join("surrealguard.toml"), "").expect("write config");
+        fs::write(root.join("surrealql-analyzer.toml"), "").expect("write config");
         fs::write(root.join("queries/bad.surql"), "SELECT * FROM ;").expect("write query");
 
         let err = run_check(&root, StylePair::both(Styles::plain()))
@@ -1369,7 +1373,8 @@ mod tests {
 
     #[test]
     fn check_accepts_json_flag() {
-        let cli = Cli::try_parse_from(["surrealguard", "check", "--json"]).expect("cli parses");
+        let cli =
+            Cli::try_parse_from(["surrealql-analyzer", "check", "--json"]).expect("cli parses");
 
         match cli.command {
             Commands::Check { json, watch } => {
@@ -1382,7 +1387,7 @@ mod tests {
 
     #[test]
     fn codegen_commands_are_not_part_of_the_rewrite_cli() {
-        assert!(Cli::try_parse_from(["surrealguard", "run"]).is_err());
+        assert!(Cli::try_parse_from(["surrealql-analyzer", "run"]).is_err());
     }
 
     #[test]
@@ -1393,7 +1398,7 @@ mod tests {
         // `--watch` at all. The question it was said to be unable to answer —
         // "watch and do what?" — has an answer, and it is the one a dev server
         // needs: check everything, then regenerate what compiles.
-        let cli = Cli::try_parse_from(["surrealguard", "watch"]).expect("watch is a verb");
+        let cli = Cli::try_parse_from(["surrealql-analyzer", "watch"]).expect("watch is a verb");
         match cli.command {
             Commands::Watch { out, check_only } => {
                 assert!(out.is_none());
@@ -1405,14 +1410,14 @@ mod tests {
 
     #[test]
     fn watch_takes_the_generate_output_path_and_a_check_only_mode() {
-        let cli = Cli::try_parse_from(["surrealguard", "watch", "--out", "gen.ts"])
+        let cli = Cli::try_parse_from(["surrealql-analyzer", "watch", "--out", "gen.ts"])
             .expect("watch --out parses");
         match cli.command {
             Commands::Watch { out, .. } => assert_eq!(out, Some(PathBuf::from("gen.ts"))),
             _ => panic!("expected watch command"),
         }
 
-        let cli = Cli::try_parse_from(["surrealguard", "watch", "--check-only"])
+        let cli = Cli::try_parse_from(["surrealql-analyzer", "watch", "--check-only"])
             .expect("watch --check-only parses");
         match cli.command {
             Commands::Watch { check_only, .. } => assert!(check_only),
@@ -1425,9 +1430,15 @@ mod tests {
         // Adding the verb must not retire the flags: they are in scripts,
         // CI configs and READMEs already.
         for args in [
-            vec!["surrealguard", "check", "--watch"],
-            vec!["surrealguard", "generate", "--watch"],
-            vec!["surrealguard", "generate", "--watch", "--out", "gen.ts"],
+            vec!["surrealql-analyzer", "check", "--watch"],
+            vec!["surrealql-analyzer", "generate", "--watch"],
+            vec![
+                "surrealql-analyzer",
+                "generate",
+                "--watch",
+                "--out",
+                "gen.ts",
+            ],
         ] {
             assert!(
                 Cli::try_parse_from(&args).is_ok(),
@@ -1441,7 +1452,7 @@ mod tests {
         // A global flag, because the user who wants plain output wants it from
         // whichever command they happened to type.
         for verb in ["check", "generate", "watch"] {
-            let cli = Cli::try_parse_from(["surrealguard", verb, "--no-color"])
+            let cli = Cli::try_parse_from(["surrealql-analyzer", verb, "--no-color"])
                 .unwrap_or_else(|error| panic!("{verb} --no-color: {error}"));
             assert!(cli.no_color);
         }
@@ -1452,7 +1463,7 @@ mod tests {
         // Each rendered block ends in a newline; concatenating them runs one
         // diagnostic's caret line straight into the next one's header.
         let root = temp_project_dir("watch-detail-spacing");
-        fs::write(root.join("surrealguard.toml"), "").expect("write config");
+        fs::write(root.join("surrealql-analyzer.toml"), "").expect("write config");
         fs::write(
             root.join("q.surql"),
             "SELECT * FROM ghost;\nSELECT * FROM phantom;",
@@ -1486,7 +1497,8 @@ mod tests {
 
     #[test]
     fn both_workspace_reading_verbs_accept_watch() {
-        let cli = Cli::try_parse_from(["surrealguard", "check", "--watch"]).expect("cli parses");
+        let cli =
+            Cli::try_parse_from(["surrealql-analyzer", "check", "--watch"]).expect("cli parses");
         match cli.command {
             Commands::Check { json, watch } => {
                 assert!(watch);
@@ -1495,7 +1507,8 @@ mod tests {
             _ => panic!("expected check command"),
         }
 
-        let cli = Cli::try_parse_from(["surrealguard", "generate", "--watch"]).expect("cli parses");
+        let cli =
+            Cli::try_parse_from(["surrealql-analyzer", "generate", "--watch"]).expect("cli parses");
         match cli.command {
             Commands::Generate { out, watch } => {
                 assert!(watch);
@@ -1507,8 +1520,14 @@ mod tests {
 
     #[test]
     fn watch_composes_with_the_generate_output_path() {
-        let cli = Cli::try_parse_from(["surrealguard", "generate", "--watch", "--out", "gen.ts"])
-            .expect("cli parses");
+        let cli = Cli::try_parse_from([
+            "surrealql-analyzer",
+            "generate",
+            "--watch",
+            "--out",
+            "gen.ts",
+        ])
+        .expect("cli parses");
         match cli.command {
             Commands::Generate { out, watch } => {
                 assert!(watch);
@@ -1523,7 +1542,7 @@ mod tests {
         // `--json` promises one document and one exit code for one run. A watch
         // stream is neither, so the pair is rejected at parse time rather than
         // silently emitting something no consumer can parse.
-        assert!(Cli::try_parse_from(["surrealguard", "check", "--watch", "--json"]).is_err());
+        assert!(Cli::try_parse_from(["surrealql-analyzer", "check", "--watch", "--json"]).is_err());
     }
 
     #[test]
@@ -1532,13 +1551,13 @@ mod tests {
         // triggers the next one. The two must resolve the same path, including
         // the default.
         let root = temp_project_dir("registry-path");
-        fs::write(root.join("surrealguard.toml"), "").expect("write config");
+        fs::write(root.join("surrealql-analyzer.toml"), "").expect("write config");
         fs::write(root.join("q.surql"), "DEFINE TABLE t;").expect("write source");
 
         let expected = generated_registry_path(&root, None);
         let report = run_generate(&root, None, Styles::plain()).expect("clean workspace generates");
         assert_eq!(report.path, expected);
-        assert_eq!(expected, root.join("surrealguard.generated.ts"));
+        assert_eq!(expected, root.join("surrealql-analyzer.generated.ts"));
 
         let explicit = root.join("custom.ts");
         assert_eq!(
@@ -1554,7 +1573,7 @@ mod tests {
         // (SELECT from a DROP table) with no lint noise.
         let root = temp_project_dir("warn-as-error");
         fs::write(
-            root.join("surrealguard.toml"),
+            root.join("surrealql-analyzer.toml"),
             "[diagnostics]\nwarnings_as_errors = true\n",
         )
         .expect("write config");
@@ -1577,7 +1596,7 @@ mod tests {
     #[test]
     fn warning_only_source_passes_without_warnings_as_errors() {
         let root = temp_project_dir("warn-only-clean");
-        fs::write(root.join("surrealguard.toml"), "").expect("write config");
+        fs::write(root.join("surrealql-analyzer.toml"), "").expect("write config");
         fs::write(
             root.join("schema.surql"),
             "DEFINE TABLE t DROP SCHEMAFULL;\nDEFINE FIELD x ON t TYPE int;\nSELECT * FROM t;",
@@ -1595,7 +1614,7 @@ mod tests {
     #[test]
     fn error_finding_fails_the_check_without_any_policy() {
         let root = temp_project_dir("error-fails");
-        fs::write(root.join("surrealguard.toml"), "").expect("write config");
+        fs::write(root.join("surrealql-analyzer.toml"), "").expect("write config");
         // An unknown table is an error-class finding (E1001).
         fs::write(root.join("query.surql"), "SELECT * FROM ghost;").expect("write source");
 
@@ -1617,7 +1636,7 @@ mod tests {
         fs::create_dir_all(root.join("schema")).expect("schema dir");
         fs::create_dir_all(root.join("src")).expect("src dir");
         fs::write(
-            root.join("surrealguard.toml"),
+            root.join("surrealql-analyzer.toml"),
             "[sources]\nschema = [\"schema/**/*.surql\"]\n",
         )
         .expect("write config");
@@ -1632,7 +1651,7 @@ mod tests {
         )
         .expect("write host source");
 
-        let out = root.join("surrealguard.generated.ts");
+        let out = root.join("surrealql-analyzer.generated.ts");
         let err = run_generate(&root, Some(&out), Styles::plain())
             .expect_err("an error-severity embedded query must fail generate");
         let message = err.to_string();
@@ -1668,7 +1687,7 @@ mod tests {
         fs::create_dir_all(root.join("schema")).expect("schema dir");
         fs::create_dir_all(root.join("src")).expect("src dir");
         fs::write(
-            root.join("surrealguard.toml"),
+            root.join("surrealql-analyzer.toml"),
             "[sources]\nschema = [\"schema/**/*.surql\"]\n",
         )
         .expect("write config");
@@ -1687,7 +1706,7 @@ mod tests {
         )
         .expect("write host source");
 
-        let out = root.join("surrealguard.generated.ts");
+        let out = root.join("surrealql-analyzer.generated.ts");
         let report = run_generate(&root, Some(&out), Styles::plain())
             .expect("a clean embedded query should generate");
         assert_eq!(report.path, out);
@@ -1711,7 +1730,7 @@ mod tests {
         fs::create_dir_all(root.join("schema")).expect("schema dir");
         fs::create_dir_all(root.join("src")).expect("src dir");
         fs::write(
-            root.join("surrealguard.toml"),
+            root.join("surrealql-analyzer.toml"),
             "[sources]\nschema = [\"schema/**/*.surql\"]\n",
         )
         .expect("write config");
@@ -1751,7 +1770,7 @@ mod tests {
         fs::create_dir_all(root.join("schema")).expect("schema dir");
         fs::create_dir_all(root.join("src")).expect("src dir");
         fs::write(
-            root.join("surrealguard.toml"),
+            root.join("surrealql-analyzer.toml"),
             "[sources]\nschema = [\"schema/**/*.surql\"]\n",
         )
         .expect("write config");
@@ -1777,7 +1796,7 @@ mod tests {
         // `diagnostics` array must carry them too — otherwise `--json`
         // contradicts itself and tooling sees an empty list.
         let root = temp_project_dir("check-json-clean-warnings");
-        fs::write(root.join("surrealguard.toml"), "").expect("write config");
+        fs::write(root.join("surrealql-analyzer.toml"), "").expect("write config");
         fs::write(
             root.join("schema.surql"),
             "DEFINE TABLE t DROP SCHEMAFULL;\nDEFINE FIELD x ON t TYPE int;\nSELECT * FROM t;",
@@ -1798,13 +1817,13 @@ mod tests {
         assert_eq!(value["diagnostics"][0]["severity"], "warning");
     }
 
-    /// Writes a resolvable `@surrealguard/client` under `dir/node_modules`.
+    /// Writes a resolvable `@surrealdb/analyzer-client` under `dir/node_modules`.
     fn install_client(dir: &Path) {
-        let package = dir.join("node_modules/@surrealguard/client");
+        let package = dir.join("node_modules/@surrealdb/analyzer-client");
         fs::create_dir_all(&package).expect("create package dir");
         fs::write(
             package.join("package.json"),
-            "{\"name\":\"@surrealguard/client\"}",
+            "{\"name\":\"@surrealdb/analyzer-client\"}",
         )
         .expect("write package.json");
     }
@@ -1816,7 +1835,7 @@ mod tests {
         fs::create_dir_all(root.join("schema")).expect("schema dir");
         fs::create_dir_all(root.join("src")).expect("src dir");
         fs::write(
-            root.join("surrealguard.toml"),
+            root.join("surrealql-analyzer.toml"),
             "[sources]\nschema = [\"schema/**/*.surql\"]\n",
         )
         .expect("write config");
@@ -1836,7 +1855,7 @@ mod tests {
     #[test]
     fn generate_warns_when_the_augmented_package_is_not_installed() {
         // The worst failure a type generator has: the module augments
-        // `@surrealguard/client`, the package is absent, TypeScript reports
+        // `@surrealdb/analyzer-client`, the package is absent, TypeScript reports
         // TS2664 *inside the generated file*, drops the augmentation, and every
         // query in the user's own code silently becomes `any` with no error on
         // it. Nothing in that chain points at the missing dependency, so
@@ -1848,9 +1867,9 @@ mod tests {
             .missing_client
             .expect("an unresolvable augmentation target must be reported");
 
-        assert!(warning.contains("`@surrealguard/client` is not installed"));
+        assert!(warning.contains("`@surrealdb/analyzer-client` is not installed"));
         assert!(
-            warning.contains("npm install @surrealguard/client surrealdb"),
+            warning.contains("npm install @surrealdb/analyzer-client surrealdb"),
             "the warning must name the command that fixes it: {warning}"
         );
         assert!(
@@ -1895,7 +1914,8 @@ mod tests {
         // An empty package directory is not an install: neither Node nor
         // TypeScript resolves one, so neither does this.
         let bare = temp_project_dir("generate-client-empty-dir");
-        fs::create_dir_all(bare.join("node_modules/@surrealguard/client")).expect("empty package");
+        fs::create_dir_all(bare.join("node_modules/@surrealdb/analyzer-client"))
+            .expect("empty package");
         assert!(!client_package_is_resolvable(&bare));
     }
 
@@ -1904,7 +1924,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system time is after epoch")
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("surrealguard-{name}-{unique}"));
+        let root = std::env::temp_dir().join(format!("surrealql-analyzer-{name}-{unique}"));
         fs::create_dir_all(&root).expect("create temp project root");
         root
     }

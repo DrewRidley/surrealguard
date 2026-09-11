@@ -1,7 +1,7 @@
-# surrealguard-embed
+# surrealql-analyzer-embed
 
 Embedded-SurrealQL extraction for
-[SurrealGuard](https://github.com/DrewRidley/surrealguard) host adapters.
+[SurrealQL Analyzer](https://github.com/surrealdb/analyzer) host adapters.
 
 Host code keeps SurrealQL in a string literal passed to a query sink —
 `db.query("SELECT * FROM person")`, `defineQuery("...")`, `defineLive("...")`.

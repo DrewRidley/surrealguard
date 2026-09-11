@@ -1,7 +1,7 @@
-# surrealguard-wasm
+# surrealql-analyzer-wasm
 
-WebAssembly bindings that expose the SurrealGuard analyzer to the browser
-playground. The crate wraps `surrealguard-workspace` and compiles to
+WebAssembly bindings that expose the SurrealQL Analyzer engine to the browser
+playground. The crate wraps `surrealql-analyzer-workspace` and compiles to
 `wasm32-wasip1`, exporting a tiny C ABI so any WASI shim (browser or Node) can
 call `analyze(schemaText, queryText)` and receive a JSON array of diagnostics.
 
@@ -45,11 +45,11 @@ The script exports the `cc`-crate overrides and runs the cargo build:
 export CC_wasm32_wasip1="$(brew --prefix llvm)/bin/clang"
 export CFLAGS_wasm32_wasip1="--target=wasm32-wasip1 --sysroot=$(brew --prefix wasi-libc)/share/wasi-sysroot"
 export AR_wasm32_wasip1="$(brew --prefix llvm)/bin/llvm-ar"
-cargo build -p surrealguard-wasm --target wasm32-wasip1 --release
+cargo build -p surrealql-analyzer-wasm --target wasm32-wasip1 --release
 ```
 
-Output: `target/wasm32-wasip1/release/surrealguard_wasm.wasm` (~4 MB), copied to
-`web/public/playground/surrealguard_wasm.wasm`.
+Output: `target/wasm32-wasip1/release/surrealql_analyzer_wasm.wasm` (~4 MB), copied to
+`web/public/playground/surrealql_analyzer_wasm.wasm`.
 
 ## Proof (headless)
 

@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use surrealguard_syntax::source::SourceId;
+use surrealql_analyzer_syntax::source::SourceId;
 
 /// The set of sources analysis runs over, keyed by [`SourceId`]. File
 /// sources keep a stable id across edits; virtual sources get a fresh id

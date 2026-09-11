@@ -1362,8 +1362,8 @@ mod tests {
     }
 
     fn schema_of(text: &str) -> crate::schema::SchemaIndex {
-        let parsed = surrealguard_syntax::parse::parse_source(
-            surrealguard_syntax::source::SourceId::new("schema:project"),
+        let parsed = surrealql_analyzer_syntax::parse::parse_source(
+            surrealql_analyzer_syntax::source::SourceId::new("schema:project"),
             text,
         )
         .expect("schema parses");

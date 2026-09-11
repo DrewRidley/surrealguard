@@ -13,9 +13,9 @@
 use std::path::{Path, PathBuf};
 
 use surrealdb_types::{Kind, KindLiteral};
-use surrealguard_diagnostics::Finding;
-use surrealguard_syntax::source::SourceId;
-use surrealguard_workspace::{analyze_workspace, render_kind, Workspace, WorkspaceAnalysis};
+use surrealql_analyzer_diagnostics::Finding;
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_workspace::{analyze_workspace, render_kind, Workspace, WorkspaceAnalysis};
 
 /// The vendored corpus root. Self-contained and committed on purpose: the
 /// realistic input lives outside this repo and is edited by hand, so it can
@@ -107,7 +107,7 @@ pub fn analyze_corpus() -> Corpus {
 
 impl Corpus {
     /// `line:col` (1-based) for a span, for human-readable snapshot lines.
-    pub fn position(&self, span: &surrealguard_syntax::span::SourceSpan) -> String {
+    pub fn position(&self, span: &surrealql_analyzer_syntax::span::SourceSpan) -> String {
         let Some(index) = self.workspace.registry().line_index(span.source()) else {
             return "?:?".to_string();
         };

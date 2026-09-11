@@ -163,7 +163,7 @@ describe("project discovery", () => {
     mkdirSync(join(root, "node_modules", "junk"), { recursive: true });
     writeFileSync(join(root, "schema", "account.surql"), SCHEMA);
     writeFileSync(join(root, "node_modules", "junk", "vendor.surql"), "DEFINE TABLE vendored;");
-    if (withConfig) writeFileSync(join(root, "surrealguard.toml"), "[sources]\n");
+    if (withConfig) writeFileSync(join(root, "surrealql-analyzer.toml"), "[sources]\n");
     resetProjectCache();
     return root;
   }
@@ -180,7 +180,7 @@ describe("project discovery", () => {
     expect(findProject(join(root, "src", "app.ts"))?.schema).not.toContain("vendored");
   });
 
-  it("has no project at all without a surrealguard.toml", () => {
+  it("has no project at all without a surrealql-analyzer.toml", () => {
     // This is the whole "degrade to silence" contract. Without the config the
     // plugin has no schema, and analysing against no schema would call every
     // table in the file undefined — noise in a repo that never opted in.
@@ -196,7 +196,7 @@ describe("project discovery", () => {
     writeFileSync(join(root, "db", "schema.surql"), SCHEMA);
     writeFileSync(join(root, "vendor", "other.surql"), "DEFINE TABLE vendored;");
     writeFileSync(
-      join(root, "surrealguard.toml"),
+      join(root, "surrealql-analyzer.toml"),
       '[sources]\nschema = ["db/**/*.surql"]\nignore = ["vendor/**"]\n',
     );
     resetProjectCache();

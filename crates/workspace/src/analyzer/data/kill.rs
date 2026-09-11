@@ -13,7 +13,7 @@
 //! parameter is a live-query id.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
@@ -23,9 +23,9 @@ pub(crate) fn analyze_kill(ctx: &mut AnalysisContext<'_>, stmt: &ast::KillStmt) 
         if let Some(kind) = kind {
             if !matches!(kind, Kind::Uuid | Kind::Any) {
                 let span =
-                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), id.span);
+                    surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), id.span);
                 ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         span,
                         2020,
                         format!(

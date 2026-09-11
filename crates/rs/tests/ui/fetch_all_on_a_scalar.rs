@@ -4,7 +4,7 @@ use surrealdb::engine::remote::ws::Client;
 use surrealdb::Surreal;
 
 async fn run(db: &Surreal<Client>) {
-    let _ = surrealguard_rs::query!("RETURN 1 + 1;").fetch_all(db).await;
+    let _ = surrealql_analyzer_rs::query!("RETURN 1 + 1;").fetch_all(db).await;
 }
 
 fn main() {}

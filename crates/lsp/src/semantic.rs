@@ -1,6 +1,6 @@
 //! Semantic tokens for SurrealQL.
 //!
-//! The classification itself lives in [`surrealguard_syntax::highlight`],
+//! The classification itself lives in [`surrealql_analyzer_syntax::highlight`],
 //! shared with the TypeScript language-service plugin so an embedded query
 //! gets the same answer whichever surface asks. What is here is the part that
 //! is LSP: the legend, the mapping of a query's tokens onto its host file, and
@@ -17,7 +17,7 @@ use tower_lsp::lsp_types::{SemanticToken, SemanticTokenType};
 
 use crate::text::LineIndex;
 
-pub use surrealguard_syntax::highlight::{tokens, Token};
+pub use surrealql_analyzer_syntax::highlight::{tokens, Token};
 
 /// The legend, in index order — a token's `token_type` is
 /// [`TokenKind::index`], so this must stay in the enum's variant order.
@@ -42,7 +42,10 @@ pub const TOKEN_TYPES: [SemanticTokenType; 12] = [
 /// that straddles a `${...}` substitution does not: it covers a generated
 /// `$__hostN` name on our side and an arbitrary host expression on the
 /// editor's, and painting it would colour the wrong text.
-pub fn map_to_host(query: &surrealguard_embed::EmbeddedQuery, tokens: Vec<Token>) -> Vec<Token> {
+pub fn map_to_host(
+    query: &surrealql_analyzer_embed::EmbeddedQuery,
+    tokens: Vec<Token>,
+) -> Vec<Token> {
     tokens
         .into_iter()
         .filter_map(|token| {
@@ -119,9 +122,9 @@ fn split(lines: &LineIndex, range: Range<usize>) -> impl Iterator<Item = (u32, u
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_syntax::highlight::TokenKind;
-    use surrealguard_syntax::parse::{parse_source, ParsedSource};
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::highlight::TokenKind;
+    use surrealql_analyzer_syntax::parse::{parse_source, ParsedSource};
+    use surrealql_analyzer_syntax::source::SourceId;
 
     fn parse(text: &str) -> ParsedSource {
         parse_source(SourceId::new("t.surql"), text).expect("parses")

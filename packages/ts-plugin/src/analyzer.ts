@@ -1,7 +1,7 @@
 /**
- * The SurrealGuard analyzer, loaded into the tsserver process as WebAssembly.
+ * The SurrealQL Analyzer engine, loaded into the tsserver process as WebAssembly.
  *
- * The alternative was shelling out to `surrealguard check`. tsserver asks for
+ * The alternative was shelling out to `surrealql-analyzer check`. tsserver asks for
  * diagnostics on a keystroke cadence, and a subprocess per keystroke means a
  * process spawn, a pipe, a JSON round-trip and a schema re-read every time —
  * tens of milliseconds where the whole budget is a few. In-process WASM makes
@@ -171,7 +171,7 @@ function wasiShim(getMemory: () => WebAssembly.Memory, log: (message: string) =>
       return WASI_ESUCCESS;
     },
     proc_exit(code: number) {
-      throw new Error(`surrealguard wasm called proc_exit(${code})`);
+      throw new Error(`surrealql-analyzer wasm called proc_exit(${code})`);
     },
   };
 }

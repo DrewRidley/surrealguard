@@ -1,6 +1,6 @@
 // Proves the generated file feeds the whole client end to end, through a single
 // import. Importing from the generated module also loads its
-// `declare module "@surrealguard/client"` augmentation, so the typed registry is
+// `declare module "@surrealdb/analyzer-client"` augmentation, so the typed registry is
 // live without a separate side-import — and the SDK value classes come with it,
 // so a `RecordId` parameter can be constructed without a second package.
 //
@@ -10,7 +10,7 @@ import {
   defineQuery,
   RecordId,
   type Json,
-} from "./surrealguard.generated.js";
+} from "./surrealql-analyzer.generated.js";
 import type { Equal, Expect } from "../assert.js";
 
 const db = createClient({ url: "ws://localhost:8000/rpc" });

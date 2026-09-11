@@ -14,16 +14,16 @@
 //! transaction state reset per source.
 //!
 //! Every stage consumes the lowered AST: statements arrive from
-//! [`surrealguard_syntax::lower::lower_statements`], and schema effects apply
+//! [`surrealql_analyzer_syntax::lower::lower_statements`], and schema effects apply
 //! to those same lowered values.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-use surrealguard_syntax::parse::ParsedSource;
-use surrealguard_syntax::source::SourceId;
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::parse::ParsedSource;
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analysis::{
     LetBindingAnalysis, NarrowingAnalysis, ParamInference, SelectModifierAnalysis,
@@ -33,7 +33,7 @@ use crate::analyzer::context::AnalysisContext;
 use crate::config::TargetVersion;
 use crate::schema::{SchemaIndex, TableDef};
 use crate::statement_env::StatementEnv;
-use surrealguard_diagnostics::Finding;
+use surrealql_analyzer_diagnostics::Finding;
 
 #[derive(Debug, Default)]
 pub(crate) struct PipelineOutput {
@@ -115,7 +115,10 @@ fn lower_all<P: std::borrow::Borrow<ParsedSource>>(parsed_sources: &[P]) -> Vec<
         .iter()
         .map(|parsed| {
             let parsed = parsed.borrow();
-            (parsed, surrealguard_syntax::lower::lower_statements(parsed))
+            (
+                parsed,
+                surrealql_analyzer_syntax::lower::lower_statements(parsed),
+            )
         })
         .collect()
 }
@@ -455,7 +458,7 @@ fn analyze_source_against(
         match &lowered.node {
             ast::Statement::Begin(_) => {
                 if open_transaction.is_some() {
-                    diagnostics.push(surrealguard_diagnostics::catalog::finding(
+                    diagnostics.push(surrealql_analyzer_diagnostics::catalog::finding(
                         span(),
                         4007,
                         "BEGIN inside an open transaction; transactions do not nest".to_string(),
@@ -466,7 +469,7 @@ fn analyze_source_against(
             ast::Statement::Commit(_) | ast::Statement::Cancel(_)
                 if open_transaction.take().is_none() =>
             {
-                diagnostics.push(surrealguard_diagnostics::catalog::finding(
+                diagnostics.push(surrealql_analyzer_diagnostics::catalog::finding(
                     span(),
                     4007,
                     "COMMIT/CANCEL without an open BEGIN".to_string(),
@@ -498,7 +501,7 @@ fn analyze_source_against(
     }
 
     if let Some(open_span) = open_transaction {
-        diagnostics.push(surrealguard_diagnostics::catalog::finding(
+        diagnostics.push(surrealql_analyzer_diagnostics::catalog::finding(
             SourceSpan::new(parsed.source_id().clone(), open_span),
             4007,
             "this BEGIN is never closed; add COMMIT or CANCEL".to_string(),
@@ -512,7 +515,7 @@ fn analyze_source_against(
                 if use_span.source() == binding.span.source()
                     && use_span.range().start() < binding.span.range().start()
                 {
-                    diagnostics.push(surrealguard_diagnostics::catalog::finding(
+                    diagnostics.push(surrealql_analyzer_diagnostics::catalog::finding(
                         use_span.clone(),
                         6004,
                         format!("`${}` is read before its LET on this line runs", param.name),
@@ -565,7 +568,7 @@ pub(crate) fn analyze_one_source(
     parsed: &ParsedSource,
     require_suppression_reasons: bool,
 ) -> OneSourceOutput {
-    let statements = surrealguard_syntax::lower::lower_statements(parsed);
+    let statements = surrealql_analyzer_syntax::lower::lower_statements(parsed);
     let working = global.global_defined.clone();
     let mut diagnostics = Vec::new();
     let analysis =
@@ -864,7 +867,8 @@ fn statement_analysis(
 /// SELECT's clause modifiers, with row-preservation semantics: WHERE and
 /// friends keep the row shape; GROUP/SPLIT/EXPLAIN change it.
 fn select_modifiers(source: &SourceId, stmt: &ast::SelectStmt) -> Vec<SelectModifierAnalysis> {
-    let span = |range: surrealguard_syntax::span::ByteRange| SourceSpan::new(source.clone(), range);
+    let span =
+        |range: surrealql_analyzer_syntax::span::ByteRange| SourceSpan::new(source.clone(), range);
     let modifier = |kind: &str, range, row_preserving, max_len| SelectModifierAnalysis {
         kind: kind.to_string(),
         span: span(range),
@@ -896,7 +900,7 @@ fn select_modifiers(source: &SourceId, stmt: &ast::SelectStmt) -> Vec<SelectModi
     }
     if let Some(group) = &stmt.group {
         let range = group.keys.first().map_or(
-            surrealguard_syntax::span::ByteRange::new(0, 0).expect("ordered"),
+            surrealql_analyzer_syntax::span::ByteRange::new(0, 0).expect("ordered"),
             |key| key.span,
         );
         out.push(modifier("group", range, false, None));
@@ -1113,7 +1117,7 @@ fn check_function_cycles(
                 .iter()
                 .all(|name| !fn_guarded.get(name).copied().unwrap_or(false));
             if unconditional {
-                diagnostics.push(surrealguard_diagnostics::catalog::finding(
+                diagnostics.push(surrealql_analyzer_diagnostics::catalog::finding(
                     function.name_span.clone(),
                     5009,
                     format!(
@@ -1238,13 +1242,13 @@ fn check_event_cycles(schema: &SchemaIndex, diagnostics: &mut Vec<Finding>) {
                 )
             };
             diagnostics.push(
-                surrealguard_diagnostics::catalog::finding(
+                surrealql_analyzer_diagnostics::catalog::finding(
                     current.name_span.clone(),
                     5010,
                     message,
                 )
                 .with_help(
-                    "surrealguard cannot see whether a WHEN condition or the written fields \
+                    "surrealql-analyzer cannot see whether a WHEN condition or the written fields \
                          break the loop; narrow WHEN on `$event` (a CREATE-only event is not \
                          re-fired by its own UPDATE) or write a table without events",
                 )

@@ -15,8 +15,8 @@ import { fileURLToPath } from "node:url";
 // resolution differs, which is exactly what is under test.
 
 const alias = {
-  "@surrealguard/client": fileURLToPath(new URL("../client/src/index.ts", import.meta.url)),
-  "@surrealguard/query": fileURLToPath(new URL("../query/src/index.ts", import.meta.url)),
+  "@surrealdb/analyzer-client": fileURLToPath(new URL("../client/src/index.ts", import.meta.url)),
+  "@surrealdb/analyzer-query": fileURLToPath(new URL("../query/src/index.ts", import.meta.url)),
 };
 
 export default defineWorkspace([

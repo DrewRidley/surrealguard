@@ -5,7 +5,7 @@
 //! spanned positions so edge-endpoint invariants can point at each.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::data::mutation;
@@ -20,9 +20,11 @@ pub(crate) fn relate_response_kind(stmt: &ast::RelateStmt, ctx: &mut AnalysisCon
     for endpoint in [stmt.from.as_ref(), stmt.to.as_ref()].into_iter().flatten() {
         if let Some(endpoint_table) = endpoint_table_name(endpoint) {
             if !ctx.schema().tables.contains_key(&endpoint_table) {
-                let span =
-                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), endpoint.span);
-                let finding = surrealguard_diagnostics::catalog::finding(
+                let span = surrealql_analyzer_syntax::span::SourceSpan::new(
+                    ctx.source().clone(),
+                    endpoint.span,
+                );
+                let finding = surrealql_analyzer_diagnostics::catalog::finding(
                     span,
                     1001,
                     format!("`{endpoint_table}` is not a defined table"),
@@ -67,9 +69,10 @@ fn check_relate_endpoints(ctx: &mut AnalysisContext<'_>, stmt: &ast::RelateStmt,
         .and_then(|table| table.relation.clone())
     else {
         if let Some(edge) = &stmt.edge {
-            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), edge.span);
+            let span =
+                surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), edge.span);
             ctx.emit(
-                surrealguard_diagnostics::catalog::finding(
+                surrealql_analyzer_diagnostics::catalog::finding(
                     span,
                     3001,
                     format!("`{edge_name}` can't be used in RELATE — it is not a relation table"),
@@ -113,8 +116,8 @@ fn check_relate_endpoints(ctx: &mut AnalysisContext<'_>, stmt: &ast::RelateStmt,
         .tables
         .get(edge_name)
         .map(|table| table.name_span.clone());
-    let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), anchor.span);
-    let mut finding = surrealguard_diagnostics::catalog::finding(
+    let span = surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), anchor.span);
+    let mut finding = surrealql_analyzer_diagnostics::catalog::finding(
         span,
         3002,
         format!(
@@ -142,22 +145,22 @@ mod tests {
     use super::*;
     use crate::schema::SchemaIndex;
     use crate::statement_env::StatementEnv;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use crate::schema::extract_schema;
 
     fn analyze(schema: &SchemaIndex, query: &str) -> Kind {
         let parsed = parse_source(SourceId::new("query"), query).expect("query should parse");
         let ast::Statement::Relate(stmt) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "RelateStatement")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "RelateStatement")
                 .expect("relate statement exists")
                 .node
         else {
             panic!("expected relate statement");
         };
         let env = StatementEnv::default();
-        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        let mut diagnostics: Vec<surrealql_analyzer_diagnostics::Finding> = Vec::new();
         let mut ctx = AnalysisContext::scoped(
             schema,
             parsed.source_id().clone(),

@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark" />
 <style>html{background:#0a0b0e}</style>
-<title>Rust · surrealguard-rs — SurrealGuard Docs</title>
-<meta name="description" content="The surrealguard-rs crate: the query! and surql! macros, compile-time checking, schema resolution, nameless typed Query<T> results, and the Kind→Rust type mapping." />
+<title>Rust · surrealql-analyzer-rs — SurrealQL Analyzer Docs</title>
+<meta name="description" content="The surrealql-analyzer-rs crate: the query! and surql! macros, compile-time checking, schema resolution, nameless typed Query<T> results, and the Kind→Rust type mapping." />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
 <link rel="stylesheet" href="/styles.css" />
 <link rel="stylesheet" href="/docs/docs.css" />
@@ -15,13 +15,13 @@
 
 <nav>
   <div class="wrap">
-    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealQL Analyzer</a>
     <div class="nav-links">
       <a href="/docs/">Docs</a>
       <a href="/playground/">Playground</a>
       <a href="/#agents">For agents</a>
       <a href="/#install">Install</a>
-      <a class="nav-cta" href="https://github.com/DrewRidley/surrealguard">GitHub ↗</a>
+      <a class="nav-cta" href="https://github.com/surrealdb/analyzer">GitHub ↗</a>
     </div>
   </div>
 </nav>
@@ -40,7 +40,7 @@
     </nav>
     <div class="group">Integrations</div>
     <nav>
-      <a href="/docs/rust.html" aria-current="page">Rust · surrealguard-rs</a>
+      <a href="/docs/rust.html" aria-current="page">Rust · surrealql-analyzer-rs</a>
       <a href="/docs/typescript.html">TypeScript</a>
       <a href="/docs/agents.html">Coding agents</a>
     </nav>
@@ -48,19 +48,19 @@
 
   <main class="docs-main">
     <span class="eyebrow-doc">// integration</span>
-    <h1>Rust · surrealguard-rs</h1>
-    <p class="lead-p">Compile-time-checked, typed SurrealQL for Rust. The <code>query!</code> macro runs the SurrealGuard analyzer against your schema <em>during compilation</em> — a wrong table, unknown field, bad arity, or kind mismatch is a <code>cargo check</code> error, and the result type is generated from the inferred response. No build script, no language server, no runtime schema fetch.</p>
+    <h1>Rust · surrealql-analyzer-rs</h1>
+    <p class="lead-p">Compile-time-checked, typed SurrealQL for Rust. The <code>query!</code> macro runs the SurrealQL Analyzer engine against your schema <em>during compilation</em> — a wrong table, unknown field, bad arity, or kind mismatch is a <code>cargo check</code> error, and the result type is generated from the inferred response. No build script, no language server, no runtime schema fetch.</p>
 
     <pre class="code"><span class="cmt"># until the crates.io release, depend on it by git in Cargo.toml</span>
-surrealguard-rs = { git = <span class="s">"https://github.com/DrewRidley/surrealguard"</span> }</pre>
+surrealql-analyzer-rs = { git = <span class="s">"https://github.com/surrealdb/analyzer"</span> }</pre>
 
     <h2>The macros</h2>
-    <p><code>surrealguard-rs</code> re-exports two proc-macros; a crate using them only needs <code>surrealguard-rs</code> in scope (it re-exports every dependency the expansion references).</p>
+    <p><code>surrealql-analyzer-rs</code> re-exports two proc-macros; a crate using them only needs <code>surrealql-analyzer-rs</code> in scope (it re-exports every dependency the expansion references).</p>
     <ul>
       <li><code>query!("…")</code> — check <em>and</em> return a typed <code>Query&lt;T&gt;</code> whose <code>T</code> is the inferred, nameless result type.</li>
       <li><code>surql!("…")</code> — check and expand to the query text as a <code>&amp;'static str</code> (the lighter form when you only want validation).</li>
     </ul>
-    <pre class="code"><span class="k">use</span> surrealguard_rs::{query, surql};
+    <pre class="code"><span class="k">use</span> surrealql_analyzer_rs::{query, surql};
 
 <span class="k">let</span> users = <span class="fn">query!</span>(<span class="s">"SELECT name, age FROM user"</span>);
 <span class="c">//  users: Query&lt;Vec&lt;{ name: String, age: i64 }&gt;&gt;  ← nameless struct, inferred</span>
@@ -71,7 +71,7 @@ surrealguard-rs = { git = <span class="s">"https://github.com/DrewRidley/surreal
     <h2>The compiler is the checker</h2>
     <p>The macro runs the real analyzer at compile time and turns each error-severity finding into a spanned <code>compile_error!</code>. On stable Rust the span covers the whole literal; the message carries every finding's code and text.</p>
     <pre class="code"><span class="k">let</span> bad = <span class="fn">query!</span>(<span class="s">"SELECT name, ssn FROM user"</span>);</pre>
-    <pre class="code"><span class="err">error: SurrealGuard rejected this query:
+    <pre class="code"><span class="err">error: SurrealQL Analyzer rejected this query:
   [E1002] unknown field `ssn` on table `user`</span>
  --&gt; src/main.rs:7:15
   |
@@ -84,11 +84,11 @@ surrealguard-rs = { git = <span class="s">"https://github.com/DrewRidley/surreal
     <h2>Schema resolution</h2>
     <p>The macro resolves your schema at compile time from, in order:</p>
     <ol>
-      <li>the <code>SURREALGUARD_SCHEMA</code> environment variable — a <code>.surql</code> file or a directory, taken relative to <code>CARGO_MANIFEST_DIR</code> unless absolute;</li>
+      <li>the <code>SURREALQL_ANALYZER_SCHEMA</code> environment variable — a <code>.surql</code> file or a directory, taken relative to <code>CARGO_MANIFEST_DIR</code> unless absolute;</li>
       <li>otherwise a convention path under the crate root, first match wins: <code>schema/</code>, <code>migrations/</code>, then <code>schema.surql</code>.</li>
     </ol>
     <pre class="code"><span class="cmt"># point the macro at an explicit schema for one build</span>
-SURREALGUARD_SCHEMA=db/schema.surql cargo check</pre>
+SURREALQL_ANALYZER_SCHEMA=db/schema.surql cargo check</pre>
     <p>A directory contributes every <code>.surql</code>/<code>.surrealql</code> file it contains, <strong>sorted by path</strong> — so zero-padded migrations (<code>0001_*.surql</code>, <code>0002_*.surql</code>) apply in order. The macro emits an <code>include_bytes!</code> per schema file, so editing a schema forces the query's crate to recompile.</p>
 
     <h2>Nameless typed results</h2>
@@ -142,16 +142,16 @@ SURREALGUARD_SCHEMA=db/schema.surql cargo check</pre>
 <footer>
   <div class="wrap">
     <div>
-      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealQL Analyzer</a>
       <div class="tiny">Static analysis &amp; type inference for SurrealQL.</div>
     </div>
     <div class="cols">
       <a href="/docs/">Docs</a>
       <a href="/llms.txt">llms.txt</a>
       <a href="/llms-full.txt">llms-full.txt</a>
-      <a href="https://github.com/DrewRidley/surrealguard">GitHub</a>
-      <a href="https://crates.io/crates/surrealguard">crates.io</a>
-      <a href="https://www.npmjs.com/org/surrealguard">npm</a>
+      <a href="https://github.com/surrealdb/analyzer">GitHub</a>
+      <a href="https://crates.io/crates/surrealql-analyzer">crates.io</a>
+      <a href="https://www.npmjs.com/org/surrealdb">npm</a>
     </div>
     <div class="tiny">MIT OR Apache-2.0</div>
   </div>

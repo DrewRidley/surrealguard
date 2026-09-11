@@ -3,8 +3,8 @@
 //! `Kind` → TypeScript mapping and the augmentation output can be eyeballed.
 
 use surrealdb_types::{Kind, KindLiteral};
-use surrealguard_codegen::{render_registry, ts_type, QueryEntry, TsContext};
-use surrealguard_workspace::analysis::ParamInference;
+use surrealql_analyzer_codegen::{render_registry, ts_type, QueryEntry, TsContext};
+use surrealql_analyzer_workspace::analysis::ParamInference;
 
 fn main() {
     let mut row = std::collections::BTreeMap::new();

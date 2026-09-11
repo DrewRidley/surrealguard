@@ -1,4 +1,4 @@
-//! Editor-surface tests: drive the **real** `surrealguard-lsp` binary over
+//! Editor-surface tests: drive the **real** `surrealql-analyzer-lsp` binary over
 //! stdio and assert on what an editor would actually receive.
 //!
 //! Why a second layer on top of `backend.rs`: every regression a user reported
@@ -56,7 +56,7 @@ DEFINE TABLE assigned_to SCHEMAFULL TYPE RELATION FROM organization_unit TO orga
 const SCHEMA_URI: &str = "file:///workspace/a_schema.surql";
 const QUERY_URI: &str = "file:///workspace/b_query.surql";
 
-/// A live `surrealguard-lsp` child process speaking LSP over its stdio.
+/// A live `surrealql-analyzer-lsp` child process speaking LSP over its stdio.
 struct Lsp {
     child: Child,
     stdin: ChildStdin,
@@ -98,7 +98,7 @@ impl Lsp {
 
     /// The handshake a *modern* editor performs: a workspace root on disk, and
     /// the two capabilities the suppression actions are gated behind — code
-    /// action literals, and file watching so an edited `surrealguard.toml` is
+    /// action literals, and file watching so an edited `surrealql-analyzer.toml` is
     /// noticed. Server requests are answered, as a real editor would.
     fn start_in(root: &Path) -> Self {
         Self::handshake(
@@ -124,12 +124,12 @@ impl Lsp {
     /// Spawns the binary and runs the sequenced handshake with the given
     /// `initialize` params.
     fn handshake(params: Value, answer_server_requests: bool) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_surrealguard-lsp"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_surrealql-analyzer-lsp"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .expect("spawn surrealguard-lsp");
+            .expect("spawn surrealql-analyzer-lsp");
 
         let stdin = child.stdin.take().expect("child stdin");
         let stdout = BufReader::new(child.stdout.take().expect("child stdout"));
@@ -146,7 +146,7 @@ impl Lsp {
         // 1. initialize — and WAIT for the response before anything else.
         let result = lsp.request("initialize", params);
         assert_eq!(
-            result["serverInfo"]["name"], "surrealguard-lsp",
+            result["serverInfo"]["name"], "surrealql-analyzer-lsp",
             "handshake must reach our server, got: {result}"
         );
         lsp.capabilities = result["capabilities"].clone();
@@ -397,7 +397,7 @@ impl TempRoot {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
-            "surrealguard-code-action-{tag}-{}-{unique}",
+            "surrealql-analyzer-code-action-{tag}-{}-{unique}",
             std::process::id()
         ));
         std::fs::create_dir_all(&path).expect("create workspace root");
@@ -1169,11 +1169,11 @@ DEFINE TABLE account SCHEMAFULL;
 DEFINE FIELD username ON account TYPE string;
 ";
 
-/// A `surrealguard.toml` written by hand: leading comment, an existing
+/// A `surrealql-analyzer.toml` written by hand: leading comment, an existing
 /// `[lints]` table with comments *inside* it, and another table after it.
 /// Mangling any of that would be the visible failure.
 const COMMENTED_CONFIG: &str = "\
-# SurrealGuard workspace config for the demo app.
+# SurrealQL Analyzer workspace config for the demo app.
 
 [sources]
 # .svelte-kit holds generated route types; never scan it.
@@ -1202,7 +1202,7 @@ fn a_surql_diagnostic_offers_both_suppressions_and_the_inline_one_actually_silen
     // statement it covers, not sit at column zero above it.
     let query = "BEGIN;\n    SELECT * FROM persn;\nCOMMIT;\n";
     let query_uri = root.write("b_query.surql", query);
-    root.write("surrealguard.toml", "[analysis]\nstrict = false\n");
+    root.write("surrealql-analyzer.toml", "[analysis]\nstrict = false\n");
 
     let mut lsp = Lsp::start_in(&root.path);
     assert!(
@@ -1220,7 +1220,7 @@ fn a_surql_diagnostic_offers_both_suppressions_and_the_inline_one_actually_silen
         titles(&actions),
         vec![
             "Suppress E1001 here".to_string(),
-            "Suppress E1001 workspace-wide (surrealguard.toml)".to_string(),
+            "Suppress E1001 workspace-wide (surrealql-analyzer.toml)".to_string(),
         ],
         "got: {actions:?}"
     );
@@ -1235,7 +1235,7 @@ fn a_surql_diagnostic_offers_both_suppressions_and_the_inline_one_actually_silen
     let suppressed = apply_lsp_edit(query, &edit);
     assert_eq!(
         suppressed,
-        "BEGIN;\n    -- surrealguard: allow(E1001)\n    SELECT * FROM persn;\nCOMMIT;\n"
+        "BEGIN;\n    -- surrealql-analyzer: allow(E1001)\n    SELECT * FROM persn;\nCOMMIT;\n"
     );
 
     // Some clients send an empty context when the request comes from a
@@ -1273,7 +1273,7 @@ fn a_workspace_requiring_reasons_gets_a_directive_carrying_one() {
     let query = "SELECT * FROM persn;\n";
     let query_uri = root.write("b_query.surql", query);
     root.write(
-        "surrealguard.toml",
+        "surrealql-analyzer.toml",
         "[diagnostics]\nrequire_suppression_reasons = true\n",
     );
 
@@ -1286,7 +1286,7 @@ fn a_workspace_requiring_reasons_gets_a_directive_carrying_one() {
     let suppressed = apply_lsp_edit(query, &edit);
     assert_eq!(
         suppressed,
-        "-- surrealguard: allow(E1001) reason=\"TODO: explain why this is allowed\"\n\
+        "-- surrealql-analyzer: allow(E1001) reason=\"TODO: explain why this is allowed\"\n\
          SELECT * FROM persn;\n"
     );
 
@@ -1302,7 +1302,7 @@ fn a_workspace_requiring_reasons_gets_a_directive_carrying_one() {
 fn a_single_line_host_string_gets_the_workspace_action_only_and_it_works() {
     let root = TempRoot::new("svelte");
     root.write("a_schema.surql", ROOT_SCHEMA);
-    root.write("surrealguard.toml", COMMENTED_CONFIG);
+    root.write("surrealql-analyzer.toml", COMMENTED_CONFIG);
     // The demo shape: the query is inside a single-line attribute string. A
     // `--` comment cannot be put anywhere in it without breaking the file.
     let page = "<Query q=\"SELECT * FROM persn\" />\n";
@@ -1315,18 +1315,21 @@ fn a_single_line_host_string_gets_the_workspace_action_only_and_it_works() {
 
     assert_eq!(
         titles(&actions),
-        vec!["Suppress E1001 workspace-wide (surrealguard.toml)".to_string()],
+        vec!["Suppress E1001 workspace-wide (surrealql-analyzer.toml)".to_string()],
         "an inline directive would corrupt this file, so it must not be \
          offered here. Got: {actions:?}"
     );
 
     let (config_uri, edit) = sole_edit(&actions[0]);
-    assert_eq!(config_uri, file_uri(&root.path.join("surrealguard.toml")));
+    assert_eq!(
+        config_uri,
+        file_uri(&root.path.join("surrealql-analyzer.toml"))
+    );
     let edited = apply_lsp_edit(COMMENTED_CONFIG, &edit);
     assert_eq!(
         edited,
         "\
-# SurrealGuard workspace config for the demo app.
+# SurrealQL Analyzer workspace config for the demo app.
 
 [sources]
 # .svelte-kit holds generated route types; never scan it.
@@ -1345,7 +1348,7 @@ strict = false
 
     // Round trip: write what the client would have written, tell the server
     // the way a client with file watching would, and the finding is gone.
-    root.write("surrealguard.toml", &edited);
+    root.write("surrealql-analyzer.toml", &edited);
     lsp.notify(
         "workspace/didChangeWatchedFiles",
         json!({"changes": [{"uri": config_uri, "type": 2}]}),
@@ -1366,7 +1369,7 @@ strict = false
 fn a_multi_line_template_takes_an_inline_directive_that_silences_it() {
     let root = TempRoot::new("template");
     root.write("a_schema.surql", ROOT_SCHEMA);
-    root.write("surrealguard.toml", COMMENTED_CONFIG);
+    root.write("surrealql-analyzer.toml", COMMENTED_CONFIG);
     // A backtick template that already spans lines: column zero of the
     // diagnostic's line is query text, so a directive line is safe there.
     let module = "const rows = await db.query(`\n  SELECT * FROM persn;\n`);\n";
@@ -1381,7 +1384,7 @@ fn a_multi_line_template_takes_an_inline_directive_that_silences_it() {
         titles(&actions),
         vec![
             "Suppress E1001 here".to_string(),
-            "Suppress E1001 workspace-wide (surrealguard.toml)".to_string(),
+            "Suppress E1001 workspace-wide (surrealql-analyzer.toml)".to_string(),
         ],
         "got: {actions:?}"
     );
@@ -1391,7 +1394,7 @@ fn a_multi_line_template_takes_an_inline_directive_that_silences_it() {
     let suppressed = apply_lsp_edit(module, &edit);
     assert_eq!(
         suppressed,
-        "const rows = await db.query(`\n  -- surrealguard: allow(E1001)\n  \
+        "const rows = await db.query(`\n  -- surrealql-analyzer: allow(E1001)\n  \
          SELECT * FROM persn;\n`);\n"
     );
 
@@ -1413,7 +1416,7 @@ fn a_lint_is_suppressed_by_its_category_code_not_the_one_the_editor_displays() {
     let query = "SELECT * FROM account;\n";
     let query_uri = root.write("b_query.surql", query);
     // 7015 is off by default; turn it on so the editor publishes it as W7015.
-    root.write("surrealguard.toml", "[lints]\n7015 = \"warn\"\n");
+    root.write("surrealql-analyzer.toml", "[lints]\n7015 = \"warn\"\n");
 
     let mut lsp = Lsp::start_in(&root.path);
     let diagnostics = lsp.did_open(&query_uri, query);
@@ -1424,7 +1427,7 @@ fn a_lint_is_suppressed_by_its_category_code_not_the_one_the_editor_displays() {
         titles(&actions),
         vec![
             "Suppress W7015 here".to_string(),
-            "Suppress W7015 workspace-wide (surrealguard.toml)".to_string(),
+            "Suppress W7015 workspace-wide (surrealql-analyzer.toml)".to_string(),
         ],
         "the title names the code the user sees; the edit must not. Got: {actions:?}"
     );
@@ -1432,7 +1435,7 @@ fn a_lint_is_suppressed_by_its_category_code_not_the_one_the_editor_displays() {
     let (_, inline) = sole_edit(&actions[0]);
     let suppressed = apply_lsp_edit(query, &inline);
     assert_eq!(
-        suppressed, "-- surrealguard: allow(L7015)\nSELECT * FROM account;\n",
+        suppressed, "-- surrealql-analyzer: allow(L7015)\nSELECT * FROM account;\n",
         "`allow(W7015)` would parse and suppress nothing"
     );
     let after = lsp.did_change(&query_uri, 2, &suppressed);

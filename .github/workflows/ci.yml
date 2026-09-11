@@ -16,7 +16,7 @@ jobs:
     steps:
       # The SurrealQL grammar is vendored in-repo at
       # `crates/tree-sitter-surrealql`, so a single checkout is all CI needs.
-      - name: Check out surrealguard
+      - name: Check out surrealql-analyzer
         uses: actions/checkout@v4
 
       - name: Install Rust

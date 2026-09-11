@@ -1,15 +1,15 @@
 {
-  "name": "@surrealguard-example/basic",
+  "name": "@surrealql-analyzer-example/basic",
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Vanilla-TS SurrealGuard example: surrealguard generate -> typed defineQuery + db.run.",
+  "description": "Vanilla-TS SurrealQL Analyzer example: surrealql-analyzer generate -> typed defineQuery + db.run.",
   "scripts": {
-    "generate": "surrealguard generate --out src/surrealguard.generated.ts",
+    "generate": "surrealql-analyzer generate --out src/surrealql-analyzer.generated.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@surrealguard/client": "workspace:*",
+    "@surrealdb/analyzer-client": "workspace:*",
     "surrealdb": "2.0.8"
   },
   "devDependencies": {

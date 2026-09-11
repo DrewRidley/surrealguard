@@ -45,7 +45,7 @@ export function recordId<Table extends string>(link: `${Table}:${string}`): Reco
   const separator = link.indexOf(":");
   if (separator < 0) {
     throw new TypeError(
-      `[@surrealguard/client] recordId: ${JSON.stringify(link)} is not a record link — ` +
+      `[@surrealdb/analyzer-client] recordId: ${JSON.stringify(link)} is not a record link — ` +
         "expected `table:id`.",
     );
   }

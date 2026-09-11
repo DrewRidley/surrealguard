@@ -1,12 +1,12 @@
-// A vanilla-TypeScript SurrealGuard demo.
+// A vanilla-TypeScript SurrealQL Analyzer demo.
 //
-// `surrealguard generate` scanned this project, found every query text in it,
+// `surrealql-analyzer generate` scanned this project, found every query text in it,
 // analyzed each one against `schema/schema.surql`, and wrote
-// `src/surrealguard.generated.ts` — a module augmentation that types every
+// `src/surrealql-analyzer.generated.ts` — a module augmentation that types every
 // query by its exact text. We import the entry points from that generated file,
 // so the augmentation loads with them and everything below is fully typed.
 
-import { createClient, RecordId, SurrealGuardError } from "./surrealguard.generated";
+import { createClient, RecordId, SurrealQLAnalyzerError } from "./surrealql-analyzer.generated";
 import {
   addPerson,
   allPeople,
@@ -79,7 +79,7 @@ async function main() {
   await db.invalidate(peopleOf.with({ team })); // just that binding
 
   // ---- Live, with no other package ---------------------------------------
-  // `@surrealguard/client` subscribes on its own. A live query is the case that
+  // `@surrealdb/analyzer-client` subscribes on its own. A live query is the case that
   // genuinely needs a named reference: `db.watch` holds on to it.
   const stop = db.watch(livePeople, (rows) => {
     for (const row of rows) console.log("live:", row.name, row.age);
@@ -106,7 +106,7 @@ async function main() {
 
 // ---- Errors carry the query that failed ----------------------------------
 void main().catch((error: unknown) => {
-  if (error instanceof SurrealGuardError) {
+  if (error instanceof SurrealQLAnalyzerError) {
     console.error("query failed:", error.query, error.params, error.cause);
   } else {
     throw error;

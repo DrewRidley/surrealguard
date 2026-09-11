@@ -11,11 +11,11 @@ import {
   preload,
   RecordId,
   type Preloaded,
-  type SurrealGuardClient,
-} from "@surrealguard/client";
+  type SurrealQLAnalyzerClient,
+} from "@surrealdb/analyzer-client";
 import { createLive, createMutation, createQuery } from "../src/index.js";
 
-declare module "@surrealguard/client" {
+declare module "@surrealdb/analyzer-client" {
   interface SurqlRegistry {
     "SELECT id, name, age FROM person": {
       result: [Array<{ id: RecordId<"person">; name: string; age: number }>];
@@ -42,7 +42,7 @@ const addPerson = defineQuery("CREATE person SET name = $name, joined = $joined"
 const livePeople = defineLive("SELECT id, name, age FROM person");
 const liveTeam = defineLive("SELECT id, name FROM person WHERE team = $team");
 
-declare const db: SurrealGuardClient;
+declare const db: SurrealQLAnalyzerClient;
 declare const team: RecordId<"team">;
 declare const enabled: boolean;
 

@@ -1,5 +1,5 @@
 /**
- * Server-side helpers (`@surrealguard/next/server`). No `"use client"` — safe
+ * Server-side helpers (`@surrealdb/analyzer-next/server`). No `"use client"` — safe
  * to call from a Server Component, a route handler, or `getServerSideProps`.
  *
  * ## Use a per-request client
@@ -13,7 +13,7 @@
  * ```ts
  * // lib/db.server.ts
  * import { cache } from "react";
- * import { createClient } from "@/surrealguard.generated";
+ * import { createClient } from "@/surrealql-analyzer.generated";
  *
  * export const getDb = cache(() =>
  *   createClient({
@@ -42,7 +42,7 @@
  * ## Seed a live client component
  *
  * ```tsx
- * import { preload } from "@surrealguard/next/server";
+ * import { preload } from "@surrealdb/analyzer-next/server";
  *
  * export default async function Page() {
  *   const preloaded = await preload(getDb(), livePeople);
@@ -66,18 +66,18 @@
  * ```
  */
 
-import { preload, type SurrealGuardClient } from "@surrealguard/client";
-import { getQueryClient, type DehydratedState } from "@surrealguard/query";
+import { preload, type SurrealQLAnalyzerClient } from "@surrealdb/analyzer-client";
+import { getQueryClient, type DehydratedState } from "@surrealdb/analyzer-query";
 
 export { preload };
-export type { Preloaded, Json } from "@surrealguard/client";
+export type { Preloaded, Json } from "@surrealdb/analyzer-client";
 
 /** Snapshot a client's cached results for transport to the browser. */
-export function dehydrate(client: SurrealGuardClient): DehydratedState {
+export function dehydrate(client: SurrealQLAnalyzerClient): DehydratedState {
   return getQueryClient(client).dehydrate();
 }
 
 /** Seed a client's cache from a server snapshot so the browser avoids a refetch. */
-export function hydrate(client: SurrealGuardClient, state: DehydratedState): void {
+export function hydrate(client: SurrealQLAnalyzerClient, state: DehydratedState): void {
   getQueryClient(client).hydrate(state);
 }

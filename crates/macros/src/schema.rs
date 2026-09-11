@@ -3,7 +3,7 @@
 //! Resolves SurrealQL schema sources so queries can be checked and typed
 //! against real tables and fields. Resolution order:
 //!
-//! 1. The `SURREALGUARD_SCHEMA` env var — a file or a directory, taken
+//! 1. The `SURREALQL_ANALYZER_SCHEMA` env var — a file or a directory, taken
 //!    relative to `CARGO_MANIFEST_DIR` unless absolute.
 //! 2. Convention paths under the crate root, first match wins: `schema/`,
 //!    `migrations/`, then `schema.surql`.
@@ -29,7 +29,7 @@ pub fn load() -> Vec<(PathBuf, String)> {
 }
 
 fn resolve(root: &Path) -> Option<PathBuf> {
-    if let Some(configured) = std::env::var_os("SURREALGUARD_SCHEMA") {
+    if let Some(configured) = std::env::var_os("SURREALQL_ANALYZER_SCHEMA") {
         let path = PathBuf::from(configured);
         let path = if path.is_absolute() {
             path

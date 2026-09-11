@@ -1,5 +1,5 @@
 [package]
-name = "surrealguard"
+name = "surrealql-analyzer"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -9,17 +9,17 @@ homepage.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
-description = "Static analyzer and type-inference engine for SurrealQL — the surrealguard CLI"
+description = "Static analyzer and type-inference engine for SurrealQL — the surrealql-analyzer CLI"
 
 # cargo-binstall: fetch the prebuilt binary from the GitHub Release instead of
 # building from source. The asset naming scheme MUST stay identical to the npm
-# launcher (npm/surrealguard/bin/surrealguard.cjs) and the release workflow
+# launcher (npm/surrealql-analyzer/bin/surrealql-analyzer.cjs) and the release workflow
 # (.github/workflows/release.yml):
 #
 #   tag:     v{version}
-#   archive: surrealguard-{version}-{target}.tar.gz   (unix)
-#            surrealguard-{version}-{target}.zip       (windows)
-#   binary:  surrealguard | surrealguard.exe           (at archive root)
+#   archive: surrealql-analyzer-{version}-{target}.tar.gz   (unix)
+#            surrealql-analyzer-{version}-{target}.zip       (windows)
+#   binary:  surrealql-analyzer | surrealql-analyzer.exe           (at archive root)
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.{ archive-format }"
 pkg-fmt = "tgz"
@@ -29,11 +29,11 @@ bin-dir = "{ bin }{ binary-ext }"
 pkg-fmt = "zip"
 
 [dependencies]
-surrealguard-codegen = { path = "../codegen", version = "0.5.3" }
-surrealguard-diagnostics = { path = "../diagnostics", version = "0.5.3" }
-surrealguard-embed = { path = "../embed", version = "0.5.3" }
-surrealguard-syntax = { path = "../syntax", version = "0.5.3" }
-surrealguard-workspace = { path = "../workspace", version = "0.5.3" }
+surrealql-analyzer-codegen = { path = "../codegen", version = "0.5.3" }
+surrealql-analyzer-diagnostics = { path = "../diagnostics", version = "0.5.3" }
+surrealql-analyzer-embed = { path = "../embed", version = "0.5.3" }
+surrealql-analyzer-syntax = { path = "../syntax", version = "0.5.3" }
+surrealql-analyzer-workspace = { path = "../workspace", version = "0.5.3" }
 clap = { version = "4", features = ["derive"]}
 # `--watch`. `notify-debouncer-full` is the `notify` project's own debouncer:
 # it merges the event storm one save produces and tracks renames by file id, so

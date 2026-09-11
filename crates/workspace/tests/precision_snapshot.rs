@@ -15,7 +15,7 @@
 //! Regenerate with:
 //!
 //! ```text
-//! UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test precision_snapshot
+//! UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test precision_snapshot
 //! ```
 //!
 //! The snapshot pins the *answers*. It does not pin the *relation* between one
@@ -28,14 +28,14 @@ mod support;
 use std::fmt::Write as _;
 
 use support::{analyze_corpus, diff_lines, snapshot_path, updating, Corpus};
-use surrealguard_workspace::render_kind;
+use surrealql_analyzer_workspace::render_kind;
 
 const SNAPSHOT: &str = "precision.snap";
 
 const HEADER: &str = "\
-# SurrealGuard precision snapshot — every inferred type the corpus produces.
+# SurrealQL Analyzer precision snapshot — every inferred type the corpus produces.
 #
-# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test precision_snapshot
+# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test precision_snapshot
 #
 # This file records CURRENT behaviour, not correct behaviour. A diff means a
 # type changed: read it, decide whether the change is an improvement, and only
@@ -57,7 +57,7 @@ fn corpus_types_match_the_committed_snapshot() {
     let expected = std::fs::read_to_string(&path).unwrap_or_else(|_| {
         panic!(
             "missing snapshot {}\n\
-             create it with: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test precision_snapshot",
+             create it with: UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test precision_snapshot",
             path.display()
         )
     });
@@ -70,7 +70,7 @@ fn corpus_types_match_the_committed_snapshot() {
          A `+ ... : unknown` or a widened kind is a precision REGRESSION; do not accept it blindly.\n\
          \n{}\n\
          Snapshot: {}\n\
-         Accept with: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test precision_snapshot\n",
+         Accept with: UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test precision_snapshot\n",
         diff_lines(&expected, &actual),
         path.display()
     );
@@ -86,11 +86,11 @@ fn corpus_is_free_of_error_findings() {
         .analysis
         .diagnostics
         .iter()
-        .filter(|finding| finding.severity() == surrealguard_diagnostics::Severity::Error)
+        .filter(|finding| finding.severity() == surrealql_analyzer_diagnostics::Severity::Error)
         .map(|finding| {
             format!(
                 "  {} {} at {}:{}",
-                surrealguard_diagnostics::render_code(finding.code(), finding.severity()),
+                surrealql_analyzer_diagnostics::render_code(finding.code(), finding.severity()),
                 finding.message(),
                 finding.span().source().as_str(),
                 corpus.position(finding.span())
@@ -267,7 +267,10 @@ fn render_sources(corpus: &Corpus, out: &mut String) {
                     format!(
                         "  diag {:>8} {:<9} {:?}",
                         corpus.position(finding.span()),
-                        surrealguard_diagnostics::render_code(finding.code(), finding.severity()),
+                        surrealql_analyzer_diagnostics::render_code(
+                            finding.code(),
+                            finding.severity()
+                        ),
                         finding.severity()
                     ),
                 )

@@ -27,7 +27,7 @@
  *    every keystroke — a cache miss per frame, and an unbounded cache.
  * 2. **The static skeleton is what the registry is keyed by,** so
  *    `SELECT … > $__host0` is one entry no matter what `minAge` is, and it is
- *    what SurrealGuard analyses. The result type is looked up from it here,
+ *    what SurrealQL Analyzer analyses. The result type is looked up from it here,
  *    which is why the snippet parameter is typed with no annotation at the call
  *    site.
  * 3. **The parameter names are positional and deterministic** — `$__host0`,
@@ -49,7 +49,7 @@ import {
   type Rows,
   type SurqlLive,
   type SurqlQuery,
-} from "@surrealguard/client";
+} from "@surrealdb/analyzer-client";
 
 /**
  * The one place the parameter prefix is written. The type-level {@link Skeleton}

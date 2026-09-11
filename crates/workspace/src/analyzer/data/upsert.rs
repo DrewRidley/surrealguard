@@ -4,7 +4,7 @@
 //! their invariants will differ (UPSERT may create).
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::data::mutation;
@@ -45,8 +45,8 @@ mod tests {
     use super::*;
     use crate::schema::SchemaIndex;
     use crate::statement_env::StatementEnv;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use crate::schema::extract_schema;
 
@@ -57,17 +57,17 @@ mod tests {
     fn analyze_with_diagnostics(
         schema: &SchemaIndex,
         query: &str,
-    ) -> (Kind, Vec<surrealguard_diagnostics::Finding>) {
+    ) -> (Kind, Vec<surrealql_analyzer_diagnostics::Finding>) {
         let parsed = parse_source(SourceId::new("query"), query).expect("query should parse");
         let ast::Statement::Upsert(stmt) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "UpsertStatement")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "UpsertStatement")
                 .expect("upsert statement exists")
                 .node
         else {
             panic!("expected upsert statement");
         };
         let env = StatementEnv::default();
-        let mut diagnostics: Vec<surrealguard_diagnostics::Finding> = Vec::new();
+        let mut diagnostics: Vec<surrealql_analyzer_diagnostics::Finding> = Vec::new();
         let kind = {
             let mut ctx = AnalysisContext::scoped(
                 schema,

@@ -1,11 +1,11 @@
-//! `surrealguard.toml` workspace configuration.
+//! `surrealql-analyzer.toml` workspace configuration.
 
 use std::collections::HashMap;
 
 use serde::Deserialize;
-use surrealguard_diagnostics::{catalog, FindingCode, LintLevel, PolicyConfig};
+use surrealql_analyzer_diagnostics::{catalog, FindingCode, LintLevel, PolicyConfig};
 
-/// Resolved `surrealguard.toml`: the source globs, analysis settings,
+/// Resolved `surrealql-analyzer.toml`: the source globs, analysis settings,
 /// diagnostic policy, and per-lint overrides, with every unset key already
 /// filled from the defaults.
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
@@ -34,9 +34,9 @@ pub struct SourceConfig {
 /// Settings that steer inference and checking.
 ///
 /// The derived default is the whole default: not strict, and no target
-/// version — "the latest release" (what SurrealGuard analyzes for), so no
+/// version — "the latest release" (what SurrealQL Analyzer analyzes for), so no
 /// version-gated check fires until a workspace states which engine it deploys
-/// against. The key is optional and `surrealguard init` does not write it:
+/// against. The key is optional and `surrealql-analyzer init` does not write it:
 /// an unset key cannot be read as a claim about which release the tool
 /// targets.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -213,7 +213,7 @@ pub struct LintConfig {
     pub levels: HashMap<FindingCode, LintLevel>,
 }
 
-/// A `surrealguard.toml` that failed to parse or carried an invalid value.
+/// A `surrealql-analyzer.toml` that failed to parse or carried an invalid value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfigError {
     message: String,
@@ -235,7 +235,7 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 impl WorkspaceConfig {
-    /// Parses a `surrealguard.toml` document, filling every unset key from
+    /// Parses a `surrealql-analyzer.toml` document, filling every unset key from
     /// [`WorkspaceConfig::default`].
     pub fn from_toml_str(input: &str) -> Result<Self, ConfigError> {
         let raw: RawWorkspaceConfig = toml::from_str(input).map_err(|error| ConfigError {
@@ -248,7 +248,7 @@ impl WorkspaceConfig {
     /// Builds the [`PolicyConfig`] both surfaces (CLI, LSP) resolve findings
     /// through: applies `warnings_as_errors` and every per-code/family level
     /// override from `[lints]`. This is the single place config becomes
-    /// policy, so a `surrealguard.toml` behaves identically everywhere.
+    /// policy, so a `surrealql-analyzer.toml` behaves identically everywhere.
     pub fn policy(&self) -> PolicyConfig {
         let mut policy = PolicyConfig::default();
         policy.set_warnings_as_errors(self.diagnostics.warnings_as_errors);
@@ -556,7 +556,7 @@ W7002 = "deny"
 
     #[test]
     fn config_policy_applies_per_code_overrides_and_warnings_as_errors() {
-        use surrealguard_diagnostics::Severity;
+        use surrealql_analyzer_diagnostics::Severity;
 
         let config = WorkspaceConfig::from_toml_str(
             r#"
@@ -631,8 +631,8 @@ W7002 = "deny"
         assert_eq!(TargetVersion::parse("1.2.3.4"), None);
     }
 
-    /// A key SurrealGuard does not know must not fail the parse, and a key an
-    /// older `surrealguard init` wrote must keep meaning what it meant. Every
+    /// A key SurrealQL Analyzer does not know must not fail the parse, and a key an
+    /// older `surrealql-analyzer init` wrote must keep meaning what it meant. Every
     /// workspace initialized before 2026-08 carries `surrealdb_version = "2"`
     /// in its file: it is still the target it names, and the tables and keys
     /// beside it that nothing reads are ignored. No struct here sets

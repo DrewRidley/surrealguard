@@ -117,8 +117,8 @@
 //! they say — which is why they are a warning rather than an error, and why
 //! the message says what the payload will actually contain.
 
-use surrealguard_syntax::ast;
-use surrealguard_syntax::span::SourceSpan;
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::span::SourceSpan;
 
 /// Checks a SELECT that will be run as a live query, appending 4009 for each
 /// part of it a live query cannot have.
@@ -130,19 +130,20 @@ use surrealguard_syntax::span::SourceSpan;
 /// ships and silently returns nothing.
 pub(crate) fn check_live_select(
     stmt: &ast::SelectStmt,
-    source: &surrealguard_syntax::source::SourceId,
-    out: &mut Vec<surrealguard_diagnostics::Finding>,
+    source: &surrealql_analyzer_syntax::source::SourceId,
+    out: &mut Vec<surrealql_analyzer_diagnostics::Finding>,
 ) {
-    let mut emit = |span: surrealguard_syntax::span::ByteRange, message: String, help: &str| {
-        out.push(
-            surrealguard_diagnostics::catalog::finding(
-                SourceSpan::new(source.clone(), span),
-                4009,
-                message,
-            )
-            .with_help(help.to_string()),
-        );
-    };
+    let mut emit =
+        |span: surrealql_analyzer_syntax::span::ByteRange, message: String, help: &str| {
+            out.push(
+                surrealql_analyzer_diagnostics::catalog::finding(
+                    SourceSpan::new(source.clone(), span),
+                    4009,
+                    message,
+                )
+                .with_help(help.to_string()),
+            );
+        };
 
     // The set-shaping clauses. Each is a parse error on the engine, so the
     // query is not merely degraded — it never registers at all.
@@ -271,17 +272,19 @@ pub(crate) fn check_live_select_statement(
 ) {
     let source = ctx.source().clone();
     let mut findings = Vec::new();
-    let mut emit =
-        |span: surrealguard_syntax::span::ByteRange, code: u16, message: String, help: &str| {
-            findings.push(
-                surrealguard_diagnostics::catalog::finding(
-                    SourceSpan::new(source.clone(), span),
-                    code,
-                    message,
-                )
-                .with_help(help.to_string()),
-            );
-        };
+    let mut emit = |span: surrealql_analyzer_syntax::span::ByteRange,
+                    code: u16,
+                    message: String,
+                    help: &str| {
+        findings.push(
+            surrealql_analyzer_diagnostics::catalog::finding(
+                SourceSpan::new(source.clone(), span),
+                code,
+                message,
+            )
+            .with_help(help.to_string()),
+        );
+    };
 
     // One subscription, one table — the engine stops at the comma while
     // parsing, so this never registers at all.

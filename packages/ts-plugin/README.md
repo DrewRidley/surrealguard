@@ -1,4 +1,4 @@
-# @surrealguard/ts-plugin
+# @surrealdb/analyzer-ts-plugin
 
 SurrealQL diagnostics, highlighting and hovers inside `db.query("…")` — reported
 as **TypeScript's own answers**, by a TypeScript language service plugin.
@@ -7,18 +7,18 @@ as **TypeScript's own answers**, by a TypeScript language service plugin.
 // tsconfig.json
 {
   "compilerOptions": {
-    "plugins": [{ "name": "@surrealguard/ts-plugin" }]
+    "plugins": [{ "name": "@surrealdb/analyzer-ts-plugin" }]
   }
 }
 ```
 
 ```sh
-pnpm add -D @surrealguard/ts-plugin
+pnpm add -D @surrealdb/analyzer-ts-plugin
 ```
 
-That is the whole setup. The plugin finds your `surrealguard.toml` by walking up
+That is the whole setup. The plugin finds your `surrealql-analyzer.toml` by walking up
 from each source file, reads your schema, and answers about the queries it finds
-in that file. **Nothing happens in a project without a `surrealguard.toml`** —
+in that file. **Nothing happens in a project without a `surrealql-analyzer.toml`** —
 not even the analyzer being loaded.
 
 VS Code users additionally need `"typescript.tsserver.pluginPaths"` to be
@@ -28,7 +28,7 @@ Workspace Version*) if the plugin is a workspace dependency.
 
 ## Why a plugin and not a language server
 
-SurrealGuard already ships `surrealguard-lsp`, and it works. But as a *second*
+SurrealQL Analyzer already ships `surrealql-analyzer-lsp`, and it works. But as a *second*
 language server it competes with TypeScript for the same byte ranges: its
 semantic tokens are overlaid on TypeScript's for the same string literal, and
 the editor resolves that differently on every keystroke. The query flickers
@@ -37,7 +37,7 @@ between highlighted and plain-string green.
 A plugin removes the conflict by construction. It proxies the language service,
 so our diagnostics and classifications *are* TypeScript's — there is nothing to
 merge and no race. It also reaches every TypeScript-aware editor rather than the
-ones with a SurrealGuard extension.
+ones with a SurrealQL Analyzer extension.
 
 ## What it does
 
@@ -49,7 +49,7 @@ ones with a SurrealGuard extension.
 
 Every other method passes straight through.
 
-Diagnostics carry `source: "surrealguard"` and a numeric code of
+Diagnostics carry `source: "surrealql-analyzer"` and a numeric code of
 `1_000_000 + the finding number` — `E1002` is `1001002`, `L7014` is `1007014`.
 TypeScript's own codes are five digits at most, so the two can never collide and
 you can filter on ours. The finding's own code is repeated at the end of the
@@ -81,24 +81,24 @@ actual complaint.
 ## What it does not do
 
 - **`tsc` never loads plugins.** That is TypeScript's design, and it is the
-  right split: keep `surrealguard check` in CI, where it sees the whole
+  right split: keep `surrealql-analyzer check` in CI, where it sees the whole
   workspace at once instead of one file at a time.
 - **`.svelte` / `.vue` files are not covered yet.** Not because of extraction —
   the analyzer reads their `<script>` blocks fine — but because the tools that
   own those files build their TypeScript language service with
   `ts.createLanguageService(…)` directly and never read `compilerOptions.plugins`.
   `svelte-check` was checked and does not load the plugin. Until that changes,
-  those files need `surrealguard-lsp` or `surrealguard check`.
-- **A `surrealguard.toml` with an exotic `[sources]` table** may resolve to the
+  those files need `surrealql-analyzer-lsp` or `surrealql-analyzer check`.
+- **A `surrealql-analyzer.toml` with an exotic `[sources]` table** may resolve to the
   default globs here. The plugin reads `schema` / `queries` / `ignore` as string
   arrays and falls back to the defaults for anything else, rather than carrying a
-  TOML parser into tsserver. `surrealguard check` remains the authority.
+  TOML parser into tsserver. `surrealql-analyzer check` remains the authority.
 
 ## How it works
 
 The analyzer is the same one the browser playground runs: a `wasm32-wasip1`
 build of the Rust workspace, instantiated in-process from
-`wasm/surrealguard.wasm`. The alternative — spawning `surrealguard check` per
+`wasm/surrealql-analyzer.wasm`. The alternative — spawning `surrealql-analyzer check` per
 keystroke — costs a process, a pipe and a schema re-read every time. In-process
 WASM makes it a function call, keeps the parsed schema catalog warm across
 keystrokes, and means installing this package installs the analyzer.

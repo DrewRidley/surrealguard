@@ -1,11 +1,11 @@
-//! In-source suppression directives: `-- surrealguard: allow(E1001)`
+//! In-source suppression directives: `-- surrealql-analyzer: allow(E1001)`
 //! comments parsed into [`Suppression`] targets matched by code or lint
 //! name.
 
 use serde::{Deserialize, Serialize};
-use surrealguard_syntax::span::SourceSpan;
+use surrealql_analyzer_syntax::span::SourceSpan;
 
-const DIRECTIVE_PREFIX: &str = "surrealguard:";
+const DIRECTIVE_PREFIX: &str = "surrealql-analyzer:";
 const ALLOW_PREFIX: &str = "allow(";
 
 /// A parsed `allow(...)` directive: what it silences, an optional reason,
@@ -85,7 +85,7 @@ pub enum SuppressionParseError {
 }
 
 /// Parses a directive from a comment body, returning `Ok(None)` when the
-/// comment is not a `surrealguard:` directive at all. Use this when
+/// comment is not a `surrealql-analyzer:` directive at all. Use this when
 /// scanning ordinary comments; malformed directives still return `Err`.
 pub fn parse_optional_suppression_directive(
     text: &str,
@@ -98,7 +98,7 @@ pub fn parse_optional_suppression_directive(
     parse_allow_body(body.trim(), span).map(Some)
 }
 
-/// Parses a comment body that is required to be a `surrealguard:`
+/// Parses a comment body that is required to be a `surrealql-analyzer:`
 /// directive, erroring if the prefix is absent. Use this when the caller
 /// has already committed to the comment being a directive.
 pub fn parse_suppression_directive(
@@ -184,8 +184,8 @@ fn is_identifier_part(raw: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_syntax::source::SourceId;
-    use surrealguard_syntax::span::ByteRange;
+    use surrealql_analyzer_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::span::ByteRange;
 
     fn span(start: u32, end: u32) -> SourceSpan {
         SourceSpan::new(
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn parses_named_suppression_with_reason() {
         let parsed = parse_suppression_directive(
-            "surrealguard: allow(lint.select_star) reason=\"intentional projection\"",
+            "surrealql-analyzer: allow(lint.select_star) reason=\"intentional projection\"",
             span(4, 68),
         )
         .expect("directive should parse");
@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn parses_code_suppression_without_reason() {
-        let parsed = parse_suppression_directive("surrealguard: allow(L7001)", span(0, 29))
+        let parsed = parse_suppression_directive("surrealql-analyzer: allow(L7001)", span(0, 29))
             .expect("directive should parse");
 
         assert_eq!(parsed.target(), &SuppressionTarget::Code("L7001".into()));
@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn rejects_blanket_suppression() {
-        let error = parse_suppression_directive("surrealguard: allow(*)", span(0, 21))
+        let error = parse_suppression_directive("surrealql-analyzer: allow(*)", span(0, 21))
             .expect_err("blanket suppressions should be rejected");
 
         assert_eq!(error, SuppressionParseError::BlanketSuppression);
@@ -230,7 +230,7 @@ mod tests {
     #[test]
     fn rejects_malformed_allow_directive() {
         let error =
-            parse_suppression_directive("surrealguard: allow lint.select_star", span(0, 37))
+            parse_suppression_directive("surrealql-analyzer: allow lint.select_star", span(0, 37))
                 .expect_err("malformed allow directive should be rejected");
 
         assert_eq!(error, SuppressionParseError::MalformedDirective);
@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn code_target_matches_finding_code_text() {
-        let parsed = parse_suppression_directive("surrealguard: allow(E6001)", span(0, 29))
+        let parsed = parse_suppression_directive("surrealql-analyzer: allow(E6001)", span(0, 29))
             .expect("directive should parse");
 
         assert!(parsed.matches_finding_code(crate::FindingCode::param(6001)));
@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn named_target_matches_exact_lint_name() {
         let parsed =
-            parse_suppression_directive("surrealguard: allow(lint.select_star)", span(0, 40))
+            parse_suppression_directive("surrealql-analyzer: allow(lint.select_star)", span(0, 40))
                 .expect("directive should parse");
 
         assert!(parsed.matches_name("lint.select_star"));

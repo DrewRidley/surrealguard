@@ -1,16 +1,16 @@
 # AGENTS.md
 
-Guidance for AI coding agents working with **SurrealGuard** — a static analyzer
+Guidance for AI coding agents working with **SurrealQL Analyzer** — a static analyzer
 and type-inference engine for SurrealQL. This file follows the
 [agents.md](https://agents.md) convention. A machine-readable summary also lives
 at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
 [`/llms-full.txt`](https://surrealguard.dev/llms-full.txt).
 
-## Using SurrealGuard in a user's project
+## Using SurrealQL Analyzer in a user's project
 
-1. **Set it up:** `npx surrealguard init`, then edit `surrealguard.toml` so
+1. **Set it up:** `npx surrealql-analyzer init`, then edit `surrealql-analyzer.toml` so
    `[sources] schema` and `queries` globs point at the project's `.surql` files.
-2. **Check on every change:** `npx surrealguard check --json`. The JSON is
+2. **Check on every change:** `npx surrealql-analyzer check --json`. The JSON is
    `{ summary, diagnostics[] }`; each diagnostic has `code`, `severity`
    (`error`/`warning`/`hint`), `source`, `range { start, end }` (byte offsets),
    `message`, and `help`. The process exit code is non-zero when errors remain
@@ -20,10 +20,10 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
    lints. The `range` is a byte offset into `source`
    — apply edits there.
 4. **Type the queries:**
-   - Rust: wrap queries in the `query!` macro (`cargo add surrealguard-rs`). They
+   - Rust: wrap queries in the `query!` macro (`cargo add surrealql-analyzer-rs`). They
      are checked at compile time; a violation fails `cargo check`.
-   - TypeScript: run `surrealguard generate --out src/surrealguard.generated.ts`,
-     import `SurrealGuardClient` from that file (it extends the `surrealdb` SDK),
+   - TypeScript: run `surrealql-analyzer generate --out src/surrealql-analyzer.generated.ts`,
+     import `SurrealQLAnalyzerClient` from that file (it extends the `surrealdb` SDK),
      and pass string literals to `db.query("…")` — destructure the first result,
      `const [rows] = await db.query("…")`.
 
@@ -43,14 +43,14 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
   it can never back a committed snapshot):
   - `crates/workspace/tests/precision_snapshot.rs` — a golden file of **every**
     inferred type the corpus produces. Regenerate with
-    `UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test precision_snapshot`.
+    `UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test precision_snapshot`.
     The snapshot records *current* behaviour, not correct behaviour: read every
     diff before accepting it.
   - `crates/workspace/tests/any_ratchet.rs` — a per-site `any`/`unknown` count
     held against a committed baseline. Precision may improve freely, never
     degrade. Failures list the *sites*, not a total. A genuinely unknowable site
     is frozen with a `# expected: <reason>` note in the baseline. Regenerate with
-    `UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test any_ratchet`
+    `UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test any_ratchet`
     (regenerating preserves the `# expected:` notes).
   - `crates/workspace/tests/narrowing_floor.rs` — an **upper bound** on every
     corpus site's type: what the hand-written narrowing recognizers inferred on
@@ -74,7 +74,7 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
     parsing is over-acceptance. There is no baseline file and no
     `UPDATE_SNAPSHOTS` path: the invariant is absolute, and moving an entry
     between the sets is a deliberate edit with a reason. The human-readable
-    report is `cargo run -p surrealguard-syntax --example conformance`, and
+    report is `cargo run -p surrealql-analyzer-syntax --example conformance`, and
     `docs/grammar-conformance.md` records the history. A handful of forms
     are parsed on purpose despite the engine refusing them, so the analyzer
     can diagnose them precisely instead of the file collapsing into a syntax
@@ -115,28 +115,28 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
     even though the engine rejects both of those queries outright. A bare count
     also hides the worst case — one gained plus one lost reads as no change.
 
-  - `crates/lsp/tests/stdio.rs` — spawns the **real** `surrealguard-lsp` binary
+  - `crates/lsp/tests/stdio.rs` — spawns the **real** `surrealql-analyzer-lsp` binary
     and asserts on hover, inlay hints, completion and diagnostics at specific
     cursor positions. `crates/lsp/tests/backend.rs` drives the service in-process
     and so cannot catch a surface that is wrong only over the wire. Requests must
     be sequenced (`initialize` → its response → `initialized` → `didOpen` →
     request) or tower-lsp answers "Server not initialized".
   - `crates/codegen/tests/golden.rs` — the **generated-TypeScript golden**.
-    `surrealguard generate` emits a module nothing used to compile, so a type
+    `surrealql-analyzer generate` emits a module nothing used to compile, so a type
     error in the emitter's output would ship undetected. The test runs the
     CLI's generation path (`QueryEntry::from_analysis` + `render_registry`)
     over the fixture workspace `crates/codegen/tests/fixtures/typecheck/`
     (schema with option/record/array/literal-union/object fields, an edge
     table, `fn::` functions, a host `src/queries.ts`) and compares the module
-    byte-for-byte with `packages/client/test-d/gen/surrealguard.generated.ts`.
+    byte-for-byte with `packages/client/test-d/gen/surrealql-analyzer.generated.ts`.
     That file is then compiled by `pnpm -r run typecheck` as part of
-    `@surrealguard/client` against the real `surrealdb` types, and
+    `@surrealdb/analyzer-client` against the real `surrealdb` types, and
     `test-d/gen/*.test-d.ts` + `test/generated.test.ts` assert what the
     resolved types are. Regenerate with
-    `UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-codegen --test golden`, then
+    `UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-codegen --test golden`, then
     run the package typecheck — the golden records *current* output, and the
     Rust side cannot tell whether it is valid TypeScript. Augment
-    `SurqlRegistry` only through `"@surrealguard/client"` in that package
+    `SurqlRegistry` only through `"@surrealdb/analyzer-client"` in that package
     (never `../src/registry.js`): one interface augmented through two
     specifiers gets two merged clones, and which one a file sees depends on
     program order.
@@ -163,6 +163,6 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
   then run `pnpm docs:diagnostics`. CI fails if the page is stale.
 - `crates/macros` + `crates/rs` — the `query!` / `surql!` macros and runtime
 - `crates/codegen` + `crates/embed` — TypeScript generation + host-file extraction
-- `crates/cli` + `crates/lsp` — the `surrealguard` and `surrealguard-lsp` binaries
-- `packages/` — `@surrealguard/{client,query,next,svelte}`
+- `crates/cli` + `crates/lsp` — the `surrealql-analyzer` and `surrealql-analyzer-lsp` binaries
+- `packages/` — `@surrealdb/analyzer-{client,query,next,svelte}`
 - `docs/DESIGN.md` — architecture; `docs/plans/` — design records

@@ -1,6 +1,6 @@
-# SurrealGuard negative corpus — every finding the INVALID corpus produces.
+# SurrealQL Analyzer negative corpus — every finding the INVALID corpus produces.
 #
-# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test negative_corpus
+# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test negative_corpus
 #
 # Every file under tests/corpus/invalid/ is wrong on purpose. This file records
 # `file:line  CODE` for each finding — never the message, which is rendering's

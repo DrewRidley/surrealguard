@@ -9,7 +9,7 @@
 //! does not stand in for `SINCE`.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 
@@ -22,10 +22,12 @@ pub(crate) fn analyze_show(ctx: &mut AnalysisContext<'_>, stmt: &ast::ShowStmt) 
                 .get(&table.node)
                 .is_some_and(|def| def.changefeed);
             if !has_changefeed {
-                let span =
-                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), table.span);
+                let span = surrealql_analyzer_syntax::span::SourceSpan::new(
+                    ctx.source().clone(),
+                    table.span,
+                );
                 ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         span,
                         4021,
                         format!(
@@ -42,9 +44,10 @@ pub(crate) fn analyze_show(ctx: &mut AnalysisContext<'_>, stmt: &ast::ShowStmt) 
     // it is not optional.
     match &stmt.since {
         None => {
-            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.span);
+            let span =
+                surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.span);
             ctx.emit(
-                surrealguard_diagnostics::catalog::finding(
+                surrealql_analyzer_diagnostics::catalog::finding(
                     span,
                     2021,
                     "SHOW CHANGES needs a SINCE: there is no default start point".to_string(),
@@ -59,11 +62,11 @@ pub(crate) fn analyze_show(ctx: &mut AnalysisContext<'_>, stmt: &ast::ShowStmt) 
             if let ast::Expr::Literal(ast::Literal::String(text)) = &since.node {
                 use std::str::FromStr;
                 if surrealdb_types::Datetime::from_str(text).is_err() {
-                    let span = surrealguard_syntax::span::SourceSpan::new(
+                    let span = surrealql_analyzer_syntax::span::SourceSpan::new(
                         ctx.source().clone(),
                         since.span,
                     );
-                    ctx.emit(surrealguard_diagnostics::catalog::finding(
+                    ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                         span,
                         2021,
                         format!(

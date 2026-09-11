@@ -1,8 +1,8 @@
 error[E0277]: the trait bound `i64: From<&str>` is not satisfied
  --> tests/ui/wrong_param_type.rs:3:13
   |
-3 |     let _ = surrealguard_rs::query!("SELECT name FROM user WHERE age > $min;", min = "18");
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `From<&str>` is not implemented for `i64`
+3 |     let _ = surrealql_analyzer_rs::query!("SELECT name FROM user WHERE age > $min;", min = "18");
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `From<&str>` is not implemented for `i64`
   |
   = help: `i64` implements trait `From<T>`:
             From<bool>
@@ -17,9 +17,9 @@ error[E0277]: the trait bound `i64: From<&str>` is not satisfied
             From<zerocopy::byteorder::I32<O>>
             From<zerocopy::byteorder::I64<O>>
   = note: required for `&str` to implement `Into<i64>`
-note: required by a bound in `surrealguard_rs::_rt::checked`
+note: required by a bound in `surrealql_analyzer_rs::_rt::checked`
  --> src/_rt.rs
   |
   | pub fn checked<T: SurrealValue, V: Into<T>>(value: V) -> T {
   |                                    ^^^^^^^ required by this bound in `checked`
-  = note: this error originates in the macro `surrealguard_rs::query` (in Nightly builds, run with -Z macro-backtrace for more info)
+  = note: this error originates in the macro `surrealql_analyzer_rs::query` (in Nightly builds, run with -Z macro-backtrace for more info)

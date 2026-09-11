@@ -1,7 +1,7 @@
 # The golden fixture for `crates/codegen/tests/golden.rs`: the smallest
 # workspace that exercises every value convention the generated TypeScript
 # names. `generate` over this tree must reproduce
-# `packages/client/test-d/gen/surrealguard.generated.ts` byte for byte, and
+# `packages/client/test-d/gen/surrealql-analyzer.generated.ts` byte for byte, and
 # that file is compiled by `tsc` against the real `surrealdb` types.
 
 [sources]

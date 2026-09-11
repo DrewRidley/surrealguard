@@ -46,9 +46,9 @@
     Preloaded,
     Rows,
     SurqlQuery,
-    SurrealGuardClient,
-    SurrealGuardError,
-  } from "@surrealguard/client";
+    SurrealQLAnalyzerClient,
+    SurrealQLAnalyzerError,
+  } from "@surrealdb/analyzer-client";
   import { sgText } from "./inline.js";
   import { createQuery } from "./queries.svelte.js";
   import { resolveSource, type Source } from "./source.js";
@@ -74,13 +74,13 @@
     /** Bound parameters, when `q` is text that names some. */
     params?: Q extends string ? ParamsOf<Q> : never;
     /** Override the context client (tests, a second connection). */
-    client?: SurrealGuardClient;
+    client?: SurrealQLAnalyzerClient;
     /** Rendered with the result once it is available. */
     children: Snippet<[QueryRows<Q>]>;
     /** Rendered while the first result is outstanding. */
     loading?: Snippet<[]>;
     /** Rendered on failure, with a retry. Omit it and the error is thrown instead. */
-    error?: Snippet<[SurrealGuardError, () => Promise<void>]>;
+    error?: Snippet<[SurrealQLAnalyzerError, () => Promise<void>]>;
   } = $props();
 
   // Through a thunk, so replacing `q` — or `params` — re-resolves the source:

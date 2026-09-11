@@ -62,7 +62,7 @@ impl Spinner {
         }
         let flag = Arc::clone(&stop);
         let handle = std::thread::Builder::new()
-            .name("surrealguard-spinner".into())
+            .name("surrealql-analyzer-spinner".into())
             .spawn(move || animate(label, &flag))
             .ok();
         Self { stop, handle }

@@ -4,9 +4,9 @@
 //! facts, source text, diagnostics, and source/span helpers. Individual
 //! analyzers should return only what their construct evaluates to.
 
-use surrealguard_diagnostics::{Finding, FindingCode, Severity};
-use surrealguard_syntax::source::SourceId;
-use surrealguard_syntax::span::SourceSpan;
+use surrealql_analyzer_diagnostics::{Finding, FindingCode, Severity};
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_syntax::span::SourceSpan;
 
 use crate::config::TargetVersion;
 use crate::expression::ExpressionFact;
@@ -290,7 +290,7 @@ impl<'a> AnalysisContext<'a> {
     pub(crate) fn record_narrowing(
         &mut self,
         path: String,
-        range: surrealguard_syntax::span::ByteRange,
+        range: surrealql_analyzer_syntax::span::ByteRange,
         kind: surrealdb_types::Kind,
         by: Option<String>,
     ) {
@@ -474,7 +474,7 @@ impl<'a> AnalysisContext<'a> {
             self.emit(finding);
             return;
         }
-        self.emit(surrealguard_diagnostics::catalog::finding(
+        self.emit(surrealql_analyzer_diagnostics::catalog::finding(
             use_span,
             6001,
             format!(
@@ -503,7 +503,7 @@ impl<'a> AnalysisContext<'a> {
         let contract = Contract::new(Position::ParamDefault, required.clone());
         let actual = contract.violation(&crate::analyzer::facts::Term::Opaque, fact)?;
         Some(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 fact.span.clone(),
                 contract.code(),
                 format!(
@@ -603,9 +603,9 @@ impl<'a> AnalysisContext<'a> {
 #[cfg(test)]
 mod tests {
     use surrealdb_types::Kind;
-    use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::source::SourceId;
-    use surrealguard_syntax::span::{ByteRange, SourceSpan};
+    use surrealql_analyzer_diagnostics::Finding;
+    use surrealql_analyzer_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
     use super::AnalysisContext;
     use crate::expression::{ExpressionFact, ExpressionValueClass};

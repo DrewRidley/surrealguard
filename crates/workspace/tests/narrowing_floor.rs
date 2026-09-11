@@ -43,7 +43,7 @@
 //! Regenerate with:
 //!
 //! ```text
-//! UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test narrowing_floor
+//! UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test narrowing_floor
 //! ```
 //!
 //! Regenerating is **not** a routine operation. The floor records a path that
@@ -56,8 +56,8 @@ mod support;
 use std::collections::BTreeMap;
 
 use surrealdb_types::Kind;
-use surrealguard_workspace::kinds::kind_is_assignable_to;
-use surrealguard_workspace::render_kind;
+use surrealql_analyzer_workspace::kinds::kind_is_assignable_to;
+use surrealql_analyzer_workspace::render_kind;
 
 use support::{analyze_corpus, sites, snapshot_path, updating};
 

@@ -1,11 +1,11 @@
-# @surrealguard/query
+# @surrealdb/analyzer-query
 
-The framework-agnostic reactive core behind `@surrealguard/svelte` and
-`@surrealguard/next`. Use it directly if you are writing your own binding, or
+The framework-agnostic reactive core behind `@surrealdb/analyzer-svelte` and
+`@surrealdb/analyzer-next`. Use it directly if you are writing your own binding, or
 want a cache without a framework.
 
 **Most people do not need this package.** For typed rows, `db.query("…")` in
-`@surrealguard/client` is the whole API:
+`@surrealdb/analyzer-client` is the whole API:
 
 ```ts
 const [people] = await db.query("SELECT id, name, age FROM person");
@@ -17,7 +17,7 @@ is simpler than anything here and needs no cache. What this package adds is
 **deduplication, caching and invalidation** across many subscribers.
 
 ```ts
-import { getQueryClient } from "@surrealguard/query";
+import { getQueryClient } from "@surrealdb/analyzer-query";
 import { db } from "./db";
 import { livePeople } from "./queries";
 
@@ -29,26 +29,26 @@ const stop = people.subscribe((state) => {
 
 ## Getting `db` and `livePeople`
 
-Both come from the module SurrealGuard generates off your schema. Install the
+Both come from the module SurrealQL Analyzer generates off your schema. Install the
 client (the generated file augments it *by name*, so it must resolve) and
 generate with an `--out` that matches how you import it — bare `generate` writes
 to the workspace root, which is usually not where your import points:
 
 ```sh
-npm install @surrealguard/query @surrealguard/client surrealdb
-npm install -D surrealguard
-npx surrealguard generate --out src/surrealguard.generated.ts
+npm install @surrealdb/analyzer-query @surrealdb/analyzer-client surrealdb
+npm install -D surrealql-analyzer
+npx surrealql-analyzer generate --out src/surrealql-analyzer.generated.ts
 ```
 
 ```ts
 // src/db.ts
-import { createClient } from "./surrealguard.generated";
+import { createClient } from "./surrealql-analyzer.generated";
 export const db = createClient({ url: "ws://localhost:8000/rpc" });
 ```
 
 ```ts
 // src/queries.ts
-import { defineLive } from "./surrealguard.generated";
+import { defineLive } from "./surrealql-analyzer.generated";
 export const livePeople = defineLive("SELECT id, name, age FROM person");
 ```
 
@@ -95,7 +95,7 @@ break SSR or break Next entirely.
 type QueryState<T> =
   | { status: "pending"; data: T | undefined; error: undefined }
   | { status: "success"; data: T;             error: undefined }
-  | { status: "error";   data: T | undefined; error: SurrealGuardError };
+  | { status: "error";   data: T | undefined; error: SurrealQLAnalyzerError };
 ```
 
 `status` narrows `data`, so reading rows before checking the status is a type

@@ -31,13 +31,13 @@ interface Fixture {
   service: ts.LanguageService;
 }
 
-/** A one-file project, with or without a `surrealguard.toml` above it. */
+/** A one-file project, with or without a `surrealql-analyzer.toml` above it. */
 function fixture(body: string, options: { config?: boolean } = {}): Fixture {
   const root = mkdtempSync(join(tmpdir(), "sg-proxy-"));
   mkdirSync(join(root, "schema"), { recursive: true });
   mkdirSync(join(root, "src"), { recursive: true });
   writeFileSync(join(root, "schema", "account.surql"), SCHEMA);
-  if (options.config !== false) writeFileSync(join(root, "surrealguard.toml"), "[sources]\n");
+  if (options.config !== false) writeFileSync(join(root, "surrealql-analyzer.toml"), "[sources]\n");
 
   const file = join(root, "src", "app.ts");
   const text = PREAMBLE + body;
@@ -112,7 +112,7 @@ describe("getSemanticDiagnostics", () => {
     expect(diagnostics.some((d) => d.source === DIAGNOSTIC_SOURCE)).toBe(true);
   });
 
-  it("says nothing at all without a surrealguard.toml", () => {
+  it("says nothing at all without a surrealql-analyzer.toml", () => {
     const { file, service } = fixture(
       `export const rows = db.query("SELECT nope FROM nothing_at_all");\n`,
       { config: false },
@@ -182,7 +182,7 @@ describe("getEncodedSemanticClassifications", () => {
     expect(starts).toEqual([...starts].sort((x, y) => x - y));
   });
 
-  it("adds nothing without a surrealguard.toml", () => {
+  it("adds nothing without a surrealql-analyzer.toml", () => {
     const withConfig = classify(
       fixture(`export const rows = db.query("SELECT username FROM account");\n`),
       ts.SemanticClassificationFormat.TwentyTwenty,

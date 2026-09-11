@@ -1,7 +1,7 @@
 # The expression-fact layer
 
 Status: design / proposal
-Author: SurrealGuard principal engineering
+Author: SurrealQL Analyzer principal engineering
 Date: 2026-07-26
 Supersedes: nothing. Replaces the recognizer set in `crates/workspace/src/analyzer/flow/narrow.rs`
 and the shape-matching in its sibling consumers.
@@ -66,7 +66,7 @@ migration (§9) rather than proposed alongside it:
 Everything in this section was run against a release build of `HEAD` of
 `redesign-v3-foundation` (`CARGO_TARGET_DIR=/tmp/facts-target cargo build --release`) over a
 scratch project at `/tmp/facts-probe` with the schema below and a host `.ts` probe file, via
-`surrealguard generate`. Output is pasted verbatim from the generated registry.
+`surrealql-analyzer generate`. Output is pasted verbatim from the generated registry.
 
 ```surql
 DEFINE TABLE user SCHEMAFULL;
@@ -1513,7 +1513,7 @@ agree with itself. That is the same sentence as §1.5, about a different structu
 ### 8.1 The diagnosis
 
 `cargo test --workspace` on `1c9d046` runs **917 tests across 23 binaries** (999 `#[test]`
-attributes in the tree; 828 of the passing ones are in `surrealguard-workspace`'s lib target).
+attributes in the tree; 828 of the passing ones are in `surrealql-analyzer-workspace`'s lib target).
 All green, and none of them could have caught `VALUE 'green'`.
 
 The reason is not that the invariant was untested. **It was tested, four times, at one site.**
@@ -1745,7 +1745,7 @@ about the *language* rather than the implementation, so they survive every later
 unchanged. `Position` itself lands here as a production enum with no behaviour attached — a
 name for each site — so that Stage 2.5 has something to make exhaustive.
 
-*Exit criterion:* snapshot grows; no existing line changes; `cargo test -p surrealguard-workspace`
+*Exit criterion:* snapshot grows; no existing line changes; `cargo test -p surrealql-analyzer-workspace`
 green; oracle count unchanged; `KNOWN_GAPS` has exactly the nine entries §7.2 measured.
 
 ### Stage 0.5 — fix the parenthesis lowering (10 lines, independently valuable)
@@ -1879,8 +1879,8 @@ behind a `cfg`-free runtime constant `USE_FACT_LAYER: bool` in `narrow.rs`, with
 recognizers still compiled. Run the harness **both ways** in CI for the duration of Stage 3:
 
 ```
-SG_FACT_LAYER=0 cargo test -p surrealguard-workspace   # old path, snapshot must match
-SG_FACT_LAYER=1 cargo test -p surrealguard-workspace   # new path, snapshot may improve
+SG_FACT_LAYER=0 cargo test -p surrealql-analyzer-workspace   # old path, snapshot must match
+SG_FACT_LAYER=1 cargo test -p surrealql-analyzer-workspace   # new path, snapshot may improve
 ```
 
 with a dedicated test that analyzes the corpus under both settings and asserts the new path's
@@ -2185,7 +2185,7 @@ construction already removes.
    there is nothing for a `VALUE` to be checked against, and today a bad default is silent at
    the definition and reported as an E6001 at an innocent *use* site. The options are: leave
    it (and accept the misplaced blame), infer the param's kind from the default and report the
-   conflict at the definition with the use as a related span, or invent a SurrealGuard-only
+   conflict at the definition with the use as a related span, or invent a SurrealQL Analyzer-only
    annotation. The middle one is the only one that does not extend the language.
 10. **Where does `check_in` live?** `MEMORY.md`'s `per_statement_analyzers_own_logic` applies
     here with more force than it does to §2: `check_in` really is a single entry point that

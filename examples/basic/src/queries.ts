@@ -14,7 +14,7 @@
 // own remedy, so a stale generated file stops the build instead of quietly
 // degrading the result to `unknown[]`.
 
-import { defineLive, defineQuery } from "./surrealguard.generated";
+import { defineLive, defineQuery } from "./surrealql-analyzer.generated";
 
 export const allPeople = defineQuery("SELECT id, name, age, team FROM person");
 export const peopleOf = defineQuery("SELECT id, name FROM person WHERE team = $team");

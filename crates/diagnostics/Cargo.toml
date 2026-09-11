@@ -1,5 +1,5 @@
 [package]
-name = "surrealguard-diagnostics"
+name = "surrealql-analyzer-diagnostics"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -9,11 +9,11 @@ homepage.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
-description = "Structured findings, severities, lint policy, and suppressions for SurrealGuard"
+description = "Structured findings, severities, lint policy, and suppressions for SurrealQL Analyzer"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-surrealguard-syntax = { path = "../syntax", version = "0.5.3" }
+surrealql-analyzer-syntax = { path = "../syntax", version = "0.5.3" }
 
 [lints]
 workspace = true

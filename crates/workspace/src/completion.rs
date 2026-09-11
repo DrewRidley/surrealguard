@@ -31,7 +31,7 @@ mod lex;
 use std::collections::BTreeMap;
 
 use surrealdb_types::{Kind, KindLiteral};
-use surrealguard_syntax::parse::ParsedSource;
+use surrealql_analyzer_syntax::parse::ParsedSource;
 
 use crate::analysis::AnalysisOutput;
 use crate::schema::SchemaIndex;

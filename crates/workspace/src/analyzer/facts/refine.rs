@@ -571,9 +571,9 @@ mod tests {
     use crate::analyzer::facts::guard::guard_of;
     use crate::analyzer::facts::place::Place;
     use surrealdb_types::Table;
-    use surrealguard_syntax::ast;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::ast;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     /// An oracle over a fixed table of places.
     struct Fixed(Vec<(Place, Kind)>);
@@ -590,7 +590,7 @@ mod tests {
     fn cond(source: &str) -> ast::Expr {
         let query = format!("IF {source} {{ RETURN 1; }};");
         let parsed = parse_source(SourceId::new("refine:test"), query.as_str()).expect("parses");
-        let statements = surrealguard_syntax::lower::lower_statements(&parsed);
+        let statements = surrealql_analyzer_syntax::lower::lower_statements(&parsed);
         let ast::Statement::IfElse(stmt) = &statements.first().expect("one statement").node else {
             panic!("expected an IF");
         };

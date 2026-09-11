@@ -8,8 +8,8 @@
 //! still shows the pre-removal state.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analyzer::context::AnalysisContext;
 
@@ -18,7 +18,7 @@ pub(crate) fn analyze_remove(ctx: &mut AnalysisContext<'_>, stmt: &ast::RemoveSt
         ast::RemoveTarget::Table(table) => {
             if !ctx.schema().tables.contains_key(&table.node) {
                 ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         SourceSpan::new(ctx.source().clone(), table.span),
                         1021,
                         format!(
@@ -33,7 +33,7 @@ pub(crate) fn analyze_remove(ctx: &mut AnalysisContext<'_>, stmt: &ast::RemoveSt
         ast::RemoveTarget::Field { field, table } => {
             let field_text = crate::schema::idiom_field_path(&field.node).join(".");
             match ctx.schema().tables.get(&table.node) {
-                None => ctx.emit(surrealguard_diagnostics::catalog::finding(
+                None => ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                     SourceSpan::new(ctx.source().clone(), table.span),
                     1021,
                     format!(
@@ -44,7 +44,7 @@ pub(crate) fn analyze_remove(ctx: &mut AnalysisContext<'_>, stmt: &ast::RemoveSt
                 Some(table_def) if !table_def.fields.contains_key(&field_text) => {
                     let related = table_def.name_span.clone();
                     ctx.emit(
-                        surrealguard_diagnostics::catalog::finding(
+                        surrealql_analyzer_diagnostics::catalog::finding(
                             SourceSpan::new(ctx.source().clone(), field.span),
                             1021,
                             format!("`{}` has no field `{field_text}` to remove", table.node),
@@ -66,7 +66,7 @@ pub(crate) fn analyze_remove(ctx: &mut AnalysisContext<'_>, stmt: &ast::RemoveSt
             );
         }
         ast::RemoveTarget::Event { event, table } => match ctx.schema().tables.get(&table.node) {
-            None => ctx.emit(surrealguard_diagnostics::catalog::finding(
+            None => ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                 SourceSpan::new(ctx.source().clone(), table.span),
                 1021,
                 format!(
@@ -77,7 +77,7 @@ pub(crate) fn analyze_remove(ctx: &mut AnalysisContext<'_>, stmt: &ast::RemoveSt
             Some(table_def) if !table_def.events.contains_key(&event.node) => {
                 let related = table_def.name_span.clone();
                 ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         SourceSpan::new(ctx.source().clone(), event.span),
                         1021,
                         format!("`{}` has no event `{}` to remove", table.node, event.node),
@@ -117,7 +117,7 @@ fn emit_missing(
     noun: &str,
 ) {
     ctx.emit(
-        surrealguard_diagnostics::catalog::finding(
+        surrealql_analyzer_diagnostics::catalog::finding(
             SourceSpan::new(ctx.source().clone(), span),
             1021,
             format!("REMOVE {keyword} `{display}` targets a {noun} that doesn't exist"),

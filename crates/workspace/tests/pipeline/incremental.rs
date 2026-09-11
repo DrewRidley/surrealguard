@@ -3,8 +3,8 @@
 //! symbol-level affected-set computation must re-analyze exactly the sources
 //! whose facts changed.
 
-use surrealguard_syntax::parse::parse_source;
-use surrealguard_workspace::{
+use surrealql_analyzer_syntax::parse::parse_source;
+use surrealql_analyzer_workspace::{
     analyze_one_source, analyze_workspace, build_global_catalog, Workspace,
 };
 
@@ -19,7 +19,7 @@ use surrealguard_workspace::{
 /// Parses every registered source in a workspace, in registration order,
 /// so the parsed set feeds `build_global_catalog` with the same source ids
 /// the full pass uses.
-fn parsed_sources_of(workspace: &Workspace) -> Vec<surrealguard_syntax::parse::ParsedSource> {
+fn parsed_sources_of(workspace: &Workspace) -> Vec<surrealql_analyzer_syntax::parse::ParsedSource> {
     workspace
         .registry()
         .source_ids()
@@ -128,7 +128,7 @@ fn incremental_query_analysis_matches_full_with_no_schema() {
 /// Measurement hook (ignored by default): times a full whole-workspace
 /// pass against a single-source incremental re-analysis on a ~20-file
 /// corpus. Run with:
-///   cargo test -p surrealguard-workspace `incremental_reanalysis_speedup` -- --ignored --nocapture
+///   cargo test -p surrealql-analyzer-workspace `incremental_reanalysis_speedup` -- --ignored --nocapture
 #[test]
 #[ignore]
 fn incremental_reanalysis_speedup() {
@@ -263,13 +263,13 @@ mod symbol_incremental_tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
 
-    use surrealguard_syntax::parse::{parse_source, ParsedSource};
-    use surrealguard_syntax::source::SourceId;
-    use surrealguard_workspace::analysis::{
+    use surrealql_analyzer_syntax::parse::{parse_source, ParsedSource};
+    use surrealql_analyzer_syntax::source::SourceId;
+    use surrealql_analyzer_workspace::analysis::{
         build_workspace_schema, changed_symbols, reanalyze_sources, source_reference_set,
         source_requires_full_reanalysis, sources_with_changed_cycle_findings,
     };
-    use surrealguard_workspace::{
+    use surrealql_analyzer_workspace::{
         analyze_workspace, build_global_catalog, AnalysisOutput, Workspace, WorkspaceAnalysis,
     };
 
@@ -600,7 +600,7 @@ mod symbol_incremental_tests {
     /// times a full whole-workspace pass against the symbol-incremental schema
     /// path for a function-body edit, and reports how many sources re-analyze.
     /// Run with:
-    ///   cargo test -p surrealguard-workspace `symbol_incremental_schema_speedup` -- --ignored --nocapture
+    ///   cargo test -p surrealql-analyzer-workspace `symbol_incremental_schema_speedup` -- --ignored --nocapture
     #[test]
     #[ignore]
     fn symbol_incremental_schema_speedup() {

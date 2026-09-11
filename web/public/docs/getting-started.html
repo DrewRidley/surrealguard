@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark" />
 <style>html{background:#0a0b0e}</style>
-<title>Getting started — SurrealGuard Docs</title>
-<meta name="description" content="Install SurrealGuard, scaffold surrealguard.toml, point it at your .surql schema and query files, and run your first check." />
+<title>Getting started — SurrealQL Analyzer Docs</title>
+<meta name="description" content="Install SurrealQL Analyzer, scaffold surrealql-analyzer.toml, point it at your .surql schema and query files, and run your first check." />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
 <link rel="stylesheet" href="/styles.css" />
 <link rel="stylesheet" href="/docs/docs.css" />
@@ -15,13 +15,13 @@
 
 <nav>
   <div class="wrap">
-    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealQL Analyzer</a>
     <div class="nav-links">
       <a href="/docs/">Docs</a>
       <a href="/playground/">Playground</a>
       <a href="/#agents">For agents</a>
       <a href="/#install">Install</a>
-      <a class="nav-cta" href="https://github.com/DrewRidley/surrealguard">GitHub ↗</a>
+      <a class="nav-cta" href="https://github.com/surrealdb/analyzer">GitHub ↗</a>
     </div>
   </div>
 </nav>
@@ -40,7 +40,7 @@
     </nav>
     <div class="group">Integrations</div>
     <nav>
-      <a href="/docs/rust.html">Rust · surrealguard-rs</a>
+      <a href="/docs/rust.html">Rust · surrealql-analyzer-rs</a>
       <a href="/docs/typescript.html">TypeScript</a>
       <a href="/docs/agents.html">Coding agents</a>
     </nav>
@@ -49,28 +49,28 @@
   <main class="docs-main">
     <span class="eyebrow-doc">// documentation</span>
     <h1>Getting started</h1>
-    <p class="lead-p">Install the CLI, scaffold a config, and check your schema and queries in under a minute. SurrealGuard needs no running database — it analyzes your <code>.surql</code> files statically.</p>
+    <p class="lead-p">Install the CLI, scaffold a config, and check your schema and queries in under a minute. SurrealQL Analyzer needs no running database — it analyzes your <code>.surql</code> files statically.</p>
 
     <h2>Install</h2>
-    <p>Run the <code>surrealguard</code> CLI with <code>npx</code> — it's published on npm, so there's no toolchain to set up. It needs no running database either; it analyzes your <code>.surql</code> files statically.</p>
+    <p>Run the <code>surrealql-analyzer</code> CLI with <code>npx</code> — it's published on npm, so there's no toolchain to set up. It needs no running database either; it analyzes your <code>.surql</code> files statically.</p>
     <pre class="code"><span class="cmt"># zero install via npm</span>
-npx surrealguard check
+npx surrealql-analyzer check
 
 <span class="cmt"># or install from source (Rust)</span>
-cargo install --git https://github.com/DrewRidley/surrealguard surrealguard</pre>
+cargo install --git https://github.com/surrealdb/analyzer surrealql-analyzer</pre>
     <div class="callout">
-      <strong>Preview note.</strong> The CLI is published on npm — run it with <code>npx surrealguard</code>. A Rust install from source (<code>cargo install --git https://github.com/DrewRidley/surrealguard surrealguard</code>) works too; the crates.io publish is gated on the tree-sitter SurrealQL grammar being published upstream. The <code>@surrealguard/*</code> TypeScript packages are already on npm.
+      <strong>Preview note.</strong> The CLI is published on npm — run it with <code>npx surrealql-analyzer</code>. A Rust install from source (<code>cargo install --git https://github.com/surrealdb/analyzer surrealql-analyzer</code>) works too; the crates.io publish is gated on the tree-sitter SurrealQL grammar being published upstream. The <code>@surrealdb/analyzer-*</code> TypeScript packages are already on npm.
     </div>
 
     <h2>Scaffold a config</h2>
-    <p><code>surrealguard init</code> writes a starter <code>surrealguard.toml</code> in the current directory (it won't overwrite an existing one).</p>
-    <pre class="code"><span class="dollar">$</span> surrealguard init
-<span class="ok">created</span> surrealguard.toml
-next: point [sources] at your .surql files, then run `surrealguard check`</pre>
+    <p><code>surrealql-analyzer init</code> writes a starter <code>surrealql-analyzer.toml</code> in the current directory (it won't overwrite an existing one).</p>
+    <pre class="code"><span class="dollar">$</span> surrealql-analyzer init
+<span class="ok">created</span> surrealql-analyzer.toml
+next: point [sources] at your .surql files, then run `surrealql-analyzer check`</pre>
 
     <h2>Configure your sources</h2>
     <p>The config classifies which <code>.surql</code> files are schema, which are queries, and which directories to skip. Point <code>[sources]</code> at your schema and query directories with glob patterns:</p>
-    <pre class="code"><span class="c"># surrealguard.toml</span>
+    <pre class="code"><span class="c"># surrealql-analyzer.toml</span>
 [sources]
 schema  = [<span class="s">"schema/**/*.surql"</span>, <span class="s">"migrations/**/*.surql"</span>]
 queries = [<span class="s">"queries/**/*.surql"</span>]
@@ -89,7 +89,7 @@ dynamic_query = <span class="s">"warn"</span>
 permission_gated_field = <span class="s">"warn"</span>
 <span class="s">"7xxx"</span> = <span class="s">"warn"</span>            <span class="c"># whole-family wildcard ("7*" also works)</span>
 E1002 = <span class="s">"allow"</span>          <span class="c"># specific code — overrides a family that also covers it</span></pre>
-    <p>Every key is optional; unset keys fall back to defaults. With no config at all, SurrealGuard analyzes <strong>every</strong> <code>.surql</code>/<code>.surrealql</code> file under the project root, skipping <code>target/</code>, <code>node_modules/</code>, and <code>.git/</code>.</p>
+    <p>Every key is optional; unset keys fall back to defaults. With no config at all, SurrealQL Analyzer analyzes <strong>every</strong> <code>.surql</code>/<code>.surrealql</code> file under the project root, skipping <code>target/</code>, <code>node_modules/</code>, and <code>.git/</code>.</p>
 
     <div class="tbl-wrap">
     <table>
@@ -105,7 +105,7 @@ E1002 = <span class="s">"allow"</span>          <span class="c"># specific code 
       </tbody>
     </table>
     </div>
-    <p>SurrealGuard finds the workspace by walking up from the current directory to the nearest <code>surrealguard.toml</code>. Sources are analyzed in sorted path order, so schema definitions are visible to the queries that follow them.</p>
+    <p>SurrealQL Analyzer finds the workspace by walking up from the current directory to the nearest <code>surrealql-analyzer.toml</code>. Sources are analyzed in sorted path order, so schema definitions are visible to the queries that follow them.</p>
 
     <h2>Write some SurrealQL</h2>
     <pre class="code"><span class="c">-- schema/user.surql</span>
@@ -118,25 +118,25 @@ E1002 = <span class="s">"allow"</span>          <span class="c"># specific code 
 <span class="err">--                                  ^^^^ E1002 unknown field `team` on table `user`</span></pre>
 
     <h2>Check</h2>
-    <p>Run <code>surrealguard check</code> from anywhere inside the project. It prints rustc-style diagnostic blocks and a summary; the exit code is non-zero when any error-severity finding survives policy.</p>
-    <pre class="code"><span class="dollar">$</span> surrealguard check
+    <p>Run <code>surrealql-analyzer check</code> from anywhere inside the project. It prints rustc-style diagnostic blocks and a summary; the exit code is non-zero when any error-severity finding survives policy.</p>
+    <pre class="code"><span class="dollar">$</span> surrealql-analyzer check
 checked 2 sources in 5ms
 <span class="ok">no issues found</span></pre>
     <p>On a terminal the severity, code, paths and carets are coloured; piped to a file or a CI log it is the same text with no escape sequences. <code>--no-color</code> and <code>NO_COLOR</code> turn colour off explicitly, and <code>--json</code> is never decorated. See the <a class="link" href="/docs/cli.html#color">CLI reference</a>.</p>
 
     <h3>Keep it running</h3>
-    <p><code>surrealguard watch</code> re-runs the check on every save and regenerates the TypeScript registry when the check passes — run it beside your dev server so the types cannot go stale behind you.</p>
-    <pre class="code"><span class="dollar">$</span> surrealguard watch --out src/surrealguard.generated.ts
-surrealguard watch /home/you/app
+    <p><code>surrealql-analyzer watch</code> re-runs the check on every save and regenerates the TypeScript registry when the check passes — run it beside your dev server so the types cannot go stale behind you.</p>
+    <pre class="code"><span class="dollar">$</span> surrealql-analyzer watch --out src/surrealql-analyzer.generated.ts
+surrealql-analyzer watch /home/you/app
 run 2 · schema/user.surql changed · 6ms
 
-<span class="ok">PASS</span> 2 sources · no diagnostics · wrote src/surrealguard.generated.ts (3 queries)
+<span class="ok">PASS</span> 2 sources · no diagnostics · wrote src/surrealql-analyzer.generated.ts (3 queries)
 
-watching .surql, host files and surrealguard.toml — Ctrl-C to stop</pre>
+watching .surql, host files and surrealql-analyzer.toml — Ctrl-C to stop</pre>
 
     <h3>Machine-readable output</h3>
     <p>Add <code>--json</code> for structured findings — code, severity, source, byte range, message, help, and related spans. This is the shape agents and CI consume.</p>
-    <pre class="code"><span class="dollar">$</span> surrealguard check --json
+    <pre class="code"><span class="dollar">$</span> surrealql-analyzer check --json
 {
   <span class="t">"summary"</span>: { <span class="t">"sources_checked"</span>: <span class="n">2</span>, <span class="t">"diagnostics"</span>: <span class="n">1</span>, <span class="t">"errors"</span>: <span class="n">1</span> },
   <span class="t">"diagnostics"</span>: [
@@ -169,16 +169,16 @@ watching .surql, host files and surrealguard.toml — Ctrl-C to stop</pre>
 <footer>
   <div class="wrap">
     <div>
-      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealQL Analyzer</a>
       <div class="tiny">Static analysis &amp; type inference for SurrealQL.</div>
     </div>
     <div class="cols">
       <a href="/docs/">Docs</a>
       <a href="/llms.txt">llms.txt</a>
       <a href="/llms-full.txt">llms-full.txt</a>
-      <a href="https://github.com/DrewRidley/surrealguard">GitHub</a>
-      <a href="https://crates.io/crates/surrealguard">crates.io</a>
-      <a href="https://www.npmjs.com/org/surrealguard">npm</a>
+      <a href="https://github.com/surrealdb/analyzer">GitHub</a>
+      <a href="https://crates.io/crates/surrealql-analyzer">crates.io</a>
+      <a href="https://www.npmjs.com/org/surrealdb">npm</a>
     </div>
     <div class="tiny">MIT OR Apache-2.0</div>
   </div>

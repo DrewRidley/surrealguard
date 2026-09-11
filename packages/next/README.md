@@ -1,6 +1,6 @@
-# @surrealguard/next
+# @surrealdb/analyzer-next
 
-Next.js / React bindings for SurrealGuard.
+Next.js / React bindings for SurrealQL Analyzer.
 
 **You may not need this package.** The default App Router pattern — await the
 query in a Server Component, ship zero client JS — is the typed client on its
@@ -28,13 +28,13 @@ the query twice. Reach for it when you want that.
 Three steps, and skipping any of them yields `any` with no error on your own
 code — see [When everything is `any`](#when-everything-is-any).
 
-**1. Install.** All three, including `@surrealguard/client`: the generated file
+**1. Install.** All three, including `@surrealdb/analyzer-client`: the generated file
 augments that module *by name*, and if the name does not resolve the whole
 registry is silently dropped.
 
 ```sh
-npm install @surrealguard/next @surrealguard/client surrealdb
-npm install -D surrealguard
+npm install @surrealdb/analyzer-next @surrealdb/analyzer-client surrealdb
+npm install -D surrealql-analyzer
 ```
 
 **2. Generate where your `@/` alias points.** Bare `generate` writes to the
@@ -42,14 +42,14 @@ workspace root; check `paths` in `tsconfig.json` and match it. A
 `create-next-app` project with a `src` directory maps `@/*` to `./src/*`:
 
 ```sh
-npx surrealguard generate --out src/surrealguard.generated.ts   # with src/
-npx surrealguard generate --out surrealguard.generated.ts       # without src/
+npx surrealql-analyzer generate --out src/surrealql-analyzer.generated.ts   # with src/
+npx surrealql-analyzer generate --out surrealql-analyzer.generated.ts       # without src/
 ```
 
 Put it in `package.json` so the path is written once:
 
 ```json
-{ "scripts": { "generate": "surrealguard generate --out src/surrealguard.generated.ts" } }
+{ "scripts": { "generate": "surrealql-analyzer generate --out src/surrealql-analyzer.generated.ts" } }
 ```
 
 Commit the generated module — it is what makes a fresh checkout type-check
@@ -61,7 +61,7 @@ ceremony in the setup.
 ```ts
 // lib/db.server.ts
 import { cache } from "react";
-import { createClient } from "@/surrealguard.generated";
+import { createClient } from "@/surrealql-analyzer.generated";
 
 export const getDb = cache(() =>
   createClient({
@@ -80,23 +80,23 @@ mutate global state for everyone. React's `cache()` scopes it to a request.
 ```tsx
 // app/providers.tsx — only if you use the hooks below
 "use client";
-import { SurrealGuardProvider } from "@surrealguard/next";
-import { createClient } from "@/surrealguard.generated";
+import { SurrealQLAnalyzerProvider } from "@surrealdb/analyzer-next";
+import { createClient } from "@/surrealql-analyzer.generated";
 
 const db = createClient({ url: process.env.NEXT_PUBLIC_SURREAL_URL! });
 
 export function Providers({ children }: { children: React.ReactNode }) {
-  return <SurrealGuardProvider client={db}>{children}</SurrealGuardProvider>;
+  return <SurrealQLAnalyzerProvider client={db}>{children}</SurrealQLAnalyzerProvider>;
 }
 ```
 
 A module-level client is correct here: the browser is one user, one session.
-`SurrealGuardProvider` is how `useLive` / `useQuery` / `useMutation` find a
+`SurrealQLAnalyzerProvider` is how `useLive` / `useQuery` / `useMutation` find a
 client; each also takes `{ client }` directly if you would rather not use
 context.
 
 Import `createClient` **from the generated file** in both. That import is what
-loads the registry augmentation; importing from `@surrealguard/client` compiles
+loads the registry augmentation; importing from `@surrealdb/analyzer-client` compiles
 fine and gives you `unknown[]` forever.
 
 ## Reading data on the server
@@ -130,7 +130,7 @@ component that subscribes to it, so the two cannot drift apart.
 
 ```ts
 // lib/queries.ts
-import { defineQuery, defineLive } from "@/surrealguard.generated";
+import { defineQuery, defineLive } from "@/surrealql-analyzer.generated";
 
 export const allPeople  = defineQuery("SELECT id, name, joined FROM person");
 export const addPerson  = defineQuery("CREATE person SET name = $name, joined = $joined");
@@ -144,7 +144,7 @@ This is the case that genuinely needs the package.
 
 ```tsx
 // app/people/page.tsx  (Server Component)
-import { preload } from "@surrealguard/next/server";
+import { preload } from "@surrealdb/analyzer-next/server";
 import { getDb } from "@/lib/db.server";
 import { livePeople } from "@/lib/queries";
 import { PeopleList } from "./people-list";
@@ -158,9 +158,9 @@ export default async function Page() {
 ```tsx
 // app/people/people-list.tsx
 "use client";
-import { useLive, useMutation, type Preloaded, type Json } from "@surrealguard/next";
+import { useLive, useMutation, type Preloaded, type Json } from "@surrealdb/analyzer-next";
 import { addPerson, allPeople, livePeople } from "@/lib/queries";
-import type { RecordId } from "@/surrealguard.generated";
+import type { RecordId } from "@/surrealql-analyzer.generated";
 
 type Person = Json<{ id: RecordId<"person">; name: string; joined: Date }>;
 
@@ -200,7 +200,7 @@ it. Backed by `useSyncExternalStore`.
 
 **No thunk.** A query reference carries a stable `key`, so the hook's memo
 dependency is `[client, source.key]` and React's "did my deps change" problem
-does not arise. (`@surrealguard/svelte` does need a thunk — the frameworks
+does not arise. (`@surrealdb/analyzer-svelte` does need a thunk — the frameworks
 differ, so the APIs do.)
 
 ### `useQuery` — a one-shot query
@@ -257,14 +257,14 @@ export function Report({ rows }: { rows: Promise<Row[]> }) {
 
 Four ways to get `any` with no error on your own code:
 
-1. **`@surrealguard/client` is not installed.** The generated file says
-   `declare module "@surrealguard/client"`. If the specifier does not resolve,
+1. **`@surrealdb/analyzer-client` is not installed.** The generated file says
+   `declare module "@surrealdb/analyzer-client"`. If the specifier does not resolve,
    TypeScript reports `TS2664` **inside the generated file** — which you would
    never open — and drops the entire registry.
 2. **The generated file is somewhere else.** Bare `generate` writes to the
    workspace root, which may not be where `@/` points. If your import and the
    file disagree, you end up with two generated files and they will drift.
-3. **You imported `createClient` / `defineQuery` from `@surrealguard/client`**
+3. **You imported `createClient` / `defineQuery` from `@surrealdb/analyzer-client`**
    rather than from the generated file. The augmentation loads with the import.
 4. **The file is `.jsx`, or `checkJs` is off.** TypeScript does not check it.
 
@@ -281,14 +281,14 @@ preference — it is what an RSC boundary accepts at all.
 
 | Export | Entry | |
 | --- | --- | --- |
-| `SurrealGuardProvider` / `useClient` | `.` | context, for the hooks below |
+| `SurrealQLAnalyzerProvider` / `useClient` | `.` | context, for the hooks below |
 | `useLive(source, options?)` | `.` | live query; `data` is always an array |
 | `useQuery(source, options?)` | `.` | one-shot; `data` is `T \| undefined` |
 | `useMutation(query, options?)` | `.` | write + invalidation |
 | `preload(db, query)` | `./server` | seed a client component |
 | `dehydrate` / `hydrate` | `./server` | whole-cache transport |
 
-`@surrealguard/next/server` carries no `"use client"` directive, so it is safe
+`@surrealdb/analyzer-next/server` carries no `"use client"` directive, so it is safe
 in an RSC.
 
 ## Licence

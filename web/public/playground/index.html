@@ -9,9 +9,9 @@
      dark surfaces arrive. -->
 <meta name="color-scheme" content="dark" />
 <style>html{background:#0a0b0e}</style>
-<title>Playground — SurrealGuard</title>
-<meta name="description" content="Run the SurrealGuard analyzer in your browser. Edit a schema and a query for live inline diagnostics and the inferred response type of every statement — no install, no database. Share what you see as a link." />
-<meta property="og:title" content="SurrealGuard Playground" />
+<title>Playground — SurrealQL Analyzer</title>
+<meta name="description" content="Run the SurrealQL Analyzer engine in your browser. Edit a schema and a query for live inline diagnostics and the inferred response type of every statement — no install, no database. Share what you see as a link." />
+<meta property="og:title" content="SurrealQL Analyzer Playground" />
 <meta property="og:description" content="The SurrealQL analyzer compiled to WebAssembly. Inline diagnostics and inferred response types, entirely in your browser." />
 <meta property="og:type" content="website" />
 <meta name="theme-color" content="#0a0b0e" />
@@ -26,18 +26,18 @@
 <link rel="stylesheet" href="/styles.css" />
 <link rel="stylesheet" href="/playground/types-panel.css" />
 <link rel="stylesheet" href="/playground/playground.css" />
-<link rel="preload" href="/playground/surrealguard_wasm.wasm" as="fetch" type="application/wasm" crossorigin />
+<link rel="preload" href="/playground/surrealql_analyzer_wasm.wasm" as="fetch" type="application/wasm" crossorigin />
 </head>
 <body class="pg-shell">
 
 <nav>
   <div class="wrap">
-    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealQL Analyzer</a>
     <div class="nav-links">
       <a href="/docs/">Docs</a>
       <a href="/playground/" aria-current="page">Playground</a>
       <a href="/#install">Install</a>
-      <a class="nav-cta" href="https://github.com/DrewRidley/surrealguard">GitHub ↗</a>
+      <a class="nav-cta" href="https://github.com/surrealdb/analyzer">GitHub ↗</a>
     </div>
   </div>
 </nav>
@@ -413,7 +413,7 @@ DEFINE FIELD email ON user TYPE option&lt;string&gt;;</textarea>
     // rather than the wrong code with some.
     await restore();
     try {
-      const bytes = await fetch("./surrealguard_wasm.wasm").then((r) => r.arrayBuffer());
+      const bytes = await fetch("./surrealql_analyzer_wasm.wasm").then((r) => r.arrayBuffer());
       analyzer = await createAnalyzer(bytes);
       status.textContent = "wasm ready";
       status.className = "pg-engine ready";

@@ -3,9 +3,9 @@
 //! and back-reference (`<~table`) resolution.
 
 use surrealdb_types::{Kind, KindLiteral};
-use surrealguard_diagnostics::FindingCode;
-use surrealguard_workspace::schema::FieldPath;
-use surrealguard_workspace::{analyze_workspace, render_kind, PartialReason, Workspace};
+use surrealql_analyzer_diagnostics::FindingCode;
+use surrealql_analyzer_workspace::schema::FieldPath;
+use surrealql_analyzer_workspace::{analyze_workspace, render_kind, PartialReason, Workspace};
 
 use crate::support::{assert_no_syntax_findings, codes};
 

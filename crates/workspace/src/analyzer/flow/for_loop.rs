@@ -7,7 +7,7 @@
 //! enclosing function/closure and bubbles up through its [`Flow`].
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::contract::{Contract, Position};
@@ -58,11 +58,11 @@ pub(crate) fn analyze_for_loop_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::F
             ]),
         );
         if contract.decide(kind).is_violation() {
-            let span = surrealguard_syntax::span::SourceSpan::new(
+            let span = surrealql_analyzer_syntax::span::SourceSpan::new(
                 ctx.source().clone(),
                 stmt.iterable.span,
             );
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
+            ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                 span,
                 contract.code(),
                 format!(
@@ -78,12 +78,12 @@ pub(crate) fn analyze_for_loop_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::F
         // flow decided by a constant).
         if let Some(surrealdb_types::Value::Array(values)) = &iterable.value {
             if values.is_empty() {
-                let span = surrealguard_syntax::span::SourceSpan::new(
+                let span = surrealql_analyzer_syntax::span::SourceSpan::new(
                     ctx.source().clone(),
                     stmt.iterable.span,
                 );
                 ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         span,
                         7004,
                         "this loop never runs: the collection is a constant empty array"
@@ -102,8 +102,10 @@ pub(crate) fn analyze_for_loop_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::F
         // Record the loop variable (element kind of the iterated collection)
         // for editor features, so `$parent` in `FOR $parent IN ...` hovers
         // and gets an inlay hint the same as a LET.
-        let name_span =
-            surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.binding.span);
+        let name_span = surrealql_analyzer_syntax::span::SourceSpan::new(
+            ctx.source().clone(),
+            stmt.binding.span,
+        );
         ctx.record_let_binding(crate::analysis::LetBindingAnalysis {
             name: stmt.binding.node.clone(),
             name_span,
@@ -125,9 +127,9 @@ pub(crate) fn analyze_for_loop_flow(ctx: &mut AnalysisContext<'_>, stmt: &ast::F
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_diagnostics::Finding;
-    use surrealguard_syntax::parse::parse_source;
-    use surrealguard_syntax::source::SourceId;
+    use surrealql_analyzer_diagnostics::Finding;
+    use surrealql_analyzer_syntax::parse::parse_source;
+    use surrealql_analyzer_syntax::source::SourceId;
 
     use crate::schema::SchemaIndex;
 
@@ -139,7 +141,7 @@ mod tests {
         )
         .expect("query parses");
         let ast::Statement::For(stmt) =
-            surrealguard_syntax::lower::lower_first_statement(&parsed, "ForStatement")
+            surrealql_analyzer_syntax::lower::lower_first_statement(&parsed, "ForStatement")
                 .expect("no ForStatement node in tree")
                 .node
         else {

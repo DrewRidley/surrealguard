@@ -1,5 +1,5 @@
 {
-  "name": "@surrealguard/client",
+  "name": "@surrealdb/analyzer-client",
   "version": "0.5.3",
   "description": "Typed SurrealQL client \u2014 literal queries resolve their result and params from generated types.",
   "type": "module",
@@ -7,7 +7,7 @@
   "author": "Drew Ridley",
   "repository": {
     "type": "git",
-    "url": "https://github.com/DrewRidley/surrealguard",
+    "url": "https://github.com/surrealdb/analyzer",
     "directory": "packages/client"
   },
   "keywords": [

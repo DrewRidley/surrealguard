@@ -10,7 +10,7 @@
 //! block nor draw a fresh value each time (7012).
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::contract::{Contract, Position};
@@ -65,12 +65,15 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
         let contract = Contract::new(position, declared.clone());
         let term = crate::analyzer::facts::eval(&expr.node, Bindings::NONE);
         if let Some(kind) = contract.violation(&term, &fact) {
-            let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
+            let span =
+                surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), expr.span);
             let field_name = idiom_text(&stmt.path.node);
-            let def_span =
-                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.path.span);
+            let def_span = surrealql_analyzer_syntax::span::SourceSpan::new(
+                ctx.source().clone(),
+                stmt.path.span,
+            );
             ctx.emit(
-                surrealguard_diagnostics::catalog::finding(
+                surrealql_analyzer_diagnostics::catalog::finding(
                     span,
                     contract.code(),
                     format!(
@@ -101,9 +104,11 @@ pub(crate) fn analyze_define_field(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
                 .decide(&kind)
                 .is_violation()
             {
-                let span =
-                    surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), assert.span);
-                ctx.emit(surrealguard_diagnostics::catalog::finding(
+                let span = surrealql_analyzer_syntax::span::SourceSpan::new(
+                    ctx.source().clone(),
+                    assert.span,
+                );
+                ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                     span,
                     2005,
                     format!(
@@ -184,8 +189,8 @@ fn check_record_targets(
     let span = stmt.ty.as_ref().map_or(stmt.path.span, |ty| ty.span);
     for table in tables {
         if !ctx.table_defined_anywhere(&table) {
-            let mut finding = surrealguard_diagnostics::catalog::finding(
-                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span),
+            let mut finding = surrealql_analyzer_diagnostics::catalog::finding(
+                surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), span),
                 1001,
                 format!("`record<{table}>` targets a table that's never defined"),
             )
@@ -267,8 +272,8 @@ fn check_id_field_clauses(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineField
     .flatten()
     {
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
-                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.path.span),
+            surrealql_analyzer_diagnostics::catalog::finding(
+                surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.path.span),
                 1033,
                 format!("`id` rejects a `{keyword}` clause"),
             )
@@ -293,10 +298,10 @@ fn check_field_definition(
     }) {
         let span = stmt.ty.as_ref().map_or(stmt.path.span, |ty| ty.span);
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
-                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), span),
+            surrealql_analyzer_diagnostics::catalog::finding(
+                surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), span),
                 6003,
-                format!("surrealguard can't analyze the type of `{field_key}` yet"),
+                format!("surrealql-analyzer can't analyze the type of `{field_key}` yet"),
             )
             .with_help(format!("unsupported type syntax: {reason}")),
         );
@@ -304,8 +309,11 @@ fn check_field_definition(
 
     match ctx.schema().table(&stmt.table.node) {
         None => {
-            let finding = surrealguard_diagnostics::catalog::finding(
-                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.table.span),
+            let finding = surrealql_analyzer_diagnostics::catalog::finding(
+                surrealql_analyzer_syntax::span::SourceSpan::new(
+                    ctx.source().clone(),
+                    stmt.table.span,
+                ),
                 1001,
                 format!(
                     "`{field_key}` is defined on `{}`, which is not a defined table",
@@ -321,8 +329,11 @@ fn check_field_definition(
                 && !stmt.if_not_exists
                 && field_is_duplicate(table, &stmt.path.node, &field_key) =>
         {
-            let mut finding = surrealguard_diagnostics::catalog::finding(
-                surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.path.span),
+            let mut finding = surrealql_analyzer_diagnostics::catalog::finding(
+                surrealql_analyzer_syntax::span::SourceSpan::new(
+                    ctx.source().clone(),
+                    stmt.path.span,
+                ),
                 1022,
                 format!("`{field_key}` is already defined on `{}`", stmt.table.node),
             )
@@ -368,8 +379,8 @@ fn check_subfield_parent(ctx: &mut AnalysisContext<'_>, stmt: &ast::DefineField,
     };
     let related = table.fields.get(&ancestor).map(|def| def.name_span.clone());
     let rendered = crate::render_kind(&ancestor_kind);
-    let mut finding = surrealguard_diagnostics::catalog::finding(
-        surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.path.span),
+    let mut finding = surrealql_analyzer_diagnostics::catalog::finding(
+        surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), stmt.path.span),
         1025,
         format!("`{field_key}` declares a subfield of `{ancestor}`, which is `{rendered}`"),
     )
@@ -438,9 +449,9 @@ fn with_value_bound<T>(
         // (option<record> vs record<T>) — a false 2001. Reverting the session
         // params to unmodeled restores the pre-seed behavior for these clauses.
         ctx.unbind_session_params();
-        let span = surrealguard_syntax::span::SourceSpan::new(
+        let span = surrealql_analyzer_syntax::span::SourceSpan::new(
             ctx.source().clone(),
-            surrealguard_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered"),
+            surrealql_analyzer_syntax::span::ByteRange::new(0, 0).expect("empty range is ordered"),
         );
         let mut fact = ExpressionFact::new(span.clone(), ExpressionValueClass::Variable);
         fact.kind = declared;
@@ -551,12 +562,12 @@ fn check_computed_calls(
         ast::Expr::Call(call) => {
             let path = call.path.node.as_str();
             if let Some(objection) = clause.objection(path) {
-                let span = surrealguard_syntax::span::SourceSpan::new(
+                let span = surrealql_analyzer_syntax::span::SourceSpan::new(
                     ctx.source().clone(),
                     call.path.span,
                 );
                 let finding = match objection {
-                    CallObjection::Blocking => surrealguard_diagnostics::catalog::finding(
+                    CallObjection::Blocking => surrealql_analyzer_diagnostics::catalog::finding(
                         span,
                         7012,
                         format!("`{path}` runs {}", clause.runs()),
@@ -565,7 +576,7 @@ fn check_computed_calls(
                         "this clause is computed {}; avoid blocking or side-effecting calls here",
                         clause.runs()
                     )),
-                    CallObjection::Nondeterministic => surrealguard_diagnostics::catalog::finding(
+                    CallObjection::Nondeterministic => surrealql_analyzer_diagnostics::catalog::finding(
                         span,
                         7012,
                         format!(
@@ -652,8 +663,9 @@ fn check_default_satisfies_assert(ctx: &mut AnalysisContext<'_>, stmt: &ast::Def
         return;
     };
     if crate::analyzer::facts::constant_violates_assert(&assert.node, &value) {
-        let span = surrealguard_syntax::span::SourceSpan::new(ctx.source().clone(), default.span);
-        ctx.emit(surrealguard_diagnostics::catalog::finding(
+        let span =
+            surrealql_analyzer_syntax::span::SourceSpan::new(ctx.source().clone(), default.span);
+        ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
             span,
             2037,
             format!(

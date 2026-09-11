@@ -22,11 +22,11 @@
 
 use std::collections::HashMap;
 
-use surrealguard_syntax::ast;
-use surrealguard_syntax::source::SourceId;
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
-use surrealguard_diagnostics::Finding;
+use surrealql_analyzer_diagnostics::Finding;
 
 pub(crate) fn check_unused_lets(
     statements: &[ast::Spanned<ast::Statement>],
@@ -77,7 +77,7 @@ fn check_sequence<'t>(
             if !used {
                 let span = SourceSpan::new(source.clone(), let_stmt.name.span);
                 diagnostics.push(
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         span,
                         7001,
                         format!("`${name}` is never used"),

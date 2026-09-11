@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Reproducible build of the SurrealGuard analyzer for the browser playground.
+# Reproducible build of the SurrealQL Analyzer engine for the browser playground.
 #
-# Produces target/wasm32-wasip1/release/surrealguard_wasm.wasm and copies it
+# Produces target/wasm32-wasip1/release/surrealql_analyzer_wasm.wasm and copies it
 # into web/public/playground/.
 #
 # Toolchain (macOS / Homebrew):
@@ -35,15 +35,15 @@ export CC_wasm32_wasip1="$CLANG"
 export CFLAGS_wasm32_wasip1="--target=wasm32-wasip1 --sysroot=$WASI_SYSROOT"
 export AR_wasm32_wasip1="$LLVM_AR"
 
-echo "Building surrealguard-wasm for wasm32-wasip1 (release)…"
-cargo build -p surrealguard-wasm --target wasm32-wasip1 --release
+echo "Building surrealql-analyzer-wasm for wasm32-wasip1 (release)…"
+cargo build -p surrealql-analyzer-wasm --target wasm32-wasip1 --release
 
 # Honour CARGO_TARGET_DIR so the build can be pointed at scratch space
 # (`CARGO_TARGET_DIR=/tmp/web-target crates/wasm/build-wasm.sh`) without the
 # copy below silently looking in the wrong place.
 TARGET_DIR="${CARGO_TARGET_DIR:-target}"
-ARTIFACT="$TARGET_DIR/wasm32-wasip1/release/surrealguard_wasm.wasm"
-DEST="web/public/playground/surrealguard_wasm.wasm"
+ARTIFACT="$TARGET_DIR/wasm32-wasip1/release/surrealql_analyzer_wasm.wasm"
+DEST="web/public/playground/surrealql_analyzer_wasm.wasm"
 cp "$ARTIFACT" "$DEST"
 echo "Wrote $DEST ($(du -h "$DEST" | cut -f1))"
 echo "Proof harness: node web/public/playground/harness.mjs"

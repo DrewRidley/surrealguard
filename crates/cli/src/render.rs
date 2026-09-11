@@ -7,8 +7,8 @@
 
 use std::collections::BTreeMap;
 
-use surrealguard_diagnostics::{render_code, Finding, Severity};
-use surrealguard_syntax::span::SourceSpan;
+use surrealql_analyzer_diagnostics::{render_code, Finding, Severity};
+use surrealql_analyzer_syntax::span::SourceSpan;
 
 use crate::style::Styles;
 
@@ -160,9 +160,9 @@ fn severity_label(severity: Severity) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_diagnostics::catalog;
-    use surrealguard_syntax::source::SourceId;
-    use surrealguard_syntax::span::{ByteRange, SourceSpan};
+    use surrealql_analyzer_diagnostics::catalog;
+    use surrealql_analyzer_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
     fn texts(name: &str, text: &str) -> BTreeMap<String, String> {
         BTreeMap::from([(name.to_string(), text.to_string())])

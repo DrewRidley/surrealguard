@@ -7,7 +7,7 @@
 //! these fires on a shape that is one token away from a correct query.
 
 use surrealdb_types::{Kind, KindLiteral};
-use surrealguard_workspace::{analyze_workspace, Workspace};
+use surrealql_analyzer_workspace::{analyze_workspace, Workspace};
 
 const SCHEMA: &str = "\
 DEFINE TABLE person SCHEMAFULL;

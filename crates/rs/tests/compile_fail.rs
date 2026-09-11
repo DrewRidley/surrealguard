@@ -17,7 +17,7 @@ fn rejections_are_compile_errors() {
     // repoints at its own generated crate — so name the schema explicitly.
     let schema = concat!(env!("CARGO_MANIFEST_DIR"), "/schema.surql");
     // SAFETY: single-threaded test setup, before any thread is spawned.
-    unsafe { std::env::set_var("SURREALGUARD_SCHEMA", schema) };
+    unsafe { std::env::set_var("SURREALQL_ANALYZER_SCHEMA", schema) };
 
     let cases = trybuild::TestCases::new();
     cases.compile_fail("tests/ui/*.rs");

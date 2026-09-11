@@ -42,7 +42,7 @@
 //! Regenerate with:
 //!
 //! ```text
-//! UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test negative_corpus
+//! UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test negative_corpus
 //! ```
 
 mod support;
@@ -50,17 +50,17 @@ mod support;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use surrealguard_diagnostics::{Finding, PolicyConfig};
-use surrealguard_workspace::{analyze_workspace, Workspace};
+use surrealql_analyzer_diagnostics::{Finding, PolicyConfig};
+use surrealql_analyzer_workspace::{analyze_workspace, Workspace};
 
 use support::{diff_lines, snapshot_path, updating};
 
 const GOLDEN: &str = "invalid.snap";
 
 const HEADER: &str = "\
-# SurrealGuard negative corpus — every finding the INVALID corpus produces.
+# SurrealQL Analyzer negative corpus — every finding the INVALID corpus produces.
 #
-# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test negative_corpus
+# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test negative_corpus
 #
 # Every file under tests/corpus/invalid/ is wrong on purpose. This file records
 # `file:line  CODE` for each finding — never the message, which is rendering's
@@ -91,7 +91,7 @@ fn the_invalid_corpus_still_reports_everything_it_used_to() {
     let expected = std::fs::read_to_string(&path).unwrap_or_else(|_| {
         panic!(
             "missing golden {}\n\
-             create it with: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test negative_corpus",
+             create it with: UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test negative_corpus",
             path.display()
         )
     });
@@ -100,7 +100,7 @@ fn the_invalid_corpus_still_reports_everything_it_used_to() {
         actual,
         "the invalid corpus reports something different.\n\n{}\n\n\
          A REMOVED line is a check that stopped firing — the reason this file exists.\n\
-         Accept with: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test negative_corpus",
+         Accept with: UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test negative_corpus",
         diff_lines(&expected, &actual)
     );
 }
@@ -138,7 +138,7 @@ fn invalid_root() -> PathBuf {
 /// restating the schema.
 fn analyzed() -> (
     Workspace,
-    Vec<(surrealguard_syntax::source::SourceId, String)>,
+    Vec<(surrealql_analyzer_syntax::source::SourceId, String)>,
 ) {
     let mut workspace = Workspace::default();
     let mut sources = Vec::new();

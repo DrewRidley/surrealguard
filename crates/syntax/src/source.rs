@@ -4,7 +4,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// Stable identity for a source analyzed by SurrealGuard.
+/// Stable identity for a source analyzed by SurrealQL Analyzer.
 ///
 /// This may be a real file URI, an embedded-query virtual URI, or any adapter-owned
 /// identifier. Spans should never travel without a source id.

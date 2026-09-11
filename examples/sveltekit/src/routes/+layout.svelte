@@ -7,7 +7,7 @@
 -->
 <script lang="ts">
   import "../app.css";
-  import { setClient } from "@surrealguard/svelte";
+  import { setClient } from "@surrealdb/analyzer-svelte";
   import { db, HEALTH_URL } from "$lib/db";
 
   setClient(db);

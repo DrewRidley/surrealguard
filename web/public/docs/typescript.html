@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark" />
 <style>html{background:#0a0b0e}</style>
-<title>TypeScript — SurrealGuard Docs</title>
+<title>TypeScript — SurrealQL Analyzer Docs</title>
 <meta name="description" content="Typed SurrealQL in TypeScript: db.query(&quot;SELECT …&quot;) resolves its rows and params from your schema, with setup, the --out path per framework, the four ways to end up with any, and the Svelte / Next / reactive-core adapters." />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z'/><path d='M9 12l2 2 4-4'/></svg>" />
 <link rel="stylesheet" href="/styles.css" />
@@ -15,13 +15,13 @@
 
 <nav>
   <div class="wrap">
-    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealQL Analyzer</a>
     <div class="nav-links">
       <a href="/docs/">Docs</a>
       <a href="/playground/">Playground</a>
       <a href="/#agents">For agents</a>
       <a href="/#install">Install</a>
-      <a class="nav-cta" href="https://github.com/DrewRidley/surrealguard">GitHub ↗</a>
+      <a class="nav-cta" href="https://github.com/surrealdb/analyzer">GitHub ↗</a>
     </div>
   </div>
 </nav>
@@ -40,7 +40,7 @@
     </nav>
     <div class="group">Integrations</div>
     <nav>
-      <a href="/docs/rust.html">Rust · surrealguard-rs</a>
+      <a href="/docs/rust.html">Rust · surrealql-analyzer-rs</a>
       <a href="/docs/typescript.html" aria-current="page">TypeScript</a>
       <a href="/docs/agents.html">Coding agents</a>
     </nav>
@@ -49,12 +49,12 @@
   <main class="docs-main">
     <span class="eyebrow-doc">// integration</span>
     <h1>TypeScript</h1>
-    <p class="lead-p">Write the SurrealQL you already know. <code>surrealguard generate</code> analyses it against your schema and types the result — no query builder, no cast, and nothing to wrap the string in.</p>
+    <p class="lead-p">Write the SurrealQL you already know. <code>surrealql-analyzer generate</code> analyses it against your schema and types the result — no query builder, no cast, and nothing to wrap the string in.</p>
     <div class="pill-row">
-      <span class="p">@surrealguard/client</span>
-      <span class="p">@surrealguard/query</span>
-      <span class="p">@surrealguard/next</span>
-      <span class="p">@surrealguard/svelte</span>
+      <span class="p">@surrealdb/analyzer-client</span>
+      <span class="p">@surrealdb/analyzer-query</span>
+      <span class="p">@surrealdb/analyzer-next</span>
+      <span class="p">@surrealdb/analyzer-svelte</span>
     </div>
 
     <pre class="code"><span class="k">import</span> { db } <span class="k">from</span> <span class="s">"./db"</span>;
@@ -73,45 +73,45 @@ people[<span class="n">0</span>].nope;                      <span class="err">//
     <p>Three steps. Skipping any one of them yields <code>any</code> with no error on your own code, so none are optional — see <a class="link" href="#any">when everything is <code>any</code></a>.</p>
 
     <h3>1. Install</h3>
-    <p><code>@surrealguard/client</code> is a real runtime dependency <em>and</em> the module the generated file augments by name. <code>surrealdb</code> is its peer. The CLI is a dev dependency.</p>
-    <pre class="code"><span class="dollar">$</span> npm install @surrealguard/client surrealdb
-<span class="dollar">$</span> npm install -D surrealguard typescript</pre>
-    <p>Add <code>@surrealguard/svelte</code> or <code>@surrealguard/next</code> only if you want the reactive helpers on this page; neither is needed for <code>db.query</code>.</p>
+    <p><code>@surrealdb/analyzer-client</code> is a real runtime dependency <em>and</em> the module the generated file augments by name. <code>surrealdb</code> is its peer. The CLI is a dev dependency.</p>
+    <pre class="code"><span class="dollar">$</span> npm install @surrealdb/analyzer-client surrealdb
+<span class="dollar">$</span> npm install -D surrealql-analyzer typescript</pre>
+    <p>Add <code>@surrealdb/analyzer-svelte</code> or <code>@surrealdb/analyzer-next</code> only if you want the reactive helpers on this page; neither is needed for <code>db.query</code>.</p>
 
     <h3>2. Generate — with <code>--out</code></h3>
-    <p>Bare <code>generate</code> writes <code>surrealguard.generated.ts</code> to the <strong>workspace root</strong>, which is almost never where your imports point. Pass the path that matches how you import it, and put it in <code>package.json</code> so the path is written once:</p>
+    <p>Bare <code>generate</code> writes <code>surrealql-analyzer.generated.ts</code> to the <strong>workspace root</strong>, which is almost never where your imports point. Pass the path that matches how you import it, and put it in <code>package.json</code> so the path is written once:</p>
     <table>
       <thead><tr><th>Project</th><th><code>--out</code></th><th>Import as</th></tr></thead>
       <tbody>
-        <tr><td>Vanilla TS</td><td><code>src/surrealguard.generated.ts</code></td><td><code>./surrealguard.generated</code></td></tr>
-        <tr><td>SvelteKit</td><td><code>src/lib/surrealguard.generated.ts</code></td><td><code>$lib/surrealguard.generated</code></td></tr>
-        <tr><td>Next (with <code>src/</code>)</td><td><code>src/surrealguard.generated.ts</code></td><td><code>@/surrealguard.generated</code></td></tr>
-        <tr><td>Next (no <code>src/</code>)</td><td><code>surrealguard.generated.ts</code></td><td><code>@/surrealguard.generated</code></td></tr>
+        <tr><td>Vanilla TS</td><td><code>src/surrealql-analyzer.generated.ts</code></td><td><code>./surrealql-analyzer.generated</code></td></tr>
+        <tr><td>SvelteKit</td><td><code>src/lib/surrealql-analyzer.generated.ts</code></td><td><code>$lib/surrealql-analyzer.generated</code></td></tr>
+        <tr><td>Next (with <code>src/</code>)</td><td><code>src/surrealql-analyzer.generated.ts</code></td><td><code>@/surrealql-analyzer.generated</code></td></tr>
+        <tr><td>Next (no <code>src/</code>)</td><td><code>surrealql-analyzer.generated.ts</code></td><td><code>@/surrealql-analyzer.generated</code></td></tr>
       </tbody>
     </table>
-    <pre class="code"><span class="dollar">$</span> npx surrealguard generate --out src/surrealguard.generated.ts
-generated src/surrealguard.generated.ts (4 queries, 11ms)</pre>
-    <p>Commit the generated module — it is what makes a fresh checkout type-check with no build step. Re-run it whenever the schema or a query changes, or leave <code>surrealguard watch</code> running. See the <a class="link" href="/docs/cli.html#generate">CLI reference</a>.</p>
+    <pre class="code"><span class="dollar">$</span> npx surrealql-analyzer generate --out src/surrealql-analyzer.generated.ts
+generated src/surrealql-analyzer.generated.ts (4 queries, 11ms)</pre>
+    <p>Commit the generated module — it is what makes a fresh checkout type-check with no build step. Re-run it whenever the schema or a query changes, or leave <code>surrealql-analyzer watch</code> running. See the <a class="link" href="/docs/cli.html#generate">CLI reference</a>.</p>
 
     <h3>3. Create the client</h3>
     <pre class="code"><span class="c">// src/db.ts</span>
-<span class="k">import</span> { createClient } <span class="k">from</span> <span class="s">"./surrealguard.generated"</span>;
+<span class="k">import</span> { createClient } <span class="k">from</span> <span class="s">"./surrealql-analyzer.generated"</span>;
 
 <span class="k">export const</span> db = <span class="fn">createClient</span>({
   url: <span class="s">"ws://localhost:8000/rpc"</span>,
   namespace: <span class="s">"app"</span>,
   database: <span class="s">"app"</span>,
 });</pre>
-    <p>Import <code>createClient</code> <strong>from the generated file</strong>. That import is what loads the <code>declare module</code> augmentation; importing it from <code>@surrealguard/client</code> compiles fine and gives you <code>unknown[]</code> forever.</p>
+    <p>Import <code>createClient</code> <strong>from the generated file</strong>. That import is what loads the <code>declare module</code> augmentation; importing it from <code>@surrealdb/analyzer-client</code> compiles fine and gives you <code>unknown[]</code> forever.</p>
     <p>The connection opens <strong>lazily</strong>, on first use, so a module-level <code>db</code> is safe and no route has to remember to <code>await db.connect(...)</code>. Import it anywhere — a component, a route handler, a plain module. There is nothing to provide, inject or wire up.</p>
 
     <h2>What <code>generate</code> emits</h2>
     <p>One file: a module augmentation keyed by each query's <strong>exact text</strong>, read by a single conditional generic. That is the whole mechanism.</p>
-    <pre class="code"><span class="k">import type</span> { RecordId } <span class="k">from</span> <span class="s">"@surrealguard/client"</span>;
+    <pre class="code"><span class="k">import type</span> { RecordId } <span class="k">from</span> <span class="s">"@surrealdb/analyzer-client"</span>;
 
-<span class="k">export</span> { createClient, defineQuery, defineLive, RecordId } <span class="k">from</span> <span class="s">"@surrealguard/client"</span>;
+<span class="k">export</span> { createClient, defineQuery, defineLive, RecordId } <span class="k">from</span> <span class="s">"@surrealdb/analyzer-client"</span>;
 
-<span class="k">declare module</span> <span class="s">"@surrealguard/client"</span> {
+<span class="k">declare module</span> <span class="s">"@surrealdb/analyzer-client"</span> {
   <span class="k">interface</span> <span class="t">SurqlRegistry</span> {
     <span class="s">"SELECT id, name FROM person WHERE team = $team"</span>: {
       result: [Array&lt;{ id: <span class="t">RecordId</span>&lt;<span class="s">"person"</span>&gt;; name: <span class="t">string</span> }&gt;];
@@ -137,8 +137,8 @@ generated src/surrealguard.generated.ts (4 queries, 11ms)</pre>
       <strong>A type generator that silently produces <code>any</code> is worse than no type generator.</strong> There are exactly four ways to get there, and all four are silent on <em>your</em> code — the failure lands somewhere you would never look. If a result is <code>any</code>, it is one of these.
     </div>
     <ol>
-      <li><strong><code>@surrealguard/client</code> is not installed.</strong> The generated file says <code>declare module "@surrealguard/client"</code>. If that specifier does not resolve, TypeScript reports <code>TS2664: Invalid module name in augmentation</code> <em>inside the generated file</em> — which you would never open — and drops the entire registry. <code>generate</code> warns by name when it detects this.</li>
-      <li><strong>You imported from <code>@surrealguard/client</code> instead of the generated file.</strong> The augmentation loads with the import. Import <code>createClient</code>, <code>defineQuery</code> and <code>RecordId</code> from <code>./surrealguard.generated</code>.</li>
+      <li><strong><code>@surrealdb/analyzer-client</code> is not installed.</strong> The generated file says <code>declare module "@surrealdb/analyzer-client"</code>. If that specifier does not resolve, TypeScript reports <code>TS2664: Invalid module name in augmentation</code> <em>inside the generated file</em> — which you would never open — and drops the entire registry. <code>generate</code> warns by name when it detects this.</li>
+      <li><strong>You imported from <code>@surrealdb/analyzer-client</code> instead of the generated file.</strong> The augmentation loads with the import. Import <code>createClient</code>, <code>defineQuery</code> and <code>RecordId</code> from <code>./surrealql-analyzer.generated</code>.</li>
       <li><strong>The generated file is somewhere else.</strong> Bare <code>generate</code> writes to the workspace root. If your import points at <code>src/lib/</code> and the file is at the root, you now have two of them and they will drift apart silently.</li>
       <li><strong>A <code>.svelte</code> script has no <code>lang="ts"</code>.</strong> Svelte does not typecheck an untyped script block at all — <code>svelte-check</code> reports zero errors on <code>people[0].nope.definitely.not.a.field</code>. Every Svelte snippet on this page says <code>lang="ts"</code> because copying the whole block is the point.</li>
     </ol>
@@ -146,7 +146,7 @@ generated src/surrealguard.generated.ts (4 queries, 11ms)</pre>
     <h2>Naming a query, when a name earns its keep</h2>
     <p><code>defineQuery</code> / <code>defineLive</code> infer the same string literal and read the same registry through the same conditional generic, so <strong>they buy no extra type safety</strong>. What they buy is a value.</p>
     <pre class="code"><span class="c">// src/queries.ts — the one place these texts live</span>
-<span class="k">import</span> { defineQuery, defineLive } <span class="k">from</span> <span class="s">"./surrealguard.generated"</span>;
+<span class="k">import</span> { defineQuery, defineLive } <span class="k">from</span> <span class="s">"./surrealql-analyzer.generated"</span>;
 
 <span class="k">export const</span> allPeople  = <span class="fn">defineQuery</span>(<span class="s">"SELECT id, name, age, team FROM person"</span>);
 <span class="k">export const</span> peopleOf   = <span class="fn">defineQuery</span>(<span class="s">"SELECT id, name FROM person WHERE team = $team"</span>);
@@ -161,7 +161,7 @@ generated src/surrealguard.generated.ts (4 queries, 11ms)</pre>
 <span class="k">await</span> db.<span class="fn">invalidate</span>(peopleOf.<span class="fn">with</span>({ team }));   <span class="c">// just that binding</span></pre>
     <p>A query text the registry does not contain is a <strong>hard compile error</strong> on <code>defineQuery</code>, carrying its own remedy — for a literal, a miss means exactly one thing: the generated file is stale. That also catches the case nobody recognises as an edit, reformatting a query. <code>defineQuery.unchecked("…")</code> opts out and degrades to <code>unknown[]</code>.</p>
 
-    <h2>@surrealguard/svelte</h2>
+    <h2>@surrealdb/analyzer-svelte</h2>
     <p>Svelte 5 / SvelteKit. <strong>You may not need it</strong> — the typed client works in a component with nothing around it:</p>
     <pre class="code">&lt;<span class="k">script</span> <span class="t">lang</span>=<span class="s">"ts"</span>&gt;
   <span class="k">import</span> { db } <span class="k">from</span> <span class="s">"$lib/db"</span>;
@@ -174,7 +174,7 @@ generated src/surrealguard.generated.ts (4 queries, 11ms)</pre>
 {/await}</pre>
     <p>What the package adds is <em>reactive</em> state: a live query that re-renders as rows change, parameters that follow <code>$derived</code> state, and an SSR payload a component can pick up without naming the query twice.</p>
     <pre class="code">&lt;<span class="k">script</span> <span class="t">lang</span>=<span class="s">"ts"</span>&gt;
-  <span class="k">import</span> { createLive } <span class="k">from</span> <span class="s">"@surrealguard/svelte"</span>;
+  <span class="k">import</span> { createLive } <span class="k">from</span> <span class="s">"@surrealdb/analyzer-svelte"</span>;
   <span class="k">import</span> { livePeople } <span class="k">from</span> <span class="s">"$lib/queries"</span>;
 
   <span class="k">const</span> people = <span class="fn">createLive</span>(livePeople);
@@ -191,7 +191,7 @@ generated src/surrealguard.generated.ts (4 queries, 11ms)</pre>
     <pre class="code"><span class="k">const</span> roster = <span class="fn">createLive</span>(() =&gt; slug ? liveTeam.<span class="fn">with</span>({ team }) : <span class="s">"skip"</span>);</pre>
     <p>For gap-free SSR, <code>preload(db, livePeople)</code> in a <code>load</code> returns a payload that carries its own key, text and params. The component passes it straight to <code>createLive</code> and subscribes to <em>exactly</em> the query the server ran, with the text appearing nowhere in the component.</p>
 
-    <h2>@surrealguard/next</h2>
+    <h2>@surrealdb/analyzer-next</h2>
     <p>Next.js / React. <strong>You may not need it</strong> either — the default App Router pattern is the typed client on its own, with zero client JS:</p>
     <pre class="code"><span class="c">// app/people/page.tsx  (Server Component)</span>
 <span class="k">import</span> { getDb } <span class="k">from</span> <span class="s">"@/lib/db.server"</span>;
@@ -204,9 +204,9 @@ generated src/surrealguard.generated.ts (4 queries, 11ms)</pre>
       <strong>The server client must be per-request.</strong> Next imports the module into the server runtime, so a module-level client would share one connection, one auth session and one cache across every concurrent request and every user. Wrap it in React's <code>cache()</code>. A module-level client is correct in the <em>browser</em>, where there is one user and one session.
     </div>
     <p>Anything passed <strong>to a client component</strong> must go through <code>runJson</code>: an RSC boundary accepts only plain values and offers no transport hook, so a <code>RecordId</code> instance crossing it throws <em>"Only plain objects can be passed to Client Components"</em>. <code>runJson</code> gives you <code>`person:${string}`</code> and ISO strings.</p>
-    <p>The reactive part is hooks, backed by <code>useSyncExternalStore</code>. Provide the browser client once with <code>&lt;SurrealGuardProvider client={db}&gt;</code> (or pass <code>{ client }</code> per hook), then:</p>
+    <p>The reactive part is hooks, backed by <code>useSyncExternalStore</code>. Provide the browser client once with <code>&lt;SurrealQLAnalyzerProvider client={db}&gt;</code> (or pass <code>{ client }</code> per hook), then:</p>
     <pre class="code"><span class="s">"use client"</span>;
-<span class="k">import</span> { useLive } <span class="k">from</span> <span class="s">"@surrealguard/next"</span>;
+<span class="k">import</span> { useLive } <span class="k">from</span> <span class="s">"@surrealdb/analyzer-next"</span>;
 <span class="k">import</span> { livePeople } <span class="k">from</span> <span class="s">"@/lib/queries"</span>;
 
 <span class="k">export function</span> <span class="fn">People</span>() {
@@ -214,11 +214,11 @@ generated src/surrealguard.generated.ts (4 queries, 11ms)</pre>
   <span class="k">return</span> &lt;<span class="t">ul</span>&gt;{people.data.<span class="fn">map</span>((p) =&gt; &lt;<span class="t">li</span> key={p.id}&gt;{p.name}&lt;/<span class="t">li</span>&gt;)}&lt;/<span class="t">ul</span>&gt;;
 }</pre>
     <p><strong>No thunk here.</strong> A query reference carries a stable <code>key</code>, so the hook's memo dependency is <code>[client, source.key]</code> and React's "did my deps change" problem does not arise. The frameworks differ, so the APIs do.</p>
-    <p><code>preload(db, livePeople)</code> from <code>@surrealguard/next/server</code> seeds a client component the same way SvelteKit's does; that entry carries no <code>"use client"</code> directive, so it is safe in an RSC.</p>
+    <p><code>preload(db, livePeople)</code> from <code>@surrealdb/analyzer-next/server</code> seeds a client component the same way SvelteKit's does; that entry carries no <code>"use client"</code> directive, so it is safe in an RSC.</p>
 
-    <h2>@surrealguard/query</h2>
+    <h2>@surrealdb/analyzer-query</h2>
     <p>The framework-agnostic reactive core both adapters are built on. Reach for it directly only if you are writing your own binding, or want a cache without a framework — for one live subscription and nothing else, <code>db.watch(livePeople, render)</code> is simpler and needs no cache.</p>
-    <pre class="code"><span class="k">import</span> { getQueryClient } <span class="k">from</span> <span class="s">"@surrealguard/query"</span>;
+    <pre class="code"><span class="k">import</span> { getQueryClient } <span class="k">from</span> <span class="s">"@surrealdb/analyzer-query"</span>;
 <span class="k">import</span> { db } <span class="k">from</span> <span class="s">"./db"</span>;
 <span class="k">import</span> { livePeople } <span class="k">from</span> <span class="s">"./queries"</span>;
 
@@ -237,12 +237,12 @@ generated src/surrealguard.generated.ts (4 queries, 11ms)</pre>
     <h2>Values are the SDK's values</h2>
     <p>The SDK decodes SurrealQL values as its own classes, so that is what the generated types say: <code>record&lt;team&gt;</code> → <code>RecordId&lt;"team"&gt;</code>, <code>datetime</code> → <code>Date</code> (because <code>createClient</code> sets <code>codecOptions.useNativeDates</code>), <code>duration</code> → <code>Duration</code>, <code>uuid</code> → <code>Uuid</code>, <code>decimal</code> → <code>Decimal</code>.</p>
     <p>Class instances do not survive SvelteKit's <code>load</code> (devalue) or a React Server Component's props. <code>Json&lt;T&gt;</code> is the projection that does — it is the SDK's own <code>Jsonify</code>, so the mapping is theirs: <code>RecordId&lt;"person"&gt;</code> becomes <code>`person:${string}`</code> and <code>Date</code> becomes <code>string</code>. <code>db.runJson</code>, <code>preload</code> and the whole reactive layer are <code>Json&lt;T&gt;</code>-shaped for this reason; <code>db.query</code> and <code>db.run</code> are not.</p>
-    <p>That asymmetry is deliberate rather than an oversight: uniformity in the other direction would either break SSR or break Next entirely, since an RSC boundary rejects class instances and has no transport hook to widen. If you want SDK-class fidelity through a SvelteKit <code>load</code>, <code>@surrealguard/svelte/transport</code> is a ready <code>transport</code> hook.</p>
+    <p>That asymmetry is deliberate rather than an oversight: uniformity in the other direction would either break SSR or break Next entirely, since an RSC boundary rejects class instances and has no transport hook to widen. If you want SDK-class fidelity through a SvelteKit <code>load</code>, <code>@surrealdb/analyzer-svelte/transport</code> is a ready <code>transport</code> hook.</p>
 
     <div class="docs-pager">
       <a href="/docs/rust.html">
         <span class="dir">← Previous</span>
-        <span class="ttl">Rust · surrealguard-rs</span>
+        <span class="ttl">Rust · surrealql-analyzer-rs</span>
       </a>
       <a class="next" href="/docs/agents.html">
         <span class="dir">Next →</span>
@@ -255,16 +255,16 @@ generated src/surrealguard.generated.ts (4 queries, 11ms)</pre>
 <footer>
   <div class="wrap">
     <div>
-      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealGuard</a>
+      <a class="brand" href="/" style="margin-bottom:8px;display:inline-flex"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#8b7cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span> SurrealQL Analyzer</a>
       <div class="tiny">Static analysis &amp; type inference for SurrealQL.</div>
     </div>
     <div class="cols">
       <a href="/docs/">Docs</a>
       <a href="/llms.txt">llms.txt</a>
       <a href="/llms-full.txt">llms-full.txt</a>
-      <a href="https://github.com/DrewRidley/surrealguard">GitHub</a>
-      <a href="https://crates.io/crates/surrealguard">crates.io</a>
-      <a href="https://www.npmjs.com/org/surrealguard">npm</a>
+      <a href="https://github.com/surrealdb/analyzer">GitHub</a>
+      <a href="https://crates.io/crates/surrealql-analyzer">crates.io</a>
+      <a href="https://www.npmjs.com/org/surrealdb">npm</a>
     </div>
     <div class="tiny">MIT OR Apache-2.0</div>
   </div>

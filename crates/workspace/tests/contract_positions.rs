@@ -21,8 +21,8 @@
 //! and may not grow. Fixing a position without deleting its line fails
 //! `known_gaps_are_still_gaps`, so it cannot go stale in either direction.
 
-use surrealguard_workspace::analyzer::contract::Position;
-use surrealguard_workspace::{analyze_workspace, Workspace};
+use surrealql_analyzer_workspace::analyzer::contract::Position;
+use surrealql_analyzer_workspace::{analyze_workspace, Workspace};
 
 /// One invariant: a declared kind, a value that inhabits it, one that provably
 /// does not, and one that cannot be proven either way.

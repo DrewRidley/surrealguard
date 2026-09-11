@@ -2,7 +2,7 @@
 //! optional help/related/tag attachments.
 
 use serde::{Deserialize, Serialize};
-use surrealguard_syntax::span::SourceSpan;
+use surrealql_analyzer_syntax::span::SourceSpan;
 
 use crate::FindingCode;
 
@@ -181,8 +181,8 @@ pub enum FindingTag {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealguard_syntax::source::SourceId;
-    use surrealguard_syntax::span::{ByteRange, SourceSpan};
+    use surrealql_analyzer_syntax::source::SourceId;
+    use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
     #[test]
     fn finding_carries_its_intrinsic_class() {

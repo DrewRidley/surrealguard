@@ -3,7 +3,7 @@ use surrealdb::engine::remote::ws::Client;
 use surrealdb::Surreal;
 
 async fn run(db: &Surreal<Client>) {
-    let _ = surrealguard_rs::query!("SELECT name FROM user; SELECT title FROM post;")
+    let _ = surrealql_analyzer_rs::query!("SELECT name FROM user; SELECT title FROM post;")
         .fetch_all(db)
         .await;
 }

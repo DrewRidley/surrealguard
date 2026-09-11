@@ -1,5 +1,5 @@
 [package]
-name = "surrealguard-embed"
+name = "surrealql-analyzer-embed"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

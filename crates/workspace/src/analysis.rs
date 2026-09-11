@@ -6,14 +6,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use surrealdb_types::Kind;
-use surrealguard_diagnostics::{Finding, FindingCode, Severity};
-use surrealguard_syntax::ast;
-use surrealguard_syntax::ast::visit::{self, Visitor};
-use surrealguard_syntax::parse::{
+use surrealql_analyzer_diagnostics::{Finding, FindingCode, Severity};
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::ast::visit::{self, Visitor};
+use surrealql_analyzer_syntax::parse::{
     parse_source, ParseError, ParsedSource, SyntaxDiagnostic, SyntaxDiagnosticKind,
 };
-use surrealguard_syntax::source::SourceId;
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_syntax::source::SourceId;
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analyzer::pipeline;
 use crate::config::WorkspaceConfig;
@@ -358,8 +358,8 @@ pub fn analyze_workspace(workspace: &Workspace) -> WorkspaceAnalysis {
             continue;
         }
         let mut live = Vec::new();
-        for statement in &surrealguard_syntax::lower::lower(parsed).statements {
-            if let surrealguard_syntax::ast::Statement::Select(select) = &statement.node {
+        for statement in &surrealql_analyzer_syntax::lower::lower(parsed).statements {
+            if let surrealql_analyzer_syntax::ast::Statement::Select(select) = &statement.node {
                 crate::analyzer::data::live_contract::check_live_select(
                     select,
                     parsed.source_id(),
@@ -432,7 +432,7 @@ pub fn build_global_catalog<P: std::borrow::Borrow<ParsedSource>>(
 /// must gate on the contract and fall back to the full pass otherwise.
 pub fn analyze_one_source(
     global: &GlobalCatalog,
-    parsed: &surrealguard_syntax::parse::ParsedSource,
+    parsed: &surrealql_analyzer_syntax::parse::ParsedSource,
     require_suppression_reasons: bool,
 ) -> AnalysisOutput {
     let mut output = AnalysisOutput {
@@ -657,7 +657,7 @@ impl SourceReferenceSet {
 /// [`SourceReferenceSet::depends_on_all`].
 pub fn source_reference_set(parsed: &ParsedSource) -> SourceReferenceSet {
     let mut refs = SourceReferenceSet::default();
-    for stmt in &surrealguard_syntax::lower::lower_statements(parsed) {
+    for stmt in &surrealql_analyzer_syntax::lower::lower_statements(parsed) {
         refs.visit_statement(stmt);
     }
     refs
@@ -790,7 +790,7 @@ impl Visitor for SourceReferenceSet {
 ///
 /// The LSP gates dirty schema documents on this before taking the symbol path.
 pub fn source_requires_full_reanalysis(parsed: &ParsedSource) -> bool {
-    let statements = surrealguard_syntax::lower::lower_statements(parsed);
+    let statements = surrealql_analyzer_syntax::lower::lower_statements(parsed);
     statements.iter().any(|stmt| {
         matches!(
             &stmt.node,

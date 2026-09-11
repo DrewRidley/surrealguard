@@ -6,8 +6,8 @@
 //! here too, since it is the same catalog reference from the other side.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-use surrealguard_syntax::span::{ByteRange, SourceSpan};
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::span::{ByteRange, SourceSpan};
 
 use crate::analyzer::context::AnalysisContext;
 
@@ -16,7 +16,7 @@ pub(crate) fn analyze_define_index(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
     let source = ctx.source().clone();
 
     let Some(table) = ctx.schema().table(&stmt.table.node) else {
-        let finding = surrealguard_diagnostics::catalog::finding(
+        let finding = surrealql_analyzer_diagnostics::catalog::finding(
             SourceSpan::new(source, stmt.table.span),
             1001,
             format!(
@@ -76,7 +76,7 @@ pub(crate) fn analyze_define_index(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
     }
 
     for (text, span) in unknown_fields {
-        let mut finding = surrealguard_diagnostics::catalog::finding(
+        let mut finding = surrealql_analyzer_diagnostics::catalog::finding(
             span,
             1002,
             format!(
@@ -97,7 +97,7 @@ pub(crate) fn analyze_define_index(ctx: &mut AnalysisContext<'_>, stmt: &ast::De
 
     if let Some(existing) = duplicate {
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 SourceSpan::new(ctx.source().clone(), stmt.name.span),
                 1029,
                 format!(
@@ -124,13 +124,13 @@ pub(crate) fn check_index_target(
 ) {
     let source = ctx.source().clone();
     match ctx.schema().table(table) {
-        None => ctx.emit(surrealguard_diagnostics::catalog::finding(
+        None => ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
             SourceSpan::new(source, table_span),
             1012,
             format!("{statement} targets `{table}`, which is not a defined table"),
         )),
         Some(table_def) if !table_def.indexes.contains_key(index) => {
-            ctx.emit(surrealguard_diagnostics::catalog::finding(
+            ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
                 SourceSpan::new(source, index_span),
                 1012,
                 format!("`{table}` has no index `{index}` ({statement})"),

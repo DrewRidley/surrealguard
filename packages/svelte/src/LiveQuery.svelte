@@ -40,9 +40,9 @@
     ParamsOf,
     Preloaded,
     SurqlLive,
-    SurrealGuardClient,
-    SurrealGuardError,
-  } from "@surrealguard/client";
+    SurrealQLAnalyzerClient,
+    SurrealQLAnalyzerError,
+  } from "@surrealdb/analyzer-client";
   import { sgTextLive } from "./inline.js";
   import { createLive } from "./queries.svelte.js";
   import { resolveSource, type Source } from "./source.js";
@@ -69,13 +69,13 @@
     /** Bound parameters, when `q` is text that names some. */
     params?: Q extends string ? ParamsOf<Q> : never;
     /** Override the context client (tests, a second connection). */
-    client?: SurrealGuardClient;
+    client?: SurrealQLAnalyzerClient;
     /** Rendered with the reconciled rows. Always an array, so no `?? []`. */
     children: Snippet<[LiveRows<Q>]>;
     /** Rendered until the seeding `SELECT` resolves. */
     loading?: Snippet<[]>;
     /** Rendered on failure. Omit it and the error is thrown instead. */
-    error?: Snippet<[SurrealGuardError]>;
+    error?: Snippet<[SurrealQLAnalyzerError]>;
   } = $props();
 
   // Through a thunk: replacing `q` kills the old `LIVE SELECT` and opens the new

@@ -3,8 +3,8 @@
 //! defaults, and the LET lints.
 
 use surrealdb_types::Kind;
-use surrealguard_workspace::analysis::ValueDomain;
-use surrealguard_workspace::{analyze_workspace, Workspace};
+use surrealql_analyzer_workspace::analysis::ValueDomain;
+use surrealql_analyzer_workspace::{analyze_workspace, Workspace};
 
 use crate::support::codes;
 

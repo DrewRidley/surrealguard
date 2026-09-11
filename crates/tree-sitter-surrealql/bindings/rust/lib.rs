@@ -3,8 +3,8 @@
 //! The grammar sources in this crate are vendored verbatim from the merged
 //! official grammar [`surrealdb/surrealql-tree-sitter`](https://github.com/surrealdb/surrealql-tree-sitter)
 //! (commit `f40a0ede750081b8d49feb40516c28cc49f1cce4`). This thin binding shim
-//! (`bindings/rust/*`) is maintained by SurrealGuard. The crate is published as
-//! `surrealguard-tree-sitter-surrealql` but stays importable as
+//! (`bindings/rust/*`) is maintained by SurrealQL Analyzer. The crate is published as
+//! `surrealql-analyzer-tree-sitter-surrealql` but stays importable as
 //! `tree_sitter_surrealql`.
 
 use tree_sitter_language::LanguageFn;

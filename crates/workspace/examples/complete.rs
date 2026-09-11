@@ -9,9 +9,9 @@
 //! This is the same path the language server takes, so what it prints is what
 //! an editor shows.
 
-use surrealguard_syntax::parse::parse_source;
-use surrealguard_workspace::analysis::{analyze_workspace, Workspace};
-use surrealguard_workspace::{complete_at, completion_context_at};
+use surrealql_analyzer_syntax::parse::parse_source;
+use surrealql_analyzer_workspace::analysis::{analyze_workspace, Workspace};
+use surrealql_analyzer_workspace::{complete_at, completion_context_at};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -50,7 +50,7 @@ fn main() {
         context
             .expected
             .as_ref()
-            .map(surrealguard_workspace::render_kind),
+            .map(surrealql_analyzer_workspace::render_kind),
         context.prefix,
     );
     // Completion runs per keystroke, so its own cost is worth showing.

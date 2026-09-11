@@ -37,7 +37,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::parse::ParsedSource;
+use surrealql_analyzer_syntax::parse::ParsedSource;
 
 use super::lex::{tokenize, Token, TokenKind};
 use crate::schema::SchemaIndex;

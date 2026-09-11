@@ -5,7 +5,7 @@
 //! context and the result is the tuple of their kinds.
 
 use surrealdb_types::{Kind, KindLiteral, Value};
-use surrealguard_syntax::ast;
+use surrealql_analyzer_syntax::ast;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::function::const_value_arg;

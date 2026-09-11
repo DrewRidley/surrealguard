@@ -1,8 +1,8 @@
-//! The `surrealguard-lsp` binary: serves the analyzer over stdio.
+//! The `surrealql-analyzer-lsp` binary: serves the analyzer over stdio.
 
 use tower_lsp::{LspService, Server};
 
-use surrealguard_lsp::backend::Backend;
+use surrealql_analyzer_lsp::backend::Backend;
 
 #[tokio::main]
 async fn main() {

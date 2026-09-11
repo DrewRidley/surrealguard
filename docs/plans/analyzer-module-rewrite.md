@@ -8,7 +8,7 @@
 
 ## Direction
 
-Move SurrealGuard from one broad semantic walker toward a statement/function-family analyzer tree.
+Move SurrealQL Analyzer from one broad semantic walker toward a statement/function-family analyzer tree.
 
 The existing implementation stays live while slices migrate into `crates/workspace/src/analyzer/`.
 
@@ -16,7 +16,7 @@ The existing implementation stays live while slices migrate into `crates/workspa
 
 - One file per discrete SurrealQL construct where practical.
 - Statement analyzers assume the caller already classified the CST node as that statement kind.
-- Function analyzers are grouped by SurrealQL function namespace, similar to Surrealix, but must use upstream `surrealdb_types::Kind` and SurrealGuard response-shape facts instead of a custom type hierarchy.
+- Function analyzers are grouped by SurrealQL function namespace, similar to Surrealix, but must use upstream `surrealdb_types::Kind` and SurrealQL Analyzer response-shape facts instead of a custom type hierarchy.
 - Diagnostics are appended through shared analyzer context, not invented per module.
 - Unknown/dynamic/unsupported constructs produce explicit partial facts instead of fake certainty.
 - Host adapters remain downstream of the plain `.surql` core.

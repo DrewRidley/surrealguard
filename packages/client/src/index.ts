@@ -1,7 +1,7 @@
 /**
- * `@surrealguard/client` — the typed SurrealQL client.
+ * `@surrealdb/analyzer-client` — the typed SurrealQL client.
  *
- * The whole guarantee lives in one mechanism: `surrealguard generate` emits an
+ * The whole guarantee lives in one mechanism: `surrealql-analyzer generate` emits an
  * `interface SurqlRegistry` keyed by *exact query text*, and a single
  * conditional generic reads it. There is no permissive `string` overload
  * anywhere (a literal is also a `string`, so a fallback overload would rescue
@@ -46,10 +46,10 @@ export {
   type CreateClientOptions,
   type InvalidationListener,
   type QueryResultOf,
-  type SurrealGuardClient,
+  type SurrealQLAnalyzerClient,
 } from "./client.js";
 
-export { SurrealGuardError, type SurrealGuardErrorContext } from "./error.js";
+export { SurrealQLAnalyzerError, type SurrealQLAnalyzerErrorContext } from "./error.js";
 
 export { recordId } from "./record.js";
 

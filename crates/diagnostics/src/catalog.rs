@@ -3,7 +3,7 @@
 //! catalog. Emission sites construct findings through [`finding`] so a
 //! code's intrinsic severity can never drift from the catalog.
 
-use surrealguard_syntax::span::SourceSpan;
+use surrealql_analyzer_syntax::span::SourceSpan;
 
 use crate::{Finding, FindingCode, LintLevel, Severity};
 
@@ -245,8 +245,8 @@ mod tests {
 
     #[test]
     fn finding_takes_severity_from_the_registry() {
-        use surrealguard_syntax::source::SourceId;
-        use surrealguard_syntax::span::ByteRange;
+        use surrealql_analyzer_syntax::source::SourceId;
+        use surrealql_analyzer_syntax::span::ByteRange;
 
         let span = SourceSpan::new(
             SourceId::new("test"),

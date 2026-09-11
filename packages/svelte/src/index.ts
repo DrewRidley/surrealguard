@@ -1,5 +1,5 @@
 /**
- * Svelte 5 / SvelteKit bindings for SurrealGuard.
+ * Svelte 5 / SvelteKit bindings for SurrealQL Analyzer.
  *
  * - {@link setClient} / {@link useClient} — provide the typed client via context.
  * - {@link createQuery} — a one-shot query with loading and error state.
@@ -33,5 +33,5 @@ export {
   type MutationOptions,
 } from "./mutation.svelte.js";
 export { dehydrate, hydrate, preload } from "./ssr.js";
-export type { Json, Preloaded, SurqlLive, SurqlQuery } from "@surrealguard/client";
-export { SurrealGuardError } from "@surrealguard/client";
+export type { Json, Preloaded, SurqlLive, SurqlQuery } from "@surrealdb/analyzer-client";
+export { SurrealQLAnalyzerError } from "@surrealdb/analyzer-client";

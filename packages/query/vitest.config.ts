@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 export default defineConfig({
   resolve: {
     alias: {
-      "@surrealguard/client": fileURLToPath(
+      "@surrealdb/analyzer-client": fileURLToPath(
         new URL("../client/src/index.ts", import.meta.url),
       ),
     },

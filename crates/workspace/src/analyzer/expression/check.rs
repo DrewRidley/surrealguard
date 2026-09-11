@@ -6,8 +6,8 @@
 //! own the expressions.
 
 use surrealdb_types::Kind;
-use surrealguard_syntax::ast;
-use surrealguard_syntax::span::SourceSpan;
+use surrealql_analyzer_syntax::ast;
+use surrealql_analyzer_syntax::span::SourceSpan;
 
 use crate::analyzer::context::AnalysisContext;
 use crate::analyzer::expression::infer::{binary_result_kind, infer_expression_fact, is_numeric};
@@ -258,7 +258,7 @@ fn check_cast(
     };
     if let Some(name) = named {
         if !TYPE_NAMES.contains(&name.node.to_ascii_lowercase().as_str()) {
-            let mut finding = surrealguard_diagnostics::catalog::finding(
+            let mut finding = surrealql_analyzer_diagnostics::catalog::finding(
                 SourceSpan::new(ctx.source().clone(), name.span),
                 2007,
                 format!("`{}` is not a known type", name.node),
@@ -602,7 +602,7 @@ fn check_field_on_receiver(
     ctx: &mut AnalysisContext<'_>,
     receiver: &Kind,
     name: &str,
-    span: surrealguard_syntax::span::ByteRange,
+    span: surrealql_analyzer_syntax::span::ByteRange,
 ) {
     let Some((_, targets)) = crate::kinds::record_link_shape(receiver) else {
         return;
@@ -791,7 +791,7 @@ fn check_index_backed_operator(
             _ => ("an MTREE or HNSW index", "MTREE DIMENSION <n>"),
         };
         ctx.emit(
-            surrealguard_diagnostics::catalog::finding(
+            surrealql_analyzer_diagnostics::catalog::finding(
                 SourceSpan::new(ctx.source().clone(), whole.span),
                 1027,
                 format!("`{name}` needs {what} on `{path}`, and there isn't one"),
@@ -909,7 +909,7 @@ fn check_none_arithmetic(
                     .any(|v| !matches!(v, Kind::None | Kind::Null))
             {
                 ctx.emit(
-                    surrealguard_diagnostics::catalog::finding(
+                    surrealql_analyzer_diagnostics::catalog::finding(
                         SourceSpan::new(ctx.source().clone(), side.span),
                         2015,
                         "this value may be NONE here, and arithmetic on NONE fails".to_string(),
@@ -1345,12 +1345,12 @@ pub(crate) fn check_field_after_destructure(
 /// Same contract, same code (7008) as a bare `SELECT *` on that table.
 pub(crate) fn emit_fieldless_splat(
     ctx: &mut AnalysisContext<'_>,
-    span: surrealguard_syntax::span::ByteRange,
+    span: surrealql_analyzer_syntax::span::ByteRange,
     table: &str,
 ) {
     let source_span = SourceSpan::new(ctx.source().clone(), span);
     ctx.emit(
-        surrealguard_diagnostics::catalog::finding(
+        surrealql_analyzer_diagnostics::catalog::finding(
             source_span,
             7008,
             format!("`{table}` has no declared fields, so `.*` expands to nothing typed"),
@@ -1363,12 +1363,12 @@ pub(crate) fn emit_fieldless_splat(
 
 fn emit(
     ctx: &mut AnalysisContext<'_>,
-    span: surrealguard_syntax::span::ByteRange,
+    span: surrealql_analyzer_syntax::span::ByteRange,
     code: u16,
     message: String,
 ) {
     let span = SourceSpan::new(ctx.source().clone(), span);
-    ctx.emit(surrealguard_diagnostics::catalog::finding(
+    ctx.emit(surrealql_analyzer_diagnostics::catalog::finding(
         span, code, message,
     ));
 }

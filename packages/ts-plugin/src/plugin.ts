@@ -1,5 +1,5 @@
 /**
- * The language-service proxy: SurrealGuard's answers, given as TypeScript's.
+ * The language-service proxy: SurrealQL Analyzer's answers, given as TypeScript's.
  *
  * A TypeScript language service plugin wraps the service the editor already
  * talks to. Every method it does not override passes straight through; the
@@ -12,7 +12,7 @@
  * tsserver calls `getSemanticDiagnostics` and `getEncodedSemanticClassifications`
  * constantly and independently. Both are served from **one** analysis per
  * `(file text, schema version)` pair, so the second of the two is free. A file
- * outside a SurrealGuard project short-circuits before any of it: one cached
+ * outside a SurrealQL Analyzer project short-circuits before any of it: one cached
  * directory lookup and a pass-through.
  *
  * # Failure is silence
@@ -38,11 +38,11 @@ import {
 import { byteToUtf16, utf16ToByte, type ByteToUtf16 } from "./offsets";
 import { findProject } from "./project";
 
-/** The extensions `surrealguard_embed::extract` knows how to read. */
+/** The extensions `surrealql_analyzer_embed::extract` knows how to read. */
 const HOST_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".svelte", ".vue", ".astro"];
 
 /** Where the analyzer lives inside the published package. */
-export const WASM_PATH = join(__dirname, "..", "wasm", "surrealguard.wasm");
+export const WASM_PATH = join(__dirname, "..", "wasm", "surrealql-analyzer.wasm");
 
 /** One file's analysis, valid while its text and its schema are unchanged. */
 interface Entry {
@@ -67,7 +67,7 @@ export function createProxy(
   const service = info.languageService;
   const log = (message: string) => {
     try {
-      info.project.projectService.logger.info(`[surrealguard] ${message}`);
+      info.project.projectService.logger.info(`[surrealql-analyzer] ${message}`);
     } catch {
       // A logger that is not there is not a reason to fail.
     }
@@ -104,7 +104,7 @@ export function createProxy(
    * wrong extension, no project, no analyzer, no snapshot.
    *
    * The cheapest checks come first on purpose. In a repo with no
-   * `surrealguard.toml` this returns on the second line, having done one
+   * `surrealql-analyzer.toml` this returns on the second line, having done one
    * cached directory lookup, which is what "costs nothing" has to mean when
    * the caller is a keystroke.
    */

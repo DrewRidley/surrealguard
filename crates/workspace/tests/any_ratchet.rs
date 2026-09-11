@@ -21,7 +21,7 @@
 //! Regenerate with:
 //!
 //! ```text
-//! UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test any_ratchet
+//! UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test any_ratchet
 //! ```
 
 mod support;
@@ -37,7 +37,7 @@ const HEADER: &str = "\
 # `any` / `unknown` ratchet baseline — every corpus site that yields an
 # imprecise type, with how many `any` leaves it contains.
 #
-# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test any_ratchet
+# Regenerate: UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test any_ratchet
 #
 # Format:  <count>  <site id>  [# expected: <reason>]
 #
@@ -60,7 +60,7 @@ fn corpus_any_count_does_not_regress() {
         Err(_) if updating() => BTreeMap::new(),
         Err(_) => panic!(
             "missing baseline {}\n\
-             create it with: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test any_ratchet",
+             create it with: UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test any_ratchet",
             path.display()
         ),
     };
@@ -101,7 +101,7 @@ fn corpus_any_count_does_not_regress() {
          Baseline: {}\n\
          If the imprecision is genuinely unavoidable, add the site to the baseline WITH a\n\
          `# expected: <reason>` note. Otherwise fix the inference — do not raise the number.\n\
-         Regenerate with: UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-workspace --test any_ratchet\n",
+         Regenerate with: UPDATE_SNAPSHOTS=1 cargo test -p surrealql-analyzer-workspace --test any_ratchet\n",
         regressions.len(),
         regressions.join("\n"),
         path.display()
