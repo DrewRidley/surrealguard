@@ -157,7 +157,7 @@
   <main class="docs-main">
     <span class="eyebrow-doc">// reference</span>
     <h1>Diagnostics &amp; lints</h1>
-    <p class="lead-p">Every construct in SurrealQL has a <strong>contract</strong> — what the author must mean for the statement to make sense. A diagnostic fires when that contract is provably violated, whether or not SurrealDB would run the query. This is the complete catalog: <strong>93 codes</strong> across eight families, plus the parser's own <a class="link" href="#fam-0">0xxx</a> codes.</p>
+    <p class="lead-p">Every construct in SurrealQL has a <strong>contract</strong> — what the author must mean for the statement to make sense. A diagnostic fires when that contract is provably violated, whether or not SurrealDB would run the query. This is the complete catalog: <strong>94 codes</strong> across eight families, plus the parser's own <a class="link" href="#fam-0">0xxx</a> codes.</p>
 
     <div class="genbar">
       <span>generated from <code>crates/diagnostics/src/catalog.rs</code></span>
@@ -217,7 +217,7 @@
       <a class="n3" href="#fam-3"><b>3xxx</b> graph · 5</a>
       <a class="n4" href="#fam-4"><b>4xxx</b> statement · 23</a>
       <a class="n5" href="#fam-5"><b>5xxx</b> functions · 5</a>
-      <a class="n6" href="#fam-6"><b>6xxx</b> params · 6</a>
+      <a class="n6" href="#fam-6"><b>6xxx</b> params · 7</a>
       <a class="n7" href="#fam-7"><b>7xxx</b> lints · 15</a>
       <a class="n8" href="#fam-8"><b>8xxx</b> compat · 3</a>
     </div>
@@ -389,7 +389,7 @@
       <div class="fam-head">
         <span class="fam-badge">6xxx</span>
         <span class="ft">Parameters</span>
-        <span class="fc">6 codes</span>
+        <span class="fc">7 codes</span>
       </div>
       <p class="fam-desc">A <code>$param</code> in a checkable position produces a <strong>constraint</strong> host adapters discharge, not a finding. Codes here fire only on contradictions and misuse.</p>
       <div class="tbl-wrap"><table>
@@ -401,6 +401,7 @@
           <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">6004</span></span></td><td><span class="lvl warn">warn</span></td><td>Param used before its LET in source order <span class="covers">— <code>RETURN $x; LET $x = 1;</code></span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">6005</span></span></td><td><span class="lvl deny">deny</span></td><td>Context param used outside its context <span class="covers">— <code>$before</code> outside an event, <code>$parent</code> outside a subquery</span></td></tr>
           <tr><td><span class="cd"><span class="sevb e">E</span><span class="num">6007</span></span></td><td><span class="lvl deny">deny</span></td><td>Assignment to a protected parameter <span class="covers">— <code>LET $auth = {...}</code></span></td></tr>
+          <tr><td><span class="cd"><span class="sevb w">W</span><span class="num">6008</span></span></td><td><span class="lvl warn">warn</span></td><td>A param a function body reads is one that something binds <span class="covers">— <code>DEFINE FUNCTION fn::f($parm: any) { RETURN $param; }</code> — engine 3.2.3 defines it and <code>fn::f(1)</code> returns NONE, so the typo is a live logic bug that runs; a did-you-mean offers the declared spelling</span></td></tr>
         </tbody>
       </table></div>
     </section>

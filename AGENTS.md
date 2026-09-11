@@ -62,18 +62,24 @@ at [`/llms.txt`](https://surrealguard.dev/llms.txt) and
     regenerate it to make it pass**: it records a path that no longer exists, so
     rewriting it from the current path turns the check into a tautology.
   - `crates/syntax/tests/conformance.rs` — the **grammar-conformance
-    ratchet**. `crates/syntax/examples/conformance_corpus.json` is known-valid
-    SurrealQL from SurrealDB's own test suites; a parse error is fatal to the
+    gate**, two corpora extracted from SurrealDB's own test suites and both
+    held at 100%. `crates/syntax/examples/conformance_corpus.json` is the
+    **valid** set (a JSON array of queries): a parse error is fatal to the
     whole source, so every entry the grammar rejects is a place the analyzer
-    is silently wrong. `tests/conformance_expected_failures.txt` lists the
-    indices that still fail (one per line, first 60 chars as a comment). The
-    test fails when a listed-passing entry breaks (a grammar regression) AND
-    when a listed-failing entry starts parsing (progress the baseline must
-    bank). Regenerate with
-    `UPDATE_SNAPSHOTS=1 cargo test -p surrealguard-syntax --test conformance`;
-    the human-readable report is
-    `cargo run -p surrealguard-syntax --example conformance -- crates/syntax/examples/conformance_corpus.json`,
-    and `docs/grammar-conformance.md` records the clusters. The grammar
+    is silently wrong — fix the grammar, never the corpus.
+    `crates/syntax/examples/conformance_rejected.json` is the **rejected**
+    set (`[query, reason]` pairs): text from the same suites that is not
+    SurrealQL (deliberate parser-error fragments, regex assertions on `INFO`
+    output), every entry of which must *fail* to parse — one that starts
+    parsing is over-acceptance. There is no baseline file and no
+    `UPDATE_SNAPSHOTS` path: the invariant is absolute, and moving an entry
+    between the sets is a deliberate edit with a reason. The human-readable
+    report is `cargo run -p surrealguard-syntax --example conformance`, and
+    `docs/grammar-conformance.md` records the history. A handful of forms
+    are parsed on purpose despite the engine refusing them, so the analyzer
+    can diagnose them precisely instead of the file collapsing into a syntax
+    error; `crates/workspace/tests/engine_refused_syntax.rs` pins that each
+    one raises its contract code. The grammar
     itself is `crates/tree-sitter-surrealql/grammar.js`; after editing it,
     regenerate with `npx --yes tree-sitter-cli@0.25.10 generate --abi 14` in
     that directory (the `tree-sitter` CLI is not a workspace dependency).

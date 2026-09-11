@@ -1,5 +1,111 @@
 # Changelog
 
+## Unreleased
+
+Two large bodies of work met here: an August series on the SurrealQL grammar,
+LIVE SELECT and the Svelte/embedded-query surfaces, and a correctness and
+performance sweep over the engine, the language server and the test suite.
+Every rule below that concerns SurrealDB's own behaviour was verified against a
+live 3.2.3 server rather than inferred.
+
+### Fixed — the language server no longer grows without bound
+
+Startup and every save copied every document's text once per document and held
+all the copies alive at once. On a 509-file workspace that was 887 MB of
+resident memory that never came back; it is now 77 MB and flat across saves.
+Document text is shared rather than copied, diagnostics publish per document,
+and the workspace scan skips build directories and honours the globs in
+`surrealguard.toml`.
+
+Two smaller leaks went with it: the semantic-tokens refresh was re-requested on
+every publish with no capability gate and no coalescing, so a client that never
+answered accumulated pending requests forever; and the server ignored the `exit`
+notification, ending only on end-of-input, so an editor that restarted the
+server could leave the old process running.
+
+### Fixed — editor latency on large files
+
+Converting a byte offset to an editor position rescanned the document from the
+first byte, once per span. It is now a cached per-document line index. On a
+3,200-line file, diagnostic conversion went from 475 ms to 2.2 ms and whole-file
+inlay hints from 253 ms to 15.6 ms, and the cost per line is flat across file
+sizes instead of growing.
+
+### Added — diagnostics
+
+Four new contracts, each engine-verified: a constant written to a field that
+violates that field's own `ASSERT` (2038); an aggregate over a column with no
+`GROUP` clause, which the engine rejects (4028); a projection under `GROUP BY`
+that is neither a group key nor an aggregate, which the engine silently
+accumulates into an array (4029); and a parameter read by a `DEFINE FUNCTION`
+body that nothing binds (6008), which evaluates to `NONE` and quietly computes
+the wrong answer.
+
+Version compatibility (8001, 8002, 8003) now emits, keyed on an optional
+`[analysis] surrealdb_version`. Unset means the latest release and nothing
+fires. The registry of when each function and syntax feature appeared or was
+removed is sourced from SurrealDB's own tags and documentation.
+
+Completeness for contracts that previously covered only part of their surface:
+duplicate and missing-target reporting for `INDEX`, `EVENT`, `FUNCTION`,
+`PARAM` and `ANALYZER`; `REMOVE` and `ALTER` now update the schema so later
+statements see the change; event self-trigger cycles (5010); `OMIT` without a
+wildcard projection (4012); and the side-effect-in-computed-field lint widened
+beyond `http::`.
+
+Retired, having never had an emission site: 4001, 4002, 4016 and 6006. Retired
+numbers are not reused.
+
+### Added — grammar and conformance
+
+SurrealDB's own extracted test queries now parse completely: 320 of 320, with a
+further 8 entries that must *not* parse (parser error-handling fragments and a
+form the engine reserves) asserted as rejected, so the harness catches
+over-acceptance as well as regression. The upstream `surrealql-tree-sitter`
+corpus passes 396 of 396.
+
+Newly parsed, each verified against the engine: `%`; prefix `NOT`, `-` and `+`
+on any operand; `dec` and `f` numeric suffixes; `s''` strings; `?.`; `WITH
+INDEX` on mutations; `INSERT IGNORE`; `KILL $param`; `LIVE SELECT ... FROM
+$param`; `array<T, N>`; `COMMENT` clauses; `HNSW`, `DISKANN`, `FULLTEXT` and
+`COUNT` index kinds; `RATELIMIT`; `DEFINE SEQUENCE`; `DEFINE ACCESS` and
+`DEFINE USER`; the `ACCESS` statement; `EXPLAIN` in prefix position; an
+immediately-called closure; and `ORDER BY count`.
+
+Lowering gaps that silently hid bugs are closed: every comparison and
+containment operator has its own typed variant and infers `bool`, where the
+whole family was previously untyped and unchecked; `=` and `==` are
+distinguished; `IF NOT EXISTS` no longer reads as a duplicate definition;
+`INSERT ... ON DUPLICATE KEY UPDATE` keeps its row payload; `LIVE SELECT`
+lowers its `WHERE` and `FETCH`; and `r'table:id'` is a record id rather than a
+regex.
+
+### Changed — internals
+
+One field-projection policy replaces five implementations that disagreed on
+`option`, unions and record links; joins route through the lattice; one AST
+visitor replaces three hand-rolled walkers; the builtin catalogue is one
+structured table that both dispatches calls and drives completion; and host-file
+span remapping is one method shared by the CLI, the language server and the
+WASM host.
+
+### Added — tests
+
+Whole-pipeline tests moved out of `analysis.rs`, which fell from 6,568 lines to
+882. The corpus gained 426 engine-verified statements over previously untested
+surface. The negative corpus went from 4 distinct codes at 0.5.3 to 81. Every
+deny-level code has a fire test and a near-miss guard. The parser gained
+property-based testing over corrupted input, which found a missing identifier
+being treated as a real empty name across sixteen lowering sites. Generated
+TypeScript is compared against a committed golden and typechecked.
+
+### Known
+
+A full edit-to-diagnostics cycle is superlinear in document size: roughly 63 µs
+per line at 200 lines and 752 µs at 3,200. This is the analysis pipeline, not
+span conversion — a document with no findings costs the same. Under
+investigation.
+
 ## 0.4.0
 
 The headline is **type-aware autocomplete**. Alongside it, a large correctness pass:

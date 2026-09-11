@@ -138,7 +138,11 @@ fn every_embedded_query_reaches_the_registry() {
         let mut key = String::new();
         for (index, part) in query.parts().iter().enumerate() {
             if index > 0 {
-                key.push_str(&format!("${}{}", surrealguard_embed::HOST_PARAM_PREFIX, index - 1));
+                key.push_str(&format!(
+                    "${}{}",
+                    surrealguard_embed::HOST_PARAM_PREFIX,
+                    index - 1
+                ));
             }
             key.push_str(part);
         }
